@@ -3,6 +3,17 @@ __pycache__/
 *.py[codz]
 *$py.class
 
+# macOS metadata
+._*
+.DS_Store
+.AppleDouble
+.Spotlight-V100
+.Trashes
+.fseventsd
+
+# Editor settings
+.vscode/
+
 # C extensions
 *.so
 
