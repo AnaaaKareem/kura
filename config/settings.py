@@ -10,7 +10,6 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
-import json
 import os
 from pathlib import Path
 from dotenv import load_dotenv
@@ -26,21 +25,12 @@ load_dotenv(BASE_DIR / '.env')
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
 # SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ.get('SECRET_KEY')
+SECRET_KEY = os.environ['SECRET_KEY']
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get('DEBUG', 'True').lower() in ('true', '1', 't')
+DEBUG = os.environ.get('DEBUG', 'False') == 'True'
 
-raw_allowed_hosts = os.environ.get('ALLOWED_HOSTS', '').strip()
-if raw_allowed_hosts.startswith('[') and raw_allowed_hosts.endswith(']'):
-    try:
-        hosts = json.loads(raw_allowed_hosts)
-    except json.JSONDecodeError:
-        hosts = [h.strip(' "\'[]') for h in raw_allowed_hosts.split(',') if h.strip(' "\'[]')]
-else:
-    hosts = [h.strip(' "\'[]') for h in raw_allowed_hosts.split(',') if h.strip(' "\'[]')]
-
-ALLOWED_HOSTS = list(dict.fromkeys(host.split(':')[0] for host in hosts if host.strip()))
+ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
 
 
 # Application definition
@@ -52,7 +42,10 @@ INSTALLED_APPS = [
     'django.contrib.sessions',
     'django.contrib.messages',
     'django.contrib.staticfiles',
+    'kura.apps.KuraConfig',
 ]
+
+AUTH_USER_MODEL = 'kura.User'
 
 MIDDLEWARE = [
     'django.middleware.security.SecurityMiddleware',
@@ -89,8 +82,12 @@ WSGI_APPLICATION = 'config.wsgi.application'
 
 DATABASES = {
     'default': {
-        'ENGINE': 'django.db.backends.sqlite3',
-        'NAME': BASE_DIR / 'db.sqlite3',
+        'ENGINE': 'django.db.backends.postgresql',
+        'NAME': os.environ['DATABASE_NAME'],
+        'USER': os.environ['DATABASE_USER'],
+        'PASSWORD': os.environ['DATABASE_PASSWORD'],
+        'HOST': os.environ.get('DATABASE_HOST', 'localhost'),
+        'PORT': os.environ.get('DATABASE_PORT', '5432'),
     }
 }
 
