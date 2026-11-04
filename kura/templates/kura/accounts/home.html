@@ -1,0 +1,98 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Dashboard - Kura{% endblock %}
+
+{% block content %}
+<div class="space-y-8">
+    <!-- Identify the page and the roles attached to this account. -->
+    <header class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+            <p class="mb-1 text-sm font-medium text-base-content/60">Your workspace</p>
+            <h1 class="text-3xl font-bold">Dashboard</h1>
+            <p class="mt-2 text-sm text-base-content/70">A quick view of work areas and recent records available to you.</p>
+        </div>
+        <div class="flex flex-wrap gap-2" aria-label="Your assigned roles">
+            {% for role in roles %}<span class="badge badge-outline">{{ role }}</span>{% endfor %}
+        </div>
+        {% for department in head_departments %}
+        <p class="text-sm font-medium text-base-content/70">Head of {{ department.name }}</p>
+        {% endfor %}
+    </header>
+
+    <!-- Keep work-area cards limited to the routes supplied for the user's assigned roles. -->
+    <section aria-labelledby="work-areas-heading">
+        <div class="mb-4 flex items-end justify-between gap-4">
+            <div>
+                <h2 id="work-areas-heading" class="text-xl font-semibold">Work areas</h2>
+                <p class="mt-1 text-sm text-base-content/70">Open a page you can use for your role.</p>
+            </div>
+        </div>
+        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+            {% for card in dashboard_cards %}
+            <article class="card border border-base-300 bg-base-100">
+                <div class="card-body gap-3 p-4 sm:p-5">
+                    <h3 class="card-title text-lg">
+                        <svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5 text-primary" fill="none" stroke="currentColor" stroke-width="1.7">
+                            <path d="M5 4h14a2 2 0 0 1 2 2v14H7a2 2 0 0 1-2-2zM5 4v14a2 2 0 0 1-2 2M9 8h8M9 12h8" stroke-linecap="round" stroke-linejoin="round"/>
+                        </svg>
+                        {{ card.title }}
+                    </h3>
+                    <p class="text-sm text-base-content/70">{{ card.description }}</p>
+                    <div class="card-actions justify-end pt-1">
+                        {% if card.external %}
+                        <a href="{{ card.url }}" target="_blank" rel="noopener noreferrer" class="btn btn-ghost btn-sm text-primary">Open security log</a>
+                        {% else %}
+                        <a href="{{ card.url }}" class="btn btn-ghost btn-sm text-primary">Open {{ card.title }}</a>
+                        {% endif %}
+                    </div>
+                </div>
+            </article>
+            {% empty %}
+            <div class="rounded-box border border-base-300 bg-base-100 p-5 text-sm text-base-content/70">
+                No work areas are currently assigned to your account. Contact an administrator if you need access.
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+
+    <!-- Summaries contain counts or aggregates, not sensitive record-level grade details. -->
+    {% for summary in dashboard_summaries %}
+    <section aria-labelledby="summary-{{ forloop.counter }}">
+        <h2 id="summary-{{ forloop.counter }}" class="mb-4 text-xl font-semibold">{{ summary.role }} overview</h2>
+        <div class="grid grid-cols-1 gap-3 sm:grid-cols-2 xl:grid-cols-3">
+            {% for item in summary.items %}
+            <article class="rounded-box border border-base-300 bg-base-100 p-4">
+                <p class="text-sm text-base-content/70">{{ item.label }}</p>
+                {% if item.url %}
+                <a href="{{ item.url }}" class="mt-1 inline-flex items-baseline gap-2 text-2xl font-semibold text-primary hover:underline">
+                    <span>{{ item.value }}</span>
+                    <span class="sr-only">View related page</span>
+                </a>
+                {% else %}
+                <p class="mt-1 text-2xl font-semibold">{{ item.value }}</p>
+                {% endif %}
+            </article>
+            {% endfor %}
+        </div>
+    </section>
+    {% endfor %}
+
+    <!-- Display only the five newest stored activity records without exposing private details. -->
+    <section aria-labelledby="recent-activity-heading" class="rounded-box border border-base-300 bg-base-100">
+        <div class="border-b border-base-300 px-4 py-3 sm:px-5">
+            <h2 id="recent-activity-heading" class="text-xl font-semibold">Recent activity</h2>
+            <p class="mt-1 text-sm text-base-content/70">Recent records from the work areas available to you.</p>
+        </div>
+        <ol class="divide-y divide-base-300 px-4 sm:px-5">
+            {% for item in recent_activity %}
+            <li class="flex flex-col gap-1 py-3 sm:flex-row sm:items-center sm:justify-between sm:gap-4">
+                <span class="text-sm font-medium">{{ item.label }}</span>
+                <time class="text-xs text-base-content/60" datetime="{{ item.date|date:'c' }}">{{ item.date|date:"j M Y, H:i" }}</time>
+            </li>
+            {% empty %}
+            <li class="py-5 text-sm text-base-content/70">There are no recent records to show.</li>
+            {% endfor %}
+        </ol>
+    </section>
+</div>
+{% endblock %}

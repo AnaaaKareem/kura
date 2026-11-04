@@ -1,0 +1,28 @@
+{# Show page messages and form-wide errors together above the page content. #}
+{% if messages %}
+<div class="space-y-2">
+    {% for message in messages %}
+    {% if 'password_changed' in message.tags %}
+    <div role="status" class="alert border border-success bg-base-100" data-password-change-confirmation><span>{{ message }}</span></div>
+    {% else %}
+    <div
+        role="alert"
+        class="alert {% if message.tags == 'error' %}alert-error{% elif message.tags == 'success' %}alert-success{% else %}alert-info{% endif %}"
+    >
+        <span>{{ message }}</span>
+    </div>
+    {% endif %}
+    {% endfor %}
+</div>
+{% endif %}
+
+{# Keep validation messages that apply to the whole form visible above its fields. #}
+{% if form.non_field_errors %}
+<div role="alert" class="alert alert-error mt-2">
+    <ul class="list-disc pl-5">
+        {% for error in form.non_field_errors %}
+        <li>{{ error }}</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endif %}
