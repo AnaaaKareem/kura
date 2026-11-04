@@ -1,8 +1,19 @@
+import hashlib
+import logging
+import secrets
+from django.contrib import messages
+from django.contrib.auth import authenticate, login, logout
 from django.contrib.auth.decorators import login_required
-from django.shortcuts import render
+from django.core.exceptions import PermissionDenied
+from django.http import HttpResponseForbidden, HttpResponseNotAllowed
+from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
-from .models import Department, User, UserRole, Schedule, Course, UserSession, StudentProfile, Enrollment, GradeChangeRequest, CourseResult, GradeStatus, ChangeRequestStatus, CourseStaff, CourseStaffRole, Assessment, Grade, ModuleAttendanceSession, AttendanceRecord, AttendanceStatus, AssessmentAttempt
+from axes.handlers.proxy import AxesProxyHandler
+from .forms import LoginForm
+from .models import Department, User, UserRole, UserSession, Schedule, Course, StudentProfile, Enrollment, GradeChangeRequest, CourseResult, GradeStatus, ChangeRequestStatus, CourseStaff, CourseStaffRole, Assessment, Grade, ModuleAttendanceSession, AttendanceRecord, AttendanceStatus, AssessmentAttempt
+
+security_logger = logging.getLogger("kura.security")
 
 DASHBOARD_CARDS_BY_ROLE = {
     "Admin": [
@@ -57,6 +68,156 @@ DASHBOARD_CARDS_BY_ROLE = {
         {"title": "Transcript", "description": "View your released course results.", "url": "/transcript/"},
     ],
 }
+
+
+def axes_lockout_callable(request, credentials=None):
+    """
+    Called by django-axes when an IP or account exceeds failure limits.
+    Security: Returns a 403 response with generic messaging to prevent enumeration.
+    """
+    return HttpResponseForbidden("Account temporarily locked due to repeated failures. Please try again later.")
+
+
+def create_user_session(request, user):
+    """
+    Creates a new tracked UserSession record for an authenticated user.
+    Records client IP address, browser user-agent, and a 14-day expiry.
+    """
+    # Generate random bytes for the session bearer token hash.
+    raw_token = secrets.token_hex(32)
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+
+    # Read client IP address from the request header.
+    ip_address = request.META.get("REMOTE_ADDR")
+
+    # Read the client browser user agent string.
+    user_agent = request.META.get("HTTP_USER_AGENT", "")[:255]
+
+    # Set expiry to 14 days from now.
+    expires_at = timezone.now() + timezone.timedelta(days=14)
+
+    # Save session record to the database.
+    user_session = UserSession.objects.create(
+        user=user,
+        session_token_hash=token_hash,
+        ip_address=ip_address,
+        user_agent=user_agent,
+        expires_at=expires_at,
+    )
+
+    # Store session id in the Django request session.
+    request.session["user_session_id"] = str(user_session.id)
+    return user_session
+
+
+def login_view(request):
+    """
+    Authenticates users using email and password.
+    Who can use it: Public unauthenticated users.
+    Security: Generic error messages, brute-force tracking via axes,
+    lockout checks on locked_until and is_active, and redirect to MFA.
+"""
+    # Redirect already-logged-in users straight to the dashboard.
+    if request.user.is_authenticated:
+        return redirect("kura:home")
+
+    form = LoginForm(request.POST or None)
+
+    if request.method == "POST":
+        if form.is_valid():
+            email = form.cleaned_data["email"].strip().lower()
+            password = form.cleaned_data["password"]
+
+            # Authenticate credentials against configured backends and axes.
+            user = authenticate(request, email=email, password=password)
+
+            # Reveal account status only after the submitted password is correct.
+            if user is None:
+                password_matched_user = User.objects.filter(email__iexact=email).first()
+                if password_matched_user and password_matched_user.check_password(password):
+                    # Explain deactivation only to someone who proved they know the password.
+                    if not password_matched_user.is_active:
+                        security_logger.warning(f"Login denied: deactivated user {email}")
+                        messages.error(request, "This account has been deactivated. Contact the administrator.")
+                        return render(request, "kura/accounts/login.html", {"form": form})
+
+                    # Include the lock expiry so a locked user knows when to try again.
+                    if password_matched_user.locked_until and password_matched_user.locked_until > timezone.now():
+                        lock_time = timezone.localtime(password_matched_user.locked_until).strftime("%d %b, %H:%M")
+                        messages.error(request, f"This account is currently locked until {lock_time}.")
+                        return render(request, "kura/accounts/login.html", {"form": form})
+
+                    # Keep automatic Axes lockouts understandable without exposing account details to wrong passwords.
+                    is_locked_by_axes = AxesProxyHandler.is_locked(request, {"username": email})
+                    if is_locked_by_axes:
+                        request.axes_locked_out = False
+                        security_logger.warning(f"Login denied: locked user {email}")
+                        messages.error(request, "This account is currently locked. Contact the administrator.")
+                        return render(request, "kura/accounts/login.html", {"form": form})
+
+                # Keep the same response for unknown emails and incorrect passwords.
+                security_logger.warning(f"Failed authentication attempt for {email}")
+                messages.error(request, "Invalid email or password.")
+                return render(request, "kura/accounts/login.html", {"form": form})
+
+            # Catch an account status change that happened just after authentication.
+            if not user.is_active:
+                security_logger.warning(f"Login denied: inactive user {email}")
+                messages.error(request, "This account has been deactivated. Contact the administrator.")
+                return render(request, "kura/accounts/login.html", {"form": form})
+
+            # Show the lock expiry if an administrator locked the account during authentication.
+            if user.locked_until and user.locked_until > timezone.now():
+                security_logger.warning(f"Login denied: locked user {email}")
+                lock_time = timezone.localtime(user.locked_until).strftime("%d %b, %H:%M")
+                messages.error(request, f"This account is currently locked until {lock_time}.")
+                return render(request, "kura/accounts/login.html", {"form": form})
+
+            security_logger.info(f"Primary credentials authenticated for {user.email}")
+
+            # If user has MFA enabled, require second factor verification.
+            if user.mfa_enabled:
+                request.session["pre_mfa_user_id"] = str(user.id)
+                return redirect("kura:mfa_verify")
+
+            # Complete login for users without MFA configured yet.
+            login(request, user)
+            user.last_login = timezone.now()
+            user.save(update_fields=["last_login"])
+            create_user_session(request, user)
+
+            # Force first-login password change if required.
+            if user.must_change_password:
+                return redirect("kura:password_change")
+
+            # Direct new users to set up mandatory MFA.
+            return redirect("kura:mfa_setup")
+
+    return render(request, "kura/accounts/login.html", {"form": form})
+
+
+def logout_view(request):
+    """
+    Logs out the user and revokes their active session record.
+    Who can use it: Authenticated users.
+    Security: POST only with CSRF token to prevent forced logout attacks.
+"""
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    # Revoke current UserSession in database.
+    user_email = "anonymous"
+    if request.user.is_authenticated:
+        user_email = request.user.email
+    security_logger.info(f"User logged out: {user_email}")
+    session_id = request.session.get("user_session_id")
+    if session_id:
+        UserSession.objects.filter(id=session_id, user=request.user).update(revoked_at=timezone.now())
+
+    # Clear Django authentication session.
+    logout(request)
+    messages.success(request, "You have been logged out.")
+    return redirect("kura:login")
 
 
 def home_view(request):
