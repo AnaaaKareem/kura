@@ -2,7 +2,7 @@ import hashlib
 import logging
 import secrets
 from django.contrib import messages
-from django.contrib.auth import authenticate, login, logout
+from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.http import HttpResponseForbidden, HttpResponseNotAllowed
@@ -10,7 +10,7 @@ from django.shortcuts import redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from axes.handlers.proxy import AxesProxyHandler
-from .forms import LoginForm
+from .forms import LoginForm, PasswordChangeForm
 from .models import Department, User, UserRole, UserSession, Schedule, Course, StudentProfile, Enrollment, GradeChangeRequest, CourseResult, GradeStatus, ChangeRequestStatus, CourseStaff, CourseStaffRole, Assessment, Grade, ModuleAttendanceSession, AttendanceRecord, AttendanceStatus, AssessmentAttempt
 
 security_logger = logging.getLogger("kura.security")
@@ -578,4 +578,36 @@ def count_upcoming_classes(course_ids, now):
 
     return upcoming_count
 
+
+
+def password_change_view(request):
+    """
+    Allows a user to rotate their password.
+    Who can use it: All authenticated users (mandatory on first login).
+    Security: Validates current password, checks minimum 12 chars and breaches.
+"""
+    form = PasswordChangeForm(request.user, request.POST or None)
+
+    if request.method == "POST" and form.is_valid():
+        new_password = form.cleaned_data["new_password"]
+
+        # Save new password and update audit timestamps.
+        request.user.set_password(new_password)
+        request.user.must_change_password = False
+        request.user.password_changed_at = timezone.now()
+        request.user.save()
+
+        # Keep current session logged in after password hash changes.
+        update_session_auth_hash(request, request.user)
+
+        # Mark the success message so the next page can show a clear confirmation card.
+        messages.success(request, "Password updated successfully.", extra_tags="password_changed")
+
+        # If MFA is not yet enabled, send user to set it up.
+        if not request.user.mfa_enabled:
+            return redirect("kura:mfa_setup")
+
+        return redirect("kura:home")
+
+    return render(request, "kura/accounts/password_change.html", {"form": form})
 

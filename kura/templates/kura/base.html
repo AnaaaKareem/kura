@@ -52,7 +52,8 @@
                             
                             
                             
-                        <li><form method="post" action="{% url 'kura:logout' %}">{% csrf_token %}<button type="submit" class="w-full text-left">Log out</button></form></li>
+                        <li><a href="{% url 'kura:password_change' %}">Change password</a></li>
+                            <li><form method="post" action="{% url 'kura:logout' %}">{% csrf_token %}<button type="submit" class="w-full text-left">Log out</button></form></li>
                         </ul>
                     </div>
                 </div>
