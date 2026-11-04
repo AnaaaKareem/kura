@@ -1,0 +1,109 @@
+{% load static %}
+<!DOCTYPE html>
+<html lang="en" data-theme="kura-system">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}Kura{% endblock %}</title>
+    <!-- Disable HTMX's injected indicator styles so the strict style policy stays intact. -->
+    <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
+    <!-- Draw the small brand mark in the browser tab without requesting a missing file. -->
+    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%235B5BD6'/%3E%3Cpath d='M10 6v20M22 7 10 16l12 9' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
+    <!-- Use only local styling and scripts so the pages work with the site's security policy. -->
+    <link rel="stylesheet" href="{% static 'css/tailwind.min.css' %}">
+    <link rel="stylesheet" href="{% static 'css/daisyui.min.css' %}">
+    <script src="{% static 'js/htmx.min.js' %}"></script>
+    <script src="{% static 'js/theme.js' %}" defer></script>
+    {% block head %}{% endblock %}
+</head>
+<body class="min-h-screen bg-base-200 font-sans text-base-content">
+    {% if user.is_authenticated %}
+    <!-- The drawer keeps work navigation open on large screens and overlays the page on phones. -->
+    <div class="drawer lg:drawer-open min-h-screen">
+        <input id="kura-sidebar-toggle" type="checkbox" class="drawer-toggle">
+        <div class="drawer-content flex min-h-screen flex-col">
+            <!-- The top bar contains the mobile menu, theme choice, and private account actions. -->
+            <nav class="navbar sticky top-0 z-20 border-b border-base-300 bg-base-100 px-3 sm:px-6" aria-label="Account navigation">
+                <div class="navbar-start gap-2">
+                    <label for="kura-sidebar-toggle" class="btn btn-square btn-ghost lg:hidden" aria-label="Open navigation menu">
+                        <svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round"/></svg>
+                    </label>
+                    <a href="{% url 'kura:home' %}" class="flex items-center gap-2 text-lg font-semibold tracking-tight lg:hidden" data-close-sidebar>
+                        <span class="grid h-8 w-8 place-items-center rounded-lg bg-primary text-primary-content" aria-hidden="true"><svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M7 4v16M17 5 7 12l10 7"/></svg></span>
+                        <span>Kura</span>
+                    </a>
+                </div>
+                <div class="navbar-end gap-2 sm:gap-3">
+                    <!-- Let each person choose a saved theme or follow the device setting. -->
+                    <label class="flex items-center gap-2 text-xs font-medium sm:text-sm">
+                        <span class="hidden sm:inline">Theme</span>
+                        <select id="theme-selector" name="theme" class="select select-bordered select-sm w-28" data-theme-selector aria-label="Choose color theme">
+                            <option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option>
+                        </select>
+                    </label>
+                    <!-- Keep personal security links separate from work navigation. -->
+                    <div class="dropdown dropdown-end">
+                        <button type="button" class="btn btn-ghost btn-sm gap-2" aria-label="Open account menu">
+                            <span class="hidden max-w-40 truncate sm:inline">{{ user.first_name }} {{ user.last_name }}</span>
+                            <svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 20c.6-3.4 2.8-5.2 6.5-5.2s5.9 1.8 6.5 5.2" stroke-linecap="round"/></svg>
+                        </button>
+                        <ul class="menu dropdown-content z-30 mt-3 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg">
+                            <li class="menu-title">Account security</li>
+                            
+                            
+                            
+                        </ul>
+                    </div>
+                </div>
+            </nav>
+    {% else %}
+    <!-- Public authentication pages share the theme and brand without private work links. -->
+    <header class="navbar border-b border-base-300 bg-base-100 px-4 sm:px-8">
+        <a href="{% url 'kura:login' %}" class="flex items-center gap-2 text-lg font-semibold"><span class="grid h-8 w-8 place-items-center rounded-lg bg-primary text-primary-content" aria-hidden="true"><svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M7 4v16M17 5 7 12l10 7"/></svg></span>Kura</a>
+        <div class="navbar-end"><label class="flex items-center gap-2 text-sm"><span>Theme</span><select id="theme-selector" name="theme" class="select select-bordered select-sm w-28" data-theme-selector aria-label="Choose color theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label></div>
+    </header>
+    {% endif %}
+
+    <!-- Show page-wide feedback before the page content and keep field errors near their forms. -->
+    <div class="mx-auto mt-4 w-full max-w-7xl space-y-3 px-4 sm:px-6">
+        {% include "kura/_form_errors.html" %}
+    </div>
+
+    <!-- Keep every page body in one shared responsive content area. -->
+    <main class="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 lg:py-8">
+        {% if user.is_authenticated and request.resolver_match.url_name != 'home' %}
+        <!-- Show the dashboard as the start of each authenticated page's navigation path. -->
+        <nav class="breadcrumbs mb-4 text-sm text-base-content/60" aria-label="Breadcrumb">
+            <ol><li><a href="{% url 'kura:home' %}">Dashboard</a></li><li aria-current="page"><span data-breadcrumb-current>{{ request.resolver_match.url_name|capfirst }}</span></li></ol>
+        </nav>
+        {% endif %}
+        {% block content %}{% endblock %}
+    </main>
+
+    {% if user.is_authenticated %}
+            </div>
+            <!-- Show work-area links only for roles assigned to the signed-in user. -->
+            <div class="drawer-side z-30">
+                <label for="kura-sidebar-toggle" class="drawer-overlay" aria-label="Close navigation menu"></label>
+                <aside class="flex min-h-full w-72 flex-col border-r border-base-300 bg-base-100 px-4 py-5" aria-label="Work areas">
+                    <a href="{% url 'kura:home' %}" class="mb-8 flex items-center gap-3 px-2" data-close-sidebar>
+                        <span class="grid h-10 w-10 place-items-center rounded-xl bg-primary text-primary-content" aria-hidden="true"><svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M7 4v16M17 5 7 12l10 7"/></svg></span>
+                        <span class="text-xl font-semibold tracking-tight">Kura</span>
+                    </a>
+                    <p class="mb-2 px-3 text-xs font-semibold uppercase tracking-wide text-base-content/60">Work areas</p>
+                    <ul class="menu menu-md flex-1 gap-1 p-0">
+                        <li><a href="{% url 'kura:home' %}" data-close-sidebar>Dashboard</a></li>
+                    </ul>
+                    <!-- Identify the signed-in user without repeating account actions in this menu. -->
+                    <div class="mt-6 border-t border-base-300 px-3 pt-4">
+                        <p class="truncate text-sm font-semibold">{{ user.first_name }} {{ user.last_name }}</p>
+                        <p class="truncate text-xs text-base-content/60">{{ user.email }}</p>
+                        {% for assignment in user.user_roles.all %}<span class="badge badge-outline mt-2 mr-1">{{ assignment.role.name }}</span>{% endfor %}
+                        {% for department in user.headed_departments.all %}<p class="mt-2 text-xs text-base-content/70">Head of {{ department.name }}</p>{% endfor %}
+                    </div>
+                </aside>
+            </div>
+        </div>
+    {% endif %}
+</body>
+</html>
