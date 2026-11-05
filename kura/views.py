@@ -3,15 +3,16 @@ import logging
 import secrets
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
+from django.core.mail import send_mail
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied
 from django.http import HttpResponseForbidden, HttpResponseNotAllowed
-from django.shortcuts import redirect, render
+from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from axes.handlers.proxy import AxesProxyHandler
-from .forms import LoginForm, PasswordChangeForm
-from .models import Department, User, UserRole, UserSession, Schedule, Course, StudentProfile, Enrollment, GradeChangeRequest, CourseResult, GradeStatus, ChangeRequestStatus, CourseStaff, CourseStaffRole, Assessment, Grade, ModuleAttendanceSession, AttendanceRecord, AttendanceStatus, AssessmentAttempt
+from .forms import LoginForm, PasswordChangeForm, PasswordResetRequestForm, PasswordResetConfirmForm
+from .models import Department, User, UserRole, UserSession, PasswordResetToken, Schedule, Course, StudentProfile, Enrollment, GradeChangeRequest, CourseResult, GradeStatus, ChangeRequestStatus, CourseStaff, CourseStaffRole, Assessment, Grade, ModuleAttendanceSession, AttendanceRecord, AttendanceStatus, AssessmentAttempt
 
 security_logger = logging.getLogger("kura.security")
 
@@ -610,4 +611,96 @@ def password_change_view(request):
         return redirect("kura:home")
 
     return render(request, "kura/accounts/password_change.html", {"form": form})
+
+
+def password_reset_request_view(request):
+    """
+    Initiates a password reset by emailing a time-limited token link.
+    Who can use it: Public unauthenticated users.
+    Security: Returns the same confirmation message regardless of whether the email exists.
+"""
+    form = PasswordResetRequestForm(request.POST or None)
+
+    if request.method == "POST" and form.is_valid():
+        email = form.cleaned_data["email"].strip().lower()
+        user = User.objects.filter(email=email, is_active=True).first()
+
+        # If user exists, generate single-use token valid for 30 minutes.
+        if user:
+            raw_token = secrets.token_urlsafe(32)
+            token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+            expires_at = timezone.now() + timezone.timedelta(minutes=30)
+
+            PasswordResetToken.objects.create(
+                user=user,
+                token_hash=token_hash,
+                expires_at=expires_at,
+            )
+
+            # Build reset link and send notification email.
+            reset_url = request.build_absolute_uri(reverse("kura:password_reset_confirm", kwargs={"token": raw_token}))
+            message_body = f"Hello,\n\nPlease reset your password using this link:\n{reset_url}\n\nThis link expires in 30 minutes."
+            from_email = "webmaster@localhost"
+            if hasattr(settings, "DEFAULT_FROM_EMAIL"):
+                from_email = settings.DEFAULT_FROM_EMAIL
+            send_mail(
+                subject="Kura Password Reset Request",
+                message=message_body,
+                from_email=from_email,
+                recipient_list=[user.email],
+                fail_silently=True,
+            )
+
+        messages.success(
+            request, "If an account exists with that email address, password reset instructions have been sent."
+        )
+        return redirect("kura:login")
+
+    return render(request, "kura/accounts/password_reset_request.html", {"form": form})
+
+
+def password_reset_confirm_view(request, token):
+    """
+    Completes password reset using a token from the email.
+    Who can use it: Public users with a valid token.
+    Security: Validates SHA-256 hash, 30-min window, single-use, and revokes all user sessions.
+"""
+    token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
+
+    # Look up unused, unexpired reset token.
+    reset_record = PasswordResetToken.objects.filter(
+        token_hash=token_hash,
+        used_at__isnull=True,
+        expires_at__gt=timezone.now(),
+    ).first()
+
+    # Reject invalid or expired tokens.
+    if not reset_record:
+        messages.error(request, "This password reset link is invalid or has expired.")
+        return redirect("kura:password_reset_request")
+
+    form = PasswordResetConfirmForm(reset_record.user, request.POST or None)
+
+    if request.method == "POST" and form.is_valid():
+        new_password = form.cleaned_data["new_password"]
+
+        # Update password on user account.
+        user = reset_record.user
+        user.set_password(new_password)
+        user.must_change_password = False
+        user.password_changed_at = timezone.now()
+        user.save()
+
+        # Mark token as consumed.
+        reset_record.used_at = timezone.now()
+        reset_record.save()
+
+        # Revoke all existing sessions for this user.
+        UserSession.objects.filter(user=user, revoked_at__isnull=True).update(revoked_at=timezone.now())
+
+        messages.success(request, "Your password has been reset. Please log in with your new password.")
+        return redirect("kura:login")
+
+    return render(request, "kura/accounts/password_reset_confirm.html", {"form": form})
+
 

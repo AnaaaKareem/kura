@@ -110,3 +110,75 @@ class PasswordChangeForm(forms.Form):
 
         return cleaned_data
 
+
+class PasswordResetRequestForm(forms.Form):
+    """
+    Form to request a password reset email link.
+    """
+
+    # Email address associated with the account.
+    email = forms.EmailField(
+        label="Email address",
+        widget=forms.EmailInput(
+            attrs={
+                "class": "input input-bordered w-full",
+                "placeholder": "name@example.com",
+                "autocomplete": "email",
+            }
+        ),
+    )
+
+
+class PasswordResetConfirmForm(forms.Form):
+    """
+    Form to set a new password after opening a valid reset link.
+    """
+
+    # New password meeting security requirements.
+    new_password = forms.CharField(
+        label="New password",
+        widget=forms.PasswordInput(
+            attrs={
+                "class": "input input-bordered w-full",
+                "autocomplete": "new-password",
+            }
+        ),
+    )
+
+    # Confirmation to prevent typos.
+    confirm_password = forms.CharField(
+        label="Confirm new password",
+        widget=forms.PasswordInput(
+            attrs={
+                "class": "input input-bordered w-full",
+                "autocomplete": "new-password",
+            }
+        ),
+    )
+
+    def __init__(self, user, *args, **kwargs):
+        """
+        Connects this password-reset form to the account receiving the new password.
+        """
+        self.user = user
+        super().__init__(*args, **kwargs)
+
+    def clean(self):
+        """
+        Checks matching password entries and applies Django's configured validators.
+        """
+        cleaned_data = super().clean()
+        new_password = cleaned_data.get("new_password")
+        confirm_password = cleaned_data.get("confirm_password")
+
+        # Check matching fields.
+        if new_password and confirm_password and new_password != confirm_password:
+            self.add_error("confirm_password", "The two password fields did not match.")
+
+        # Run validators against password rules.
+        if new_password:
+            validate_password(new_password, self.user)
+
+        return cleaned_data
+
+
