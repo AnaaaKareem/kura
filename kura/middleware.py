@@ -34,6 +34,12 @@ class SecurityEnforcementMiddleware:
                 return redirect("kura:password_change")
             return self.get_response(request)
 
+        mfa_setup_url = reverse("kura:mfa_setup")
+        mfa_complete_url = reverse("kura:mfa_setup_complete")
+        if not request.user.mfa_enabled:
+            if path not in (mfa_setup_url, mfa_complete_url, password_change_url):
+                return redirect("kura:mfa_setup")
+
         response = self.get_response(request)
 
         # Prevent browser caching of sensitive authenticated content.

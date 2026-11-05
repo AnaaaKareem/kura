@@ -9,4 +9,7 @@ urlpatterns = [
     path("password/change/", views.password_change_view, name="password_change"),
     path("password/reset/", views.password_reset_request_view, name="password_reset_request"),
     path("password/reset/<str:token>/", views.password_reset_confirm_view, name="password_reset_confirm"),
+    path("login/mfa/", views.mfa_verify_view, name="mfa_verify"),
+    path("mfa/setup/", views.mfa_setup_view, name="mfa_setup"),
+    path("mfa/complete/", views.mfa_setup_complete_view, name="mfa_setup_complete"),
 ]
