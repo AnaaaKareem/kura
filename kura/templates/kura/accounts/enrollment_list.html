@@ -1,0 +1,94 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Course Enrollments - Kura{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+            <h1 class="text-2xl font-bold">Course Enrollments</h1>
+            <p class="text-sm text-base-content/70 mt-1">
+                View institutional course enrollments and register students.
+            </p>
+        </div>
+        <div class="space-x-2">
+            <a href="{% url 'kura:student_list' %}" class="btn btn-outline btn-sm">Students</a>
+            <a href="{% url 'kura:student_create' %}" class="btn btn-outline btn-sm">
+                + New Student
+            </a>
+            <a href="{% url 'kura:enrollment_create' %}" class="btn btn-primary btn-sm">
+                + Enroll Student
+            </a>
+        </div>
+    </div>
+
+    <form method="get" class="card bg-base-100 p-4 space-y-2">
+        {{ filter_form.as_p }}
+        <button type="submit" class="btn btn-primary btn-sm">Filter enrollments</button>
+        <a href="{% url 'kura:enrollment_list' %}" class="btn btn-ghost btn-sm">Clear</a>
+    </form>
+    <!-- Enrollments table using DaisyUI -->
+    <div class="card bg-base-100 border border-base-300 overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="table table-sm w-full text-sm">
+                <thead class="bg-base-200">
+                    <tr>
+                        <th>Course</th>
+                        <th>Student</th>
+                        <th>Enrolled By</th>
+                        <th>Status</th>
+                        <th class="text-right">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for enrollment in enrollments %}
+                    <tr>
+                        <td>
+                            <div class="font-semibold">{{ enrollment.course.code }}</div>
+                            <div class="text-xs text-base-content/60">{{ enrollment.course.title }}</div>
+                        </td>
+                        <td>
+                            <div class="font-semibold">{{ enrollment.student.get_full_name|default:enrollment.student.email }}</div>
+                            <div class="text-xs text-base-content/60 font-mono">{{ enrollment.student.email }}</div>
+                        </td>
+                        <td class="text-xs text-base-content/70">
+                            <div>{{ enrollment.enrolled_by.email|default:"System" }}</div>
+                            <div class="text-xs text-base-content/50">{{ enrollment.enrolled_at|date:"Y-m-d" }}</div>
+                        </td>
+                        <td>
+                            {% if enrollment.status == 'active' %}
+                            <span class="badge badge-success badge-sm">Active</span>
+                            {% elif enrollment.status == 'dropped' %}
+                            <span class="badge badge-error badge-sm">Dropped</span>
+                            {% else %}
+                            <span class="badge badge-ghost badge-sm">{{ enrollment.status }}</span>
+                            {% endif %}
+                        </td>
+                        <td class="text-right">
+                            {% if enrollment.status == 'active' %}
+                            <form method="post" action="{% url 'kura:enrollment_drop' enrollment.id %}" class="inline">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-ghost btn-xs text-error" data-confirm-action="Drop this student from {{ enrollment.course.code }}?">
+                                    Drop
+                                </button>
+                            </form>
+                            {% elif enrollment.status == 'dropped' %}
+                            <span class="text-xs text-base-content/50 italic">
+                                Dropped on {{ enrollment.dropped_at|date:"Y-m-d" }}
+                            </span>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="5" class="text-center py-4 text-base-content/50">
+                            No course enrollments found.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

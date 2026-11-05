@@ -22,4 +22,11 @@ urlpatterns = [
     path("admin/users/<uuid:user_id>/roles/", views.user_roles_view, name="user_roles"),
     path("admin/courses/new/", views.admin_course_create_view, name="admin_course_create"),
     path("admin/courses/<uuid:course_id>/edit/", views.admin_course_edit_view, name="admin_course_edit"),
+    path("registrar/students/new/", views.student_create_view, name="student_create"),
+    path("registrar/students/", views.student_list_view, name="student_list"),
+    path("registrar/students/<uuid:student_id>/", views.student_profile_view, name="student_profile"),
+    path("registrar/enrollments/", views.enrollment_list_view, name="enrollment_list"),
+    path("registrar/enrollments/new/", views.enrollment_create_view, name="enrollment_create"),
+    path("registrar/enrollments/search/", views.enrollment_search_view, name="enrollment_search"),
+    path("registrar/enrollments/<uuid:enrollment_id>/drop/", views.enrollment_drop_view, name="enrollment_drop"),
 ]

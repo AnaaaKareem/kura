@@ -1234,3 +1234,277 @@ def user_roles_view(request, user_id):
             "available_roles": available_roles,
         },
     )
+
+from .forms import StudentCreateForm, StudentFilterForm, EnrollmentFilterForm, EnrollmentSearchForm, EnrollmentForm
+def student_create_view(request):
+    """
+    Creates a new student account and profile with an auto-generated temporary password.
+    Who can use it: Academic registrar.
+    Security: Restricted to Registrar role; assigns Student role automatically.
+"""
+    # Check registrar permission.
+    if not has_role(request.user, "Registrar"):
+        raise PermissionDenied
+
+    form = StudentCreateForm(request.POST or None)
+
+    if request.method == "POST" and form.is_valid():
+        email = form.cleaned_data["email"].strip().lower()
+        first_name = form.cleaned_data["first_name"].strip()
+        last_name = form.cleaned_data["last_name"].strip()
+        department = form.cleaned_data["department"]
+        current_level = form.cleaned_data["current_level"]
+        matriculation_year = form.cleaned_data["matriculation_year"]
+
+        # Generate a secure 16-character temporary password.
+        temporary_password = secrets.token_urlsafe(12)
+
+        with transaction.atomic():
+            # Create student user account.
+            new_user = User.objects.create_user(
+                email=email,
+                password=temporary_password,
+                first_name=first_name,
+                last_name=last_name,
+                must_change_password=True,
+                mfa_enabled=False,
+            )
+
+            # Create student academic profile.
+            StudentProfile.objects.create(
+                user=new_user,
+                department=department,
+                current_level=current_level,
+                matriculation_year=matriculation_year,
+            )
+
+            # Assign Student system role.
+            student_role, _ = Role.objects.get_or_create(name="Student")
+            UserRole.objects.get_or_create(
+                user=new_user,
+                role=student_role,
+                defaults={"assigned_by": request.user},
+            )
+
+        messages.success(request, f"Student account created for {email}. Temporary password: {temporary_password}")
+        return redirect("kura:enrollment_list")
+
+    return render(request, "kura/accounts/student_create.html", {"form": form})
+
+
+def student_list_view(request):
+    """
+    Lists student accounts and their status for the registrar.
+    Who can use it: Registrars.
+    Security: Checks the Registrar role and validates all search filters.
+"""
+    # Other roles must not browse institutional student records.
+    if not has_role(request.user, "Registrar"):
+        raise PermissionDenied
+    students = StudentProfile.objects.select_related("user", "department").order_by("user__email")
+    form = StudentFilterForm(request.GET or None)
+    now = timezone.now()
+    if form.is_valid():
+        search = form.cleaned_data["q"]
+        if search:
+            matches = (
+                Q(user__first_name__icontains=search)
+                | Q(user__last_name__icontains=search)
+                | Q(user__email__icontains=search)
+            )
+            try:
+                matches |= Q(user_id=uuid.UUID(search))
+            except ValueError:
+                pass
+            students = students.filter(matches)
+        if form.cleaned_data["department"]:
+            students = students.filter(department=form.cleaned_data["department"])
+        if form.cleaned_data["level"]:
+            students = students.filter(current_level=form.cleaned_data["level"])
+        status = form.cleaned_data["status"]
+        if status == "deactivated":
+            students = students.filter(user__is_active=False)
+        elif status == "locked":
+            students = students.filter(user__is_active=True, user__locked_until__gt=now)
+        elif status == "active":
+            students = students.filter(user__is_active=True).filter(
+                Q(user__locked_until__isnull=True) | Q(user__locked_until__lte=now)
+            )
+    return render(request, "kura/accounts/student_list.html", {"students": students, "filter_form": form, "now": now})
+
+
+def student_profile_view(request, student_id):
+    """
+    Shows a student's account details and enrollments without grades.
+    Who can use it: Registrars.
+    Security: Checks the role before looking up the requested student.
+"""
+    # A guessed student ID must not expose a profile to other roles.
+    if not has_role(request.user, "Registrar"):
+        raise PermissionDenied
+    student = get_object_or_404(StudentProfile.objects.select_related("user", "department"), user_id=student_id)
+    enrollments = Enrollment.objects.filter(student=student.user).select_related("course").order_by("-enrolled_at")
+    return render(
+        request,
+        "kura/accounts/student_profile.html",
+        {"student": student, "enrollments": enrollments, "now": timezone.now()},
+    )
+
+
+def enrollment_search_view(request):
+    """
+    Finds eligible students or published courses for enrollment.
+    Who can use it: Registrars.
+    Security: Checks the role, validates input, limits results, and rate-limits user and IP.
+"""
+    # Only registrars may search, and the search must not change data.
+    if not has_role(request.user, "Registrar"):
+        raise PermissionDenied
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+    form = EnrollmentSearchForm(request.GET)
+    if not form.is_valid():
+        return HttpResponse("Unable to search.", status=400)
+    # Separate shared limits stop both one account and one IP from excessive searches.
+    cache = caches["search_limits"]
+    window = int(timezone.now().timestamp() // 60)
+    for value in (f"user:{request.user.id}", f"ip:{request.META.get('REMOTE_ADDR', '')}"):
+        key = "enrollment-search:" + hashlib.sha256(value.encode()).hexdigest() + f":{window}"
+        # A short-lived lock makes the database cache's non-atomic increment safe.
+        lock = key + ":lock"
+        if not cache.add(lock, 1, timeout=120):
+            return HttpResponse("Too many searches. Please try again later.", status=429)
+        try:
+            count = cache.get(key, 0) + 1
+            cache.set(key, count, timeout=120)
+            # Do not allow a search if the shared counter could not be saved.
+            if cache.get(key) != count:
+                return HttpResponse("Search is temporarily unavailable.", status=503)
+        finally:
+            cache.delete(lock)
+        if count > 60:
+            return HttpResponse("Too many searches. Please try again later.", status=429)
+    query = form.cleaned_data["q"]
+    kind = form.cleaned_data["kind"]
+    results = []
+    if query and kind == "course":
+        results = (
+            Course.objects.filter(is_published=True)
+            .filter(Q(code__icontains=query) | Q(title__icontains=query))
+            .order_by("code")[:10]
+        )
+    elif query:
+        matches = Q(first_name__icontains=query) | Q(last_name__icontains=query) | Q(email__icontains=query)
+        try:
+            matches |= Q(id=uuid.UUID(query))
+        except ValueError:
+            pass
+        results = (
+            User.objects.filter(student_profile__isnull=False, is_active=True).filter(matches).order_by("email")[:10]
+        )
+    return render(request, "kura/accounts/_enrollment_search.html", {"results": results, "kind": kind})
+
+
+def enrollment_list_view(request):
+    """
+    Lists course enrollments across the institution.
+    Who can use it: Academic registrar.
+    Security: Registrar only; no grade content or course material is exposed.
+"""
+    # Check registrar permission.
+    if not has_role(request.user, "Registrar"):
+        raise PermissionDenied
+
+    enrollments = Enrollment.objects.select_related(
+        "course",
+        "student",
+        "enrolled_by",
+        "dropped_by",
+    ).order_by("-enrolled_at")
+
+    # Apply only values accepted by the filter form.
+    form = EnrollmentFilterForm(request.GET or None)
+    if form.is_valid():
+        if form.cleaned_data["course"]:
+            enrollments = enrollments.filter(course=form.cleaned_data["course"])
+        if form.cleaned_data["student"]:
+            enrollments = enrollments.filter(student=form.cleaned_data["student"])
+        if form.cleaned_data["status"]:
+            enrollments = enrollments.filter(status=form.cleaned_data["status"])
+        if form.cleaned_data["semester"]:
+            enrollments = enrollments.filter(course__semester=form.cleaned_data["semester"])
+        if form.cleaned_data["year"]:
+            enrollments = enrollments.filter(course__academic_year=form.cleaned_data["year"])
+    return render(request, "kura/accounts/enrollment_list.html", {"enrollments": enrollments, "filter_form": form})
+
+
+def enrollment_create_view(request):
+    """
+    Enrolls an active student into a published course.
+    Who can use it: Academic registrar.
+    Security: Registrar only; sets enrolled_by to preserve registration audit trail.
+"""
+    # Check registrar permission.
+    if not has_role(request.user, "Registrar"):
+        raise PermissionDenied
+
+    form = EnrollmentForm(request.POST or None)
+
+    if request.method == "POST" and form.is_valid():
+        course = form.cleaned_data["course"]
+        student = form.cleaned_data["student"]
+
+        # Check if enrollment already exists.
+        existing = Enrollment.objects.filter(course=course, student=student).first()
+        if existing and existing.status == EnrollmentStatus.ACTIVE:
+            messages.error(request, "This student is already actively enrolled in this course.")
+            return render(request, "kura/accounts/enrollment_create.html", {"form": form})
+
+        if existing:
+            # Re-activate previously dropped enrollment.
+            existing.status = EnrollmentStatus.ACTIVE
+            existing.enrolled_by = request.user
+            existing.dropped_by = None
+            existing.dropped_at = None
+            existing.save()
+            messages.success(request, f"Re-enrolled {student.email} in {course.code}.")
+            return redirect("kura:enrollment_list")
+
+        # Create new active enrollment record.
+        Enrollment.objects.create(
+            course=course,
+            student=student,
+            status=EnrollmentStatus.ACTIVE,
+            enrolled_by=request.user,
+        )
+        messages.success(request, f"Enrolled {student.email} in {course.code}.")
+        return redirect("kura:enrollment_list")
+
+    return render(request, "kura/accounts/enrollment_create.html", {"form": form})
+
+
+def enrollment_drop_view(request, enrollment_id):
+    """
+    Drops a student from a course, recording who dropped them and preserving history.
+    Who can use it: Academic registrar.
+    Security: Registrar only; POST only; records dropped_by and dropped_at.
+"""
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    # Check registrar permission.
+    if not has_role(request.user, "Registrar"):
+        raise PermissionDenied
+
+    enrollment = get_object_or_404(Enrollment, id=enrollment_id)
+
+    # Set status to dropped and record dropping registrar.
+    enrollment.status = EnrollmentStatus.DROPPED
+    enrollment.dropped_by = request.user
+    enrollment.dropped_at = timezone.now()
+    enrollment.save()
+
+    messages.success(request, f"Dropped {enrollment.student.email} from {enrollment.course.code}.")
+    return redirect("kura:enrollment_list")
+
+
