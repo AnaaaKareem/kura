@@ -12,4 +12,7 @@ urlpatterns = [
     path("login/mfa/", views.mfa_verify_view, name="mfa_verify"),
     path("mfa/setup/", views.mfa_setup_view, name="mfa_setup"),
     path("mfa/complete/", views.mfa_setup_complete_view, name="mfa_setup_complete"),
+    path("account/sessions/", views.user_sessions_view, name="user_sessions"),
+    path("admin/sessions/", views.admin_sessions_view, name="admin_sessions"),
+    path("admin/sessions/revoke/", views.admin_sessions_revoke_view, name="admin_sessions_revoke"),
 ]
