@@ -202,3 +202,42 @@ class MFAVerifyForm(forms.Form):
         ),
     )
 
+
+class AdminSessionFilterForm(forms.Form):
+    """Validate the search and filters for the administrator's session list."""
+
+    # Limit the inputs used to search session records.
+    q = forms.CharField(required=False, max_length=150, label="Name or email")
+    ip = forms.CharField(required=False, max_length=45, label="IP address starts with")
+    role = forms.ChoiceField(
+        required=False,
+        choices=[
+            ("", "All roles"),
+            ("Admin", "Admin"),
+            ("Registrar", "Registrar"),
+            ("Department head", "Department head"),
+            ("Instructor", "Instructor"),
+            ("Teaching assistant", "Teaching assistant"),
+            ("Student", "Student"),
+        ],
+    )
+    state = forms.ChoiceField(
+        required=False,
+        choices=[
+            ("active", "Active"),
+            ("revoked", "Revoked"),
+            ("expired", "Expired"),
+        ],
+        initial="active",
+    )
+
+
+class AdminSessionRevokeForm(forms.Form):
+    """Validate which session or user's sessions an administrator wants to end."""
+
+    # Use UUID fields so malformed identifiers cannot reach the database lookup.
+    action = forms.ChoiceField(choices=[("one", "One session"), ("all", "All sessions")])
+    session_id = forms.UUIDField(required=False)
+    user_id = forms.UUIDField(required=False)
+
+

@@ -1,0 +1,75 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Sessions - Kura{% endblock %}
+
+{% block content %}
+<!-- Explain that this page is for administrators managing all users' sessions. -->
+<div class="space-y-6">
+    <header>
+        <h1 class="text-2xl font-bold">Sessions</h1>
+        <p>Search and manage sessions for all users.</p>
+    </header>
+
+    <!-- Submit search filters as GET parameters validated by the server. -->
+    <form method="get" class="card bg-base-100 border border-base-300 p-4 space-y-3">
+        {{ form.as_p }}
+        <div class="flex gap-2">
+            <button type="submit" class="btn btn-primary btn-sm">Apply filters</button>
+            <a href="{% url 'kura:admin_sessions' %}" class="btn btn-ghost btn-sm">Clear</a>
+        </div>
+    </form>
+
+    <!-- An exact email search identifies the one user whose sessions can be ended together. -->
+    {% if selected_user %}
+    <details>
+        <summary class="btn btn-error btn-outline btn-sm">End all sessions for {{ selected_user.email }}</summary>
+        <p>End all active sessions for this user?</p>
+        <form method="post" action="{% url 'kura:admin_sessions_revoke' %}">
+            {% csrf_token %}
+            <input type="hidden" name="action" value="all">
+            <input type="hidden" name="user_id" value="{{ selected_user.id }}">
+            <button type="submit" class="btn btn-error btn-sm">Confirm ending all sessions</button>
+        </form>
+    </details>
+    {% endif %}
+
+    <!-- Show session details without exposing session tokens or their hashes. -->
+    <div class="overflow-x-auto bg-base-100 border border-base-300 rounded-box">
+        <table class="table table-sm w-full">
+            <caption class="sr-only">User sessions</caption>
+            <thead class="bg-base-200"><tr><th>User</th><th>Device</th><th>IP address</th><th>Started</th><th>Status</th><th>Action</th></tr></thead>
+            <tbody>
+                {% for session in sessions %}
+                <tr>
+                    <td>{{ session.user.get_full_name|default:session.user.email }}<br>{{ session.user.email }}</td>
+                    <td>{{ session.user_agent|default:"Unknown device" }}</td>
+                    <td>{{ session.ip_address|default:"Unknown" }}</td>
+                    <td>{{ session.created_at|date:"j M Y, H:i" }}</td>
+                    <td>
+                        {% if session.revoked_at %}Revoked
+                        {% elif session.id|stringformat:"s" == current_session_id %}This device
+                        {% else %}{{ form.cleaned_data.state|default:"Active"|capfirst }}{% endif %}
+                    </td>
+                    <td>
+                        {% if not session.revoked_at and form.cleaned_data.state != 'expired' %}
+                        <details>
+                            <summary class="btn btn-error btn-outline btn-sm">End session</summary>
+                            <p>End this session for {{ session.user.email }}?</p>
+                            <form method="post" action="{% url 'kura:admin_sessions_revoke' %}">
+                                {% csrf_token %}
+                                <input type="hidden" name="action" value="one">
+                                <input type="hidden" name="session_id" value="{{ session.id }}">
+                                <button type="submit" class="btn btn-error btn-sm">Confirm ending session</button>
+                            </form>
+                        </details>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="6">No sessions match these filters.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

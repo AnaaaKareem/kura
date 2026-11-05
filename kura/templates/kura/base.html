@@ -95,6 +95,11 @@
                     <p class="mb-2 px-3 text-xs font-semibold uppercase tracking-wide text-base-content/60">Work areas</p>
                     <ul class="menu menu-md flex-1 gap-1 p-0">
                         <li><a href="{% url 'kura:home' %}" data-close-sidebar>Dashboard</a></li>
+                        {% for assignment in user.user_roles.all %}
+                        {% if assignment.role.name == 'Admin' %}
+                        <li><a href="{% url 'kura:admin_sessions' %}" data-close-sidebar>Active sessions</a></li>
+                        {% endif %}
+                        {% endfor %}
                     </ul>
                     <!-- Identify the signed-in user without repeating account actions in this menu. -->
                     <div class="mt-6 border-t border-base-300 px-3 pt-4">

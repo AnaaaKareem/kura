@@ -845,3 +845,112 @@ def mfa_setup_complete_view(request):
         {"recovery_codes": recovery_codes},
     )
 
+
+from .forms import AdminSessionFilterForm, AdminSessionRevokeForm
+from .permissions import has_role
+def user_sessions_view(request):
+    """
+    Redirects the old sessions page to the administrator's session list.
+    Who can use it: Administrators only.
+    Security: Non-admin users cannot view or revoke sessions through the old URL.
+"""
+    # Do not leave the former personal-session endpoint available to other roles.
+    if not has_role(request.user, "Admin"):
+        raise PermissionDenied
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+    return redirect("kura:admin_sessions")
+
+
+def admin_sessions_view(request):
+    """
+    Lists and filters session records across the university.
+    Who can use it: Administrators only.
+    Security: Validates filters with a Django form and never displays session tokens.
+"""
+    # Check the role before loading any other user's session records.
+    if not has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    # Reject invalid filters rather than accidentally showing an unfiltered list.
+    form = AdminSessionFilterForm(request.GET or None)
+    sessions = UserSession.objects.select_related("user").order_by("-created_at")
+    selected_user = None
+    if form.is_bound and not form.is_valid():
+        sessions = sessions.none()
+    else:
+        filters = {}
+        if form.is_bound:
+            filters = form.cleaned_data
+        search = filters.get("q", "")
+        if search:
+            sessions = sessions.annotate(
+                full_name=Concat("user__first_name", Value(" "), "user__last_name"),
+            ).filter(Q(user__email__icontains=search) | Q(full_name__icontains=search))
+            selected_user = User.objects.filter(email__iexact=search).first()
+        if filters.get("role"):
+            sessions = sessions.filter(user__user_roles__role__name=filters["role"]).distinct()
+        if filters.get("ip"):
+            sessions = sessions.filter(ip_address__istartswith=filters["ip"])
+        state = filters.get("state") or "active"
+        if state == "active":
+            sessions = sessions.filter(revoked_at__isnull=True, expires_at__gt=timezone.now())
+        elif state == "revoked":
+            sessions = sessions.filter(revoked_at__isnull=False)
+        else:
+            sessions = sessions.filter(revoked_at__isnull=True, expires_at__lte=timezone.now())
+
+    # The page marks the current device and offers bulk revoke only for an exact email search.
+    return render(
+        request,
+        "kura/accounts/admin_sessions.html",
+        {
+            "form": form,
+            "sessions": sessions,
+            "selected_user": selected_user,
+            "current_session_id": request.session.get("user_session_id"),
+        },
+    )
+
+
+def admin_sessions_revoke_view(request):
+    """
+    Ends one session or all active sessions belonging to a selected user.
+    Who can use it: Administrators only.
+    Security: Requires POST, CSRF, validated identifiers, and logs every revoked session.
+"""
+    # Only administrators may end sessions, and only POST can change them.
+    if not has_role(request.user, "Admin"):
+        raise PermissionDenied
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    # Require a valid action and the corresponding session or user identifier.
+    form = AdminSessionRevokeForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, "Could not end the selected session.")
+        return redirect("kura:admin_sessions")
+    action = form.cleaned_data["action"]
+    if action == "one" and form.cleaned_data["session_id"]:
+        target = get_object_or_404(UserSession, id=form.cleaned_data["session_id"])
+        sessions = UserSession.objects.filter(id=target.id)
+    elif action == "all" and form.cleaned_data["user_id"]:
+        target_user = get_object_or_404(User, id=form.cleaned_data["user_id"])
+        sessions = UserSession.objects.filter(user=target_user)
+    else:
+        messages.error(request, "Could not end the selected session.")
+        return redirect("kura:admin_sessions")
+
+    # Mark each active session revoked and record who performed the action.
+    for session in sessions.filter(revoked_at__isnull=True, expires_at__gt=timezone.now()):
+        changed = UserSession.objects.filter(
+            id=session.id,
+            revoked_at__isnull=True,
+            expires_at__gt=timezone.now(),
+        ).update(revoked_at=timezone.now())
+        if changed:
+            security_logger.info("Session %s ended by administrator %s", session.id, request.user.id)
+    messages.success(request, "Selected sessions ended.")
+    return redirect("kura:admin_sessions")
+
+
