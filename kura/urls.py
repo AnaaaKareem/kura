@@ -19,6 +19,7 @@ urlpatterns = [
     path("admin/staff/new/", views.staff_create_view, name="staff_create"),
     path("admin/users/<uuid:user_id>/deactivate/", views.user_deactivate_view, name="user_deactivate"),
     path("admin/users/<uuid:user_id>/lock/", views.user_lock_toggle_view, name="user_lock_toggle"),
+    path("admin/users/<uuid:user_id>/roles/", views.user_roles_view, name="user_roles"),
     path("admin/courses/new/", views.admin_course_create_view, name="admin_course_create"),
     path("admin/courses/<uuid:course_id>/edit/", views.admin_course_edit_view, name="admin_course_edit"),
 ]

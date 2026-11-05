@@ -12,7 +12,7 @@ from django.urls import reverse
 from django.utils import timezone
 from axes.handlers.proxy import AxesProxyHandler
 from .forms import LoginForm, PasswordChangeForm, PasswordResetRequestForm, PasswordResetConfirmForm
-from .models import Department, User, UserRole, UserSession, PasswordResetToken, Schedule, Course, StudentProfile, Enrollment, GradeChangeRequest, CourseResult, GradeStatus, ChangeRequestStatus, CourseStaff, CourseStaffRole, Assessment, Grade, ModuleAttendanceSession, AttendanceRecord, AttendanceStatus, AssessmentAttempt
+from .models import Department, Role, User, UserRole, UserSession, PasswordResetToken, Schedule, Course, StudentProfile, Enrollment, GradeChangeRequest, CourseResult, GradeStatus, ChangeRequestStatus, CourseStaff, CourseStaffRole, Assessment, Grade, ModuleAttendanceSession, AttendanceRecord, AttendanceStatus, AssessmentAttempt
 
 security_logger = logging.getLogger("kura.security")
 
@@ -1175,3 +1175,62 @@ def admin_course_edit_view(request, course_id):
     return render(request, "kura/courses/admin_course_form.html", {"form": form, "editing": True, "course": course})
 
 
+
+def user_roles_view(request, user_id):
+    """
+    Manages assigned system roles for a user.
+    Who can use it: System administrators.
+    Security: Admin only; enforces strict separation of duty between Admin and grading roles.
+"""
+    # Check administrator permission.
+    if not has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    target_user = get_object_or_404(User, id=user_id)
+
+    if request.method == "POST":
+        action = request.POST.get("action")
+        role_id = request.POST.get("role_id")
+        target_role = get_object_or_404(Role, id=role_id)
+
+        # Get existing assigned role names for target user.
+        existing_roles = list(UserRole.objects.filter(user=target_user).values_list("role__name", flat=True))
+
+        if action == "assign":
+            # Rule: Block assigning Admin to an Instructor or Teaching Assistant.
+            if target_role.name == "Admin" and any(r in ("Instructor", "Teaching assistant") for r in existing_roles):
+                messages.error(request, "Separation of duty: Administrators cannot hold grading roles.")
+                return redirect("kura:user_roles", user_id=target_user.id)
+
+            # Rule: Block assigning Instructor or TA to an Administrator.
+            if target_role.name in ("Instructor", "Teaching assistant") and "Admin" in existing_roles:
+                messages.error(request, "Separation of duty: Administrators cannot hold grading roles.")
+                return redirect("kura:user_roles", user_id=target_user.id)
+
+            UserRole.objects.get_or_create(
+                user=target_user,
+                role=target_role,
+                defaults={"assigned_by": request.user},
+            )
+            messages.success(request, f"Assigned role {target_role.name} to {target_user.email}.")
+
+        elif action == "remove":
+            UserRole.objects.filter(user=target_user, role=target_role).delete()
+            messages.success(request, f"Removed role {target_role.name} from {target_user.email}.")
+
+        return redirect("kura:user_roles", user_id=target_user.id)
+
+    # Load currently assigned roles and unassigned roles.
+    assigned_roles = UserRole.objects.filter(user=target_user).select_related("role", "assigned_by")
+    assigned_ids = [ur.role_id for ur in assigned_roles]
+    available_roles = Role.objects.exclude(id__in=assigned_ids)
+
+    return render(
+        request,
+        "kura/accounts/user_roles.html",
+        {
+            "target_user": target_user,
+            "assigned_roles": assigned_roles,
+            "available_roles": available_roles,
+        },
+    )
