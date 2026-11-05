@@ -1,0 +1,60 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Create Module - {{ course.code }} - Kura{% endblock %}
+
+{% block content %}
+<div class="max-w-xl mx-auto mt-6">
+    <div class="card bg-base-100 border border-base-300">
+        <div class="card-body gap-4 p-4 sm:p-6">
+            <h1 class="card-title text-2xl font-bold">{% if editing %}Edit Curriculum Module{% else %}Add Curriculum Module{% endif %}</h1>
+            <p class="text-sm text-base-content/70">
+                Create a module unit for <strong>{{ course.code }}</strong>. You can restrict access to specific student academic levels.
+            </p>
+
+            <form method="post" class="mt-4 space-y-4">
+                {% csrf_token %}
+                {% if form.errors %}<div role="alert" class="alert alert-error">Please correct the highlighted fields. {{ form.errors }}</div>{% endif %}
+
+                <div class="form-control">
+                    <label for="id_title" class="label"><span class="label-text font-medium">Module Title</span></label>
+                    {{ form.title }}
+                    {% if form.title.errors %}
+                    <label class="label"><span class="label-text-alt text-error">{{ form.title.errors.0 }}</span></label>
+                    {% endif %}
+                </div>
+
+                <div class="form-control">
+                    <label for="id_description" class="label"><span class="label-text font-medium">Description</span></label>
+                    {{ form.description }}
+                </div>
+
+                <div class="form-control">
+                    <label class="label cursor-pointer justify-start gap-3">
+                        {{ form.is_visible }}
+                        <span class="label-text font-medium">Publish module to students immediately</span>
+                    </label>
+                </div>
+
+                <div class="form-control">
+                    <label class="label"><span class="label-text font-medium">Target Academic Levels</span></label>
+                    <div class="grid grid-cols-2 gap-2 p-3 bg-base-200 rounded-box border border-base-300">
+                        <!-- Render one labelled checkbox row for each academic level. -->
+                        {% for level in form.target_levels %}
+                        <label class="label cursor-pointer justify-start gap-3">
+                            {{ level.tag }}
+                            <span class="label-text">{{ level.choice_label }}</span>
+                        </label>
+                        {% endfor %}
+                    </div>
+                    <label class="label"><span class="label-text-alt text-base-content/60">Leave unselected to make visible to all enrolled students.</span></label>
+                </div>
+
+                <div class="card-actions justify-end mt-6">
+                    <a href="{% url 'kura:course_detail' course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
+                    <button type="submit" class="btn btn-primary btn-sm">{% if editing %}Save Module{% else %}Create Module{% endif %}</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
