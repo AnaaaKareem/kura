@@ -98,6 +98,8 @@
                         {% for assignment in user.user_roles.all %}
                         {% if assignment.role.name == 'Admin' %}
                         <li><a href="{% url 'kura:admin_sessions' %}" data-close-sidebar>Active sessions</a></li>
+                        <li><a href="{% url 'kura:staff_list' %}" data-close-sidebar>Staff accounts</a></li>
+                        <li><a href="{% url 'kura:admin_course_create' %}" data-close-sidebar>Manage courses</a></li>
                         {% endif %}
                         {% endfor %}
                     </ul>

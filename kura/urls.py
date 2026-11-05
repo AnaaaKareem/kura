@@ -15,4 +15,10 @@ urlpatterns = [
     path("account/sessions/", views.user_sessions_view, name="user_sessions"),
     path("admin/sessions/", views.admin_sessions_view, name="admin_sessions"),
     path("admin/sessions/revoke/", views.admin_sessions_revoke_view, name="admin_sessions_revoke"),
+    path("admin/staff/", views.staff_list_view, name="staff_list"),
+    path("admin/staff/new/", views.staff_create_view, name="staff_create"),
+    path("admin/users/<uuid:user_id>/deactivate/", views.user_deactivate_view, name="user_deactivate"),
+    path("admin/users/<uuid:user_id>/lock/", views.user_lock_toggle_view, name="user_lock_toggle"),
+    path("admin/courses/new/", views.admin_course_create_view, name="admin_course_create"),
+    path("admin/courses/<uuid:course_id>/edit/", views.admin_course_edit_view, name="admin_course_edit"),
 ]
