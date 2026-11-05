@@ -1,0 +1,59 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Draft New Course - Kura{% endblock %}
+
+{% block content %}
+<div class="max-w-xl mx-auto mt-6">
+    <div class="card bg-base-100 border border-base-300">
+        <div class="card-body gap-4 p-4 sm:p-6">
+            <h1 class="card-title text-2xl font-bold">Draft New Course</h1>
+            <p class="text-sm text-base-content/70">
+                Create a new course under the <strong>{{ department.name }}</strong> department. Courses start in draft mode and become visible to students when published.
+            </p>
+
+            <form method="post" class="mt-4 space-y-4">
+                {% csrf_token %}
+
+                <div class="grid grid-cols-3 gap-4">
+                    <div class="form-control col-span-1">
+                        <label for="id_code" class="label"><span class="label-text font-medium">Course Code</span></label>
+                        {{ form.code }}
+                        {% if form.code.errors %}
+                        <label class="label"><span class="label-text-alt text-error">{{ form.code.errors.0 }}</span></label>
+                        {% endif %}
+                    </div>
+                    <div class="form-control col-span-2">
+                        <label for="id_title" class="label"><span class="label-text font-medium">Course Title</span></label>
+                        {{ form.title }}
+                        {% if form.title.errors %}
+                        <label class="label"><span class="label-text-alt text-error">{{ form.title.errors.0 }}</span></label>
+                        {% endif %}
+                    </div>
+                </div>
+
+                <div class="form-control">
+                    <label for="id_description" class="label"><span class="label-text font-medium">Description</span></label>
+                    {{ form.description }}
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label for="id_semester" class="label"><span class="label-text font-medium">Semester</span></label>
+                        {{ form.semester }}
+                    </div>
+                    <div class="form-control">
+                        <label for="id_academic_year" class="label"><span class="label-text font-medium">Academic Year</span></label>
+                        {{ form.academic_year }}
+                    </div>
+                </div>
+
+                <div class="card-actions justify-end mt-6">
+                    <a href="{% url 'kura:course_list' %}" class="btn btn-ghost btn-sm">Cancel</a>
+                    <button type="submit" class="btn btn-primary btn-sm">Create Course Draft</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

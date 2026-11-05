@@ -29,4 +29,9 @@ urlpatterns = [
     path("registrar/enrollments/new/", views.enrollment_create_view, name="enrollment_create"),
     path("registrar/enrollments/search/", views.enrollment_search_view, name="enrollment_search"),
     path("registrar/enrollments/<uuid:enrollment_id>/drop/", views.enrollment_drop_view, name="enrollment_drop"),
+    path("courses/", views.course_list_view, name="course_list"),
+    path("courses/new/", views.course_create_view, name="course_create"),
+    path("courses/<uuid:course_id>/", views.course_detail_view, name="course_detail"),
+    path("courses/<uuid:course_id>/publish/", views.course_publish_toggle_view, name="course_publish_toggle"),
+    path("courses/<uuid:course_id>/staff/assign/", views.course_staff_assign_view, name="course_staff_assign"),
 ]

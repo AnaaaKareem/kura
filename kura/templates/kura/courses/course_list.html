@@ -1,0 +1,72 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Course Catalog - Kura{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+            <h1 class="text-2xl font-bold">Course Catalog</h1>
+            <p class="text-sm text-base-content/70 mt-1">
+                Browse academic courses and access curriculum materials.
+            </p>
+        </div>
+        {% if is_admin %}
+        <a href="{% url 'kura:admin_course_create' %}" class="btn btn-primary btn-sm">+ New Course</a>
+        {% elif is_head %}
+        <a href="{% url 'kura:course_create' %}" class="btn btn-primary btn-sm">
+            + New Course
+        </a>
+        {% endif %}
+    </div>
+
+    {% if is_admin %}
+    <form method="get" class="card bg-base-100 p-4 space-y-2">
+        {{ filter_form.as_p }}
+        <button type="submit" class="btn btn-primary btn-sm">Filter courses</button>
+        <a href="{% url 'kura:course_list' %}" class="btn btn-ghost btn-sm">Clear</a>
+    </form>
+    {% endif %}
+    <!-- Course cards grid with DaisyUI -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+        {% for course in courses %}
+        <div class="card bg-base-100 border border-base-300">
+            <div class="card-body gap-4 p-4 sm:p-6">
+                <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <span class="badge badge-primary font-mono text-xs">{{ course.code }}</span>
+                    {% if course.is_published %}
+                    <span class="badge badge-success badge-sm">Published</span>
+                    {% else %}
+                    <span class="badge badge-warning badge-sm">Draft</span>
+                    {% endif %}
+                </div>
+                <h2 class="card-title text-lg mt-2">{{ course.title }}</h2>
+                <p class="text-xs text-base-content/70 line-clamp-2 mt-1">
+                    {{ course.description|default:"No curriculum description provided." }}
+                </p>
+                <div class="text-xs text-base-content/60 mt-3 pt-2 border-t border-base-200 flex justify-between">
+                    <span>{{ course.department.name }}</span>
+                    <span>{{ course.semester|capfirst }} {{ course.academic_year }}</span>
+                </div>
+                <div class="card-actions justify-end mt-4">
+                    <a href="{% url 'kura:course_detail' course.id %}" class="btn btn-outline btn-sm">
+                        View Course &rarr;
+                    </a>
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="col-span-full rounded-box border border-base-300 bg-base-100 p-6 text-center">
+            <p class="font-medium">No courses are available for your account.</p>
+            {% if is_admin %}
+            <a href="{% url 'kura:admin_course_create' %}" class="btn btn-primary btn-sm mt-4">Create a course</a>
+            {% elif is_head %}
+            <a href="{% url 'kura:course_create' %}" class="btn btn-primary btn-sm mt-4">Create a course</a>
+            {% else %}
+            <p class="mt-2 text-sm text-base-content/70">Ask your course administrator if you expected to see a course here.</p>
+            {% endif %}
+        </div>
+        {% endfor %}
+    </div>
+</div>
+{% endblock %}

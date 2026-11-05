@@ -1,0 +1,226 @@
+{% extends "kura/base.html" %}
+{% load markdown %}
+
+{% block title %}{{ course.code }} - {{ course.title }} - Kura{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <!-- Course Header Card -->
+    <div class="card bg-base-100 border border-base-300">
+        <div class="card-body gap-4 p-4 sm:p-6">
+            <div class="flex flex-wrap justify-between items-start gap-4">
+                <div>
+                    <div class="flex items-center gap-2">
+                        <span class="badge badge-primary font-mono text-sm">{{ course.code }}</span>
+                        {% if course.is_published %}
+                        <span class="badge badge-success badge-sm">Published</span>
+                        {% else %}
+                        <span class="badge badge-warning badge-sm">Draft Mode</span>
+                        {% endif %}
+                    </div>
+                    <h1 class="card-title text-2xl font-bold mt-2">{{ course.title }}</h1>
+                    <p class="text-sm text-base-content/70 mt-1">{{ course.description|default:"No curriculum description." }}</p>
+                    <div class="text-xs text-base-content/60 mt-2">
+                        Department: <strong>{{ course.department.name }}</strong> &bull; Semester: <strong>{{ course.semester|capfirst }} {{ course.academic_year }}</strong>
+                    </div>
+                </div>
+
+                <!-- Department Head & Staff Actions -->
+                <div class="flex flex-wrap gap-2">
+                    {% if is_head or is_admin %}
+                    <!-- Publish / Unpublish Toggle -->
+                    <form method="post" action="{% url 'kura:course_publish_toggle' course.id %}">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-sm {% if course.is_published %}btn-warning{% else %}btn-success{% endif %}">
+                            {% if course.is_published %}Unpublish{% else %}Publish Course{% endif %}
+                        </button>
+                    </form>
+                    {% if is_admin %}
+                    <a href="{% url 'kura:admin_course_edit' course.id %}" class="btn btn-outline btn-sm">Edit course</a>
+                    {% else %}
+                    <a href="{% url 'kura:course_staff_assign' course.id %}" class="btn btn-outline btn-sm">
+                        Assign Instructor
+                    </a>
+                    {% endif %}
+                    {% endif %}
+
+                    {% if is_staff or is_head %}
+                    {% if is_lead %}
+                    <a href="{% url 'kura:course_ta_assign' course.id %}" class="btn btn-outline btn-sm">
+                        Assign TA
+                    </a>
+                    {% endif %}
+                    <a href="{% url 'kura:module_create' course.id %}" class="btn btn-primary btn-sm">
+                        + Add Curriculum Module
+                    </a>
+                    <a href="{% url 'kura:schedule_create' course.id %}" class="btn btn-outline btn-sm">Add schedule</a>
+                    {% endif %}
+                </div>
+            </div>
+
+            <!-- Staff Roster -->
+            {% if staff_assignments %}
+            <div class="mt-4 pt-3 border-t border-base-200">
+                <h3 class="text-xs font-semibold uppercase text-base-content/60">Teaching Staff</h3>
+                <div class="flex flex-wrap gap-3 mt-1.5 text-xs">
+                    {% for staff in staff_assignments %}
+                    <span class="badge badge-ghost gap-1">
+                        <strong>{{ staff.user.get_full_name|default:staff.user.email }}</strong>
+                        ({{ staff.staff_role|title }})
+                        {% if staff.can_release_grades %}<span class="text-success">&bull; Release marks</span>{% endif %}
+                    </span>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+
+    <!-- Only authorized teaching users and students see course materials. -->
+    {% if not is_admin %}
+    <!-- Curriculum Modules Section -->
+    <div class="space-y-6">
+        <h2 class="text-xl font-bold">Curriculum Modules</h2>
+
+        {% for module in modules %}
+        <div class="card bg-base-100 border border-base-300">
+            <div class="card-body gap-4 p-4 sm:p-6">
+                <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+                    <div>
+                        <div class="flex items-center gap-2">
+                            <h3 class="card-title text-lg font-bold">{{ module.title }}</h3>
+                            {% if not module.is_visible %}
+                            <span class="badge badge-ghost badge-sm italic">Hidden from students</span>
+                            {% endif %}
+                        </div>
+                        {% if module.description %}
+                        <p class="text-xs text-base-content/70 mt-1">{{ module.description }}</p>
+                        {% endif %}
+                        <!-- Target levels -->
+                        {% if module.target_levels.all %}
+                        <div class="flex flex-wrap gap-1 mt-2">
+                            <span class="text-xs text-base-content/50 mr-1">Target levels:</span>
+                            {% for tl in module.target_levels.all %}
+                            <span class="badge badge-neutral badge-xs">{{ tl.target_level }}</span>
+                            {% endfor %}
+                        </div>
+                        {% endif %}
+                    </div>
+
+                    {% if is_staff or is_head %}
+                    <a href="{% url 'kura:module_edit' module.id %}" class="btn btn-ghost btn-xs">Edit module</a>
+                    <form method="post" action="{% url 'kura:module_delete' module.id %}">
+                        {% csrf_token %}
+                        <label><input type="checkbox" name="confirm" required> Confirm delete</label>
+                        <button type="submit" class="btn btn-outline btn-xs">Delete module</button>
+                    </form>
+                    <a href="{% url 'kura:section_create' module.id %}" class="btn btn-ghost btn-xs">
+                        + Add Section
+                    </a>
+                    {% endif %}
+                </div>
+
+                <!-- Sections inside Module -->
+                <div class="mt-4 space-y-4">
+                    {% for section in module.sections.all %}
+                    <div class="bg-base-200 rounded-box p-4 border border-base-300">
+                        <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                            <div class="flex items-center gap-2">
+                                <span class="font-semibold text-sm">{{ section.title }}</span>
+                                <span class="badge badge-info badge-xs uppercase">{{ section.section_type }}</span>
+                                {% if not section.is_visible %}<span class="badge badge-ghost">Hidden from students</span>{% endif %}
+                            </div>
+                            {% if is_staff or is_head %}
+                            <a href="{% url 'kura:assessment_create' section.id %}" class="btn btn-ghost btn-xs">Add assessment</a>
+                            <a href="{% url 'kura:section_edit' section.id %}" class="btn btn-ghost btn-xs">Edit section</a>
+                            <form method="post" action="{% url 'kura:section_visibility_toggle' section.id %}">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-outline btn-xs">{% if section.is_visible %}Hide{% else %}Release{% endif %} section</button>
+                            </form>
+                            <form method="post" action="{% url 'kura:section_delete' section.id %}">
+                                {% csrf_token %}
+                                <label><input type="checkbox" name="confirm" required> Confirm delete</label>
+                                <button type="submit" class="btn btn-outline btn-xs">Delete section</button>
+                            </form>
+                            <a href="{% url 'kura:item_create' section.id %}" class="btn btn-primary btn-xs">
+                                + Add Item
+                            </a>
+                            {% endif %}
+                        </div>
+
+                        {% for assessment in section.assessments.all %}
+                        <p class="mt-2"><a class="link" href="{% url 'kura:assessment_detail' assessment.id %}">{{ assessment.title }}</a></p>
+                        {% endfor %}
+
+                        <!-- Items in section -->
+                        <div class="mt-3 space-y-3">
+                            {% for item in section.items.all %}
+                            <div class="bg-base-100 rounded-lg p-3 border border-base-300">
+                                <!-- Staff can see and change this item's release state. -->
+                                <div class="flex flex-wrap justify-between items-start gap-3">
+                                    <div>
+                                        <h4 class="font-bold text-sm text-gray-800">{{ item.title }}</h4>
+                                        {% if is_staff or is_head %}
+                                        <div class="flex flex-wrap items-center gap-2 mt-2">
+                                            {% if item.is_visible %}
+                                            <span class="badge badge-success badge-sm">Released</span>
+                                            {% else %}
+                                            <span class="badge badge-ghost badge-sm">Hidden</span>
+                                            {% endif %}
+                                            {% if item.released_at %}
+                                            <span class="text-xs text-base-content/60">Release at {{ item.released_at|date:"d M Y, H:i" }}</span>
+                                            {% endif %}
+                                        </div>
+                                        {% endif %}
+                                    </div>
+                                    {% if is_staff or is_head %}
+                                    <a href="{% url 'kura:item_edit' item.id %}" class="btn btn-ghost btn-xs">Edit item</a>
+                                    <form method="post" action="{% url 'kura:item_delete' item.id %}">
+                                        {% csrf_token %}
+                                        <label><input type="checkbox" name="confirm" required> Confirm delete</label>
+                                        <button type="submit" class="btn btn-outline btn-xs">Delete item</button>
+                                    </form>
+                                    <form method="post" action="{% url 'kura:item_visibility_toggle' item.id %}">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-outline btn-xs">
+                                            {% if item.is_visible %}Hide{% else %}Release{% endif %} item
+                                        </button>
+                                    </form>
+                                    {% endif %}
+                                </div>
+                                <div class="prose max-w-none text-xs mt-2 text-gray-700">
+                                    {% render_markdown item.content_body %}
+                                </div>
+
+                                <!-- Attached Files -->
+                                {% if item.item_files.all %}
+                                <div class="mt-3 pt-2 border-t border-base-200 flex flex-wrap gap-2">
+                                    {% for item_file in item.item_files.all %}
+                                    <a href="{% url 'kura:file_download' course.id item_file.file.id %}" class="btn btn-xs btn-outline btn-primary gap-1">
+                                        <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"/></svg>
+                                        {{ item_file.file.original_filename }} ({{ item_file.file.size_bytes|filesizeformat }})
+                                    </a>
+                                    {% endfor %}
+                                </div>
+                                {% endif %}
+                            </div>
+                            {% empty %}
+                            <p class="text-xs text-base-content/50 italic py-1">No items in this section.</p>
+                            {% endfor %}
+                        </div>
+                    </div>
+                    {% empty %}
+                    <p class="text-xs text-base-content/50 italic">No sections created in this module.</p>
+                    {% endfor %}
+                </div>
+            </div>
+        </div>
+        {% empty %}
+        <div class="card bg-base-100 border border-base-300 p-8 text-center text-base-content/50">
+            <p>No curriculum modules have been added to this course yet.</p>
+        </div>
+        {% endfor %}
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
