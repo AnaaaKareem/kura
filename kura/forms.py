@@ -609,3 +609,161 @@ class CourseStaffAssignForm(forms.Form):
     )
 
 
+
+class TAAssignForm(forms.Form):
+    """
+    Form for Instructors to assign Teaching Assistants to their course.
+    """
+
+    # Restrict both displayed choices and submitted IDs to active teaching assistants.
+    user = forms.ModelChoiceField(
+        label="Teaching Assistant",
+        queryset=User.objects.filter(
+            is_active=True,
+            user_roles__role__name="Teaching assistant",
+        ).distinct(),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+
+class ModuleForm(forms.Form):
+    """
+    Form for Instructors to create or edit a curriculum module.
+    """
+
+    title = forms.CharField(
+        label="Module Title",
+        max_length=255,
+        widget=forms.TextInput(
+            attrs={
+                "class": "input input-bordered w-full",
+                "placeholder": "e.g. Week 1: Network Protocols",
+            }
+        ),
+    )
+
+    description = forms.CharField(
+        label="Description",
+        required=False,
+        widget=forms.Textarea(
+            attrs={
+                "class": "textarea textarea-bordered w-full",
+                "rows": 3,
+            }
+        ),
+    )
+
+    is_visible = forms.BooleanField(
+        label="Visible to enrolled students",
+        required=False,
+        widget=forms.CheckboxInput(attrs={"class": "checkbox checkbox-primary"}),
+    )
+
+    target_levels = forms.MultipleChoiceField(
+        label="Target Academic Levels (leave blank for all students)",
+        choices=AcademicLevel.choices,
+        required=False,
+        widget=forms.CheckboxSelectMultiple(attrs={"class": "checkbox checkbox-sm checkbox-primary"}),
+    )
+
+
+class DeleteConfirmationForm(forms.Form):
+    """Require an explicit confirmation before deleting a record."""
+
+    confirm = forms.BooleanField(required=True)
+
+
+class ModuleSectionForm(forms.Form):
+    """
+    Form for Instructors to create a section grouping within a module.
+    """
+
+    title = forms.CharField(
+        label="Section Title",
+        max_length=255,
+        widget=forms.TextInput(
+            attrs={
+                "class": "input input-bordered w-full",
+                "placeholder": "e.g. Lecture Notes",
+            }
+        ),
+    )
+
+    section_type = forms.ChoiceField(
+        label="Section Type",
+        choices=SectionType.choices,
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+
+class SectionItemForm(forms.Form):
+    """
+    Form for Instructors to author content items with rich text and file attachment.
+    """
+
+    title = forms.CharField(
+        label="Item Title",
+        max_length=255,
+        widget=forms.TextInput(
+            attrs={
+                "class": "input input-bordered w-full",
+                "placeholder": "e.g. Chapter 1 Summary",
+            }
+        ),
+    )
+
+    content_body = forms.CharField(
+        label="Content Body (Markdown)",
+        required=False,
+        widget=forms.Textarea(
+            attrs={
+                "class": "textarea textarea-bordered w-full font-mono text-sm",
+                "rows": 6,
+                "placeholder": "Write your notes using Markdown...",
+            }
+        ),
+    )
+
+    # Let staff schedule when students may access an item.
+    released_at = forms.DateTimeField(
+        label="Release at (optional)",
+        required=False,
+        input_formats=["%Y-%m-%dT%H:%M"],
+        widget=forms.DateTimeInput(
+            attrs={"class": "input input-bordered w-full", "type": "datetime-local"},
+            format="%Y-%m-%dT%H:%M",
+        ),
+    )
+
+    file = forms.FileField(
+        label="Attach File (Optional, max 25 MiB)",
+        required=False,
+        widget=forms.FileInput(attrs={"class": "file-input file-input-bordered w-full"}),
+    )
+
+    def __init__(self, data=None, files=None, initial=None, existing_file=False):
+        """
+        Initializes the section-item form with its existing-attachment state.
+        """
+        # An existing attachment also counts when editing a file-only item.
+        super().__init__(data=data, files=files, initial=initial)
+        self.existing_file = existing_file
+
+    def clean(self):
+        """
+        Requires the section item to contain text, a new file, or an existing attachment.
+        """
+        # Require something useful in the item, even though each field is optional.
+        cleaned_data = super().clean()
+        if not cleaned_data.get("content_body") and not cleaned_data.get("file") and not self.existing_file:
+            raise forms.ValidationError("Add some content or attach a file.")
+        return cleaned_data
+
+
+class MarkdownPreviewForm(forms.Form):
+    """Validate the Markdown text submitted for an authorized preview."""
+
+    # Empty text is valid so staff can preview while writing.
+    content_body = forms.CharField(required=False, widget=forms.Textarea)
+
+

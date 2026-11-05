@@ -1762,3 +1762,550 @@ def course_staff_assign_view(request, course_id):
 
     return render(request, "kura/courses/staff_assign.html", {"form": form, "course": course})
 
+
+import nh3
+import html
+from django.db import transaction
+from .forms import TAAssignForm, ModuleForm, DeleteConfirmationForm, ModuleSectionForm, SectionItemForm, MarkdownPreviewForm
+from .templatetags.markdown import render_markdown
+from .permissions import can_access_learning_records, is_course_staff
+def course_ta_assign_view(request, course_id):
+    """
+    Assigns a teaching assistant to an instructor's course.
+    Who can use it: Instructors assigned to the course and Department Heads.
+    Security: TAs never receive can_release_grades authority.
+"""
+    course = get_object_or_404(Course, id=course_id)
+
+    # Only an assigned instructor or the department head may assign teaching assistants.
+    instructor = has_role(request.user, "Instructor") and is_course_staff(request.user, course)
+    if is_admin_course_manager(request.user) or not (instructor or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+
+    form = TAAssignForm(request.POST or None)
+
+    if request.method == "POST" and form.is_valid():
+        user = form.cleaned_data["user"]
+
+        # Teaching assistants strictly receive can_release_grades=False.
+        CourseStaff.objects.update_or_create(
+            course=course,
+            user=user,
+            defaults={
+                "staff_role": "teaching_assistant",
+                "can_release_grades": False,
+                "assigned_by": request.user,
+            },
+        )
+        messages.success(request, f"Assigned {user.email} as Teaching Assistant.")
+        return redirect("kura:course_detail", course_id=course.id)
+
+    return render(request, "kura/courses/ta_assign.html", {"form": form, "course": course})
+
+
+def module_create_view(request, course_id):
+    """
+    Creates a curriculum module with optional academic target levels.
+    Who can use it: Course instructors and Department Heads.
+    Security: Restricted to authorized course staff and department head.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Admins manage course metadata only, not instructional content.
+    if is_admin_course_manager(request.user):
+        raise PermissionDenied
+    course = get_object_or_404(Course, id=course_id)
+
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+
+    form = ModuleForm(request.POST or None)
+
+    if request.method == "POST" and form.is_valid():
+        title = form.cleaned_data["title"]
+        description = form.cleaned_data["description"]
+        is_visible = form.cleaned_data["is_visible"]
+        target_levels = form.cleaned_data.get("target_levels", [])
+
+        with transaction.atomic():
+            module = Module.objects.create(
+                course=course,
+                title=title,
+                description=description,
+                is_visible=is_visible,
+                created_by=request.user,
+            )
+
+            # Save target academic levels for access control.
+            for level in target_levels:
+                ModuleTargetLevel.objects.create(module=module, target_level=level)
+
+        messages.success(request, f"Module '{title}' created successfully.")
+        return redirect("kura:course_detail", course_id=course.id)
+
+    return render(request, "kura/courses/module_create.html", {"form": form, "course": course})
+
+
+def module_delete_view(request, module_id):
+    """
+    Deletes a module only when it has no student attempts or attendance records.
+    Who can use it: Assigned staff and the department head, except Admins.
+    Security: POST, confirmation, course permission, row locks, and deletion logging.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Check the exact course and require an explicit POST confirmation.
+    if is_admin_course_manager(request.user):
+        raise PermissionDenied
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    module = get_object_or_404(Module.objects.select_related("course__department"), id=module_id)
+    course = module.course
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+    if not DeleteConfirmationForm(request.POST).is_valid():
+        messages.error(request, "Confirm module deletion first.")
+        return redirect("kura:course_detail", course_id=course.id)
+    # Lock child rows before checking so new attempts or attendance cannot race deletion.
+    with transaction.atomic():
+        module = Module.objects.select_for_update().get(id=module.id)
+        sections = list(ModuleSection.objects.filter(module=module).order_by("id").select_for_update())
+        assessments = list(Assessment.objects.filter(section__in=sections).order_by("id").select_for_update())
+        sessions = list(ModuleAttendanceSession.objects.filter(module=module).order_by("id").select_for_update())
+        if (
+            AssessmentAttempt.objects.filter(assessment__in=assessments).exists()
+            or AttendanceRecord.objects.filter(session__in=sessions).exists()
+        ):
+            messages.error(request, "This module contains student records and cannot be deleted. Hide it instead.")
+            return redirect("kura:course_detail", course_id=course.id)
+        module.delete()
+        security_logger.info("Module %s deleted by %s", module_id, request.user.id)
+    messages.success(request, "Module deleted.")
+    return redirect("kura:course_detail", course_id=course.id)
+
+
+def module_edit_view(request, module_id):
+    """
+    Edits a module and its target levels.
+    Who can use it: Assigned staff and the department head, except Admins.
+    Security: Checks the exact course and validates changes before saving atomically.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Reject unrelated users before processing the form.
+    if is_admin_course_manager(request.user):
+        raise PermissionDenied
+    module = get_object_or_404(Module.objects.select_related("course__department"), id=module_id)
+    course = module.course
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+    initial = {
+        "title": module.title,
+        "description": module.description,
+        "is_visible": module.is_visible,
+        "target_levels": list(module.target_levels.values_list("target_level", flat=True)),
+    }
+    form = ModuleForm(request.POST or None, initial=initial)
+    if request.method == "POST" and form.is_valid():
+        # Keep module details and target-level rows consistent.
+        with transaction.atomic():
+            module.title = form.cleaned_data["title"]
+            module.description = form.cleaned_data["description"]
+            module.is_visible = form.cleaned_data["is_visible"]
+            module.save(update_fields=["title", "description", "is_visible"])
+            ModuleTargetLevel.objects.filter(module=module).delete()
+            for level in form.cleaned_data["target_levels"]:
+                ModuleTargetLevel.objects.create(module=module, target_level=level)
+        messages.success(request, "Module updated.")
+        return redirect("kura:course_detail", course_id=course.id)
+    return render(request, "kura/courses/module_create.html", {"form": form, "course": course, "editing": True})
+
+
+def section_edit_view(request, section_id):
+    """
+    Edits a section's title and type.
+    Who can use it: Assigned staff and the department head, except Admins.
+    Security: Checks the exact course and accepts changes only from a validated POST.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Check the section's actual course rather than trusting the URL alone.
+    if is_admin_course_manager(request.user):
+        raise PermissionDenied
+    section = get_object_or_404(ModuleSection.objects.select_related("module__course__department"), id=section_id)
+    course = section.module.course
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+    form = ModuleSectionForm(
+        request.POST or None, initial={"title": section.title, "section_type": section.section_type}
+    )
+    if request.method == "POST" and form.is_valid():
+        section.title = form.cleaned_data["title"]
+        section.section_type = form.cleaned_data["section_type"]
+        section.save(update_fields=["title", "section_type"])
+        messages.success(request, "Section updated.")
+        return redirect("kura:course_detail", course_id=course.id)
+    return render(
+        request, "kura/courses/section_create.html", {"form": form, "module": section.module, "editing": True}
+    )
+
+
+def section_create_view(request, module_id):
+    """
+    Creates a section grouping within a curriculum module.
+    Who can use it: Course instructors and Department Heads.
+    Security: Checks course staff assignment on the module's course.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Admins must not access instructional content through another assignment.
+    if is_admin_course_manager(request.user):
+        raise PermissionDenied
+    module = get_object_or_404(Module.objects.select_related("course"), id=module_id)
+    course = module.course
+
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+
+    form = ModuleSectionForm(request.POST or None)
+
+    if request.method == "POST" and form.is_valid():
+        ModuleSection.objects.create(
+            module=module,
+            title=form.cleaned_data["title"],
+            section_type=form.cleaned_data["section_type"],
+        )
+        messages.success(request, f"Section '{form.cleaned_data['title']}' created.")
+        return redirect("kura:course_detail", course_id=course.id)
+
+    return render(request, "kura/courses/section_create.html", {"form": form, "module": module})
+
+
+def section_delete_view(request, section_id):
+    """
+    Deletes an empty section or hides one containing assessment attempts.
+    Who can use it: Assigned course staff and the department head, except Admins.
+    Security: POST, confirmation, course permission, row locks, and an audit log.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Verify the request method and the user's permission for this section's course.
+    if is_admin_course_manager(request.user):
+        raise PermissionDenied
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    section = get_object_or_404(ModuleSection.objects.select_related("module__course__department"), id=section_id)
+    course = section.module.course
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+    if not DeleteConfirmationForm(request.POST).is_valid():
+        messages.error(request, "Confirm section deletion first.")
+        return redirect("kura:course_detail", course_id=course.id)
+
+    # Lock the section and its assessments so an attempt cannot race with deletion.
+    with transaction.atomic():
+        section = ModuleSection.objects.select_for_update().get(id=section.id)
+        assessments = list(Assessment.objects.filter(section=section).order_by("id").select_for_update())
+        if AssessmentAttempt.objects.filter(assessment__in=assessments).exists():
+            section.is_visible = False
+            section.save(update_fields=["is_visible"])
+            messages.warning(request, "Section hidden because it contains student attempts.")
+            security_logger.info("Section %s hidden instead of deletion by %s", section.id, request.user.id)
+        else:
+            section_id = section.id
+            section.delete()
+            security_logger.info("Section %s deleted by %s", section_id, request.user.id)
+            messages.success(request, "Section deleted.")
+    return redirect("kura:course_detail", course_id=course.id)
+
+
+def section_visibility_toggle_view(request, section_id):
+    """
+    Hides or releases a section without deleting its contents.
+    Who can use it: Assigned course staff and the department head, except Admins.
+    Security: POST only, checks the exact course and preserves assessment attempts.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Reject administrators and non-POST requests before changing anything.
+    if is_admin_course_manager(request.user):
+        raise PermissionDenied
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    section = get_object_or_404(ModuleSection.objects.select_related("module__course__department"), id=section_id)
+    course = section.module.course
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+    # Keep the section and its attempts while changing only its visibility.
+    section.is_visible = not section.is_visible
+    section.save(update_fields=["is_visible"])
+    security_logger.info("Section visibility changed: section %s, actor %s", section.id, request.user.id)
+    messages.success(request, "Section visibility updated.")
+    return redirect("kura:course_detail", course_id=course.id)
+
+
+def item_edit_view(request, item_id):
+    """
+    Edits a learning item while preserving existing attachments.
+    Who can use it: Assigned staff and the department head, except Admins.
+    Security: Checks the course, cleans Markdown, and validates optional uploads atomically.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Load the item only for an authorized course author.
+    if is_admin_course_manager(request.user):
+        raise PermissionDenied
+    item = get_object_or_404(SectionItem.objects.select_related("section__module__course__department"), id=item_id)
+    section = item.section
+    course = section.module.course
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+    initial = {"title": item.title, "content_body": html.unescape(item.content_body), "released_at": item.released_at}
+    form = SectionItemForm(
+        request.POST or None, request.FILES or None, initial=initial, existing_file=item.item_files.exists()
+    )
+    if request.method == "POST" and form.is_valid():
+        try:
+            # Roll back the item update if the new attachment is rejected.
+            with transaction.atomic():
+                item.title = form.cleaned_data["title"]
+                item.content_body = nh3.clean(html.escape(form.cleaned_data["content_body"]), tags=set(), attributes={})
+                item.released_at = form.cleaned_data["released_at"]
+                item.save(update_fields=["title", "content_body", "released_at"])
+                if form.cleaned_data["file"]:
+                    stored = validate_and_save_upload(form.cleaned_data["file"], request.user)
+                    SectionItemFile.objects.create(section_item=item, file=stored)
+        except ValidationError as error:
+            if hasattr(error, "message"):
+                error_message = str(error.message)
+            else:
+                error_message = str(error)
+            messages.error(request, error_message)
+        else:
+            messages.success(request, "Item updated.")
+            return redirect("kura:course_detail", course_id=course.id)
+    return render(request, "kura/courses/item_create.html", {"form": form, "section": section, "editing": True})
+
+
+def item_delete_view(request, item_id):
+    """
+    Deletes a learning item after confirmation.
+    Who can use it: Assigned staff and the department head, except Admins.
+    Security: POST only, checks course permission and confirmation, and logs deletion.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Require the exact course permission and an explicit confirmation.
+    if is_admin_course_manager(request.user):
+        raise PermissionDenied
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    item = get_object_or_404(SectionItem.objects.select_related("section__module__course__department"), id=item_id)
+    course = item.section.module.course
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+    if not DeleteConfirmationForm(request.POST).is_valid():
+        messages.error(request, "Confirm item deletion first.")
+        return redirect("kura:course_detail", course_id=course.id)
+    # Delete only the requested item and record who made the change.
+    item.delete()
+    security_logger.info("Item %s deleted by %s", item_id, request.user.id)
+    messages.success(request, "Item deleted.")
+    return redirect("kura:course_detail", course_id=course.id)
+
+
+def item_create_view(request, section_id):
+    """
+    Authors a section item, sanitizes rich text via nh3, and attaches an optional file.
+    Who can use it: Assigned Instructors and Teaching Assistants, and the course's Department Head.
+    Security: checks course access, sanitizes rich text against XSS, and validates uploaded files.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Admins manage course metadata, not teaching materials.
+    if is_admin_course_manager(request.user):
+        raise PermissionDenied
+    section = get_object_or_404(ModuleSection.objects.select_related("module__course"), id=section_id)
+    course = section.module.course
+
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+
+    form = SectionItemForm(request.POST or None, request.FILES or None)
+
+    if request.method == "POST" and form.is_valid():
+        # Read the validated item details and optional release time from the form.
+        title = form.cleaned_data["title"]
+        raw_body = form.cleaned_data["content_body"]
+        released_at = form.cleaned_data["released_at"]
+        uploaded_file = form.cleaned_data.get("file")
+
+        # Encode HTML as text and clean the Markdown source before storing it.
+        clean_body = nh3.clean(html.escape(raw_body), tags=set(), attributes={})
+
+        # Roll back the item if its attachment cannot be saved.
+        upload_error = None
+        with transaction.atomic():
+            item = SectionItem.objects.create(
+                section=section,
+                title=title,
+                content_body=clean_body,
+                released_at=released_at,
+            )
+
+            # If a file was attached, validate and save it.
+            if uploaded_file:
+                try:
+                    stored_file = validate_and_save_upload(uploaded_file, request.user)
+                    SectionItemFile.objects.create(section_item=item, file=stored_file)
+                except ValidationError as e:
+                    if hasattr(e, "message"):
+                        upload_error = str(e.message)
+                    else:
+                        upload_error = str(e)
+                    transaction.set_rollback(True)
+
+        # Show the error after leaving the rolled-back transaction.
+        if upload_error:
+            messages.error(request, upload_error)
+            return render(request, "kura/courses/item_create.html", {"form": form, "section": section})
+
+        messages.success(request, f"Item '{title}' created hidden. Release it when ready.")
+        return redirect("kura:course_detail", course_id=course.id)
+
+    return render(request, "kura/courses/item_create.html", {"form": form, "section": section})
+
+
+def item_preview_view(request, section_id):
+    """
+    Previews Markdown for an item in a course section.
+    Who can use it: Assigned instructors and TAs, and the department head.
+    Security: Requires POST and CSRF, validates text, checks course access, and cleans HTML.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Admins cannot inspect teaching materials, even if they have another assignment.
+    if is_admin_course_manager(request.user):
+        raise PermissionDenied
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    # Check access to the exact section before rendering submitted text.
+    section = get_object_or_404(ModuleSection.objects.select_related("module__course__department"), id=section_id)
+    course = section.module.course
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+
+    # Preview with the same sanitized renderer used for saved items.
+    form = MarkdownPreviewForm(request.POST)
+    if not form.is_valid():
+        return HttpResponse("Unable to preview this content.", status=400)
+    # Use the same source encoding as saving, so literal entities preview accurately.
+    clean_body = nh3.clean(html.escape(form.cleaned_data["content_body"]), tags=set(), attributes={})
+    return HttpResponse(render_markdown(clean_body))
+
+
+def item_visibility_toggle_view(request, item_id):
+    """
+    Hides a section item or releases it for students.
+    Who can use it: Instructors and Teaching Assistants assigned to the course, and its Department Head.
+    Security: POST only; checks staff assignment or department ownership for this exact item.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Admins cannot change teaching materials, even with another course assignment.
+    if is_admin_course_manager(request.user):
+        raise PermissionDenied
+
+    # Only POST requests may change an item's visibility.
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    # Load the item's course so access is checked against the resource being changed.
+    item = get_object_or_404(
+        SectionItem.objects.select_related("section__module__course"),
+        id=item_id,
+    )
+    course = item.section.module.course
+
+    # Only assigned course staff or this course's department head may change visibility.
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+
+    # Flip the saved state and tell the staff member what happened.
+    item.is_visible = not item.is_visible
+    item.save(update_fields=["is_visible"])
+    if item.is_visible:
+        status_message = "released"
+    else:
+        status_message = "hidden"
+    messages.success(request, f"Item '{item.title}' is now {status_message}.")
+    return redirect("kura:course_detail", course_id=course.id)
+
+
+from .models import (
+    AppealStatus,
+    Assessment,
+    AssessmentAttempt,
+    AssessmentDeliveryMode,
+    AssessmentFile,
+    AttemptFile,
+    AttemptStatus,
+    AttendanceMethod,
+    AttendanceRecord,
+    AttendanceStatus,
+    ChangeRequestStatus,
+    Course,
+    CourseGradeScheme,
+    CourseResult,
+    CourseStaff,
+    CourseStaffRole,
+    Department,
+    Enrollment,
+    EnrollmentStatus,
+    ExamAnswerKey,
+    Grade,
+    GradeAppeal,
+    GradeChangeRequest,
+    GradeHistory,
+    GradeStatus,
+    Module,
+    ModuleAttendanceSession,
+    ModuleSection,
+    ModuleTargetLevel,
+    PasswordResetToken,
+    Role,
+    Schedule,
+    SectionItem,
+    SectionItemFile,
+    StaffProfile,
+    StoredFile,
+    StudentProfile,
+    User,
+    UserRole,
+    UserSession,
+)
