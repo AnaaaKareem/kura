@@ -182,3 +182,23 @@ class PasswordResetConfirmForm(forms.Form):
         return cleaned_data
 
 
+
+class MFAVerifyForm(forms.Form):
+    """
+    Form for submitting a TOTP authenticator code or recovery backup token.
+    """
+
+    # Numeric code from authenticator app or backup token.
+    code = forms.CharField(
+        label="Security code",
+        max_length=20,
+        widget=forms.TextInput(
+            attrs={
+                "class": "input input-bordered w-full text-center tracking-widest text-lg font-mono",
+                "placeholder": "123456",
+                "autocomplete": "one-time-code",
+                "autofocus": "autofocus",
+            }
+        ),
+    )
+

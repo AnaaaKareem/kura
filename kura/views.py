@@ -704,3 +704,144 @@ def password_reset_confirm_view(request, token):
     return render(request, "kura/accounts/password_reset_confirm.html", {"form": form})
 
 
+
+from django_otp.plugins.otp_static.models import StaticDevice, StaticToken
+from django_otp.plugins.otp_totp.models import TOTPDevice
+import qrcode
+import qrcode.image.svg
+import urllib.parse
+from .forms import MFAVerifyForm
+
+def mfa_verify_view(request):
+    """
+    Verifies the TOTP code or recovery code during two-factor login.
+    Who can use it: Users who successfully passed password authentication.
+    Security: Validates a one-time code against the user’s enrolled devices.
+"""
+    # Retrieve user ID stored during step 1 authentication.
+    user_id = request.session.get("pre_mfa_user_id")
+    if not user_id:
+        return redirect("kura:login")
+
+    user = get_object_or_404(User, id=user_id)
+    form = MFAVerifyForm(request.POST or None)
+
+    if request.method == "POST" and form.is_valid():
+        code = form.cleaned_data["code"].strip()
+
+        # Check TOTP devices first.
+        verified = False
+        for device in TOTPDevice.objects.filter(user=user, confirmed=True):
+            if device.verify_token(code):
+                verified = True
+                break
+
+        # Check static recovery backup codes if TOTP did not match.
+        if not verified:
+            for static_device in StaticDevice.objects.filter(user=user):
+                if static_device.verify_token(code):
+                    verified = True
+                    break
+
+        # Reject invalid codes with generic error.
+        if not verified:
+            messages.error(request, "Invalid security code.")
+            return render(request, "kura/accounts/mfa_verify.html", {"form": form})
+
+        # Complete login and clean up pre-mfa session marker.
+        request.session.pop("pre_mfa_user_id", None)
+        login(request, user, backend="kura.backends.KuraAuthBackend")
+        user.last_login = timezone.now()
+        user.save(update_fields=["last_login"])
+        create_user_session(request, user)
+
+        # Handle first-login password rotation if needed.
+        if user.must_change_password:
+            return redirect("kura:password_change")
+
+        return redirect("kura:home")
+
+    return render(request, "kura/accounts/mfa_verify.html", {"form": form})
+
+
+def mfa_setup_view(request):
+    """
+    Configures TOTP authenticator app and generates backup recovery codes.
+    Who can use it: Authenticated users.
+    Security: Uses local qrcode library (no external calls) and shows recovery codes once.
+"""
+    # Fetch or create an unconfirmed TOTP device for this user.
+    device, _ = TOTPDevice.objects.get_or_create(
+        user=request.user,
+        name="default",
+        defaults={"confirmed": False},
+    )
+
+    # Generate QR code in memory as an SVG data URI.
+    qr_img = qrcode.make(device.config_url, image_factory=qrcode.image.svg.SvgPathImage)
+    svg_data = qr_img.to_string().decode("utf-8")
+    qr_code_data_uri = f"data:image/svg+xml;utf8,{urllib.parse.quote(svg_data)}"
+
+    form = MFAVerifyForm(request.POST or None)
+
+    if request.method == "POST" and form.is_valid():
+        code = form.cleaned_data["code"].strip()
+
+        # Verify the user correctly entered the code from their authenticator app.
+        if device.verify_token(code):
+            device.confirmed = True
+            device.save()
+
+            # Set mfa_enabled on the user model.
+            request.user.mfa_secret = device.key
+            request.user.mfa_enabled = True
+            request.user.save(update_fields=["mfa_secret", "mfa_enabled"])
+
+            # Create or get static device for 10 single-use recovery codes.
+            static_device, _ = StaticDevice.objects.get_or_create(
+                user=request.user,
+                name="recovery",
+                defaults={"confirmed": True},
+            )
+            # Remove any previous recovery tokens.
+            StaticToken.objects.filter(device=static_device).delete()
+
+            # Generate 10 new random 8-character recovery codes.
+            recovery_codes = []
+            for _ in range(10):
+                token_val = secrets.token_hex(4).upper()
+                StaticToken.objects.create(device=static_device, token=token_val)
+                recovery_codes.append(token_val)
+
+            # Store recovery codes in session to display once on completion page.
+            request.session["recovery_codes"] = recovery_codes
+            return redirect("kura:mfa_setup_complete")
+        else:
+            messages.error(request, "Invalid security code. Please try again.")
+
+    return render(
+        request,
+        "kura/accounts/mfa_setup.html",
+        {
+            "form": form,
+            "qr_code_url": qr_code_data_uri,
+        },
+    )
+
+
+def mfa_setup_complete_view(request):
+    """
+    Displays the 10 static recovery codes once after MFA setup.
+    Who can use it: Authenticated users who just completed MFA setup.
+    Security: Clears codes from session immediately after display.
+"""
+    recovery_codes = request.session.pop("recovery_codes", None)
+    if not recovery_codes:
+        return redirect("kura:home")
+
+    return render(
+        request,
+        "kura/accounts/mfa_setup_complete.html",
+        {"recovery_codes": recovery_codes},
+    )
+

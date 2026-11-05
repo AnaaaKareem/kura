@@ -1,0 +1,44 @@
+{% extends "kura/base.html" %}
+
+{% block title %}MFA Configured - Recovery Codes - Kura{% endblock %}
+
+{% block content %}
+<div class="max-w-lg mx-auto mt-6">
+    <div class="card bg-base-100 border border-base-300">
+        <div class="card-body gap-4 p-4 sm:p-6">
+            <div class="text-center">
+                <div class="inline-flex items-center justify-center h-12 w-12 rounded-full bg-success/20 text-success mb-3">
+                    <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
+                    </svg>
+                </div>
+                <h1 class="card-title text-2xl font-bold justify-center">MFA Successfully Enabled</h1>
+                <p class="text-sm text-base-content/70 mt-2">
+                    Save your 10 backup recovery codes in a safe place. Each code can only be used once if you lose access to your authenticator app.
+                </p>
+            </div>
+
+            <!-- 10 single-use static recovery codes display with DaisyUI -->
+            <div class="mt-4 bg-base-200 border border-base-300 rounded-box p-4 font-mono text-sm">
+                <div class="grid grid-cols-2 gap-3 text-center">
+                    {% for code in recovery_codes %}
+                    <div class="badge badge-lg badge-neutral p-3 font-semibold tracking-wider w-full">
+                        {{ code }}
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+
+            <div role="alert" class="alert alert-warning mt-4 text-xs">
+                <span><strong>Important:</strong> These recovery codes are only displayed once and cannot be viewed again.</span>
+            </div>
+
+            <div class="card-actions mt-6">
+                <a href="{% url 'kura:home' %}" class="btn btn-primary w-full">
+                    Continue to Dashboard
+                </a>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}
