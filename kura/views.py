@@ -1768,7 +1768,7 @@ import html
 from django.db import transaction
 from .forms import TAAssignForm, ModuleForm, DeleteConfirmationForm, ModuleSectionForm, SectionItemForm, MarkdownPreviewForm
 from .templatetags.markdown import render_markdown
-from .permissions import can_access_learning_records, is_course_staff
+from .permissions import can_access_learning_records, is_course_staff, is_enrolled
 def course_ta_assign_view(request, course_id):
     """
     Assigns a teaching assistant to an instructor's course.
@@ -2309,3 +2309,60 @@ from .models import (
     UserRole,
     UserSession,
 )
+
+from .files import create_download_response, validate_and_save_upload
+from .models import SectionItemFile
+def file_download_view(request, course_id, file_id):
+    """
+    Permission-checked view for downloading course material files.
+    Who can use it: Enrolled students with matching academic level, assigned staff, department heads.
+    Security: checks course and item release access, prevents IDOR, and uses safe download headers.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Admins cannot download course materials through another course relationship.
+    if is_admin_course_manager(request.user):
+        raise PermissionDenied
+    course = get_object_or_404(Course, id=course_id)
+    stored_file = get_object_or_404(StoredFile, id=file_id)
+
+    # Verify this file is attached to an item in this course.
+    item_file = get_object_or_404(
+        SectionItemFile.objects.select_related("section_item__section__module"),
+        file=stored_file,
+        section_item__section__module__course=course,
+    )
+    # Keep the parent item so the student release state can be checked before sending its file.
+    section_item = item_file.section_item
+    module = item_file.section_item.section.module
+
+    is_head = is_department_head(request.user, course.department)
+    is_staff = is_course_staff(request.user, course)
+    enrolled = is_enrolled(request.user, course)
+
+    # Access check: staff/head or actively enrolled student.
+    if not (is_head or is_staff or (enrolled and course.is_published and module.is_visible)):
+        raise PermissionDenied
+
+    # Students can download an item's file only after the item is visible and its release time passes.
+    if not (is_head or is_staff):
+        if not section_item.section.is_visible:
+            raise PermissionDenied
+        if not section_item.is_visible:
+            raise PermissionDenied
+        if section_item.released_at and section_item.released_at > timezone.now():
+            raise PermissionDenied
+
+    # For students, enforce academic target level requirements.
+    if not (is_head or is_staff):
+        student_profile = StudentProfile.objects.filter(user=request.user).first()
+        student_level = None
+        if student_profile:
+            student_level = student_profile.current_level
+        target_levels = list(module.target_levels.values_list("target_level", flat=True))
+        if target_levels and (not student_level or student_level not in target_levels):
+            raise PermissionDenied
+
+    return create_download_response(stored_file)

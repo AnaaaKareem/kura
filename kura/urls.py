@@ -47,4 +47,5 @@ urlpatterns = [
     path("items/<uuid:item_id>/edit/", views.item_edit_view, name="item_edit"),
     path("items/<uuid:item_id>/delete/", views.item_delete_view, name="item_delete"),
     path("items/<uuid:item_id>/visibility/", views.item_visibility_toggle_view, name="item_visibility_toggle"),
+    path("courses/<uuid:course_id>/files/<uuid:file_id>/download/", views.file_download_view, name="file_download"),
 ]
