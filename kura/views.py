@@ -1508,3 +1508,257 @@ def enrollment_drop_view(request, enrollment_id):
     return redirect("kura:enrollment_list")
 
 
+
+from .forms import CourseCreateForm, CourseStaffAssignForm
+from .permissions import is_department_head
+def course_list_view(request):
+    """
+    Displays the course catalog according to the user's role.
+    Who can use it: Students (enrolled published), Staff (assigned), Department heads (departmental).
+    Security: Filtered by user permissions; students only see published courses they are enrolled in.
+"""
+    # Administrators manage course metadata across all departments, including drafts.
+    is_admin = is_admin_course_manager(request.user)
+    if is_admin:
+        courses = Course.objects.select_related("department")
+
+    # Department heads see all courses in their headed departments.
+    elif has_role(request.user, "Department head"):
+        headed_dept_ids = Department.objects.filter(head_user=request.user).values_list("id", flat=True)
+        courses = Course.objects.filter(department_id__in=headed_dept_ids).select_related("department")
+
+    # Instructors and TAs see courses where they are assigned staff.
+    elif has_role(request.user, "Instructor") or has_role(request.user, "Teaching assistant"):
+        # A retained assignment counts only while its corresponding role is active.
+        staff_roles = []
+        if has_role(request.user, "Instructor"):
+            staff_roles.extend(["lead_instructor", "co_instructor"])
+        if has_role(request.user, "Teaching assistant"):
+            staff_roles.append("teaching_assistant")
+        assigned_course_ids = CourseStaff.objects.filter(user=request.user, staff_role__in=staff_roles).values_list(
+            "course_id", flat=True
+        )
+        courses = Course.objects.filter(id__in=assigned_course_ids).select_related("department")
+
+    # Students see only published courses in which they are actively enrolled.
+    elif has_role(request.user, "Student"):
+        enrolled_ids = Enrollment.objects.filter(
+            student=request.user,
+            status=EnrollmentStatus.ACTIVE,
+        ).values_list("course_id", flat=True)
+        courses = Course.objects.filter(id__in=enrolled_ids, is_published=True).select_related("department")
+
+    # Registrars and Admins see published courses catalog.
+    else:
+        courses = Course.objects.filter(is_published=True).select_related("department")
+
+    # Admin filters narrow the already authorized catalog; invalid values are not used.
+    filter_form = AdminCourseFilterForm(request.GET or None)
+    if is_admin and filter_form.is_valid():
+        if filter_form.cleaned_data["department"]:
+            courses = courses.filter(department=filter_form.cleaned_data["department"])
+        if filter_form.cleaned_data["semester"]:
+            courses = courses.filter(semester=filter_form.cleaned_data["semester"])
+        if filter_form.cleaned_data["year"]:
+            courses = courses.filter(academic_year=filter_form.cleaned_data["year"])
+        if filter_form.cleaned_data["published"]:
+            courses = courses.filter(is_published=filter_form.cleaned_data["published"] == "yes")
+
+    # Check if the user is a department head to display the "Create Course" action button.
+    is_head = has_role(request.user, "Department head") and Department.objects.filter(head_user=request.user).exists()
+
+    return render(
+        request,
+        "kura/courses/course_list.html",
+        {"courses": courses, "is_head": is_head, "is_admin": is_admin, "filter_form": filter_form},
+    )
+
+
+def course_create_view(request):
+    """
+    Allows a Department Head to draft a new course in their department.
+    Who can use it: Department Heads.
+    Security: Checks Department Head role and restricts course to their department.
+"""
+    if not has_role(request.user, "Department head"):
+        raise PermissionDenied
+
+    department = Department.objects.filter(head_user=request.user).first()
+    if not department:
+        messages.error(request, "You are not assigned as head of any department.")
+        return redirect("kura:course_list")
+
+    form = CourseCreateForm(request.POST or None)
+
+    if request.method == "POST" and form.is_valid():
+        Course.objects.create(
+            department=department,
+            code=form.cleaned_data["code"],
+            title=form.cleaned_data["title"],
+            description=form.cleaned_data["description"],
+            semester=form.cleaned_data["semester"],
+            academic_year=form.cleaned_data["academic_year"],
+            created_by=request.user,
+            is_published=False,
+        )
+        messages.success(request, f"Course {form.cleaned_data['code']} created as draft.")
+        return redirect("kura:course_list")
+
+    return render(request, "kura/courses/course_create.html", {"form": form, "department": department})
+
+
+def course_detail_view(request, course_id):
+    """
+    Displays course curriculum modules, sections, and learning materials.
+    Who can use it: Enrolled students (published only, matching target level), assigned staff, department heads.
+    Security: checks course access and filters students to visible modules and released items at their level.
+"""
+    # Registrars cannot open instructional content, even with another role.
+    if has_role(request.user, "Registrar"):
+        raise PermissionDenied
+
+    course = get_object_or_404(Course.objects.select_related("department"), id=course_id)
+
+    # Administrators see course metadata and staff, never curriculum content.
+    if is_admin_course_manager(request.user):
+        staff_assignments = CourseStaff.objects.filter(course=course).select_related("user")
+        return render(
+            request,
+            "kura/courses/course_detail.html",
+            {
+                "course": course,
+                "staff_assignments": staff_assignments,
+                "is_admin": True,
+            },
+        )
+
+    # Permission check: verify user is allowed to access this course.
+    is_head = is_department_head(request.user, course.department)
+    is_staff = is_course_staff(request.user, course)
+    enrolled = is_enrolled(request.user, course)
+
+    if not (is_head or is_staff or (enrolled and course.is_published)):
+        raise PermissionDenied
+
+    # Load modules and target levels, then fetch only released items for students.
+    modules_qs = Module.objects.filter(course=course).prefetch_related("target_levels")
+
+    # If user is a student, enforce visibility and academic level restrictions.
+    if not (is_head or is_staff):
+        modules_qs = modules_qs.filter(is_visible=True)
+        released_item_times = Q(released_at__isnull=True) | Q(released_at__lte=timezone.now())
+        student_items = (
+            SectionItem.objects.filter(
+                is_visible=True,
+            )
+            .filter(released_item_times)
+            .prefetch_related("item_files__file")
+        )
+        student_sections = ModuleSection.objects.filter(is_visible=True).prefetch_related(
+            Prefetch("items", queryset=student_items),
+            "assessments",
+        )
+        modules_qs = modules_qs.prefetch_related(Prefetch("sections", queryset=student_sections))
+
+        # Find the student's current academic level for the existing module restrictions.
+        student_profile = StudentProfile.objects.filter(user=request.user).first()
+        if student_profile:
+            student_level = student_profile.current_level
+        else:
+            student_level = None
+
+        # Filter out modules restricted to levels that do not match the student's level.
+        allowed_modules = []
+        for mod in modules_qs:
+            target_levels = list(mod.target_levels.values_list("target_level", flat=True))
+            if not target_levels or (student_level and student_level in target_levels):
+                allowed_modules.append(mod)
+        modules_list = allowed_modules
+    else:
+        # Staff must see hidden and scheduled items so they can manage the release state.
+        modules_qs = modules_qs.prefetch_related("sections__items__item_files__file", "sections__assessments")
+        modules_list = list(modules_qs)
+
+    # Load course staff assignments.
+    staff_assignments = CourseStaff.objects.filter(course=course).select_related("user")
+
+    # Check lead instructor authority to assign TAs.
+    is_lead = is_lead_instructor(request.user, course)
+
+    context = {
+        "course": course,
+        "modules": modules_list,
+        "staff_assignments": staff_assignments,
+        "is_head": is_head,
+        "is_staff": is_staff,
+        "is_lead": is_lead,
+    }
+    return render(request, "kura/courses/course_detail.html", context)
+
+
+def course_publish_toggle_view(request, course_id):
+    """
+    Publishes or unpublishes a course in the department catalog.
+    Who can use it: Department Heads.
+    Security: Restricts action to Department Head of the course's department; POST only.
+"""
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    course = get_object_or_404(Course, id=course_id)
+
+    # Verify user is head of this course's department.
+    if not (is_admin_course_manager(request.user) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+
+    if not course.is_published:
+        course.is_published = True
+        course.published_by = request.user
+        course.published_at = timezone.now()
+        messages.success(request, f"Course {course.code} is now published.")
+    else:
+        course.is_published = False
+        course.published_by = None
+        course.published_at = None
+        messages.success(request, f"Course {course.code} is now unpublished (draft).")
+
+    course.save()
+    return redirect("kura:course_detail", course_id=course.id)
+
+
+def course_staff_assign_view(request, course_id):
+    """
+    Assigns a lead instructor or co-instructor to a departmental course.
+    Who can use it: Department Heads.
+    Security: Department Head of the course's department only; auto-grants grade release for lead.
+"""
+    course = get_object_or_404(Course, id=course_id)
+
+    if not is_department_head(request.user, course.department):
+        raise PermissionDenied
+
+    form = CourseStaffAssignForm(request.POST or None)
+
+    if request.method == "POST" and form.is_valid():
+        user = form.cleaned_data["user"]
+        staff_role = form.cleaned_data["staff_role"]
+        can_release = form.cleaned_data["can_release_grades"]
+
+        # Lead instructors automatically hold grade release authority.
+        if staff_role == "lead_instructor":
+            can_release = True
+
+        CourseStaff.objects.update_or_create(
+            course=course,
+            user=user,
+            defaults={
+                "staff_role": staff_role,
+                "can_release_grades": can_release,
+                "assigned_by": request.user,
+            },
+        )
+        messages.success(request, f"Assigned {user.email} as {staff_role} in {course.code}.")
+        return redirect("kura:course_detail", course_id=course.id)
+
+    return render(request, "kura/courses/staff_assign.html", {"form": form, "course": course})
+

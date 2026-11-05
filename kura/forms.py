@@ -508,3 +508,104 @@ class EnrollmentForm(forms.Form):
     )
 
 
+
+class CourseCreateForm(forms.Form):
+    """
+    Form for Department Heads to create a new course within their department.
+    """
+
+    code = forms.CharField(
+        label="Course Code",
+        max_length=30,
+        widget=forms.TextInput(
+            attrs={
+                "class": "input input-bordered w-full",
+                "placeholder": "e.g. CS201",
+            }
+        ),
+    )
+
+    title = forms.CharField(
+        label="Course Title",
+        max_length=255,
+        widget=forms.TextInput(
+            attrs={
+                "class": "input input-bordered w-full",
+                "placeholder": "e.g. Data Structures and Algorithms",
+            }
+        ),
+    )
+
+    description = forms.CharField(
+        label="Description",
+        required=False,
+        widget=forms.Textarea(
+            attrs={
+                "class": "textarea textarea-bordered w-full",
+                "rows": 3,
+                "placeholder": "Course curriculum summary and prerequisites",
+            }
+        ),
+    )
+
+    semester = forms.ChoiceField(
+        label="Semester",
+        choices=SemesterType.choices,
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+    academic_year = forms.IntegerField(
+        label="Academic Year",
+        min_value=2000,
+        max_value=2100,
+        widget=forms.NumberInput(
+            attrs={
+                "class": "input input-bordered w-full",
+                "placeholder": "2026",
+            }
+        ),
+    )
+
+    def clean_code(self):
+        """
+        Normalizes a new course code and checks that it is not already in use.
+        """
+        # Enforce unique course code.
+        code = self.cleaned_data.get("code", "").strip().upper()
+        if Course.objects.filter(code=code).exists():
+            raise forms.ValidationError("A course with this code already exists.")
+        return code
+
+
+class CourseStaffAssignForm(forms.Form):
+    """
+    Form for Department Heads to assign lead or co-instructors to a departmental course.
+    """
+
+    # Restrict both displayed choices and submitted IDs to active instructors.
+    user = forms.ModelChoiceField(
+        label="Instructor",
+        queryset=User.objects.filter(
+            staff_profile__isnull=False,
+            is_active=True,
+            user_roles__role__name="Instructor",
+        ).distinct(),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+    staff_role = forms.ChoiceField(
+        label="Role in Course",
+        choices=[
+            ("lead_instructor", "Lead Instructor"),
+            ("co_instructor", "Co-Instructor"),
+        ],
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+    can_release_grades = forms.BooleanField(
+        label="Can release final grades to students",
+        required=False,
+        widget=forms.CheckboxInput(attrs={"class": "checkbox checkbox-primary"}),
+    )
+
+
