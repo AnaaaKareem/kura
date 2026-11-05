@@ -8,3 +8,4 @@ django-two-factor-auth>=1.18.1
 qrcode>=7.4.2
 nh3>=0.2.14
 markdown-it-py==4.2.0
+python-magic>=0.4.27
