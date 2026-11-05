@@ -954,3 +954,224 @@ def admin_sessions_revoke_view(request):
     return redirect("kura:admin_sessions")
 
 
+
+from .forms import AdminCourseFilterForm, AdminStaffFilterForm, StaffCreateForm, AdminCourseForm
+from .permissions import is_admin_course_manager
+def staff_list_view(request):
+    """
+    Displays the list of staff accounts for administrative management.
+    Who can use it: System administrators.
+    Security: Strictly restricted to users holding the Admin role.
+"""
+    # Verify the current user is an administrator.
+    if not has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    # Load staff accounts and profiles.
+    staff_members = StaffProfile.objects.select_related("user", "department").order_by("-created_at")
+    # Apply only validated filters to the administrator's staff list.
+    filter_form = AdminStaffFilterForm(request.GET or None)
+    if filter_form.is_valid():
+        search = filter_form.cleaned_data["q"]
+        if search:
+            staff_members = staff_members.filter(
+                Q(user__first_name__icontains=search)
+                | Q(user__last_name__icontains=search)
+                | Q(user__email__icontains=search)
+            )
+        if filter_form.cleaned_data["role"]:
+            staff_members = staff_members.filter(user__user_roles__role__name=filter_form.cleaned_data["role"])
+        if filter_form.cleaned_data["department"]:
+            staff_members = staff_members.filter(department=filter_form.cleaned_data["department"])
+        status = filter_form.cleaned_data["status"]
+        now = timezone.now()
+        if status == "deactivated":
+            staff_members = staff_members.filter(user__is_active=False)
+        elif status == "locked":
+            staff_members = staff_members.filter(user__is_active=True, user__locked_until__gt=now)
+        elif status == "active":
+            staff_members = staff_members.filter(user__is_active=True).filter(
+                Q(user__locked_until__isnull=True) | Q(user__locked_until__lte=now)
+            )
+        staff_members = staff_members.distinct()
+
+    # Build a simple lookup so each staff row can show departments this user heads.
+    head_department_names = {}
+    for department in Department.objects.filter(head_user__isnull=False).order_by("name"):
+        if department.head_user_id not in head_department_names:
+            head_department_names[department.head_user_id] = []
+        head_department_names[department.head_user_id].append(department.name)
+
+    # Attach each user's managed department names to their staff profile for display.
+    for staff_member in staff_members:
+        staff_member.head_department_names = head_department_names.get(staff_member.user_id, [])
+
+    return render(
+        request,
+        "kura/accounts/staff_list.html",
+        {"staff_members": staff_members, "now": timezone.now(), "filter_form": filter_form},
+    )
+
+
+def staff_create_view(request):
+    """
+    Creates a new staff account and profile with an auto-generated temporary password.
+    Who can use it: System administrators.
+    Security: Restricted to Admin role; enforces must_change_password=True on first login.
+"""
+    # Check administrator permission.
+    if not has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    form = StaffCreateForm(request.POST or None)
+
+    if request.method == "POST" and form.is_valid():
+        email = form.cleaned_data["email"].strip().lower()
+        first_name = form.cleaned_data["first_name"].strip()
+        last_name = form.cleaned_data["last_name"].strip()
+        department = form.cleaned_data["department"]
+        staff_title = form.cleaned_data["staff_title"].strip()
+        office_location = form.cleaned_data["office_location"].strip()
+
+        # Generate a secure 16-character temporary password.
+        temporary_password = secrets.token_urlsafe(12)
+
+        with transaction.atomic():
+            # Create user account requiring password rotation on first login.
+            new_user = User.objects.create_user(
+                email=email,
+                password=temporary_password,
+                first_name=first_name,
+                last_name=last_name,
+                must_change_password=True,
+                mfa_enabled=False,
+            )
+
+            # Create staff employment profile.
+            StaffProfile.objects.create(
+                user=new_user,
+                department=department,
+                staff_title=staff_title,
+                office_location=office_location,
+            )
+
+        messages.success(request, f"Staff account created for {email}. Temporary password: {temporary_password}")
+        return redirect("kura:staff_list")
+
+    return render(request, "kura/accounts/staff_create.html", {"form": form})
+
+
+def user_deactivate_view(request, user_id):
+    """
+    Deactivates a user account and immediately revokes all active sessions.
+    Who can use it: System administrators.
+    Security: Admin only; POST only; administrators cannot deactivate themselves.
+"""
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    # Check administrator permission.
+    if not has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    # Prevent administrators from deactivating their own account.
+    if str(request.user.id) == str(user_id):
+        messages.error(request, "You cannot deactivate your own account.")
+        return redirect("kura:staff_list")
+
+    target_user = get_object_or_404(User, id=user_id)
+
+    # Deactivate the account and revoke its sessions together so they cannot get out of sync.
+    with transaction.atomic():
+        target_user.is_active = False
+        target_user.deactivated_at = timezone.now()
+        target_user.save(update_fields=["is_active", "deactivated_at"])
+        ended_session_count = UserSession.objects.filter(
+            user=target_user,
+            revoked_at__isnull=True,
+        ).update(revoked_at=timezone.now())
+
+    # Tell the administrator how many sessions were ended by the deactivation.
+    if ended_session_count == 1:
+        session_label = "session"
+    else:
+        session_label = "sessions"
+    messages.success(request, f"Account deactivated, {ended_session_count} {session_label} ended.")
+    return redirect("kura:staff_list")
+
+
+def user_lock_toggle_view(request, user_id):
+    """
+    Toggles administrative lockout for a user account.
+    Who can use it: System administrators.
+    Security: Admin only; POST only; administrators cannot lock themselves.
+"""
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    # Check administrator permission.
+    if not has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    # Prevent administrators from locking their own account.
+    if str(request.user.id) == str(user_id):
+        messages.error(request, "You cannot lock your own account.")
+        return redirect("kura:staff_list")
+
+    target_user = get_object_or_404(User, id=user_id)
+
+    # If currently locked, unlock it; otherwise set a 24-hour lockout.
+    if target_user.locked_until and target_user.locked_until > timezone.now():
+        target_user.locked_until = None
+        messages.success(request, "Account unlocked.")
+    else:
+        target_user.locked_until = timezone.now() + timezone.timedelta(days=1)
+        lock_time = timezone.localtime(target_user.locked_until).strftime("%d %b, %H:%M")
+        messages.success(request, f"Account locked until {lock_time}.")
+
+    target_user.save()
+    return redirect("kura:staff_list")
+
+
+def admin_course_create_view(request):
+    """
+    Creates a draft course in any department.
+    Who can use it: Administrators.
+    Security: Checks the Admin role and validates all fields with a Django form.
+"""
+    # Do not let other roles use this institution-wide course form.
+    if not is_admin_course_manager(request.user):
+        raise PermissionDenied
+
+    # A validated POST creates a draft, never a published course.
+    form = AdminCourseForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        course = form.save(commit=False)
+        course.created_by = request.user
+        course.is_published = False
+        course.save()
+        messages.success(request, "Course draft created.")
+        return redirect("kura:course_detail", course_id=course.id)
+    return render(request, "kura/courses/admin_course_form.html", {"form": form, "editing": False})
+
+
+def admin_course_edit_view(request, course_id):
+    """
+    Edits course details in any department.
+    Who can use it: Administrators.
+    Security: Checks the Admin role and limits changes to the form's allowed fields.
+"""
+    # The Admin role is required before looking up the course.
+    if not is_admin_course_manager(request.user):
+        raise PermissionDenied
+
+    # Load the requested course and validate only its editable metadata.
+    course = get_object_or_404(Course, id=course_id)
+    form = AdminCourseForm(request.POST or None, instance=course)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        messages.success(request, "Course updated.")
+        return redirect("kura:course_detail", course_id=course.id)
+    return render(request, "kura/courses/admin_course_form.html", {"form": form, "editing": True, "course": course})
+
+

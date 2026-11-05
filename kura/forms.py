@@ -1,4 +1,24 @@
 from django import forms
+from django.contrib.auth.password_validation import validate_password
+from django.core.exceptions import ValidationError
+from .models import (
+    AcademicLevel,
+    AssessmentDeliveryMode,
+    AppealStatus,
+    AttendanceStatus,
+    ChangeRequestStatus,
+    Course,
+    DayOfWeek,
+    Department,
+    GradeComponentType,
+    EnrollmentStatus,
+    SectionType,
+    SemesterType,
+    SessionType,
+    User,
+    validate_cidr,
+)
+
 
 class LoginForm(forms.Form):
     """
@@ -239,5 +259,134 @@ class AdminSessionRevokeForm(forms.Form):
     action = forms.ChoiceField(choices=[("one", "One session"), ("all", "All sessions")])
     session_id = forms.UUIDField(required=False)
     user_id = forms.UUIDField(required=False)
+
+
+
+class AdminCourseFilterForm(forms.Form):
+    """Validate administrator course catalog filters."""
+
+    department = forms.ModelChoiceField(queryset=Department.objects.all(), required=False)
+    semester = forms.ChoiceField(choices=[("", "All semesters")] + list(SemesterType.choices), required=False)
+    year = forms.IntegerField(required=False, min_value=1900, max_value=9999)
+    published = forms.ChoiceField(choices=[("", "All statuses"), ("yes", "Published"), ("no", "Draft")], required=False)
+
+
+class AdminStaffFilterForm(forms.Form):
+    """Validate administrator staff account filters."""
+
+    q = forms.CharField(required=False, max_length=150, label="Name or email")
+    role = forms.ChoiceField(
+        required=False,
+        choices=[
+            ("", "All roles"),
+            ("Admin", "Admin"),
+            ("Registrar", "Registrar"),
+            ("Department head", "Department head"),
+            ("Instructor", "Instructor"),
+            ("Teaching assistant", "Teaching assistant"),
+        ],
+    )
+    department = forms.ModelChoiceField(queryset=Department.objects.all(), required=False)
+    status = forms.ChoiceField(
+        required=False,
+        choices=[("", "All statuses"), ("active", "Active"), ("locked", "Locked"), ("deactivated", "Deactivated")],
+    )
+
+
+class StaffCreateForm(forms.Form):
+    """
+    Form used by administrators to provision a new staff account.
+    Creates a User record and an associated StaffProfile.
+    """
+
+    email = forms.EmailField(
+        label="Email address",
+        widget=forms.EmailInput(
+            attrs={
+                "class": "input input-bordered w-full",
+                "placeholder": "staff@example.com",
+                "autocomplete": "email",
+            }
+        ),
+    )
+
+    first_name = forms.CharField(
+        label="First name",
+        max_length=150,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "input input-bordered w-full", "autocomplete": "given-name"}),
+    )
+
+    last_name = forms.CharField(
+        label="Last name",
+        max_length=150,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "input input-bordered w-full", "autocomplete": "family-name"}),
+    )
+
+    department = forms.ModelChoiceField(
+        label="Department",
+        queryset=Department.objects.all(),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full", "autocomplete": "off"}),
+    )
+
+    staff_title = forms.CharField(
+        label="Staff title",
+        max_length=100,
+        widget=forms.TextInput(
+            attrs={
+                "class": "input input-bordered w-full",
+                "placeholder": "e.g. Associate Professor",
+                "autocomplete": "organization-title",
+            }
+        ),
+    )
+
+    office_location = forms.CharField(
+        label="Office location",
+        max_length=100,
+        required=False,
+        widget=forms.TextInput(
+            attrs={
+                "class": "input input-bordered w-full",
+                "placeholder": "e.g. Building B, Room 204",
+                "autocomplete": "off",
+            }
+        ),
+    )
+
+    def clean_email(self):
+        """
+        Normalizes a new staff member's email and rejects duplicates.
+        """
+        # Ensure email is unique across the system.
+        email = self.cleaned_data.get("email", "").strip().lower()
+        if User.objects.filter(email=email).exists():
+            raise forms.ValidationError("An account with this email already exists.")
+        return email
+
+
+class AdminCourseForm(forms.ModelForm):
+    """Validate the course details an administrator may create or edit."""
+
+    # Only these course fields can be changed by the administrator's form.
+    class Meta:
+        model = Course
+        fields = ["department", "code", "title", "description", "semester", "academic_year"]
+        # Keep the description within the form card on narrow screens.
+        widgets = {
+            "description": forms.Textarea(
+                attrs={
+                    "class": "textarea textarea-bordered box-border w-full min-w-0 max-w-full",
+                }
+            ),
+        }
+
+    def clean_code(self):
+        """
+        Normalizes a course code before it is saved.
+        """
+        # Keep course codes consistent with the existing course-creation form.
+        return self.cleaned_data["code"].strip().upper()
 
 

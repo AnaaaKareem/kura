@@ -1,0 +1,83 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Create Staff Account - Kura{% endblock %}
+
+{% block content %}
+<div class="max-w-xl mx-auto mt-6">
+    <div class="card bg-base-100 border border-base-300">
+        <div class="card-body gap-4 p-4 sm:p-6">
+            <h1 class="card-title text-2xl font-bold">Create Staff Account</h1>
+            <p class="text-sm text-base-content/70">
+                Provision a new staff account. A secure temporary password will be generated automatically and displayed upon submission.
+            </p>
+
+            <form method="post" class="mt-4 space-y-4">
+                {% csrf_token %}
+
+                <div class="form-control">
+                    <label for="id_email" class="label">
+                        <span class="label-text font-medium">Email address</span>
+                    </label>
+                    {{ form.email }}
+                    {% if form.email.errors %}
+                    <label class="label"><span class="label-text-alt text-error">{{ form.email.errors.0 }}</span></label>
+                    {% endif %}
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label for="id_first_name" class="label">
+                            <span class="label-text font-medium">First name</span>
+                        </label>
+                        {{ form.first_name }}
+                    </div>
+                    <div class="form-control">
+                        <label for="id_last_name" class="label">
+                            <span class="label-text font-medium">Last name</span>
+                        </label>
+                        {{ form.last_name }}
+                    </div>
+                </div>
+
+                <div class="form-control">
+                    <label for="id_department" class="label">
+                        <span class="label-text font-medium">Department</span>
+                    </label>
+                    {{ form.department }}
+                    {% if form.department.errors %}
+                    <label class="label"><span class="label-text-alt text-error">{{ form.department.errors.0 }}</span></label>
+                    {% endif %}
+                </div>
+
+                <div class="grid grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label for="id_staff_title" class="label">
+                            <span class="label-text font-medium">Staff Title</span>
+                        </label>
+                        {{ form.staff_title }}
+                        {% if form.staff_title.errors %}
+                        <label class="label"><span class="label-text-alt text-error">{{ form.staff_title.errors.0 }}</span></label>
+                        {% endif %}
+                    </div>
+                    <div class="form-control">
+                        <label for="id_office_location" class="label">
+                            <span class="label-text font-medium">Office Location</span>
+                        </label>
+                        {{ form.office_location }}
+                    </div>
+                </div>
+
+                <div class="card-actions justify-end mt-6">
+                    <a href="{% url 'kura:staff_list' %}" class="btn btn-ghost btn-sm">
+                        Cancel
+                    </a>
+                    <button type="submit" class="btn btn-primary btn-sm">
+                        Provision Staff Account
+                    </button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
