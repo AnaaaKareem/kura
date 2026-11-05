@@ -1,0 +1,7 @@
+<!-- Search results contain only validated choices; the final form checks the selected ID again. -->
+<select name="{{ kind }}" id="id_{{ kind }}" class="select select-bordered w-full" required>
+    <option value="">Select a result</option>
+    {% for result in results %}
+    <option value="{{ result.pk }}">{% if kind == 'course' %}{{ result.code }} — {{ result.title }}{% else %}{{ result.get_full_name|default:result.email }} — {{ result.email }}{% endif %}</option>
+    {% endfor %}
+</select>

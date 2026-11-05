@@ -1,0 +1,32 @@
+{% extends "kura/base.html" %}
+{% block title %}Student profile - Kura{% endblock %}
+{% block content %}
+<div class="space-y-4">
+    <a class="link" href="{% url 'kura:student_list' %}">Back to students</a>
+    <h1 class="text-2xl font-bold">{{ student.user.get_full_name|default:student.user.email }}</h1>
+    <dl>
+        <dt>Email</dt><dd>{{ student.user.email }}</dd>
+        <dt>Student ID</dt><dd>{{ student.user_id }}</dd>
+        <dt>Department</dt><dd>{{ student.department.name }}</dd>
+        <dt>Level</dt><dd>{{ student.get_current_level_display }}</dd>
+        <dt>Status</dt>
+        <dd>
+            {% if not student.user.is_active %}
+                Deactivated
+            {% elif student.user.locked_until and student.user.locked_until > now %}
+                Locked until {{ student.user.locked_until|date:"d M, H:i" }}
+            {% else %}
+                Active
+            {% endif %}
+        </dd>
+    </dl>
+    <h2 class="text-xl font-bold">Enrollments</h2>
+    <ul>
+        {% for enrollment in enrollments %}
+        <li>{{ enrollment.course.code }} — {{ enrollment.course.title }} ({{ enrollment.get_status_display }})</li>
+        {% empty %}
+        <li>No enrollments.</li>
+        {% endfor %}
+    </ul>
+</div>
+{% endblock %}

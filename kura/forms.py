@@ -390,3 +390,121 @@ class AdminCourseForm(forms.ModelForm):
         return self.cleaned_data["code"].strip().upper()
 
 
+
+class StudentCreateForm(forms.Form):
+    """
+    Form used by the registrar to provision a new student account.
+    Creates a User record and an associated StudentProfile.
+    """
+
+    email = forms.EmailField(
+        label="Email address",
+        widget=forms.EmailInput(
+            attrs={
+                "class": "input input-bordered w-full",
+                "placeholder": "student@example.com",
+            }
+        ),
+    )
+
+    first_name = forms.CharField(
+        label="First name",
+        max_length=150,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+    )
+
+    last_name = forms.CharField(
+        label="Last name",
+        max_length=150,
+        required=False,
+        widget=forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+    )
+
+    department = forms.ModelChoiceField(
+        label="Department",
+        queryset=Department.objects.all(),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+    current_level = forms.ChoiceField(
+        label="Academic level",
+        choices=AcademicLevel.choices,
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+    matriculation_year = forms.IntegerField(
+        label="Matriculation year",
+        min_value=2000,
+        max_value=2100,
+        widget=forms.NumberInput(
+            attrs={
+                "class": "input input-bordered w-full",
+                "placeholder": "2026",
+            }
+        ),
+    )
+
+    def clean_email(self):
+        """
+        Normalizes a new student's email and rejects duplicates.
+        """
+        # Ensure student email is unique.
+        email = self.cleaned_data.get("email", "").strip().lower()
+        if User.objects.filter(email=email).exists():
+            raise forms.ValidationError("An account with this email already exists.")
+        return email
+
+
+class StudentFilterForm(forms.Form):
+    """Validate search and filters for the registrar's student list."""
+
+    q = forms.CharField(required=False, max_length=150, label="Student ID, name or email")
+    department = forms.ModelChoiceField(queryset=Department.objects.all(), required=False)
+    level = forms.ChoiceField(choices=[("", "All levels")] + list(AcademicLevel.choices), required=False)
+    status = forms.ChoiceField(
+        choices=[("", "All statuses"), ("active", "Active"), ("locked", "Locked"), ("deactivated", "Deactivated")],
+        required=False,
+    )
+
+
+class EnrollmentFilterForm(forms.Form):
+    """Validate filters for enrollment records."""
+
+    course = forms.ModelChoiceField(
+        queryset=Course.objects.filter(enrollments__isnull=False).distinct(), required=False
+    )
+    student = forms.ModelChoiceField(
+        queryset=User.objects.filter(student_profile__isnull=False, enrollments__isnull=False).distinct(),
+        required=False,
+    )
+    status = forms.ChoiceField(choices=[("", "All statuses")] + list(EnrollmentStatus.choices), required=False)
+    semester = forms.ChoiceField(choices=[("", "All semesters")] + list(SemesterType.choices), required=False)
+    year = forms.IntegerField(required=False, min_value=1900, max_value=9999)
+
+
+class EnrollmentSearchForm(forms.Form):
+    """Validate an enrollment search before querying private records."""
+
+    kind = forms.ChoiceField(choices=[("student", "Student"), ("course", "Course")])
+    q = forms.CharField(required=False, max_length=150)
+
+
+class EnrollmentForm(forms.Form):
+    """
+    Form used by the registrar to enroll a student into an active course.
+    """
+
+    course = forms.ModelChoiceField(
+        label="Course",
+        queryset=Course.objects.filter(is_published=True),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+    student = forms.ModelChoiceField(
+        label="Student",
+        queryset=User.objects.filter(student_profile__isnull=False, is_active=True),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+

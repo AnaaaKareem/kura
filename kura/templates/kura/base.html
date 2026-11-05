@@ -100,6 +100,9 @@
                         <li><a href="{% url 'kura:admin_sessions' %}" data-close-sidebar>Active sessions</a></li>
                         <li><a href="{% url 'kura:staff_list' %}" data-close-sidebar>Staff accounts</a></li>
                         <li><a href="{% url 'kura:admin_course_create' %}" data-close-sidebar>Manage courses</a></li>
+                        {% elif assignment.role.name == 'Registrar' %}
+                        <li><a href="{% url 'kura:student_list' %}" data-close-sidebar>Students</a></li>
+                        <li><a href="{% url 'kura:enrollment_list' %}" data-close-sidebar>Enrollments</a></li>
                         {% endif %}
                         {% endfor %}
                     </ul>

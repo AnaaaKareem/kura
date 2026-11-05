@@ -1,0 +1,48 @@
+{% extends "kura/base.html" %}
+{% block title %}Students - Kura{% endblock %}
+{% block content %}
+<div class="space-y-4">
+    <h1 class="text-2xl font-bold">Students</h1>
+    <a href="{% url 'kura:student_create' %}" class="btn btn-primary btn-sm">New student</a>
+    <form method="get" class="card bg-base-100 p-4 space-y-2">
+        {{ filter_form.as_p }}
+        <button type="submit" class="btn btn-primary btn-sm">Filter students</button>
+        <a href="{% url 'kura:student_list' %}" class="btn btn-ghost btn-sm">Clear</a>
+    </form>
+    <div class="overflow-x-auto">
+        <table class="table table-sm w-full">
+        <thead class="bg-base-200">
+            <tr>
+                <th>Student</th>
+                <th>Student ID</th>
+                <th>Department</th>
+                <th>Level</th>
+                <th>Status</th>
+            </tr>
+        </thead>
+        <tbody>{% for student in students %}
+        <tr>
+            <td>
+                <a class="link" href="{% url 'kura:student_profile' student.user_id %}">
+                    {{ student.user.get_full_name|default:student.user.email }}
+                </a>
+                <br>{{ student.user.email }}
+            </td>
+            <td>{{ student.user_id }}</td>
+            <td>{{ student.department.name }}</td>
+            <td>{{ student.get_current_level_display }}</td>
+            <td>
+                {% if not student.user.is_active %}
+                    Deactivated
+                {% elif student.user.locked_until and student.user.locked_until > now %}
+                    Locked until {{ student.user.locked_until|date:"d M, H:i" }}
+                {% else %}
+                    Active
+                {% endif %}
+            </td>
+        </tr>
+        {% empty %}<tr><td colspan="5">No students found.</td></tr>{% endfor %}</tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
