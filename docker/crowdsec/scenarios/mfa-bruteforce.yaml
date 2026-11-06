@@ -1,0 +1,18 @@
+# ==============================================================================
+# CrowdSec scenario: More than 5 failed MFA codes from one IP in 10 minutes
+# A "leaky bucket": each matching event adds one drop; drops leak out at a
+# steady rate. If the bucket overflows (more than 5 events faster than the
+# leak), an alert is raised and the remediation profile bans the IP.
+# ==============================================================================
+type: leaky
+name: kura/mfa-bruteforce
+description: "More than 5 failed MFA codes from one IP in 10 minutes"
+filter: "evt.Meta.service == 'kura' && evt.Meta.log_type == 'auth.mfa.failed'"
+groupby: evt.Meta.source_ip
+capacity: 5
+leakspeed: "2m"
+blackhole: 5m
+labels:
+  remediation: true
+  service: kura
+  type: bruteforce

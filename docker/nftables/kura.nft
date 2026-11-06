@@ -1,0 +1,42 @@
+#!/usr/sbin/nft -f
+
+# Kura's host-only firewall. Do not apply until NetBird and recovery access
+# have been verified, and the operator has scheduled the rollback in README.md.
+# Replace only this table, never the whole ruleset or Docker's forwarding rules.
+# Reloading recreates the CrowdSec sets; the bouncer must repopulate them.
+table inet kura_host
+delete table inet kura_host
+table inet kura_host {
+    # The host bouncer maintains these temporary IPv4 and IPv6 ban entries.
+    set crowdsec_blacklists { type ipv4_addr; flags timeout; }
+    set crowdsec6_blacklists { type ipv6_addr; flags timeout; }
+
+    # Filter traffic addressed to the host, not Docker's forwarded traffic.
+    chain input {
+        type filter hook input priority filter; policy drop;
+
+        # Local processes and replies to established connections must work.
+        iif "lo" accept
+        ct state invalid drop
+        ct state established,related accept
+
+        # Block new host connections from addresses banned by CrowdSec.
+        ip saddr @crowdsec_blacklists drop
+        ip6 saddr @crowdsec6_blacklists drop
+
+        # IPv6 neighbour discovery is needed for normal network operation.
+        icmpv6 type { nd-neighbor-solicit, nd-neighbor-advert, nd-router-advert } accept
+        # Permit limited IPv4 ping for diagnosis without opening TCP ports.
+        ip protocol icmp icmp type echo-request limit rate 5/second accept
+
+        # Only authenticated NetBird peers may reach host administration.
+        iifname "wt0" accept
+        # NetBird client: WireGuard peer traffic between devices.
+        udp dport 51820 accept
+        # Self-hosted NetBird SERVER (docker/netbird/server): admins on the LAN
+        # reach https://netbird.kura.lan on TCP 443, and its STUN service on
+        # UDP 3478. Published by Docker only when NETBIRD_BIND_ADDRESS=0.0.0.0.
+        tcp dport 443 accept
+        udp dport 3478 accept
+    }
+}
