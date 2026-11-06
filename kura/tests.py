@@ -347,6 +347,25 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
         self.assertTrue(Assessment.objects.filter(id=self.assessment.id).exists())
         self.assertTrue(AssessmentAttempt.objects.filter(id=attempt.id).exists())
 
+    def test_opening_an_expired_scanned_attempt_does_not_submit_it(self):
+        # A GET must not change the attempt; the scheduled command handles expiry.
+        self.assessment.delivery_mode = "paper_scanned"
+        self.assessment.save(update_fields=["delivery_mode"])
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment, student=self.student, attempt_no=1,
+            status=AttemptStatus.IN_PROGRESS, expires_at=timezone.now() - timezone.timedelta(minutes=1),
+            ip_address="127.0.0.1",
+        )
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("kura:assessment_take", kwargs={"attempt_id": attempt.id}))
+        self.assertEqual(response.status_code, 302)
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.status, AttemptStatus.IN_PROGRESS)
+        call_command("finalize_attempts", stdout=StringIO())
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.status, AttemptStatus.REQUIRES_MANUAL_GRADING)
+        self.assertFalse(Grade.objects.filter(attempt=attempt).exists())
+
     def test_scanned_attempt_rejects_non_image_non_pdf_upload(self):
         # Files that are otherwise allowed cannot be submitted as scanned papers.
         self.assessment.delivery_mode = "paper_scanned"
@@ -636,6 +655,191 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
         ):
             with self.subTest(url=url):
                 self.assertEqual(self.client.get(url).status_code, 403)
+
+
+class AutoFinalizeMissedDeadlinesCommandTests(TestCase):
+    """
+    Tests Auto-finalizing overdue in-progress attempts past deadline.
+    """
+
+    def setUp(self):
+        self.instructor = make_user("Instructor", mfa_enabled=True)
+        self.student = make_user("Student", mfa_enabled=True)
+        self.dept = Department.objects.create(name="Math", code="MTH")
+
+        self.course = Course.objects.create(
+            department=self.dept,
+            code="MTH101",
+            title="Calculus",
+            semester="1",
+            academic_year=2026,
+            is_published=True,
+            published_by=self.instructor,
+            published_at=timezone.now(),
+        )
+        CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True)
+
+        self.module = Module.objects.create(course=self.course, title="Limits", is_visible=True)
+        self.section = ModuleSection.objects.create(module=self.module, title="Quiz Section", section_type="quiz")
+
+        past = timezone.now() - timezone.timedelta(minutes=10)
+        self.assessment = Assessment.objects.create(
+            section=self.section,
+            title="Limits Quiz",
+            component_type=GradeComponentType.QUIZ,
+            max_score=Decimal("10.00"),
+            max_attempts=1,
+            opens_at=past - timezone.timedelta(hours=1),
+            due_date=past,
+            duration_minutes=30,
+            questions_json=[
+                {"question_id": "q1", "type": "multiple_choice", "points": 10.0, "prompt": "lim x->0 (x)?"}
+            ],
+            created_by=self.instructor,
+        )
+        ExamAnswerKey.objects.create(
+            assessment=self.assessment,
+            answer_key_json={"q1": {"correct_option_ids": ["0"]}},
+            created_by=self.instructor,
+        )
+
+        # Overdue attempt left in progress by student.
+        self.overdue_attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment,
+            student=self.student,
+            attempt_no=1,
+            status=AttemptStatus.IN_PROGRESS,
+            expires_at=past,
+            answers_json=[{"question_id": "q1", "type": "multiple_choice", "selected_option_ids": ["0"]}],
+            ip_address="127.0.0.1",
+        )
+
+    def test_finalize_attempts_command_finalizes_overdue_attempts(self):
+        # Running finalize_attempts marks overdue attempts as submitted, computes hash, and auto-grades.
+        call_command("finalize_attempts")
+
+        self.overdue_attempt.refresh_from_db()
+        self.assertNotEqual(self.overdue_attempt.status, AttemptStatus.IN_PROGRESS)
+        self.assertEqual(self.overdue_attempt.submitted_at, self.overdue_attempt.expires_at)
+        self.assertIsNotNone(self.overdue_attempt.submission_hash)
+        self.assertEqual(len(self.overdue_attempt.submission_hash), 64)
+        self.assertTrue(self.overdue_attempt.summary_score_json["is_fully_graded"])
+
+
+class AutoGradingTests(TestCase):
+    """
+    Tests Auto-grading multiple-choice and matching questions.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.instructor = make_user("Instructor", mfa_enabled=True)
+        self.student = make_user("Student", mfa_enabled=True)
+        self.dept = Department.objects.create(name="Biology", code="BIO")
+
+        StudentProfile.objects.create(user=self.student, department=self.dept, current_level="level_4", matriculation_year=2026)
+        self.course = Course.objects.create(
+            department=self.dept,
+            code="BIO101",
+            title="General Biology",
+            semester="1",
+            academic_year=2026,
+            is_published=True,
+            published_by=self.instructor,
+            published_at=timezone.now(),
+        )
+        CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True)
+        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
+
+        self.module = Module.objects.create(course=self.course, title="Cells", is_visible=True)
+        self.section = ModuleSection.objects.create(module=self.module, title="Cell Quiz", section_type="quiz")
+
+        now = timezone.now()
+        self.assessment = Assessment.objects.create(
+            section=self.section,
+            title="Cellular Biology Quiz",
+            component_type=GradeComponentType.QUIZ,
+            max_score=Decimal("20.00"),
+            max_attempts=1,
+            opens_at=now - timezone.timedelta(hours=1),
+            due_date=now + timezone.timedelta(hours=2),
+            duration_minutes=45,
+            questions_json=[
+                {
+                    "question_id": "q1",
+                    "type": "multiple_choice",
+                    "points": 10.0,
+                    "prompt": "Which organelle is the powerhouse of the cell?",
+                    "options": [
+                        {"option_id": "opt_mito", "text": "Mitochondria"},
+                        {"option_id": "opt_ribo", "text": "Ribosome"},
+                    ],
+                },
+                {
+                    "question_id": "q2",
+                    "type": "matching",
+                    "points": 10.0,
+                    "prompt": "Match the organelle to function.",
+                    "left_prompts": [
+                        {"pair_id": "p1", "text": "Nucleus"},
+                        {"pair_id": "p2", "text": "Chloroplast"},
+                    ],
+                    "available_matches": ["Genetic control", "Photosynthesis"],
+                },
+            ],
+            created_by=self.instructor,
+        )
+        ExamAnswerKey.objects.create(
+            assessment=self.assessment,
+            answer_key_json={
+                "q1": {"correct_option_ids": ["opt_mito"]},
+                "q2": {"correct_pairs": {"p1": "Genetic control", "p2": "Photosynthesis"}},
+            },
+            created_by=self.instructor,
+        )
+
+    def test_auto_grading_calculates_correct_score(self):
+        # Student answers MCQ correctly (10 pts) and Matching 1/2 correct (5 pts) -> total 15.00 pts.
+        now = timezone.now()
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment,
+            student=self.student,
+            attempt_no=1,
+            status=AttemptStatus.IN_PROGRESS,
+            expires_at=now + timezone.timedelta(minutes=30),
+            answers_json=[
+                {"question_id": "q1", "type": "multiple_choice", "selected_option_ids": ["opt_mito"]},
+                {
+                    "question_id": "q2",
+                    "type": "matching",
+                    "submitted_matches": [
+                        {"pair_id": "p1", "selected_match": "Genetic control"},
+                        {"pair_id": "p2", "selected_match": "Wrong Match"},
+                    ],
+                },
+            ],
+            ip_address="127.0.0.1",
+        )
+
+        self.client.force_login(self.student)
+        response = self.client.post(reverse("kura:assessment_submit", kwargs={"attempt_id": attempt.id}))
+        self.assertRedirects(response, reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id}))
+
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.status, AttemptStatus.FULLY_GRADED)
+        self.assertEqual(attempt.summary_score_json["auto_graded_points"], 15.0)
+        self.assertEqual(attempt.summary_score_json["total_score"], 15.0)
+        self.assertTrue(attempt.summary_score_json["is_fully_graded"])
+
+        # The student is emailed a receipt with the submission's integrity hash.
+        receipt = OutgoingEmail.objects.get(event_key=f"submission-receipt:{attempt.id}")
+        self.assertEqual(receipt.to_email, self.student.email)
+        self.assertIn(attempt.submission_hash, receipt.body)
+
+        # Check draft grade was created for student.
+        grade = Grade.objects.get(assessment=self.assessment, student=self.student)
+        self.assertEqual(grade.score, Decimal("15.00"))
+        self.assertEqual(grade.status, GradeStatus.DRAFT)
 
 
 class SecurityLoggingTests(TestCase):
