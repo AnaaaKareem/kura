@@ -17,6 +17,9 @@ urlpatterns = [
     # Multi-factor authentication routes
     path("mfa/setup/", views.mfa_setup_view, name="mfa_setup"),
     path("mfa/complete/", views.mfa_setup_complete_view, name="mfa_setup_complete"),
+    # Passkey (WebAuthn / FIDO2) management routes
+    path("passkeys/", views.passkey_manage_view, name="passkey_manage"),
+    path("passkeys/<int:key_id>/delete/", views.passkey_delete_view, name="passkey_delete"),
     # User sessions management
     path("account/sessions/", views.user_sessions_view, name="user_sessions"),
     path("admin/sessions/", views.admin_sessions_view, name="admin_sessions"),

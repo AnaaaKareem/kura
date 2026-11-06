@@ -5428,6 +5428,141 @@ class RowLevelSecurityAndPostgresRolesTests(TestCase):
         self.assertEqual(result, str(self.student_a.id))
 
 
+class PasskeyWebAuthnIntegrationTests(TestCase):
+    """
+    Tests Passkeys (WebAuthn / FIDO2) with django-mfa2.
+    Tests user model property compatibility, passkey management views,
+    deletion access control, mfa_login_callback session creation, and WebAuthn challenges.
+    """
+
+    def setUp(self):
+        self.user_a = make_user("Student", mfa_enabled=True)
+        self.user_b = make_user("Student", mfa_enabled=True)
+        self.client_a = Client()
+        self.client_a.force_login(self.user_a)
+        self.client_b = Client()
+        self.client_b.force_login(self.user_b)
+
+    def test_fido2_enrollment_page_renders(self):
+        # An authenticated user should be able to open the passkey enrollment page.
+        response = self.client_a.get(reverse("start_fido2"))
+
+        self.assertEqual(response.status_code, 200)
+
+    def test_user_model_username_property_compatibility(self):
+        # Third-party WebAuthn libraries require user.username even when USERNAME_FIELD is email.
+        self.assertEqual(self.user_a.username, self.user_a.email)
+
+    def test_passkey_manage_view_isolation(self):
+        # Authenticated users can view their own enrolled passkeys, but never other users' keys.
+        from mfa.models import User_Keys
+
+        key_a = User_Keys.objects.create(
+            username=self.user_a.email,
+            key_type="FIDO2",
+            properties={"device": "dGVzdC1jcmVkZW50aWFsLWRhdGE=", "type": "public-key"},
+            enabled=True,
+            added_on=timezone.now(),
+        )
+        key_b = User_Keys.objects.create(
+            username=self.user_b.email,
+            key_type="FIDO2",
+            properties={"device": "dGVzdC1jcmVkZW50aWFsLWRhdGE=", "type": "public-key"},
+            enabled=True,
+            added_on=timezone.now(),
+        )
+
+        response = self.client_a.get(reverse("kura:passkey_manage"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, f"Passkey #{key_a.id}")
+        self.assertNotContains(response, f"Passkey #{key_b.id}")
+
+    def test_passkey_delete_view_owner_and_idor_protection(self):
+        # Users can delete their own passkeys via POST. Deleting another user's key raises 404 (IDOR).
+        from mfa.models import User_Keys
+
+        key_a = User_Keys.objects.create(
+            username=self.user_a.email,
+            key_type="FIDO2",
+            properties={"device": "dGVzdC1jcmVkZW50aWFsLWRhdGE=", "type": "public-key"},
+            enabled=True,
+            added_on=timezone.now(),
+        )
+
+        # GET request is not allowed
+        get_res = self.client_a.get(reverse("kura:passkey_delete", kwargs={"key_id": key_a.id}))
+        self.assertEqual(get_res.status_code, 405)
+
+        # User B cannot delete User A's key (IDOR protection)
+        res_b = self.client_b.post(reverse("kura:passkey_delete", kwargs={"key_id": key_a.id}))
+        self.assertEqual(res_b.status_code, 404)
+        self.assertTrue(User_Keys.objects.filter(id=key_a.id).exists())
+
+        # User A can successfully delete their own key
+        res_a = self.client_a.post(reverse("kura:passkey_delete", kwargs={"key_id": key_a.id}))
+        self.assertEqual(res_a.status_code, 302)
+        self.assertFalse(User_Keys.objects.filter(id=key_a.id).exists())
+
+    def test_mfa_login_callback_establishes_session(self):
+        # The django-mfa2 login callback authenticates the user and logs a UserSession record.
+        from django.test import RequestFactory
+        from django.contrib.sessions.middleware import SessionMiddleware
+        from django.contrib.messages.middleware import MessageMiddleware
+        from kura.views import mfa_login_callback
+        from kura.models import UserSession
+
+        factory = RequestFactory()
+        request = factory.get(reverse("kura:home"))
+        # Add session and messages support
+        session_middleware = SessionMiddleware(lambda r: None)
+        session_middleware.process_request(request)
+        message_middleware = MessageMiddleware(lambda r: None)
+        message_middleware.process_request(request)
+        request.session["pre_mfa_user_id"] = str(self.user_a.id)
+        request.session["base_username"] = self.user_a.email
+
+        response = mfa_login_callback(request, username=self.user_a.email)
+        self.assertEqual(response.status_code, 302)
+        self.assertNotIn("pre_mfa_user_id", request.session)
+        self.assertTrue(UserSession.objects.filter(user=self.user_a).exists())
+
+    def test_mfa_verify_view_detects_enrolled_passkeys(self):
+        # mfa_verify_view informs the template when the user has registered passkeys.
+        from mfa.models import User_Keys
+
+        client = Client()
+        session = client.session
+        session["pre_mfa_user_id"] = str(self.user_a.id)
+        session.save()
+
+        # Before adding passkey: has_passkeys is False
+        res = client.get(reverse("kura:mfa_verify"))
+        self.assertEqual(res.status_code, 200)
+        self.assertFalse(res.context["has_passkeys"])
+
+        # After adding passkey: has_passkeys is True
+        User_Keys.objects.create(
+            username=self.user_a.email,
+            key_type="FIDO2",
+            properties={"device": "dGVzdA==", "type": "public-key"},
+            enabled=True,
+            added_on=timezone.now(),
+        )
+        res = client.get(reverse("kura:mfa_verify"))
+        self.assertEqual(res.status_code, 200)
+        self.assertTrue(res.context["has_passkeys"])
+
+    def test_webauthn_begin_registration_endpoint(self):
+        # The /mfa/fido2/begin_reg endpoint returns a cryptographic challenge and RP metadata.
+        response = self.client_a.get(reverse("fido2_begin_reg"))
+        self.assertEqual(response.status_code, 200)
+        data = response.json()
+        self.assertIn("publicKey", data)
+        self.assertIn("challenge", data["publicKey"])
+        self.assertIn("rp", data["publicKey"])
+        self.assertEqual(data["publicKey"]["rp"]["name"], "Kura LMS")
+
+
 class SemesterValueMigrationTests(TestCase):
     """Verify semester values migrate forward and have a documented rollback mapping."""
 
@@ -6489,3 +6624,35 @@ class EmailNotificationTests(TestCase):
         email = OutgoingEmail.objects.get(event_key="password-reset:old")
         self.assertEqual((email.status, email.body), (OutgoingEmailStatus.FAILED, ""))
         self.assertEqual(len(mail.outbox), 0)
+
+
+class PasskeyAddedAuditTests(TestCase):
+    """
+    WP1: adding a passkey writes auth.passkey.added. The FIDO2 cryptography is
+    django-mfa2's job, so its complete_reg view is replaced with a stand-in here.
+    """
+
+    def setUp(self):
+        self.user = make_user("Student")
+        self.client.force_login(self.user)
+
+    def test_successful_registration_is_logged(self):
+        from django.http import JsonResponse
+        from mfa.models import User_Keys
+
+        def fake_complete_reg(request):
+            User_Keys.objects.create(username=request.user.username, key_type="FIDO2", properties={})
+            return JsonResponse({"status": "OK"})
+
+        with patch("mfa.FIDO2.complete_reg", side_effect=fake_complete_reg):
+            with self.assertLogs("kura.security", level="INFO") as captured:
+                response = self.client.post("/mfa/fido2/complete_reg", data="{}", content_type="application/json")
+        self.assertEqual(response.status_code, 200)
+        self.assertTrue(any('event="auth.passkey.added"' in line for line in captured.output))
+
+    def test_failed_registration_is_not_logged(self):
+        from django.http import JsonResponse
+
+        with patch("mfa.FIDO2.complete_reg", return_value=JsonResponse({"status": "ERR"})):
+            with self.assertNoLogs("kura.security", level="INFO"):
+                self.client.post("/mfa/fido2/complete_reg", data="{}", content_type="application/json")

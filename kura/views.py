@@ -631,6 +631,91 @@ def mfa_verify_view(request):
     return render(request, "kura/accounts/mfa_verify.html", {"form": form, "has_passkeys": has_passkeys})
 
 
+def mfa_login_callback(request, username):
+    """
+    Callback executed by django-mfa2 upon successful FIDO2 / Passkey authentication.
+    Who can use it: System internal auth callback.
+    Security: Establishes session for the authenticated user and cleans up pre-mfa markers.
+    """
+    user = get_object_or_404(User, email=username)
+    login(request, user, backend="kura.backends.KuraAuthBackend")
+    user.last_login = timezone.now()
+    user.save(update_fields=["last_login"])
+    create_user_session(request, user)
+
+    request.session.pop("pre_mfa_user_id", None)
+    request.session.pop("base_username", None)
+
+    log_security_event(request, "auth.mfa.ok", {"method": "passkey"})
+
+    if user.must_change_password:
+        return redirect("kura:password_change")
+
+    return redirect("kura:home")
+
+
+@login_required
+def passkey_manage_view(request):
+    """
+    Displays the user's enrolled WebAuthn / FIDO2 passkeys and allows enrolling new ones.
+    Who can use it: Any authenticated user.
+    Security: Strictly filters User_Keys by request.user.email.
+"""
+    from mfa.models import User_Keys
+
+    keys = User_Keys.objects.filter(username=request.user.email, key_type="FIDO2").order_by("-added_on")
+    return render(request, "kura/accounts/passkeys.html", {"keys": keys})
+
+
+@login_required
+def passkey_register_complete_view(request):
+    """
+    Finishes adding a new passkey, then records it in the security log.
+    Who can use it: Any authenticated user adding a passkey to their own account.
+    Security: all the real checks (the FIDO2 challenge kept in the session and
+    the authenticator's signature) are done by django-mfa2's own
+    FIDO2.complete_reg, which this view simply calls. The library has no hook
+    for "a key was added", so this wrapper sits on the same URL to add the
+    auth.passkey.added audit event when the library reports success.
+    """
+    from mfa import FIDO2
+    from mfa.models import User_Keys
+
+    # Let django-mfa2 verify and save the new key exactly as before.
+    response = FIDO2.complete_reg(request)
+
+    # The library answers with JSON: "OK" (or "RECOVERY") means the key was saved.
+    result = json.loads(response.content)
+    if result.get("status") in ("OK", "RECOVERY"):
+        newest_key = (
+            User_Keys.objects.filter(username=request.user.username, key_type="FIDO2").order_by("-id").first()
+        )
+        key_id = "-"
+        if newest_key:
+            key_id = newest_key.id
+        log_security_event(request, "auth.passkey.added", {"key_id": key_id})
+    return response
+
+
+@login_required
+def passkey_delete_view(request, key_id):
+    """
+    Deletes an enrolled passkey (FIDO2 / WebAuthn key).
+    Who can use it: The owner of the passkey.
+    Security: Checks key belongs to request.user.email, POST only with CSRF.
+"""
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    from mfa.models import User_Keys
+
+    key = get_object_or_404(User_Keys, id=key_id, username=request.user.email)
+    key.delete()
+    log_security_event(request, "auth.passkey.removed", {"key_id": key_id})
+    messages.success(request, "Passkey removed successfully.")
+    return redirect("kura:passkey_manage")
+
+
 @login_required
 def logout_view(request):
     """
