@@ -1,0 +1,31 @@
+# ==============================================================================
+# Cloudflare Tunnel origin settings (config.yml)
+#
+# IMPORTANT: Kura's tunnel is "remotely managed": cloudflared starts with a
+# token, and Cloudflare sends it the routing rules set in the Zero Trust
+# dashboard. For such tunnels cloudflared IGNORES the ingress rules in this file.
+#
+# This file is kept as the written record of exactly what must be entered in
+# the dashboard (docker/cloudflare/README.md, Step 3), so the settings can be
+# reviewed in Git. If the tunnel is ever switched to a locally managed tunnel
+# (credentials file instead of a token), this file becomes the live config.
+# ==============================================================================
+
+ingress:
+  # The Kura hostname goes to Nginx over HTTPS inside the Docker network.
+  - hostname: kura.example.com
+    service: https://nginx:443
+    originRequest:
+      # VERIFY Nginx's certificate (never "noTLSVerify: true"): otherwise
+      # anything that answered as "nginx" on the Docker network could read
+      # all traffic.
+      noTLSVerify: false
+      # The certificate cloudflared trusts for Nginx, mounted by docker-compose.yml.
+      caPool: /etc/cloudflared/origin-ca.crt
+      # The name that must appear in Nginx's certificate (its SAN list has DNS:nginx).
+      originServerName: nginx
+      http2Origin: true
+      connectTimeout: 30s
+
+  # Any other hostname gets a 404 (cloudflared requires a final catch-all rule).
+  - service: http_status:404
