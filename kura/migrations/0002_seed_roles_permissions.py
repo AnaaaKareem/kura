@@ -35,10 +35,6 @@ def seed_roles_and_permissions(apps, schema_editor):
             ('execute', 'backup_recovery', 'institution'),
             ('execute', 'data_retention', 'institution'),
             ('execute', 'incident_response', 'institution'),
-            ('read', 'courses', 'institution'),
-            ('write', 'courses', 'institution'),
-            ('view', 'sessions', 'institution'),
-            ('revoke', 'sessions', 'institution'),
         ],
         'Registrar': [
             ('create', 'student_accounts', 'institution'),
@@ -109,7 +105,7 @@ def remove_roles_and_permissions(apps, schema_editor):
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('kura', '0003_attempt_files_lock_trigger'),
+        ('kura', '0001_initial'),
     ]
 
     operations = [

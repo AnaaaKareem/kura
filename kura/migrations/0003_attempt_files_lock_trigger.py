@@ -52,7 +52,7 @@ DROP FUNCTION IF EXISTS check_attempt_files_lock();
 class Migration(migrations.Migration):
 
     dependencies = [
-        ('kura', '0002_remove_storedfile_stored_file_mime_type_allowlisted_and_more'),
+        ('kura', '0002_seed_roles_permissions'),
     ]
 
     operations = [
