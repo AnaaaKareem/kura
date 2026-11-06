@@ -1,0 +1,135 @@
+{% extends "kura/base.html" %}
+
+{% block title %}{{ session.title }} - Attendance Roll - Kura{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+            <div class="flex items-center gap-2">
+                <span class="badge badge-primary font-mono text-xs">{{ session.module.course.code }}</span>
+                {% if is_live %}
+                <span class="badge badge-success badge-sm animate-pulse">Live Check-in Open</span>
+                {% else %}
+                <span class="badge badge-ghost badge-sm">Closed</span>
+                {% endif %}
+            </div>
+            <h1 class="text-2xl font-bold mt-2">{{ session.title }}</h1>
+            <p class="text-sm text-base-content/70">
+                Module: <strong>{{ session.module.title }}</strong> &bull; Ends at: <strong>{{ session.expires_at|date:"H:i (Y-m-d)" }}</strong>
+            </p>
+        </div>
+
+        {% if is_live %}
+        <form method="post" action="{% url 'kura:attendance_session_close' session.id %}">
+            {% csrf_token %}
+            <button type="submit" class="btn btn-warning btn-sm" data-confirm-action="Close attendance session now?">
+                End Session Now
+            </button>
+        </form>
+        {% endif %}
+    </div>
+
+    <!-- Active Check-in Screen for Classroom Projector -->
+    {% if is_live and passcode %}
+    <div class="card bg-base-100 shadow-lg border-2 border-primary/30">
+        <div class="card-body gap-4 p-4 sm:p-6">
+            <h2 class="card-title text-center justify-center text-lg">Classroom Check-in Passcode & QR Code</h2>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-center mt-4">
+                <div class="text-center p-6 bg-base-200 rounded-box border border-base-300">
+                    <span class="text-xs uppercase font-bold text-base-content/60 tracking-wider">Dynamic Passcode</span>
+                    <div class="text-5xl font-mono font-extrabold tracking-widest text-primary mt-3">
+                        {{ passcode }}
+                    </div>
+                    <p class="text-xs text-base-content/60 mt-4">Students enter this passcode on their check-in screen.</p>
+                </div>
+
+                {% if qr_code_url %}
+                <div class="flex flex-col items-center p-6 bg-base-200 rounded-box border border-base-300">
+                    <span class="text-xs uppercase font-bold text-base-content/60 tracking-wider mb-3">Scan to Check In</span>
+                    <div class="p-2 bg-white rounded-box shadow">
+                        <img src="{{ qr_code_url }}" alt="Attendance QR Code" class="w-44 h-44">
+                    </div>
+                </div>
+                {% endif %}
+            </div>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Recorded Attendance Roster & Manual Override Form -->
+    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <!-- Roster Table -->
+        <div class="lg:col-span-2 card bg-base-100 border border-base-300 overflow-hidden">
+            <div class="p-4 border-b border-base-200 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+                <h3 class="font-bold">Verified Attendance Roll ({{ records|length }})</h3>
+            </div>
+            <div class="overflow-x-auto">
+                <table class="table table-sm w-full text-xs">
+                    <thead class="bg-base-200">
+                        <tr>
+                            <th>Student</th>
+                            <th>Status</th>
+                            <th>Method</th>
+                            <th>Time</th>
+                            <th>Notes</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for record in records %}
+                        <tr>
+                            <td class="font-semibold">{{ record.student.get_full_name|default:record.student.email }}</td>
+                            <td>
+                                {% if record.status == 'present' %}
+                                <span class="badge badge-success badge-xs">Present</span>
+                                {% elif record.status == 'late' %}
+                                <span class="badge badge-warning badge-xs">Late</span>
+                                {% elif record.status == 'excused' %}
+                                <span class="badge badge-info badge-xs">Excused</span>
+                                {% else %}
+                                <span class="badge badge-error badge-xs">Absent</span>
+                                {% endif %}
+                            </td>
+                            <td><span class="badge badge-ghost badge-xs uppercase font-mono">{{ record.method }}</span></td>
+                            <td class="text-base-content/60">{{ record.verified_at|date:"H:i:s" }}</td>
+                            <td class="max-w-xs truncate text-base-content/60" title="{{ record.override_reason }}">{{ record.override_reason|default:"-" }}</td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="5" class="text-center py-6 text-base-content/50">No students checked in yet.</td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Manual Roll Form -->
+        <div class="card bg-base-100 border border-base-300">
+            <div class="card-body gap-4 p-4 sm:p-6">
+                <h3 class="card-title text-base font-bold">Manual Roll Entry</h3>
+                <p class="text-xs text-base-content/70">Manually record or correct a student's attendance. A written justification reason is mandatory.</p>
+
+                <form method="post" action="{% url 'kura:attendance_manual_record' session.id %}" class="mt-3 space-y-3">
+                    {% csrf_token %}
+                    <div class="form-control">
+                        <label class="label"><span class="label-text text-xs font-medium">Student</span></label>
+                        {{ manual_form.student }}
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text text-xs font-medium">Status</span></label>
+                        {{ manual_form.status }}
+                    </div>
+                    <div class="form-control">
+                        <label class="label"><span class="label-text text-xs font-medium">Justification Reason</span></label>
+                        {{ manual_form.override_reason }}
+                    </div>
+                    <button type="submit" class="btn btn-primary btn-sm w-full mt-2">
+                        Record Manual Attendance
+                    </button>
+                </form>
+            </div>
+        </div>
+    </div>
+</div>
+{% endblock %}

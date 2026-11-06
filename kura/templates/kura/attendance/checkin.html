@@ -1,0 +1,45 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Check In - {{ session.title }} - Kura{% endblock %}
+
+{% block content %}
+<div class="max-w-md mx-auto mt-6">
+    <div class="card bg-base-100 border border-base-300">
+        <div class="card-body gap-4 p-4 sm:p-6">
+            <div class="flex items-center gap-2">
+                <span class="badge badge-primary font-mono text-xs">{{ session.module.course.code }}</span>
+                <span class="badge badge-success badge-sm">Check-in Open</span>
+            </div>
+            <h1 class="card-title text-2xl font-bold mt-2">Attendance Check-in</h1>
+            <p class="text-sm text-base-content/70">
+                Session: <strong>{{ session.title }}</strong> ({{ session.module.title }})
+            </p>
+            <p class="text-xs text-base-content/60">
+                Closes at: <strong>{{ session.expires_at|date:"H:i (Y-m-d)" }}</strong>
+            </p>
+
+            <form method="post" class="mt-4 space-y-4">
+                {% csrf_token %}
+
+                <div class="form-control">
+                    <label for="id_passcode" class="label">
+                        <span class="label-text font-medium">Enter 6-Character Passcode</span>
+                    </label>
+                    {{ form.passcode }}
+                    {% if form.passcode.errors %}
+                    <label class="label">
+                        <span class="label-text-alt text-error">{{ form.passcode.errors.0 }}</span>
+                    </label>
+                    {% endif %}
+                </div>
+
+                <div class="card-actions justify-end mt-6">
+                    <a href="{% url 'kura:attendance_history' %}" class="btn btn-ghost btn-sm">Cancel</a>
+                    <button type="submit" class="btn btn-primary btn-sm">Submit Check-in</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
