@@ -1,0 +1,167 @@
+{% extends "kura/base.html" %}
+{% load static %}
+
+{% block title %}{% if assessment %}Edit{% else %}Create{% endif %} Assessment - {{ section.title }} - Kura{% endblock %}
+
+{% block content %}
+<div class="max-w-4xl mx-auto space-y-6">
+    <div class="flex items-center gap-2 text-sm text-base-content/70">
+        <a href="{% url 'kura:course_detail' section.module.course.id %}" class="link link-hover">{{ section.module.course.code }}</a>
+        <span>&rsaquo;</span>
+        <span>{{ section.module.title }}</span>
+        <span>&rsaquo;</span>
+        <span class="font-medium text-base-content">{{ section.title }}</span>
+    </div>
+
+    <div class="card bg-base-100 border border-base-300">
+        <div class="card-body gap-4 p-4 sm:p-6">
+            <h1 class="card-title text-2xl font-bold">{% if assessment %}Edit assessment{% else %}Create new assessment{% endif %}</h1>
+            <p class="text-sm text-base-content/70">
+                Author quizzes, coursework assignments, and exams. Question prompts are saved in <code>questions_json</code> while answer keys and rubrics are strictly isolated in <code>ExamAnswerKey</code>.
+            </p>
+            {% if questions_locked %}<p class="alert alert-warning">Questions are locked because students have started. Only the title, instructions and dates can be changed.</p>{% endif %}
+            {% if builder_unavailable %}<p class="alert alert-warning">These existing questions exceed the builder's supported format. Only the title, instructions and dates can be changed without losing data.</p>{% endif %}
+
+            <form method="post" class="mt-6 space-y-6">
+                {% csrf_token %}
+                {% if form.errors %}
+                <div role="alert" class="alert alert-error">
+                    <div><p>Check the assessment details below.</p><ul>
+                        {% for field in form %}{% for error in field.errors %}
+                        <li><a href="#{{ field.id_for_label }}">{{ field.label }}: {{ error }}</a></li>
+                        {% endfor %}{% endfor %}
+                    </ul></div>
+                </div>
+                {% endif %}
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label for="id_title" class="label"><span class="label-text font-medium">Title</span></label>
+                        {{ form.title }}
+                        {% if form.title.errors %}<label class="label"><span class="label-text-alt text-error">{{ form.title.errors.0 }}</span></label>{% endif %}
+                    </div>
+                    <div class="form-control">
+                        <label for="id_component_type" class="label"><span class="label-text font-medium">Assessment Type</span></label>
+                        {{ form.component_type }}
+                    </div>
+                </div>
+
+                <div class="form-control">
+                    <label for="id_description" class="label"><span class="label-text font-medium">Briefing & Instructions</span></label>
+                    {{ form.description }}
+                </div>
+
+                <!-- Choose online questions or a paper script that needs manual marking. -->
+                <div class="form-control">
+                    <label for="id_delivery_mode" class="label"><span class="label-text font-medium">Delivery mode</span></label>
+                    {{ form.delivery_mode }}
+                    {% if form.delivery_mode.errors %}<span class="text-error">{{ form.delivery_mode.errors.0 }}</span>{% endif %}
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <div class="form-control">
+                        <label for="id_max_score" class="label"><span class="label-text font-medium">Max Score</span></label>
+                        {{ form.max_score }}
+                    </div>
+                    <div class="form-control">
+                        <label for="id_max_attempts" class="label"><span class="label-text font-medium">Max Attempts</span></label>
+                        {{ form.max_attempts }}
+                    </div>
+                    <div class="form-control">
+                        <label for="id_duration_minutes" class="label"><span class="label-text font-medium">Duration (Minutes)</span></label>
+                        {{ form.duration_minutes }}
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div class="form-control">
+                        <label for="id_opens_at" class="label"><span class="label-text font-medium">Opens At</span></label>
+                        {{ form.opens_at }}
+                        {% if form.opens_at.errors %}<label class="label"><span class="label-text-alt text-error">{{ form.opens_at.errors.0 }}</span></label>{% endif %}
+                    </div>
+                    <div class="form-control">
+                        <label for="id_due_date" class="label"><span class="label-text font-medium">Due Date</span></label>
+                        {{ form.due_date }}
+                        {% if form.due_date.errors %}<label class="label"><span class="label-text-alt text-error">{{ form.due_date.errors.0 }}</span></label>{% endif %}
+                    </div>
+                </div>
+
+                <!-- Proctored Hall & Network Constraints -->
+                <div class="p-4 bg-base-200 rounded-box border border-base-300 space-y-4">
+                    <h3 class="font-bold text-sm uppercase tracking-wider text-base-content/80">Proctoring & Network Restrictions (Optional)</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                        <div class="form-control">
+                            <label for="id_lab_cidr_allowed" class="label"><span class="label-text font-medium text-xs">Lab CIDR Subnet</span></label>
+                            {{ form.lab_cidr_allowed }}
+                            {% if form.lab_cidr_allowed.errors %}<label class="label"><span class="label-text-alt text-error">{{ form.lab_cidr_allowed.errors.0 }}</span></label>{% endif %}
+                        </div>
+                        <div class="form-control">
+                            <label for="id_proctor_code" class="label"><span class="label-text font-medium text-xs">Whiteboard Proctor Code</span></label>
+                            {{ form.proctor_code }}
+                            {% if assessment %}<p class="text-xs">Leave blank to keep the existing code.</p>{% endif %}
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Delivery Settings -->
+                <div class="p-4 bg-base-200 rounded-box border border-base-300 space-y-3" data-online-only>
+                    <h3 class="font-bold text-sm uppercase tracking-wider text-base-content/80">Delivery Parameters</h3>
+                    <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
+                        <label class="cursor-pointer label justify-start gap-3">
+                            {{ form.shuffle_questions }}
+                            <span class="label-text text-xs">Shuffle Questions</span>
+                        </label>
+                        <label class="cursor-pointer label justify-start gap-3">
+                            {{ form.shuffle_options }}
+                            <span class="label-text text-xs">Shuffle Options</span>
+                        </label>
+                        <label class="cursor-pointer label justify-start gap-3">
+                            {{ form.allow_backtracking }}
+                            <span class="label-text text-xs">Allow Backtracking</span>
+                        </label>
+                    </div>
+                    <div class="form-control max-w-xs mt-2">
+                        <label for="id_autosave_interval_seconds" class="label"><span class="label-text text-xs font-medium">Autosave Interval (seconds)</span></label>
+                        {{ form.autosave_interval_seconds }}
+                    </div>
+                </div>
+
+                <!-- Formset management fields keep the server's question count accurate. -->
+                <section data-online-only>
+                    <h2 class="font-bold text-lg">Questions</h2>
+                    <p class="text-sm">Correct answers and marking guides are kept in the staff-only answer key.</p>
+                    <fieldset {% if questions_locked or builder_unavailable %}disabled{% endif %}>
+                    {{ question_forms.management_form }}
+                    {{ question_forms.non_form_errors }}
+                    <div id="question-list" class="space-y-4 mt-3" aria-live="polite">
+                        {% for question_form in question_forms %}
+                        {% include "kura/assessments/_question_form.html" %}
+                        {% endfor %}
+                    </div>
+                    <div class="flex flex-wrap gap-2 items-end mt-4">
+                        <div><label for="question-type">Question type</label>
+                            <select id="question-type" name="type" class="select select-bordered">
+                                <option value="multiple_choice">Multiple choice</option>
+                                <option value="matching">Matching</option>
+                                <option value="long_text">Written answer</option>
+                            </select>
+                        </div>
+                        <button type="button" class="btn btn-outline" hx-get="{% url 'kura:assessment_question_form' section.id %}"
+                            hx-include="#question-type, #id_questions-TOTAL_FORMS" hx-target="#question-list"
+                            hx-swap="beforeend" hx-sync="this:drop">Add question</button>
+                    </div>
+                    <p class="text-xs mt-2">Up to 20 questions; each can have up to 8 options or pairs.</p>
+                    </fieldset>
+                </section>
+                <p data-scanned-only>Students or staff upload a PDF or photo of the script. Marking is manual.</p>
+
+                <div class="card-actions justify-end mt-6">
+                    <a href="{% url 'kura:course_detail' section.module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
+                    <button type="submit" class="btn btn-primary btn-sm">Save assessment</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+<script src="{% static 'js/theme.js' %}" defer></script>
+{% endblock %}

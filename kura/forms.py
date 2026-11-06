@@ -923,3 +923,275 @@ class ManualAttendanceForm(forms.Form):
 
 
 
+
+
+class AssessmentCreateForm(forms.Form):
+    """
+    Form for Instructors to author an assessment with settings, delivery parameters, and questions.
+    """
+
+    title = forms.CharField(
+        label="Assessment Title",
+        max_length=255,
+        widget=forms.TextInput(
+            attrs={"class": "input input-bordered w-full", "placeholder": "e.g. Midterm Examination"}
+        ),
+    )
+
+    description = forms.CharField(
+        label="Briefing & Instructions",
+        required=False,
+        widget=forms.Textarea(attrs={"class": "textarea textarea-bordered w-full", "rows": 3}),
+    )
+
+    component_type = forms.ChoiceField(
+        label="Assessment Category",
+        choices=GradeComponentType.choices,
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+    # Keep old submissions compatible while making the delivery choice explicit.
+    delivery_mode = forms.ChoiceField(
+        choices=AssessmentDeliveryMode.choices,
+        required=False,
+        initial=AssessmentDeliveryMode.ONLINE,
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+    max_score = forms.DecimalField(
+        label="Maximum Score",
+        max_digits=6,
+        decimal_places=2,
+        min_value=0.01,
+        initial=100.00,
+        widget=forms.NumberInput(attrs={"class": "input input-bordered w-full", "step": "0.01"}),
+    )
+
+    max_attempts = forms.IntegerField(
+        label="Max Attempts Allowed",
+        min_value=1,
+        initial=1,
+        widget=forms.NumberInput(attrs={"class": "input input-bordered w-full"}),
+    )
+
+    opens_at = forms.DateTimeField(
+        label="Opening Window",
+        widget=forms.DateTimeInput(
+            format="%Y-%m-%dT%H:%M", attrs={"class": "input input-bordered w-full", "type": "datetime-local"}
+        ),
+    )
+
+    due_date = forms.DateTimeField(
+        label="Submission Due Date",
+        widget=forms.DateTimeInput(
+            format="%Y-%m-%dT%H:%M", attrs={"class": "input input-bordered w-full", "type": "datetime-local"}
+        ),
+    )
+
+    duration_minutes = forms.IntegerField(
+        label="Duration (Minutes)",
+        min_value=1,
+        initial=60,
+        widget=forms.NumberInput(attrs={"class": "input input-bordered w-full"}),
+    )
+
+    lab_cidr_allowed = forms.CharField(
+        label="Required Lab CIDR Subnet (Optional)",
+        required=False,
+        validators=[validate_cidr],
+        widget=forms.TextInput(attrs={"class": "input input-bordered w-full", "placeholder": "e.g. 10.20.0.0/24"}),
+    )
+
+    proctor_code = forms.CharField(
+        label="Whiteboard Proctor Code (Optional)",
+        required=False,
+        max_length=50,
+        widget=forms.TextInput(
+            attrs={"class": "input input-bordered w-full font-mono", "placeholder": "e.g. EXAM-8842"}
+        ),
+    )
+
+    shuffle_questions = forms.BooleanField(
+        label="Shuffle questions for each student",
+        required=False,
+        initial=True,
+        widget=forms.CheckboxInput(attrs={"class": "checkbox checkbox-primary"}),
+    )
+
+    shuffle_options = forms.BooleanField(
+        label="Shuffle question options",
+        required=False,
+        initial=True,
+        widget=forms.CheckboxInput(attrs={"class": "checkbox checkbox-primary"}),
+    )
+
+    allow_backtracking = forms.BooleanField(
+        label="Allow students to navigate back and change answers",
+        required=False,
+        initial=True,
+        widget=forms.CheckboxInput(attrs={"class": "checkbox checkbox-primary"}),
+    )
+
+    autosave_interval_seconds = forms.IntegerField(
+        label="Autosave Interval (seconds)",
+        min_value=5,
+        max_value=300,
+        initial=15,
+        widget=forms.NumberInput(attrs={"class": "input input-bordered w-full"}),
+    )
+
+    def clean(self):
+        """
+        Checks that an assessment opens before its due date.
+        """
+        cleaned_data = super().clean()
+        # The closing time must be later than the opening time.
+        opens_at = cleaned_data.get("opens_at")
+        due_date = cleaned_data.get("due_date")
+        if opens_at and due_date and due_date <= opens_at:
+            self.add_error("due_date", "Due date must be strictly later than opening time.")
+        return cleaned_data
+
+
+class AssessmentQuestionForm(forms.Form):
+    """Validate one online question and its staff-only answer fields."""
+
+    # Every question has a type, a prompt, and a positive number of points.
+    type = forms.ChoiceField(
+        choices=[
+            ("multiple_choice", "Multiple choice"),
+            ("matching", "Matching"),
+            ("long_text", "Written answer"),
+        ]
+    )
+    prompt = forms.CharField(max_length=5000, widget=forms.Textarea(attrs={"rows": 2}))
+    points = forms.DecimalField(max_digits=6, decimal_places=2, min_value=0.01)
+    max_words = forms.IntegerField(required=False, min_value=1, max_value=100000, initial=500)
+    rubric = forms.CharField(required=False, max_length=5000, widget=forms.Textarea(attrs={"rows": 3}))
+    explanation = forms.CharField(required=False, max_length=5000, widget=forms.Textarea(attrs={"rows": 2}))
+    extra_matches = forms.CharField(
+        required=False,
+        max_length=4000,
+        label="Additional matching choices, one per line",
+        widget=forms.Textarea(attrs={"rows": 2}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        """
+        Builds the repeated question fields and display rows for one question form.
+        """
+        # Each row is a normal Django field, so every submitted value is validated.
+        super().__init__(*args, **kwargs)
+        for number in range(1, 9):
+            self.fields[f"option_{number}"] = forms.CharField(required=False, max_length=500, label=f"Option {number}")
+            self.fields[f"correct_{number}"] = forms.BooleanField(required=False, label="Correct")
+            self.fields[f"left_{number}"] = forms.CharField(required=False, max_length=500, label=f"Left item {number}")
+            self.fields[f"right_{number}"] = forms.CharField(
+                required=False, max_length=500, label=f"Correct match {number}"
+            )
+        self.option_rows = []
+        self.pair_rows = []
+        for number in range(1, 9):
+            self.option_rows.append((self[f"option_{number}"], self[f"correct_{number}"]))
+            self.pair_rows.append((self[f"left_{number}"], self[f"right_{number}"]))
+
+    def clean(self):
+        """
+        Checks that the submitted question has enough valid answers for its type.
+        """
+        # Require enough choices and a real answer; reject incomplete matching pairs.
+        cleaned_data = super().clean()
+        if cleaned_data.get("type") == "multiple_choice":
+            options = 0
+            correct = 0
+            for number in range(1, 9):
+                option = cleaned_data.get(f"option_{number}")
+                marked = cleaned_data.get(f"correct_{number}")
+                if option:
+                    options += 1
+                if marked and option:
+                    correct += 1
+                elif marked:
+                    self.add_error(f"option_{number}", "Enter the marked option's text.")
+            if options < 2 or correct == 0:
+                raise forms.ValidationError("Add at least two options and mark at least one correct answer.")
+        elif cleaned_data.get("type") == "matching":
+            pairs = 0
+            for number in range(1, 9):
+                left = cleaned_data.get(f"left_{number}")
+                right = cleaned_data.get(f"right_{number}")
+                if left and right:
+                    pairs += 1
+                elif left or right:
+                    self.add_error(f"right_{number}", "Enter both sides of this pair.")
+            if not pairs:
+                raise forms.ValidationError("Add at least one complete matching pair.")
+        elif cleaned_data.get("type") == "long_text" and not cleaned_data.get("max_words"):
+            self.add_error("max_words", "Enter a word limit.")
+        return cleaned_data
+
+
+class AssessmentQuestionAddForm(forms.Form):
+    """Validate the type and formset position for a blank question card."""
+
+    type = forms.ChoiceField(choices=AssessmentQuestionForm.base_fields["type"].choices)
+    index = forms.IntegerField(min_value=0, max_value=19)
+
+
+# Cap the formset so a forged request cannot create an unlimited number of forms.
+AssessmentQuestionFormSet = forms.formset_factory(
+    AssessmentQuestionForm,
+    extra=0,
+    can_delete=True,
+    can_order=True,
+    max_num=20,
+    validate_max=True,
+    absolute_max=20,
+)
+
+
+class AssessmentQuestionAddForm(forms.Form):
+    """Validate the type and formset position for a blank question card."""
+
+    type = forms.ChoiceField(choices=AssessmentQuestionForm.base_fields["type"].choices)
+    index = forms.IntegerField(min_value=0, max_value=19)
+
+
+class AssessmentAttemptStartForm(forms.Form):
+    """
+    Form for students to initiate an attempt, validating the exam whiteboard proctor code if required.
+    """
+
+    proctor_code = forms.CharField(
+        label="Enter Exam Proctor Code",
+        required=False,
+        max_length=50,
+        widget=forms.TextInput(
+            attrs={
+                "class": "input input-bordered w-full font-mono text-center tracking-wider text-lg uppercase",
+                "placeholder": "Enter whiteboard code",
+                "autofocus": "autofocus",
+            }
+        ),
+    )
+
+
+
+
+class AssessmentFileUploadForm(forms.Form):
+    """
+    Form for uploading files attached to assessments or student attempts.
+    """
+
+    file = forms.FileField(
+        label="Choose File",
+        widget=forms.FileInput(attrs={"class": "file-input file-input-bordered w-full"}),
+    )
+
+class ScannedPaperStaffUploadForm(forms.Form):
+    """Validate the student and scanned file selected by authorized course staff."""
+
+    # The view restricts this empty queryset to students enrolled in its course.
+    student = forms.ModelChoiceField(queryset=User.objects.none())
+    file = forms.FileField()
+

@@ -1,0 +1,43 @@
+<!-- One formset card; answer fields are shown only to authorized course staff. -->
+<fieldset class="border border-base-300 rounded-box p-4 space-y-3" data-question-card>
+    <legend class="font-bold">Question</legend>
+    {{ question_form.ORDER.as_hidden }}
+    <button type="button" data-move-question="up" class="btn btn-outline btn-sm">Move question up</button>
+    <button type="button" data-move-question="down" class="btn btn-outline btn-sm">Move question down</button>
+    {{ question_form.non_field_errors }}
+    <div>{{ question_form.type.label_tag }} {{ question_form.type }} {{ question_form.type.errors }}</div>
+    <div>{{ question_form.prompt.label_tag }} {{ question_form.prompt }} {{ question_form.prompt.errors }}</div>
+    <div>{{ question_form.points.label_tag }} {{ question_form.points }} {{ question_form.points.errors }}</div>
+    <div data-question-group="multiple_choice">
+        <p class="font-medium">Options <span class="badge badge-ghost">Answer key</span></p>
+        {% for option, correct in question_form.option_rows %}
+        <div data-question-row class="flex flex-wrap items-center gap-2 mt-2">
+            {{ option.label_tag }} {{ option }} {{ correct }} {{ correct.label_tag }} {{ option.errors }} {{ correct.errors }}
+            <button type="button" data-remove-row class="btn btn-ghost btn-xs">Remove option</button>
+        </div>
+        {% endfor %}
+        <button type="button" data-add-row class="btn btn-outline btn-sm mt-2">Add option</button>
+        <div>{{ question_form.explanation.label_tag }} {{ question_form.explanation }} {{ question_form.explanation.errors }}</div>
+    </div>
+    <div data-question-group="matching">
+        <p class="font-medium">Pairs <span class="badge badge-ghost">Answer key</span></p>
+        {% for left, right in question_form.pair_rows %}
+        <div data-question-row class="flex flex-wrap items-center gap-2 mt-2">
+            {{ left.label_tag }} {{ left }} {{ right.label_tag }} {{ right }} {{ left.errors }} {{ right.errors }}
+            <button type="button" data-remove-row class="btn btn-ghost btn-xs">Remove pair</button>
+        </div>
+        {% endfor %}
+        <button type="button" data-add-row class="btn btn-outline btn-sm mt-2">Add pair</button>
+        <div>{{ question_form.extra_matches.label_tag }} {{ question_form.extra_matches }} {{ question_form.extra_matches.errors }}</div>
+    </div>
+    <div data-question-group="long_text">
+        <div>{{ question_form.max_words.label_tag }} {{ question_form.max_words }} {{ question_form.max_words.errors }}</div>
+        <div>{{ question_form.rubric.label_tag }} <span class="badge badge-ghost">Answer key</span>
+            {{ question_form.rubric }} {{ question_form.rubric.errors }}</div>
+    </div>
+    <label>{{ question_form.DELETE }} Remove this question</label>
+</fieldset>
+{% if new_total %}
+<!-- HTMX replaces the management field only after the new card arrives. -->
+<input type="hidden" name="questions-TOTAL_FORMS" value="{{ new_total }}" id="id_questions-TOTAL_FORMS" hx-swap-oob="outerHTML">
+{% endif %}
