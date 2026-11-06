@@ -2366,3 +2366,146 @@ def file_download_view(request, course_id, file_id):
             raise PermissionDenied
 
     return create_download_response(stored_file)
+
+from .forms import ScheduleForm
+from .models import Schedule, DayOfWeek, SessionType
+from .permissions import can_access_learning_records, is_course_staff, is_enrolled, is_department_head
+def schedule_list_view(request):
+    """
+    Displays the academic meeting schedule and timetable.
+    Who can use it: Students (enrolled courses), Staff (assigned courses), Department Heads.
+    Security: Only shows meeting slots for courses the user is permitted to see.
+"""
+    if has_role(request.user, "Department head"):
+        dept_ids = Department.objects.filter(head_user=request.user).values_list("id", flat=True)
+        schedules = Schedule.objects.filter(course__department_id__in=dept_ids)
+    elif has_role(request.user, "Instructor") or has_role(request.user, "Teaching assistant"):
+        # Only assignments matching the user's current roles grant schedule access.
+        staff_roles = []
+        if has_role(request.user, "Instructor"):
+            staff_roles.extend(["lead_instructor", "co_instructor"])
+        if has_role(request.user, "Teaching assistant"):
+            staff_roles.append("teaching_assistant")
+        staff_courses = CourseStaff.objects.filter(user=request.user, staff_role__in=staff_roles).values_list(
+            "course_id", flat=True
+        )
+        schedules = Schedule.objects.filter(course_id__in=staff_courses)
+    elif has_role(request.user, "Student"):
+        enrolled_courses = Enrollment.objects.filter(student=request.user, status=EnrollmentStatus.ACTIVE).values_list(
+            "course_id", flat=True
+        )
+        schedules = Schedule.objects.filter(course_id__in=enrolled_courses, course__is_published=True)
+    else:
+        schedules = Schedule.objects.filter(course__is_published=True)
+
+    schedules = schedules.select_related("course", "instructor").order_by("day", "start_time")
+    # Show edit controls only for courses this non-admin user is assigned to or heads.
+    # Recheck each schedule's exact course before displaying management controls.
+    headed_department_ids = set(Department.objects.filter(head_user=request.user).values_list("id", flat=True))
+    is_admin = is_admin_course_manager(request.user)
+    is_head = has_role(request.user, "Department head")
+    for schedule in schedules:
+        schedule.can_manage = not is_admin and (
+            is_course_staff(request.user, schedule.course)
+            or (is_head and schedule.course.department_id in headed_department_ids)
+        )
+    return render(request, "kura/attendance/schedule_list.html", {"schedules": schedules})
+
+
+def schedule_create_view(request, course_id):
+    """
+    Creates a recurring meeting schedule for a course.
+    Who can use it: Course instructors and Department Heads.
+    Security: Enforces course staff assignment; validates end_time > start_time.
+"""
+    course = get_object_or_404(Course, id=course_id)
+
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+
+    form = ScheduleForm(request.POST or None)
+
+    if request.method == "POST" and form.is_valid():
+        Schedule.objects.create(
+            course=course,
+            instructor=form.cleaned_data["instructor"],
+            session_type=form.cleaned_data["session_type"],
+            day=form.cleaned_data["day"],
+            start_time=form.cleaned_data["start_time"],
+            end_time=form.cleaned_data["end_time"],
+            location=form.cleaned_data["location"],
+            recurrence_start=form.cleaned_data["recurrence_start"],
+            recurrence_end=form.cleaned_data["recurrence_end"],
+            created_by=request.user,
+        )
+        messages.success(request, f"Class schedule created for {course.code}.")
+        return redirect("kura:course_detail", course_id=course.id)
+
+    return render(request, "kura/attendance/schedule_create.html", {"form": form, "course": course})
+
+
+def schedule_edit_view(request, schedule_id):
+    """
+    Edits a recurring course schedule.
+    Who can use it: Assigned staff and the department head, except Admins.
+    Security: Checks the exact course and validates every field before saving.
+"""
+    # Only authorized staff may edit this course's schedule.
+    if is_admin_course_manager(request.user):
+        raise PermissionDenied
+    schedule = get_object_or_404(Schedule.objects.select_related("course__department"), id=schedule_id)
+    course = schedule.course
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+    initial = {
+        "instructor": schedule.instructor_id,
+        "session_type": schedule.session_type,
+        "day": schedule.day,
+        "start_time": schedule.start_time,
+        "end_time": schedule.end_time,
+        "location": schedule.location,
+        "recurrence_start": schedule.recurrence_start,
+        "recurrence_end": schedule.recurrence_end,
+    }
+    form = ScheduleForm(request.POST or None, initial=initial)
+    if request.method == "POST" and form.is_valid():
+        # Copy only validated, explicitly allowed fields into the existing schedule.
+        schedule.instructor = form.cleaned_data["instructor"]
+        schedule.session_type = form.cleaned_data["session_type"]
+        schedule.day = form.cleaned_data["day"]
+        schedule.start_time = form.cleaned_data["start_time"]
+        schedule.end_time = form.cleaned_data["end_time"]
+        schedule.location = form.cleaned_data["location"]
+        schedule.recurrence_start = form.cleaned_data["recurrence_start"]
+        schedule.recurrence_end = form.cleaned_data["recurrence_end"]
+        schedule.save()
+        messages.success(request, "Schedule updated.")
+        return redirect("kura:schedule_list")
+    return render(request, "kura/attendance/schedule_create.html", {"form": form, "course": course, "editing": True})
+
+
+def schedule_delete_view(request, schedule_id):
+    """
+    Deletes a schedule without deleting attendance sessions.
+    Who can use it: Assigned staff and the department head, except Admins.
+    Security: Requires POST, confirmation, course permission, and deletion logging.
+"""
+    # Verify permission and require confirmation before changing the schedule.
+    if is_admin_course_manager(request.user):
+        raise PermissionDenied
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    schedule = get_object_or_404(Schedule.objects.select_related("course__department"), id=schedule_id)
+    course = schedule.course
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+    if not DeleteConfirmationForm(request.POST).is_valid():
+        messages.error(request, "Confirm schedule deletion first.")
+        return redirect("kura:schedule_list")
+    # Attendance sessions remain recorded; Django clears their optional schedule link.
+    schedule.delete()
+    security_logger.info("Schedule %s deleted by %s", schedule_id, request.user.id)
+    messages.success(request, "Schedule deleted.")
+    return redirect("kura:schedule_list")
+
+
