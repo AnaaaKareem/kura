@@ -164,6 +164,480 @@ def reseed_roles_after_flush():
         admin_migration.update_admin_permissions(django_apps, editor)
 
 
+class AssessmentAttemptAndDeliveryTests(TestCase):
+    """
+    Tests Assessment delivery, CIDR checks, proctor codes, autosave, and submission.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.instructor = make_user("Instructor", mfa_enabled=True)
+        self.student = make_user("Student", mfa_enabled=True)
+        self.dept = Department.objects.create(name="Engineering", code="ENG")
+
+        StudentProfile.objects.create(
+            user=self.student,
+            department=self.dept,
+            current_level="level_4",
+            matriculation_year=2026,
+        )
+
+        self.course = Course.objects.create(
+            department=self.dept,
+            code="ENG101",
+            title="Engineering Basics",
+            semester="1",
+            academic_year=2026,
+            is_published=True,
+            published_by=self.instructor,
+            published_at=timezone.now(),
+        )
+        CourseStaff.objects.create(
+            course=self.course,
+            user=self.instructor,
+            staff_role="lead_instructor",
+            can_release_grades=True,
+        )
+        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
+
+        self.module = Module.objects.create(course=self.course, title="Unit 1", is_visible=True)
+        self.section = ModuleSection.objects.create(module=self.module, title="Exam Section", section_type="exam")
+
+        now = timezone.now()
+        proctor_hash = hashlib.sha256("PROCTOR123".encode("utf-8")).hexdigest()
+        self.assessment = Assessment.objects.create(
+            section=self.section,
+            title="Engineering Exam",
+            component_type=GradeComponentType.EXAM,
+            max_score=Decimal("100.00"),
+            max_attempts=1,
+            opens_at=now - timezone.timedelta(hours=1),
+            due_date=now + timezone.timedelta(hours=4),
+            duration_minutes=60,
+            lab_cidr_allowed="10.20.0.0/24",
+            proctor_code_hash=proctor_hash,
+            questions_json=[
+                {
+                    "question_id": "q1",
+                    "type": "multiple_choice",
+                    "points": 10.0,
+                    "prompt": "What is Newton's second law?",
+                    "options": [
+                        {"option_id": "o1", "text": "F = ma"},
+                        {"option_id": "o2", "text": "E = mc^2"},
+                    ],
+                }
+            ],
+            created_by=self.instructor,
+        )
+        ExamAnswerKey.objects.create(
+            assessment=self.assessment,
+            answer_key_json={"q1": {"correct_option_ids": ["o1"]}},
+            created_by=self.instructor,
+        )
+
+    def test_course_page_links_authorized_users_to_assessments(self):
+        # Staff can create assessments and enrolled students can find visible ones.
+        self.client.force_login(self.instructor)
+        page = self.client.get(reverse("kura:course_detail", kwargs={"course_id": self.course.id}))
+        self.assertContains(page, reverse("kura:assessment_create", kwargs={"section_id": self.section.id}))
+        self.assertContains(page, reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id}))
+        self.client.force_login(self.student)
+        page = self.client.get(reverse("kura:course_detail", kwargs={"course_id": self.course.id}))
+        self.assertContains(page, reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id}))
+        self.assertNotContains(page, reverse("kura:assessment_create", kwargs={"section_id": self.section.id}))
+
+    def test_scanned_attempt_requires_file_and_is_manually_graded(self):
+        # Scanned attempts cannot be submitted empty or automatically given a zero mark.
+        self.assessment.delivery_mode = "paper_scanned"
+        self.assessment.save(update_fields=["delivery_mode"])
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment, student=self.student, attempt_no=1,
+            status=AttemptStatus.IN_PROGRESS, expires_at=timezone.now() + timezone.timedelta(minutes=30),
+            ip_address="127.0.0.1",
+        )
+        self.client.force_login(self.student)
+        # Scanned-paper delivery shows a deadline instead of an online countdown.
+        page = self.client.get(reverse("kura:assessment_take", kwargs={"attempt_id": attempt.id}))
+        self.assertContains(page, "Upload scanned paper")
+        self.assertNotContains(page, 'id="exam-timer"')
+        url = reverse("kura:assessment_submit", kwargs={"attempt_id": attempt.id})
+
+        # Empty submission is rejected without changing the attempt.
+        self.client.post(url)
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.status, AttemptStatus.IN_PROGRESS)
+
+        # A real PDF passes the normal upload checks and is sent for manual marking.
+        upload = SimpleUploadedFile("script.pdf", b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF", content_type="application/pdf")
+        self.client.post(reverse("kura:assessment_attempt_file_upload", kwargs={"attempt_id": attempt.id}), {"file": upload})
+        self.assertEqual(AttemptFile.objects.filter(attempt=attempt).count(), 1)
+        self.client.post(url)
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.status, AttemptStatus.REQUIRES_MANUAL_GRADING)
+        self.assertFalse(Grade.objects.filter(attempt=attempt).exists())
+
+    def test_hidden_section_blocks_student_assessment_links_but_not_staff(self):
+        # Hiding a section must protect its assessment even when a student knows the URL.
+        self.section.is_visible = False
+        self.section.save(update_fields=["is_visible"])
+        self.client.force_login(self.student)
+        self.assertNotContains(self.client.get(reverse("kura:course_detail", kwargs={"course_id": self.course.id})), self.section.title)
+        self.assertEqual(self.client.get(reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id})).status_code, 403)
+        self.assertEqual(self.client.post(reverse("kura:assessment_attempt_start", kwargs={"assessment_id": self.assessment.id})).status_code, 403)
+        self.client.force_login(self.instructor)
+        self.assertContains(self.client.get(reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id})), self.assessment.title)
+
+    def test_hidden_section_blocks_existing_student_attempt(self):
+        # A previously started attempt must not bypass a later section hide.
+        attempt = AssessmentAttempt.objects.create(assessment=self.assessment, student=self.student, attempt_no=1,
+                                                   expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1")
+        self.section.is_visible = False
+        self.section.save(update_fields=["is_visible"])
+        self.client.force_login(self.student)
+        self.assertEqual(self.client.get(reverse("kura:assessment_take", kwargs={"attempt_id": attempt.id})).status_code, 403)
+        self.assertEqual(self.client.post(reverse("kura:assessment_autosave", kwargs={"attempt_id": attempt.id}), {"focus_lost": "1"}).status_code, 403)
+
+    def test_staff_can_hide_section_without_deleting_attempts(self):
+        # Hiding a section preserves attempts, and neither students nor GET can perform it.
+        attempt = AssessmentAttempt.objects.create(assessment=self.assessment, student=self.student, attempt_no=1,
+                                                   expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1")
+        url = reverse("kura:section_visibility_toggle", kwargs={"section_id": self.section.id})
+        self.client.force_login(self.student)
+        self.assertEqual(self.client.post(url).status_code, 403)
+        self.client.force_login(self.instructor)
+        self.assertEqual(self.client.get(url).status_code, 405)
+        self.assertEqual(self.client.post(url).status_code, 302)
+        self.section.refresh_from_db()
+        self.assertFalse(self.section.is_visible)
+        self.assertTrue(AssessmentAttempt.objects.filter(id=attempt.id).exists())
+
+    def test_delete_section_with_attempt_hides_instead(self):
+        # Confirmed deletion must preserve both the section and a student's existing attempt.
+        attempt = AssessmentAttempt.objects.create(assessment=self.assessment, student=self.student, attempt_no=1,
+                                                   expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1")
+        self.client.force_login(self.instructor)
+        url = reverse("kura:section_delete", kwargs={"section_id": self.section.id})
+        self.assertEqual(self.client.get(url).status_code, 405)
+        self.client.post(url, {"confirm": "on"})
+        self.section.refresh_from_db()
+        self.assertFalse(self.section.is_visible)
+        self.assertTrue(AssessmentAttempt.objects.filter(id=attempt.id).exists())
+
+    def test_section_deletion_requires_confirmation_and_course_permission(self):
+        # An unconfirmed or unrelated request must never delete a section.
+        empty_section = ModuleSection.objects.create(module=self.module, title="Empty", section_type="lecture")
+        url = reverse("kura:section_delete", kwargs={"section_id": empty_section.id})
+        self.client.force_login(self.student)
+        self.assertEqual(self.client.post(url, {"confirm": "on"}).status_code, 403)
+        self.client.force_login(self.instructor)
+        self.client.post(url)
+        self.assertTrue(ModuleSection.objects.filter(id=empty_section.id).exists())
+        self.client.post(url, {"confirm": "on"})
+        self.assertFalse(ModuleSection.objects.filter(id=empty_section.id).exists())
+
+    def test_assessment_with_attempt_cannot_be_deleted(self):
+        # Direct assessment deletion must not cascade into a student's attempt.
+        attempt = AssessmentAttempt.objects.create(assessment=self.assessment, student=self.student, attempt_no=1,
+                                                   expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1")
+        self.client.force_login(self.instructor)
+        url = reverse("kura:assessment_delete", kwargs={"assessment_id": self.assessment.id})
+        self.assertEqual(self.client.get(url).status_code, 405)
+        self.client.post(url, {"confirm": "on"})
+        self.assertTrue(Assessment.objects.filter(id=self.assessment.id).exists())
+        self.assertTrue(AssessmentAttempt.objects.filter(id=attempt.id).exists())
+
+    def test_scanned_attempt_rejects_non_image_non_pdf_upload(self):
+        # Files that are otherwise allowed cannot be submitted as scanned papers.
+        self.assessment.delivery_mode = "paper_scanned"
+        self.assessment.save(update_fields=["delivery_mode"])
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment, student=self.student, attempt_no=1,
+            status=AttemptStatus.IN_PROGRESS, expires_at=timezone.now() + timezone.timedelta(minutes=30),
+            ip_address="127.0.0.1",
+        )
+        self.client.force_login(self.student)
+        upload = SimpleUploadedFile("script.txt", b"This is plain text and not a scanned paper.")
+        response = self.client.post(
+            reverse("kura:assessment_attempt_file_upload", kwargs={"attempt_id": attempt.id}),
+            {"file": upload}, follow=True,
+        )
+        self.assertContains(response, "Upload a PDF or image of the scanned paper.")
+        self.assertFalse(AttemptFile.objects.filter(attempt=attempt).exists())
+        self.assertFalse(StoredFile.objects.filter(original_filename="script.txt").exists())
+
+    def test_scanned_paper_staff_upload_checks_staff_and_student_enrollment(self):
+        # Neither unassigned staff nor an unrelated student can be used for a paper upload.
+        self.assessment.delivery_mode = "paper_scanned"
+        self.assessment.save(update_fields=["delivery_mode"])
+        outsider = make_user("Student", mfa_enabled=True)
+        unrelated_staff = make_user("Instructor", mfa_enabled=True)
+        url = reverse("kura:scanned_paper_staff_upload", kwargs={"assessment_id": self.assessment.id})
+        self.client.force_login(unrelated_staff)
+        self.assertEqual(self.client.post(url).status_code, 403)
+        self.client.force_login(self.instructor)
+        self.assertEqual(self.client.get(url).status_code, 405)
+        upload = SimpleUploadedFile("scan.pdf", b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF")
+        response = self.client.post(url, {"student": str(outsider.id), "file": upload})
+        self.assertEqual(response.status_code, 302)
+        self.assertFalse(AssessmentAttempt.objects.filter(assessment=self.assessment, student=outsider).exists())
+
+    def test_student_cannot_start_from_wrong_ip_range(self):
+        # Starting an attempt from outside the lab CIDR subnet is rejected.
+        self.client.force_login(self.student)
+        response = self.client.post(
+            reverse("kura:assessment_attempt_start", kwargs={"assessment_id": self.assessment.id}),
+            {"proctor_code": "PROCTOR123"},
+            REMOTE_ADDR="192.168.1.100",
+        )
+        self.assertRedirects(response, reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id}))
+        self.assertFalse(AssessmentAttempt.objects.filter(assessment=self.assessment, student=self.student).exists())
+
+    def test_student_can_start_from_valid_ip_range_with_proctor_code(self):
+        # Starting with authorized lab IP and correct proctor code creates an active attempt.
+        self.client.force_login(self.student)
+        response = self.client.post(
+            reverse("kura:assessment_attempt_start", kwargs={"assessment_id": self.assessment.id}),
+            {"proctor_code": "PROCTOR123"},
+            REMOTE_ADDR="10.20.0.45",
+        )
+        attempt = AssessmentAttempt.objects.get(assessment=self.assessment, student=self.student)
+        self.assertRedirects(response, reverse("kura:assessment_take", kwargs={"attempt_id": attempt.id}))
+        self.assertEqual(attempt.status, AttemptStatus.IN_PROGRESS)
+        self.assertTrue(attempt.expires_at > timezone.now())
+
+    @override_settings(TRUST_PROXY_IP_HEADER=True)
+    def test_lab_check_uses_visitor_ip_from_waf_not_waf_address(self):
+        # Behind the WAF, REMOTE_ADDR is the WAF's address (outside the lab
+        # subnet) and X-Real-IP carries the student's lab PC address.
+        # The lab check must use the student's address.
+        self.client.force_login(self.student)
+        response = self.client.post(
+            reverse("kura:assessment_attempt_start", kwargs={"assessment_id": self.assessment.id}),
+            {"proctor_code": "PROCTOR123"},
+            REMOTE_ADDR="172.28.10.130",
+            HTTP_X_REAL_IP="10.20.0.45",
+        )
+        attempt = AssessmentAttempt.objects.get(assessment=self.assessment, student=self.student)
+        self.assertRedirects(response, reverse("kura:assessment_take", kwargs={"attempt_id": attempt.id}))
+        # The attempt records the student's address, not the WAF's.
+        self.assertEqual(attempt.ip_address, "10.20.0.45")
+
+    def test_autosave_rejected_after_deadline(self):
+        # Responses submitted after expires_at are rejected with 403 Forbidden.
+        now = timezone.now()
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment,
+            student=self.student,
+            attempt_no=1,
+            status=AttemptStatus.IN_PROGRESS,
+            expires_at=now - timezone.timedelta(minutes=5),
+            ip_address="10.20.0.45",
+        )
+
+        self.client.force_login(self.student)
+        response = self.client.post(
+            reverse("kura:assessment_autosave", kwargs={"attempt_id": attempt.id}),
+            {"question_id": "q1", "response_type": "multiple_choice", "selected_options": ["o1"]},
+        )
+        self.assertEqual(response.status_code, 403)
+
+    def test_matching_autosave_ignores_forged_duplicate_pair_names(self):
+        # Extra POST keys must not duplicate a correct pair and inflate automatic marks.
+        self.assessment.questions_json = [{
+            "question_id": "match", "type": "matching", "prompt": "Match", "points": 10,
+            "left_prompts": [{"pair_id": "p1", "text": "One"}], "available_matches": ["First", "Other"],
+        }]
+        self.assessment.save(update_fields=["questions_json"])
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment, student=self.student, attempt_no=1,
+            expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1",
+        )
+        self.client.force_login(self.student)
+        response = self.client.post(reverse("kura:assessment_autosave", kwargs={"attempt_id": attempt.id}), {
+            "question_id": "match", "response_type": "matching", "match_p1": "First", "match_match_p1": "First",
+        })
+        self.assertEqual(response.status_code, 200)
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.answers_json[0]["submitted_matches"], [{"pair_id": "p1", "selected_match": "First"}])
+
+    def test_matching_grader_counts_old_duplicate_answers_only_once(self):
+        # Previously stored duplicate answers must not award more than the question's points.
+        self.assessment.questions_json = [{
+            "question_id": "match", "type": "matching", "prompt": "Match", "points": 10,
+            "left_prompts": [{"pair_id": "p1", "text": "One"}], "available_matches": ["First"],
+        }]
+        self.assessment.save(update_fields=["questions_json"])
+        key = self.assessment.answer_key
+        key.answer_key_json = {"match": {"correct_pairs": {"p1": "First"}}}
+        key.save(update_fields=["answer_key_json"])
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment, student=self.student, attempt_no=1,
+            expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1",
+            answers_json=[{"question_id": "match", "type": "matching", "submitted_matches": [
+                {"pair_id": "p1", "selected_match": "First"}, {"pair_id": "p1", "selected_match": "First"},
+            ]}],
+        )
+        self.client.force_login(self.student)
+        self.client.post(reverse("kura:assessment_submit", kwargs={"attempt_id": attempt.id}))
+        grade = Grade.objects.get(attempt=attempt)
+        self.assertEqual(grade.score, Decimal("10"))
+
+    def test_autosave_rejects_unknown_questions_and_options(self):
+        # Students cannot save invented questions, types, or choices into an attempt.
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment, student=self.student, attempt_no=1,
+            expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1",
+        )
+        self.client.force_login(self.student)
+        url = reverse("kura:assessment_autosave", kwargs={"attempt_id": attempt.id})
+        for data in (
+            {"question_id": "unknown", "response_type": "multiple_choice", "selected_options": ["o1"]},
+            {"question_id": "q1", "response_type": "matching"},
+            {"question_id": "q1", "response_type": "multiple_choice", "selected_options": ["invented"]},
+        ):
+            with self.subTest(data=data):
+                self.assertEqual(self.client.post(url, data).status_code, 400)
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.answers_json, [])
+
+    def test_reopening_attempt_restores_saved_answers(self):
+        # Returning to the page must not make autosaved answers appear to be lost.
+        self.assessment.questions_json = [
+            {"question_id": "q1", "type": "multiple_choice", "points": 10, "prompt": "Choose",
+             "options": [{"option_id": "o1", "text": "First"}, {"option_id": "o2", "text": "Second"}]},
+            {"question_id": "q2", "type": "matching", "points": 10, "prompt": "Match",
+             "left_prompts": [{"pair_id": "p1", "text": "One"}], "available_matches": ["First", "Second"]},
+            {"question_id": "q3", "type": "long_text", "points": 10, "prompt": "Explain", "max_words": 100},
+        ]
+        self.assessment.save(update_fields=["questions_json"])
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment, student=self.student, attempt_no=1,
+            expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1",
+            answers_json=[
+                {"question_id": "q1", "selected_option_ids": ["o2"]},
+                {"question_id": "q2", "submitted_matches": [{"pair_id": "p1", "selected_match": "Second"}]},
+                {"question_id": "q3", "response_text": "Saved written answer"},
+            ],
+        )
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("kura:assessment_take", kwargs={"attempt_id": attempt.id}))
+        self.assertContains(response, 'value="o2" class="checkbox checkbox-primary checkbox-sm"\n                            checked')
+        self.assertContains(response, '<option value="Second" selected>Second</option>')
+        self.assertContains(response, '>Saved written answer</textarea>')
+
+    def test_upload_file_rejected_after_submission_and_trigger_locks(self):
+        # Uploading coursework files after submission is blocked by view and trigger.
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment,
+            student=self.student,
+            attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED,
+            expires_at=timezone.now() + timezone.timedelta(minutes=30),
+            submitted_at=timezone.now(),
+            ip_address="10.20.0.45",
+        )
+
+        self.client.force_login(self.student)
+        fake_file = SimpleUploadedFile("report.pdf", b"%PDF-1.4\ntest", content_type="application/pdf")
+        self.client.post(
+            reverse("kura:assessment_attempt_file_upload", kwargs={"attempt_id": attempt.id}),
+            {"file": fake_file},
+        )
+        self.assertFalse(AttemptFile.objects.filter(attempt=attempt).exists())
+
+        # Direct database insert is blocked by the check_attempt_files_lock trigger.
+        stored_file = validate_and_save_upload(
+            SimpleUploadedFile("code.txt", b"print('hello')", content_type="text/plain"),
+            self.student,
+        )
+        with self.assertRaises(DatabaseError):
+            AttemptFile.objects.create(attempt=attempt, file=stored_file)
+
+    def test_student_cannot_see_attempt_summary_before_grade_release(self):
+        # A draft or finalized grade must not reveal the attempt's automatic score.
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment, student=self.student, attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1",
+            summary_score_json={"total_score": 73, "max_possible_points": 100},
+        )
+        grade = Grade.objects.create(
+            assessment=self.assessment, student=self.student, attempt=attempt,
+            score=73, status=GradeStatus.DRAFT,
+        )
+        self.client.force_login(self.student)
+        url = reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id})
+
+        for status in (GradeStatus.DRAFT, GradeStatus.FINALIZED):
+            grade.status = status
+            grade.save(update_fields=["status"])
+            response = self.client.get(url)
+            self.assertEqual(response.status_code, 200)
+            self.assertNotContains(response, "Evaluation Summary")
+            self.assertNotContains(response, "73 / 100")
+            self.assertIsNone(response.context["released_grade"])
+
+    def test_student_sees_only_the_released_grade_not_a_stale_attempt_summary(self):
+        # A released grade may have changed since automatic marking, so show the released value.
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment, student=self.student, attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1",
+            summary_score_json={"total_score": 73, "max_possible_points": 100},
+        )
+        Grade.objects.create(
+            assessment=self.assessment, student=self.student, attempt=attempt,
+            score=81, status=GradeStatus.RELEASED,
+        )
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id}))
+        self.assertContains(response, "81.00")
+        self.assertNotContains(response, "Evaluation Summary")
+        self.assertNotContains(response, "73 / 100")
+
+    def test_course_staff_can_see_another_students_attempt_summary(self):
+        # Assigned teaching staff still need the marking breakdown for other students.
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment, student=self.student, attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1",
+            summary_score_json={"total_score": 73, "max_possible_points": 100},
+        )
+        self.client.force_login(self.instructor)
+        response = self.client.get(reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id}))
+        self.assertContains(response, "Evaluation Summary")
+        self.assertContains(response, "73 / 100")
+
+    def test_student_who_is_also_course_staff_cannot_see_own_draft_summary(self):
+        # A course assignment must not expose a student's own unreleased mark.
+        CourseStaff.objects.create(course=self.course, user=self.student, staff_role="teaching_assistant")
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment, student=self.student, attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1",
+            summary_score_json={"total_score": 73, "max_possible_points": 100},
+        )
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id}))
+        self.assertNotContains(response, "Evaluation Summary")
+        self.assertNotContains(response, "73 / 100")
+
+    def test_admin_with_course_assignment_cannot_open_assessment_or_attempt(self):
+        # An Admin role must override a matching course staff assignment.
+        admin = make_user("Admin", mfa_enabled=True)
+        CourseStaff.objects.create(course=self.course, user=admin, staff_role="co_instructor")
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment, student=self.student, attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1",
+            summary_score_json={"total_score": 73},
+        )
+        self.client.force_login(admin)
+        for url in (
+            reverse("kura:assessment_create", kwargs={"section_id": self.section.id}),
+            reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id}),
+            reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id}),
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(self.client.get(url).status_code, 403)
+
+
 class SecurityLoggingTests(TestCase):
     """
     Tests Security event logging without leaking sensitive credentials.

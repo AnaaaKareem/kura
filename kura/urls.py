@@ -90,4 +90,36 @@ urlpatterns = [
     path("assessments/<uuid:assessment_id>/", views.assessment_detail_view, name="assessment_detail"),
     path("assessments/<uuid:assessment_id>/edit/", views.assessment_create_view, name="assessment_edit"),
     path("assessments/<uuid:assessment_id>/delete/", views.assessment_delete_view, name="assessment_delete"),
+    path(
+        "assessments/<uuid:assessment_id>/files/upload/",
+        views.assessment_file_upload_view,
+        name="assessment_file_upload",
+    ),
+    path(
+        "assessments/<uuid:assessment_id>/scanned-upload/",
+        views.scanned_paper_staff_upload_view,
+        name="scanned_paper_staff_upload",
+    ),
+    path(
+        "assessments/<uuid:assessment_id>/files/<uuid:file_id>/download/",
+        views.assessment_file_download_view,
+        name="assessment_file_download",
+    ),
+    path(
+        "assessments/<uuid:assessment_id>/start/", views.assessment_attempt_start_view, name="assessment_attempt_start"
+    ),
+    path("attempts/<uuid:attempt_id>/", views.attempt_detail_view, name="attempt_detail"),
+    path(
+        "attempts/<uuid:attempt_id>/files/<uuid:file_id>/download/",
+        views.attempt_file_download_view,
+        name="attempt_file_download",
+    ),
+    path("attempts/<uuid:attempt_id>/take/", views.assessment_take_view, name="assessment_take"),
+    path("attempts/<uuid:attempt_id>/autosave/", views.assessment_autosave_view, name="assessment_autosave"),
+    path(
+        "attempts/<uuid:attempt_id>/files/upload/",
+        views.assessment_attempt_file_upload_view,
+        name="assessment_attempt_file_upload",
+    ),
+    path("attempts/<uuid:attempt_id>/submit/", views.assessment_submit_view, name="assessment_submit"),
 ]

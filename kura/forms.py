@@ -1155,6 +1155,57 @@ class AssessmentAttemptStartForm(forms.Form):
     )
 
 
+class AssessmentAutosaveForm(forms.Form):
+    """Validate which question or focus event the student is sending."""
+
+    # Only known response types can reach the answer validation below.
+    question_id = forms.CharField(required=False, max_length=255)
+    response_type = forms.ChoiceField(
+        required=False,
+        choices=[
+            ("multiple_choice", "Multiple choice"),
+            ("matching", "Matching"),
+            ("long_text", "Written answer"),
+            ("essay", "Essay"),
+        ],
+    )
+    focus_lost = forms.BooleanField(required=False)
+
+
+class AssessmentAnswerForm(forms.Form):
+    """Validate answers against the choices in the student's actual question."""
+
+    # Limit written responses and make choice values come from the assessment itself.
+    selected_options = forms.MultipleChoiceField(required=False, choices=[])
+    response_text = forms.CharField(required=False, max_length=100000, strip=False)
+
+    def __init__(self, data, question):
+        """
+        Builds answer fields from the actual question shown to the student.
+        """
+        # Add only the matching-pair fields and choices that the question really contains.
+        super().__init__(data)
+        self.max_words = question.get("max_words", 500)
+        for option in question.get("options", []):
+            option_id = option.get("option_id", "")
+            self.fields["selected_options"].choices.append((option_id, option.get("text", "")))
+        choices = [("", "No answer")]
+        for match in question.get("available_matches", []):
+            choices.append((match, match))
+        for pair in question.get("left_prompts", []):
+            self.fields[f"match_{pair['pair_id']}"] = forms.ChoiceField(required=False, choices=choices)
+
+    def clean_response_text(self):
+        """
+        Checks that a written answer stays within the question's word limit.
+        """
+        # A student cannot submit more words than the question allows.
+        text = self.cleaned_data["response_text"]
+        if len(text.split()) > self.max_words:
+            raise forms.ValidationError("The answer exceeds this question's word limit.")
+        return text
+
+
 class AssessmentFileUploadForm(forms.Form):
     """
     Form for uploading files attached to assessments or student attempts.
