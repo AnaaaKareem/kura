@@ -1,0 +1,327 @@
+name: Kura CI/CD Pipeline
+
+on:
+  push:
+    branches:
+      - main
+      - development
+  pull_request:
+    branches:
+      - main
+      - development
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # 1. Code Quality & Dependency Audit
+  # ---------------------------------------------------------------------------
+  lint-and-audit:
+    name: Lint & Dependency Security Audit
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+
+      - name: Install Linting & Audit Tools
+        run: |
+          python -m pip install --upgrade pip
+          pip install ruff pip-audit -r requirements.txt
+
+      - name: Run Ruff Linter
+        run: |
+          ruff check .
+
+      - name: Run Pip-Audit Vulnerability Scanner
+        run: |
+          pip-audit -r requirements.txt
+
+  # ---------------------------------------------------------------------------
+  # 2. Automated Tests & Production Deployment Check
+  # ---------------------------------------------------------------------------
+  test-and-deploy-check:
+    name: Tests & Deployment Configuration Check
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: kura
+          POSTGRES_USER: kura
+          POSTGRES_PASSWORD: kura_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libmagic1 libpq-dev
+
+      - name: Install Python Dependencies
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Run Full Test Suite with PostgreSQL 17
+        env:
+          DATABASE_NAME: kura
+          DATABASE_USER: kura
+          DATABASE_PASSWORD: kura_password
+          DATABASE_HOST: localhost
+          DATABASE_PORT: 5432
+          SECRET_KEY: ci-test-secret-key-not-for-production-environment
+          DEBUG: "True"
+        run: |
+          python manage.py test kura --noinput
+
+      - name: Verify Django Production Deploy Checks
+        env:
+          DATABASE_NAME: kura
+          DATABASE_USER: kura
+          DATABASE_PASSWORD: kura_password
+          DATABASE_HOST: localhost
+          DATABASE_PORT: 5432
+          SECRET_KEY: ci-production-deploy-check-secret-key-min-fifty-chars-long-abc123
+          DEBUG: "False"
+          ALLOWED_HOSTS: localhost,127.0.0.1
+          SECURE_SSL_REDIRECT: "True"
+        run: |
+          python manage.py check --deploy
+
+  # ---------------------------------------------------------------------------
+  # 3. Static Application Security Testing (SAST) with Semgrep
+  # ---------------------------------------------------------------------------
+  semgrep-scan:
+    name: Semgrep SAST Scan (OWASP Top 10 & Django)
+    runs-on: ubuntu-latest
+    container:
+      image: semgrep/semgrep
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Run Semgrep Security Rules
+        run: |
+          semgrep scan --config "p/django" --config "p/owasp-top-ten" --error
+
+  # ---------------------------------------------------------------------------
+  # 4. Container Build & Image Vulnerability Scan with Trivy
+  # ---------------------------------------------------------------------------
+  docker-build-and-trivy:
+    name: Docker Image Build & Trivy Vulnerability Scan
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Build Container Image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          load: true
+          tags: kura:${{ github.sha }}
+
+      - name: Scan Image with Trivy (Fail on CRITICAL)
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          image-ref: "kura:${{ github.sha }}"
+          format: "table"
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "CRITICAL"
+
+      - name: Scan Image with Trivy (Informational Report on HIGH)
+        if: always()
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          image-ref: "kura:${{ github.sha }}"
+          format: "table"
+          exit-code: "0"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "HIGH"
+
+      # Build the mail relay separately so its packages are scanned too.
+      - name: Build mail relay image
+        uses: docker/build-push-action@v6
+        with:
+          context: ./docker/postfix
+          load: true
+          tags: kura-relay:${{ github.sha }}
+
+      # Validate Postfix's installed files before scanning the image.
+      - name: Check Postfix configuration
+        run: docker run --rm --entrypoint postfix "kura-relay:${{ github.sha }}" check
+
+      # Apply the same critical vulnerability gate used for the web image.
+      - name: Scan mail relay image with Trivy
+        uses: aquasecurity/trivy-action@0.29.0
+        with:
+          image-ref: "kura-relay:${{ github.sha }}"
+          format: "table"
+          exit-code: "1"
+          ignore-unfixed: true
+          vuln-type: "os,library"
+          severity: "CRITICAL"
+
+  # Validate infrastructure files without starting the real services.
+  infrastructure-config:
+    name: Infrastructure configuration checks
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout source code
+        uses: actions/checkout@v4
+
+      # These are empty CI-only files, never production credentials. Do not
+      # overwrite an existing file if this step is reused in another checkout.
+      - name: Create missing placeholder secret files
+        run: |
+          mkdir -p secrets
+          for name in db_password backup_encryption_key django_secret_key crowdsec_bouncer_key cloudflare_tunnel_token grafana_admin_password telegram_bot_token telegram_chat_id netbird_setup_key smtp_relay_credentials vault_role_id vault_secret_id; do
+            test -e "secrets/$name.txt" || touch "secrets/$name.txt"
+          done
+
+      # Parsing Compose does not start containers or read secret contents.
+      - name: Check Compose configuration
+        run: docker compose config --quiet
+
+      # nft -c validates the file without applying the host firewall.
+      - name: Install nftables and check firewall syntax
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y nftables
+          sudo nft -c -f docker/nftables/kura.nft
+
+      # Use the exact pinned Prometheus image used by the stack.
+      - name: Check Prometheus alert rules
+        run: |
+          docker run --rm --entrypoint=/bin/promtool \
+            -v "$PWD/docker/prometheus/alerts.yml:/tmp/alerts.yml:ro" \
+            prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2 \
+            check rules /tmp/alerts.yml
+
+      # Check alert routing without starting Alertmanager or reading secrets.
+      - name: Check Alertmanager configuration
+        run: |
+          docker run --rm --entrypoint=/bin/amtool \
+            -v "$PWD/docker/alertmanager/alertmanager.yml:/tmp/alertmanager.yml:ro" \
+            prom/alertmanager:v0.34.2@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b \
+            check-config /tmp/alertmanager.yml
+
+      # Validate Alloy's configuration using its pinned image.
+      - name: Check Alloy configuration
+        run: |
+          docker run --rm --entrypoint=/bin/alloy \
+            -v "$PWD/docker/alloy/config.alloy:/tmp/config.alloy:ro" \
+            grafana/alloy:v1.21.3@sha256:8ab871206bd2d8f89277f53abffee5f452a293980788d52f85fa183a87a505a4 \
+            validate /tmp/config.alloy
+
+  # ---------------------------------------------------------------------------
+  # 5. Dynamic Application Security Testing (DAST) with OWASP ZAP
+  # ---------------------------------------------------------------------------
+  owasp-zap-dast:
+    name: OWASP ZAP Baseline DAST Scan
+    runs-on: ubuntu-latest
+
+    services:
+      postgres:
+        image: postgres:17-alpine
+        env:
+          POSTGRES_DB: kura
+          POSTGRES_USER: kura
+          POSTGRES_PASSWORD: kura_password
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    steps:
+      - name: Checkout Source Code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.14
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.14"
+          cache: "pip"
+
+      - name: Install Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libmagic1 libpq-dev
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Migrate Database & Start Kura Server
+        env:
+          DATABASE_NAME: kura
+          DATABASE_USER: kura
+          DATABASE_PASSWORD: kura_password
+          DATABASE_HOST: 127.0.0.1
+          DATABASE_PORT: 5432
+          SECRET_KEY: ci-zap-dast-secret-key-min-fifty-chars-long-for-security-scan
+          DEBUG: "False"
+          ALLOWED_HOSTS: localhost,127.0.0.1
+          SECURE_SSL_REDIRECT: "False"
+          VAULT_ENABLED: "False"
+          CLAMAV_REQUIRED: "False"
+        run: |
+          python manage.py migrate --noinput
+          python manage.py collectstatic --noinput
+          gunicorn --bind 127.0.0.1:8000 --workers 2 config.wsgi:application --daemon
+          for i in $(seq 1 15); do
+            if curl -fsS http://127.0.0.1:8000/login/ > /dev/null; then
+              break
+            fi
+            sleep 1
+          done
+
+      - name: Run OWASP ZAP Baseline Scan
+        run: |
+          mkdir -p zap-reports
+          chmod 777 zap-reports
+          docker run --rm --network host \
+            -v "${GITHUB_WORKSPACE}/zap-reports:/zap/wrk:rw" \
+            ghcr.io/zaproxy/zaproxy:stable \
+            zap-baseline.py \
+            -t http://127.0.0.1:8000/login/ \
+            -r zap-report.html \
+            -md zap-report.md \
+            -I
+
+      - name: Upload OWASP ZAP Report Artifact
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: owasp-zap-dast-report
+          path: zap-reports/

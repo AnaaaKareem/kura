@@ -1,0 +1,12 @@
+[tool.ruff]
+line-length = 120
+target-version = "py314"
+exclude = [
+    ".git",
+    ".venv",
+    "kura/migrations",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "W"]
+ignore = ["E501"]
