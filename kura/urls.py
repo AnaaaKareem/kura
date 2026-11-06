@@ -3,6 +3,8 @@ from . import views
 
 app_name = "kura"
 urlpatterns = [
+    path("attendance/history/", views.attendance_history_view, name="attendance_history"),
+
     path("modules/<uuid:module_id>/attendance/start/", views.attendance_session_start_view, name="attendance_session_start"),
     path("attendance/sessions/<uuid:session_id>/", views.attendance_session_detail_view, name="attendance_session_detail"),
     path("attendance/sessions/<uuid:session_id>/close/", views.attendance_session_close_view, name="attendance_session_close"),

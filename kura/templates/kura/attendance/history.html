@@ -1,0 +1,102 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Attendance History - Kura{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+            <h1 class="text-2xl font-bold">
+                {% if is_staff_view %}Course Attendance Roll{% else %}My Attendance History{% endif %}
+            </h1>
+            <p class="text-sm text-base-content/70 mt-1">
+                {% if is_staff_view %}
+                Verified attendance entries across your taught courses.
+                {% else %}
+                Your verified class attendance and check-in history.
+                {% endif %}
+            </p>
+        </div>
+        <a href="{% url 'kura:schedule_list' %}" class="btn btn-outline btn-sm">
+            View Timetable
+        </a>
+    </div>
+
+    <div class="card bg-base-100 border border-base-300 overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="table table-sm w-full text-sm">
+                <thead class="bg-base-200">
+                    <tr>
+                        {% if is_staff_view %}
+                        <th>Student</th>
+                        {% endif %}
+                        <th>Course</th>
+                        <th>Session</th>
+                        <th>Status</th>
+                        <th>Method</th>
+                        <th>Date & Time</th>
+                        {% if is_staff_view %}
+                        <th>Notes</th>
+                        {% endif %}
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for record in records %}
+                    <tr>
+                        {% if is_staff_view %}
+                        <td>
+                            <div class="font-semibold">{{ record.student.get_full_name|default:record.student.email }}</div>
+                            <div class="text-xs text-base-content/60">{{ record.student.email }}</div>
+                        </td>
+                        {% endif %}
+                        <td>
+                            <span class="badge badge-primary badge-sm font-mono">{{ record.session.module.course.code }}</span>
+                        </td>
+                        <td>
+                            <div class="font-medium">{{ record.session.title }}</div>
+                            <div class="text-xs text-base-content/60">{{ record.session.module.title }}</div>
+                        </td>
+                        <td>
+                            {% if record.status == 'present' %}
+                            <span class="badge badge-success badge-sm">Present</span>
+                            {% elif record.status == 'late' %}
+                            <span class="badge badge-warning badge-sm">Late</span>
+                            {% elif record.status == 'excused' %}
+                            <span class="badge badge-info badge-sm">Excused</span>
+                            {% else %}
+                            <span class="badge badge-error badge-sm">Absent</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <span class="badge badge-ghost badge-sm uppercase font-mono">{{ record.method }}</span>
+                        </td>
+                        <td>
+                            <div class="font-mono text-xs">{{ record.verified_at|date:"Y-m-d H:i" }}</div>
+                        </td>
+                        {% if is_staff_view %}
+                        <td class="text-xs text-base-content/70 max-w-xs truncate" title="{{ record.override_reason }}">
+                            {% if record.override_reason %}
+                            <span class="font-medium">Override:</span> {{ record.override_reason }}
+                            {% if record.recorded_by %}
+                            <span class="text-base-content/50">({{ record.recorded_by.get_full_name|default:record.recorded_by.email }})</span>
+                            {% endif %}
+                            {% else %}
+                            &ndash;
+                            {% endif %}
+                        </td>
+                        {% endif %}
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="{% if is_staff_view %}7{% else %}5{% endif %}" class="text-center py-8 text-base-content/50">
+                            No attendance records found.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

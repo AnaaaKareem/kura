@@ -920,3 +920,6 @@ class ManualAttendanceForm(forms.Form):
             raise forms.ValidationError("A written justification reason is required for manual roll entries.")
         return reason
 
+
+
+
