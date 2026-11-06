@@ -1,0 +1,61 @@
+# ==============================================================================
+# Postfix settings for the Kura mail relay (docker/postfix/README.md)
+#
+#   Django ──STARTTLS (relay.crt from Vault's CA)──► relay :25
+#   relay  ──STARTTLS (provider certificate checked) + login──► mail provider
+# ==============================================================================
+
+compatibility_level = 3.11
+
+# Kura's mail identity. kura.edu is assumed to be a real domain whose mail
+# provider (relayhost below) is allowed to send for it (SPF/DKIM at the provider).
+myhostname = mail.kura.edu
+mydomain = kura.edu
+myorigin = kura.edu
+
+# Nothing is ever delivered on this machine: every email goes to the provider.
+mydestination =
+local_transport = error:local delivery is disabled
+alias_maps =
+alias_database =
+
+# --- Who may hand mail to the relay -------------------------------------------
+# Only the private "mail" Docker network (172.28.30.0/24), which only Django
+# is on, and the container itself. Everyone else is refused.
+inet_interfaces = all
+inet_protocols = ipv4
+mynetworks = 127.0.0.0/8 172.28.30.0/24
+smtpd_client_restrictions = permit_mynetworks, reject
+smtpd_relay_restrictions = permit_mynetworks, reject
+# Every Kura email must come from noreply@kura.edu; any other sender is refused.
+smtpd_sender_restrictions = check_sender_access inline:{ noreply@kura.edu=OK }, reject
+# Notifications are small; nothing larger than 1 MB is accepted.
+message_size_limit = 1048576
+
+# TLS from Django: required (no plain-text mail), certificate from Vault's CA.
+smtpd_tls_cert_file = /etc/postfix/tls/relay.crt
+smtpd_tls_key_file = /etc/postfix/tls/relay.key
+smtpd_tls_security_level = encrypt
+smtpd_tls_mandatory_protocols = >=TLSv1.2
+
+# --- How the relay reaches the mail provider ----------------------------------
+# EDIT THIS LINE: your provider's SMTP server and port, in square brackets
+# (brackets = connect to exactly this host, no MX lookup).
+relayhost = [smtp.example.com]:587
+# Always use TLS to the provider AND check its certificate against the public
+# CAs and its host name ("secure"), so nobody in between can read or change mail.
+smtp_tls_security_level = secure
+smtp_tls_mandatory_protocols = >=TLSv1.2
+smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt
+# Log in to the provider. The username and password come from the Docker
+# secret smtp_relay_credentials, one line: [smtp.example.com]:587 username:password
+smtp_sasl_auth_enable = yes
+smtp_sasl_password_maps = texthash:/run/secrets/smtp_relay_credentials
+smtp_sasl_security_options = noanonymous
+smtp_sasl_tls_security_options = noanonymous
+
+# Log to the container output (docker compose logs relay), including one line
+# per TLS connection on both hops, as an audit trail that mail was encrypted.
+maillog_file = /dev/stdout
+smtpd_tls_loglevel = 1
+smtp_tls_loglevel = 1

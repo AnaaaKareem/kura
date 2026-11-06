@@ -17,7 +17,6 @@ from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
 from django.contrib.auth.decorators import login_required
-from django.core.mail import send_mail
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.cache import caches
 from django.db import transaction
@@ -71,6 +70,7 @@ from .forms import (
     TAAssignForm,
 )
 from .models import (
+    OutgoingEmail,
     QuarantinedFile,
     AppealStatus,
     Assessment,
@@ -284,6 +284,73 @@ def csrf_failure_view(request, reason=""):
     # Record the CSRF denial for investigation without exposing the reason in the page.
     log_security_event(request, "access.csrf_failed", {"reason": str(reason)[:200]}, logging.WARNING)
     return render(request, "403.html", status=403)
+
+def queue_email(event_key, to_email, subject, body):
+    """
+    Puts one email in the outbox (OutgoingEmail) for send_queued_emails to send.
+    Used by the password reset and by every notification.
+    Security: event_key is unique in the database, so the same event (for
+    example "reminder-24h:<assessment>:<student>") is never emailed twice, even
+    if two requests or jobs try at the same moment. The subject is squeezed onto
+    one line, so text from a title can never add extra email headers.
+    """
+    # One line only, at most 200 characters.
+    one_line_subject = " ".join(subject.split())[:200]
+
+    # Create each notification only once, and report only when this call created it.
+    email_record, created = OutgoingEmail.objects.get_or_create(
+        event_key=event_key[:255],
+        defaults={"to_email": to_email, "subject": one_line_subject, "body": body},
+    )
+    if created:
+        event_key_prefix = email_record.event_key.split(":", 1)[0]
+        log_security_event(None, "email.queued", {"event_key_prefix": event_key_prefix})
+    return created
+
+
+def queue_assessment_notification(assessment, event_name, subject, opening_line):
+    """
+    Emails every actively enrolled student of the assessment's course about it.
+    Used for "new assessment" (create view and module made visible) and
+    "dates changed" (edit view).
+    Security: only when students can actually see the assessment (its section
+    and module are visible), never with scores or answers, and each student is
+    emailed at most once per event (event_key "<event_name>:<assessment>:<student>").
+    """
+    section = assessment.section
+    module = section.module
+    course = module.course
+
+    # Hidden work stays hidden: no email until students can see it.
+    if not (section.is_visible and module.is_visible):
+        return
+
+    # The same text for every student. The link uses the fixed SITE_URL, never
+    # the Host header of the request.
+    link = settings.SITE_URL + reverse("kura:assessment_detail", kwargs={"assessment_id": assessment.id})
+    opens_text = timezone.localtime(assessment.opens_at).strftime("%d %b %Y, %H:%M")
+    due_text = timezone.localtime(assessment.due_date).strftime("%d %b %Y, %H:%M")
+    body = (
+        f"Hello,\n\n{opening_line}\n\n"
+        f"{assessment.get_component_type_display()}: {assessment.title}\n"
+        f"Course: {course.code} {course.title}\n"
+        f"Opens: {opens_text}\n"
+        f"Due: {due_text}\n\n"
+        f"Log in to Kura to see the details:\n{link}\n\n"
+        "This is an automatic message from Kura. Please do not reply."
+    )
+
+    # One email per actively enrolled student.
+    enrollments = Enrollment.objects.filter(
+        course=course, status=EnrollmentStatus.ACTIVE, student__is_active=True
+    ).select_related("student")
+    for enrollment in enrollments:
+        queue_email(
+            f"{event_name}:{assessment.id}:{enrollment.student_id}",
+            enrollment.student.email,
+            subject,
+            body,
+        )
 
 
 def create_user_session(request, user):
@@ -920,31 +987,46 @@ def password_reset_request_view(request):
         email = form.cleaned_data["email"].strip().lower()
         user = User.objects.filter(email=email, is_active=True).first()
 
-        # If user exists, generate single-use token valid for 30 minutes.
+        # At most 2 reset emails per account every 5 minutes, so nobody can flood
+        # someone's inbox. Extra requests are ignored without telling the visitor.
+        recent_requests = 0
         if user:
+            recent_requests = PasswordResetToken.objects.filter(
+                user=user, created_at__gte=timezone.now() - timezone.timedelta(minutes=5)
+            ).count()
+
+        # If the user exists, create a single-use token valid for 30 minutes.
+        queued = False
+        if user and recent_requests < 2:
             raw_token = secrets.token_urlsafe(32)
             token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
             expires_at = timezone.now() + timezone.timedelta(minutes=30)
 
-            PasswordResetToken.objects.create(
+            reset_token = PasswordResetToken.objects.create(
                 user=user,
                 token_hash=token_hash,
                 expires_at=expires_at,
             )
 
-            # Build reset link and send notification email.
-            reset_url = request.build_absolute_uri(reverse("kura:password_reset_confirm", kwargs={"token": raw_token}))
-            message_body = f"Hello,\n\nPlease reset your password using this link:\n{reset_url}\n\nThis link expires in 30 minutes."
-            from_email = "webmaster@localhost"
-            if hasattr(settings, "DEFAULT_FROM_EMAIL"):
-                from_email = settings.DEFAULT_FROM_EMAIL
-            send_mail(
-                subject="Kura Password Reset Request",
-                message=message_body,
-                from_email=from_email,
-                recipient_list=[user.email],
-                fail_silently=True,
+            # Put the email in the outbox instead of sending it here, so the page
+            # answers just as fast whether or not the account exists. The link
+            # uses the fixed SITE_URL, never the Host header the visitor sent.
+            reset_url = settings.SITE_URL + reverse("kura:password_reset_confirm", kwargs={"token": raw_token})
+            queued = queue_email(
+                f"password-reset:{reset_token.id}",
+                user.email,
+                "Kura Password Reset Request",
+                f"Hello,\n\nPlease reset your password using this link:\n{reset_url}\n\n"
+                "This link expires in 30 minutes. If you did not ask for this, ignore this email.",
             )
+
+        # Record only the generic outcome; never include the reset token or address.
+        reason = "ok"
+        if not user:
+            reason = "unknown_email"
+        elif recent_requests >= 2:
+            reason = "rate_limited"
+        log_security_event(request, "auth.password.reset_requested", {"queued": queued, "reason": reason})
 
         messages.success(
             request, "If an account exists with that email address, password reset instructions have been sent."
@@ -2301,6 +2383,7 @@ def module_delete_view(request, module_id):
     return redirect("kura:course_detail", course_id=course.id)
 
 
+@login_required
 def module_edit_view(request, module_id):
     """
     Edits a module and its target levels.
@@ -2335,6 +2418,15 @@ def module_edit_view(request, module_id):
             ModuleTargetLevel.objects.filter(module=module).delete()
             for level in form.cleaned_data["target_levels"]:
                 ModuleTargetLevel.objects.create(module=module, target_level=level)
+
+        # If the module is visible now, tell students about its assessments.
+        # Students already told (event_key) are not emailed again.
+        if module.is_visible:
+            for assessment in Assessment.objects.filter(section__module=module).select_related("section__module__course"):
+                queue_assessment_notification(
+                    assessment, "assessment-new", f"New {assessment.get_component_type_display()}: {assessment.title}",
+                    "A new assessment has been published in one of your courses.",
+                )
         messages.success(request, "Module updated.")
         return redirect("kura:course_detail", course_id=course.id)
     return render(request, "kura/courses/module_create.html", {"form": form, "course": course, "editing": True})

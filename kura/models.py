@@ -979,6 +979,48 @@ class FileContent(models.Model):
         return f"Binary Content for {self.file_id}"
 
 
+class OutgoingEmailStatus(models.TextChoices):
+    """
+    Where an email is in the outbox: waiting, sent, or given up on.
+    """
+
+    PENDING = "pending", "Pending"
+    SENT = "sent", "Sent"
+    FAILED = "failed", "Failed"
+
+
+class OutgoingEmail(models.Model):
+    """
+    The outbox. Views never send email themselves: they save a row here and
+    answer straight away (so a password-reset page answers just as fast whether
+    or not the account exists). The send_queued_emails command sends pending rows.
+    event_key is unique, so the database refuses a second copy of the same
+    notification (for example "reminder-24h:<assessment>:<student>").
+    The body is wiped once the email is sent or given up on, because it can
+    contain a password-reset link.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    event_key = models.CharField(max_length=255, unique=True)
+    to_email = models.EmailField(max_length=255)
+    subject = models.CharField(max_length=200)
+    body = models.TextField()
+    status = models.CharField(max_length=10, choices=OutgoingEmailStatus.choices, default=OutgoingEmailStatus.PENDING)
+    attempts = models.PositiveSmallIntegerField(default=0)
+    last_error = models.CharField(max_length=255, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    sent_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        db_table = "outgoing_emails"
+
+    def __str__(self):
+        """
+        Formats this model's identifying fields for readable display.
+        """
+        return f"{self.event_key} ({self.status})"
+
+
 class QuarantinedFile(models.Model):
     """
     An upload that ClamAV rejected (a virus, an encrypted file, or a macro).

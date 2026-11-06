@@ -32,8 +32,10 @@ from unittest.mock import MagicMock, call, patch
 
 from .files import check_signature_age, scan_file_for_malware, validate_and_save_upload
 from .forms import PasswordChangeForm
-from .views import log_security_event
+from .views import log_security_event, queue_assessment_notification, queue_email
 from .models import (
+    OutgoingEmail,
+    OutgoingEmailStatus,
     QuarantinedFile,
     ALLOWED_UPLOAD_MIME_TYPES,
     AcademicLevel,
@@ -92,6 +94,29 @@ from .permissions import (
 )
 
 User = get_user_model()
+
+
+class EmailConfigurationTests(TestCase):
+    def test_debug_email_uses_django_console_backend(self):
+        # Password reset messages should use Django's configured mail backend.
+        from config import settings
+
+        if settings.DEBUG:
+            self.assertEqual(settings.EMAIL_BACKEND, "django.core.mail.backends.console.EmailBackend")
+        else:
+            self.assertEqual(settings.EMAIL_BACKEND, "django.core.mail.backends.smtp.EmailBackend")
+
+    def test_admin_course_filter_restricts_department(self):
+        # A validated department filter should show only that department's courses.
+        admin = make_user("Admin")
+        first = Department.objects.create(name="Filter one", code="F1")
+        second = Department.objects.create(name="Filter two", code="F2")
+        Course.objects.create(department=first, code="F101", title="First course", semester="1", academic_year=2026)
+        Course.objects.create(department=second, code="F201", title="Second course", semester="2", academic_year=2026)
+        self.client.force_login(admin)
+        response = self.client.get(reverse("kura:course_list"), {"department": first.pk})
+        self.assertContains(response, "First course")
+        self.assertNotContains(response, "Second course")
 
 
 def make_user(role_name, email=None, password="ValidPassword123!", **extra_fields):
@@ -872,3 +897,164 @@ class ClamAVQuarantineTests(TransactionTestCase):
         response = self.client.post(delete_url, {"confirm": "on"})
         self.assertRedirects(response, reverse("kura:quarantine_list"))
         self.assertFalse(QuarantinedFile.objects.filter(id=quarantined.id).exists())
+
+
+@override_settings(SITE_URL="https://kura.example.com")
+class EmailNotificationTests(TestCase):
+    """
+    Email notifications through the outbox (OutgoingEmail): password resets,
+    new/changed assessments, 24-hour reminders, submission receipts and appeal
+    decisions, plus the send_queued_emails job.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.instructor = make_user("Instructor")
+        self.student = make_user("Student")
+        self.dropped_student = make_user("Student")
+        department = Department.objects.create(name="Art", code="ART")
+        self.course = Course.objects.create(
+            department=department, code="ART101", title="Art History", semester="1", academic_year=2026,
+            is_published=True, published_by=self.instructor, published_at=timezone.now(),
+        )
+        CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor")
+        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
+        Enrollment.objects.create(
+            course=self.course, student=self.dropped_student, status=EnrollmentStatus.DROPPED,
+            dropped_by=self.instructor, dropped_at=timezone.now(),
+        )
+        self.module = Module.objects.create(course=self.course, title="Renaissance", is_visible=True)
+        self.section = ModuleSection.objects.create(module=self.module, title="Essays", section_type="coursework")
+        self.assessment = Assessment.objects.create(
+            section=self.section, title="Renaissance Essay", component_type=GradeComponentType.COURSEWORK,
+            opens_at=timezone.now() - timezone.timedelta(hours=1),
+            due_date=timezone.now() + timezone.timedelta(hours=10),
+            duration_minutes=60, created_by=self.instructor,
+        )
+
+    # --- password reset ---------------------------------------------------
+
+    def request_reset(self, email):
+        return self.client.post(reverse("kura:password_reset_request"), {"email": email})
+
+    def test_reset_is_queued_not_sent_and_uses_the_fixed_site_url(self):
+        response = self.request_reset(self.student.email)
+        self.assertRedirects(response, reverse("kura:login"), fetch_redirect_response=False)
+        self.assertEqual(len(mail.outbox), 0)
+        email = OutgoingEmail.objects.get(to_email=self.student.email)
+        self.assertTrue(email.event_key.startswith("password-reset:"))
+        self.assertIn("https://kura.example.com/password/reset/", email.body)
+
+    def test_unknown_email_gets_same_answer_and_nothing_is_queued(self):
+        known = self.request_reset(self.student.email)
+        unknown = self.request_reset("nobody@kura.edu")
+        self.assertEqual(known.status_code, unknown.status_code)
+        self.assertEqual(known["Location"], unknown["Location"])
+        self.assertFalse(OutgoingEmail.objects.filter(to_email="nobody@kura.edu").exists())
+
+    def test_at_most_two_reset_emails_per_account_every_five_minutes(self):
+        for _ in range(4):
+            self.request_reset(self.student.email)
+        self.assertEqual(OutgoingEmail.objects.filter(to_email=self.student.email).count(), 2)
+
+    # --- the outbox helper --------------------------------------------------
+
+    def test_same_event_is_only_queued_once_and_subject_is_one_line(self):
+        queue_email("test-event:1", "a@kura.edu", "Line one\r\nBcc: victim@example.com", "Body")
+        queue_email("test-event:1", "a@kura.edu", "Again", "Body")
+        email = OutgoingEmail.objects.get(event_key="test-event:1")
+        self.assertEqual(email.subject, "Line one Bcc: victim@example.com")
+        self.assertEqual(OutgoingEmail.objects.filter(event_key="test-event:1").count(), 1)
+
+    # --- assessment notifications ------------------------------------------
+
+    def test_new_assessment_emails_only_active_students_once(self):
+        queue_assessment_notification(self.assessment, "assessment-new", "New", "A new assessment.")
+        queue_assessment_notification(self.assessment, "assessment-new", "New", "A new assessment.")
+        recipients = list(OutgoingEmail.objects.values_list("to_email", flat=True))
+        self.assertEqual(recipients, [self.student.email])
+        body = OutgoingEmail.objects.get().body
+        self.assertIn("Renaissance Essay", body)
+        self.assertIn(f"https://kura.example.com/assessments/{self.assessment.id}/", body)
+
+    def test_hidden_section_or_module_sends_nothing(self):
+        self.section.is_visible = False
+        self.section.save()
+        queue_assessment_notification(self.assessment, "assessment-new", "New", "A new assessment.")
+        self.assertEqual(OutgoingEmail.objects.count(), 0)
+
+    def test_making_a_module_visible_announces_its_assessments(self):
+        self.module.is_visible = False
+        self.module.save()
+        self.client.force_login(self.instructor)
+        self.client.post(
+            reverse("kura:module_edit", kwargs={"module_id": self.module.id}),
+            {"title": "Renaissance", "description": "", "is_visible": "on", "target_levels": ["level_4"]},
+        )
+        self.assertTrue(
+            OutgoingEmail.objects.filter(event_key=f"assessment-new:{self.assessment.id}:{self.student.id}").exists()
+        )
+
+    # --- 24-hour reminders --------------------------------------------------
+
+    def test_reminder_goes_to_students_who_have_not_submitted_once(self):
+        submitted = make_user("Student")
+        Enrollment.objects.create(course=self.course, student=submitted, status=EnrollmentStatus.ACTIVE)
+        AssessmentAttempt.objects.create(
+            assessment=self.assessment, student=submitted, expires_at=timezone.now(),
+            submitted_at=timezone.now(), ip_address="127.0.0.1",
+        )
+        call_command("queue_due_reminders", stdout=StringIO())
+        call_command("queue_due_reminders", stdout=StringIO())
+        reminders = OutgoingEmail.objects.filter(event_key__startswith="reminder-24h:")
+        self.assertEqual(list(reminders.values_list("to_email", flat=True)), [self.student.email])
+
+    def test_no_reminder_when_due_more_than_a_day_away_or_not_open(self):
+        self.assessment.due_date = timezone.now() + timezone.timedelta(days=3)
+        self.assessment.save()
+        later = Assessment.objects.create(
+            section=self.section, title="Not open yet", component_type=GradeComponentType.QUIZ,
+            opens_at=timezone.now() + timezone.timedelta(hours=1),
+            due_date=timezone.now() + timezone.timedelta(hours=5),
+            duration_minutes=30, created_by=self.instructor,
+        )
+        call_command("queue_due_reminders", stdout=StringIO())
+        self.assertFalse(OutgoingEmail.objects.filter(event_key__contains=str(later.id)).exists())
+        self.assertEqual(OutgoingEmail.objects.count(), 0)
+
+    # --- send_queued_emails ---------------------------------------------------
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    def test_sending_marks_sent_and_wipes_the_body(self):
+        queue_email("test-send:1", self.student.email, "Subject", "Secret link")
+        call_command("send_queued_emails", stdout=StringIO())
+        self.assertEqual(len(mail.outbox), 1)
+        self.assertEqual(mail.outbox[0].from_email, "Kura <noreply@kura.edu>")
+        email = OutgoingEmail.objects.get(event_key="test-send:1")
+        self.assertEqual(email.status, OutgoingEmailStatus.SENT)
+        self.assertEqual(email.body, "")
+
+    def test_failed_sends_are_retried_then_given_up_after_five(self):
+        import smtplib
+
+        queue_email("test-send:2", self.student.email, "Subject", "Body")
+        with patch("kura.management.commands.send_queued_emails.EmailMessage.send", side_effect=smtplib.SMTPException):
+            for _ in range(4):
+                call_command("send_queued_emails", stdout=StringIO())
+            email = OutgoingEmail.objects.get(event_key="test-send:2")
+            self.assertEqual((email.status, email.attempts), (OutgoingEmailStatus.PENDING, 4))
+            call_command("send_queued_emails", stdout=StringIO())
+        email.refresh_from_db()
+        self.assertEqual((email.status, email.attempts, email.body), (OutgoingEmailStatus.FAILED, 5, ""))
+        self.assertEqual(email.last_error, "SMTPException")
+
+    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
+    def test_old_reset_emails_expire_instead_of_sending(self):
+        queue_email("password-reset:old", self.student.email, "Reset", "Old link")
+        OutgoingEmail.objects.filter(event_key="password-reset:old").update(
+            created_at=timezone.now() - timezone.timedelta(minutes=31)
+        )
+        call_command("send_queued_emails", stdout=StringIO())
+        email = OutgoingEmail.objects.get(event_key="password-reset:old")
+        self.assertEqual((email.status, email.body), (OutgoingEmailStatus.FAILED, ""))
+        self.assertEqual(len(mail.outbox), 0)
