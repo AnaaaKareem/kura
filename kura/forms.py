@@ -1367,3 +1367,24 @@ class GradeChangeRequestReviewForm(forms.Form):
             }
         ),
     )
+
+
+class CourseGradeSchemeForm(forms.Form):
+    """
+    Form to configure component weight percentage in a course grading scheme.
+    """
+
+    component_type = forms.ChoiceField(
+        label="Component Type",
+        choices=GradeComponentType.choices,
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+    weight_percentage = forms.DecimalField(
+        label="Weight Percentage (%)",
+        max_digits=5,
+        decimal_places=2,
+        min_value=0,
+        max_value=100,
+        widget=forms.NumberInput(attrs={"class": "input input-bordered w-full", "step": "0.5"}),
+    )

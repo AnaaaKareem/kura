@@ -5232,3 +5232,142 @@ def grade_change_request_review_view(request, request_id):
         return redirect("kura:course_grades", course_id=course.id)
 
     return render(request, "kura/grades/change_request_review.html", {"form": form, "change_request": change_request})
+
+
+@login_required
+def course_result_calculate_view(request, course_id):
+    """
+    Calculates cumulative course results from released grades and grading schemes.
+    Who can use it: Course instructors and Department Heads.
+    Security: Only aggregates released grades; enforces final_score 0 to 100 constraint.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Administrators cannot calculate results from grades.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    # Calculating results changes records and therefore requires a POST.
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    course = get_object_or_404(Course.objects.select_related("department"), id=course_id)
+
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+
+    schemes = CourseGradeScheme.objects.filter(course=course)
+    enrollments = Enrollment.objects.filter(course=course, status=EnrollmentStatus.ACTIVE).select_related("student")
+
+    with transaction.atomic():
+        # Serialize result calculation and release for this course.
+        Course.objects.select_for_update().get(id=course.id)
+        for enr in enrollments:
+            student = enr.student
+            # Released results are already on transcripts and must never be overwritten.
+            if CourseResult.objects.filter(course=course, student=student, status=GradeStatus.RELEASED).exists():
+                continue
+            cumulative_score = Decimal("0.00")
+
+            for scheme in schemes:
+                comp_type = scheme.component_type
+                weight = scheme.weight_percentage
+
+                # Find all released grades for assessments of this component type.
+                comp_grades = Grade.objects.filter(
+                    assessment__section__module__course=course,
+                    assessment__component_type=comp_type,
+                    student=student,
+                    status=GradeStatus.RELEASED,
+                ).select_related("assessment")
+
+                if comp_grades.exists():
+                    # Calculate average percentage for this component.
+                    total_pct = sum((g.score / g.assessment.max_score * 100) for g in comp_grades)
+                    avg_pct = total_pct / comp_grades.count()
+                    cumulative_score += avg_pct * (weight / 100)
+
+            final_val = min(Decimal("100.00"), max(Decimal("0.00"), cumulative_score.quantize(Decimal("0.01"))))
+
+            CourseResult.objects.update_or_create(
+                course=course,
+                student=student,
+                defaults={
+                    "final_score": final_val,
+                    "status": GradeStatus.DRAFT,
+                },
+            )
+
+    messages.success(request, "Course results calculated from released grades.")
+    return redirect("kura:course_grades", course_id=course.id)
+
+
+@login_required
+def course_result_release_view(request, course_id):
+    """
+    Releases cumulative course results to students.
+    Who can use it: Instructors with can_release_grades=True.
+    Security: Requires grade release authorization; marks results as released.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    course = get_object_or_404(Course, id=course_id)
+
+    if not can_release_grades(request.user, course):
+        raise PermissionDenied
+
+    # Use the same course lock as calculation so the two actions cannot race.
+    with transaction.atomic():
+        Course.objects.select_for_update().get(id=course.id)
+        now = timezone.now()
+        CourseResult.objects.filter(course=course).exclude(status=GradeStatus.RELEASED).update(
+            status=GradeStatus.RELEASED,
+            finalized_by=request.user,
+            finalized_at=now,
+            released_at=now,
+        )
+    messages.success(request, "Course results released to transcripts.")
+    return redirect("kura:course_grades", course_id=course.id)
+
+
+@login_required
+def student_transcript_view(request):
+    """
+    Displays the official academic transcript for the student.
+    Who can use it: Students.
+    Security: Strictly filters CourseResult by student=request.user and status=RELEASED.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # An Admin role must not grant access to results through a Student role.
+    if has_role(request.user, "Admin") or not has_role(request.user, "Student"):
+        raise PermissionDenied
+
+    results = (
+        CourseResult.objects.filter(
+            student=request.user,
+            status=GradeStatus.RELEASED,
+        )
+        .select_related("course__department")
+        .order_by("-course__academic_year", "course__semester")
+    )
+
+    student_profile = StudentProfile.objects.filter(user=request.user).first()
+
+    return render(
+        request,
+        "kura/grades/transcript.html",
+        {
+            "results": results,
+            "student_profile": student_profile,
+        },
+    )
