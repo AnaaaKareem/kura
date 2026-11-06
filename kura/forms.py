@@ -837,3 +837,86 @@ class ScheduleForm(forms.Form):
 
         return cleaned_data
 
+
+
+class AttendanceSessionStartForm(forms.Form):
+    """
+    Form for instructors and TAs to launch a live attendance roll session.
+    """
+
+    title = forms.CharField(
+        label="Session Title",
+        max_length=150,
+        widget=forms.TextInput(
+            attrs={
+                "class": "input input-bordered w-full",
+                "placeholder": "e.g. Lecture 4 Attendance",
+            }
+        ),
+    )
+
+    duration_minutes = forms.IntegerField(
+        label="Check-in Window (Minutes)",
+        min_value=1,
+        max_value=240,
+        initial=20,
+        widget=forms.NumberInput(attrs={"class": "input input-bordered w-full"}),
+    )
+
+
+class StudentCheckinForm(forms.Form):
+    """
+    Form for students to submit a 6-character check-in passcode.
+    """
+
+    passcode = forms.CharField(
+        label="Session Passcode",
+        max_length=20,
+        widget=forms.TextInput(
+            attrs={
+                "class": "input input-bordered w-full text-center tracking-widest text-lg font-mono uppercase",
+                "placeholder": "e.g. 9B3A7F",
+                "autofocus": "autofocus",
+            }
+        ),
+    )
+
+
+class ManualAttendanceForm(forms.Form):
+    """
+    Form for staff to manually override or record attendance with a required reason.
+    """
+
+    student = forms.ModelChoiceField(
+        label="Student",
+        queryset=User.objects.filter(student_profile__isnull=False, is_active=True),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+    status = forms.ChoiceField(
+        label="Attendance Status",
+        choices=AttendanceStatus.choices,
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+    override_reason = forms.CharField(
+        label="Justification Reason (Required)",
+        widget=forms.Textarea(
+            attrs={
+                "class": "textarea textarea-bordered w-full",
+                "rows": 3,
+                "placeholder": "Explain the justification for this manual roll entry...",
+            }
+        ),
+    )
+
+    def clean_override_reason(self):
+        """
+        Ensures a manual attendance change includes a written reason.
+        """
+        # Override reason is mandatory for manual roll records.
+        reason = self.cleaned_data.get("override_reason", "").strip()
+        if not reason:
+            raise forms.ValidationError("A written justification reason is required for manual roll entries.")
+        return reason
+

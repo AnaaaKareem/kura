@@ -2509,3 +2509,231 @@ def schedule_delete_view(request, schedule_id):
     return redirect("kura:schedule_list")
 
 
+
+from .forms import AttendanceSessionStartForm, StudentCheckinForm, ManualAttendanceForm, DeleteConfirmationForm
+
+def attendance_session_start_view(request, module_id):
+    """
+    Launches a live attendance check-in session with a rotating passcode and QR code.
+    Who can use it: Course instructors and Teaching Assistants.
+    Security: Server generates random 6-character passcode and stores only its SHA-256 hash.
+"""
+    module = get_object_or_404(Module.objects.select_related("course"), id=module_id)
+    course = module.course
+
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+
+    form = AttendanceSessionStartForm(request.POST or None)
+
+    if request.method == "POST" and form.is_valid():
+        title = form.cleaned_data["title"]
+        duration = form.cleaned_data["duration_minutes"]
+
+        # Generate a random 6-character passcode.
+        raw_passcode = secrets.token_hex(3).upper()
+        passcode_hash = hashlib.sha256(raw_passcode.encode("utf-8")).hexdigest()
+        expires_at = timezone.now() + timezone.timedelta(minutes=duration)
+
+        session = ModuleAttendanceSession.objects.create(
+            module=module,
+            created_by=request.user,
+            title=title,
+            passcode_hash=passcode_hash,
+            expires_at=expires_at,
+            is_active=True,
+        )
+
+        # Store raw passcode in request session temporarily to display on projector screen.
+        request.session[f"session_passcode_{session.id}"] = raw_passcode
+
+        messages.success(request, f"Attendance roll started for {title}.")
+        return redirect("kura:attendance_session_detail", session_id=session.id)
+
+    return render(request, "kura/attendance/session_start.html", {"form": form, "module": module})
+
+
+def attendance_session_detail_view(request, session_id):
+    """
+    Displays live attendance roll for staff, including active passcode and QR code.
+    Who can use it: Course staff and Department Heads.
+    Security: Live roll monitor displaying real-time check-in records.
+"""
+    session = get_object_or_404(
+        ModuleAttendanceSession.objects.select_related("module__course__department"),
+        id=session_id,
+    )
+    course = session.module.course
+
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+
+    # Check if session is still unexpired and active.
+    is_live = session.is_active and session.expires_at > timezone.now()
+
+    # Retrieve temporary raw passcode from staff session if available.
+    passcode = None
+    if is_live:
+        passcode = request.session.get(f"session_passcode_{session.id}")
+
+    # Generate QR code URL if session is live and passcode is known.
+    qr_code_data_uri = None
+    if is_live and passcode:
+        checkin_url = request.build_absolute_uri(
+            reverse("kura:student_checkin", kwargs={"session_id": session.id}) + f"?code={passcode}"
+        )
+        qr_img = qrcode.make(checkin_url, image_factory=qrcode.image.svg.SvgPathImage)
+        svg_data = qr_img.to_string().decode("utf-8")
+        qr_code_data_uri = f"data:image/svg+xml;utf8,{urllib.parse.quote(svg_data)}"
+
+    # Load recorded attendance entries.
+    records = (
+        AttendanceRecord.objects.filter(session=session)
+        .select_related("student", "recorded_by")
+        .order_by("-verified_at")
+    )
+    manual_form = ManualAttendanceForm()
+
+    context = {
+        "session": session,
+        "is_live": is_live,
+        "passcode": passcode,
+        "qr_code_url": qr_code_data_uri,
+        "records": records,
+        "manual_form": manual_form,
+    }
+    return render(request, "kura/attendance/session_detail.html", context)
+
+
+def attendance_session_close_view(request, session_id):
+    """
+    Closes an active attendance check-in session immediately.
+    Who can use it: Course staff and Department Heads.
+    Security: POST only; marks is_active=False.
+"""
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    session = get_object_or_404(ModuleAttendanceSession.objects.select_related("module__course"), id=session_id)
+    course = session.module.course
+
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+
+    session.is_active = False
+    session.save(update_fields=["is_active"])
+
+    messages.success(request, f"Attendance roll closed for {session.title}.")
+    return redirect("kura:attendance_session_detail", session_id=session.id)
+
+
+def student_checkin_view(request, session_id):
+    """
+    Student attendance check-in using a dynamic passcode or QR scan.
+    Who can use it: Enrolled students.
+    Security: Validates passcode hash, expiry, enrollment, single check-in, and sets method on server.
+"""
+    session = get_object_or_404(
+        ModuleAttendanceSession.objects.select_related("module__course"),
+        id=session_id,
+    )
+    course = session.module.course
+
+    # Verify student is actively enrolled in the course.
+    if not is_enrolled(request.user, course):
+        raise PermissionDenied
+
+    # Verify session is currently active and unexpired.
+    if not session.is_active or session.expires_at <= timezone.now():
+        messages.error(request, "This attendance session is closed or has expired.")
+        return redirect("kura:attendance_history")
+
+    # Check if student already checked in (enforce one record per student per session).
+    if AttendanceRecord.objects.filter(session=session, student=request.user).exists():
+        messages.warning(request, "You have already checked in for this attendance session.")
+        return redirect("kura:attendance_history")
+
+    # Check if passcode was provided in QR code URL query parameter.
+    qr_code_param = request.GET.get("code")
+    initial_code = ""
+    if qr_code_param:
+        initial_code = qr_code_param.strip().upper()
+
+    # Scanning a QR code pre-fills the form, but does not record attendance on GET.
+    form = StudentCheckinForm(request.POST or None, initial={"passcode": initial_code})
+
+    if request.method == "POST":
+        if form.is_valid():
+            submitted_code = form.cleaned_data["passcode"].strip().upper()
+            submitted_hash = hashlib.sha256(submitted_code.encode("utf-8")).hexdigest()
+
+            # Verify passcode matches.
+            if submitted_hash != session.passcode_hash:
+                messages.error(request, "Invalid attendance passcode.")
+                return render(request, "kura/attendance/checkin.html", {"form": form, "session": session})
+
+            # Server sets check-in method: QR_CODE if scanned via query param, otherwise PASSCODE.
+            if qr_code_param:
+                method = AttendanceMethod.QR_CODE
+            else:
+                method = AttendanceMethod.PASSCODE
+            client_ip = request.META.get("REMOTE_ADDR")
+
+            # Create attendance record.
+            AttendanceRecord.objects.create(
+                session=session,
+                student=request.user,
+                status=AttendanceStatus.PRESENT,
+                method=method,
+                ip_address=client_ip,
+            )
+
+            messages.success(request, f"Attendance verified for {session.title}!")
+            return redirect("kura:attendance_history")
+
+    return render(request, "kura/attendance/checkin.html", {"form": form, "session": session})
+
+
+def attendance_manual_record_view(request, session_id):
+    """
+    Manually logs or adjusts an attendance entry with a required written justification.
+    Who can use it: Course instructors and Teaching Assistants.
+    Security: Server sets method=manual, records staff ID, and enforces non-empty override_reason.
+"""
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    session = get_object_or_404(ModuleAttendanceSession.objects.select_related("module__course"), id=session_id)
+    course = session.module.course
+
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+
+    form = ManualAttendanceForm(request.POST)
+
+    if form.is_valid():
+        student = form.cleaned_data["student"]
+        status = form.cleaned_data["status"]
+        override_reason = form.cleaned_data["override_reason"]
+
+        # A course attendance roll cannot contain an unrelated student.
+        if not is_enrolled(student, course):
+            messages.error(request, "Unable to record attendance for this student.")
+            return redirect("kura:attendance_session_detail", session_id=session.id)
+
+        AttendanceRecord.objects.update_or_create(
+            session=session,
+            student=student,
+            defaults={
+                "status": status,
+                "method": AttendanceMethod.MANUAL,
+                "recorded_by": request.user,
+                "override_reason": override_reason,
+            },
+        )
+        messages.success(request, f"Manual attendance recorded for {student.email}.")
+    else:
+        messages.error(request, "A written justification reason is required for manual roll entries.")
+
+    return redirect("kura:attendance_session_detail", session_id=session.id)
+
