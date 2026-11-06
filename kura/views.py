@@ -53,6 +53,8 @@ from .forms import (
     EnrollmentForm,
     EnrollmentFilterForm,
     EnrollmentSearchForm,
+    GradeEntryForm,
+    GradeReleaseForm,
     LoginForm,
     MFAVerifyForm,
     ManualAttendanceForm,
@@ -4633,3 +4635,317 @@ def attempt_detail_view(request, attempt_id):
         "released_grade": released_grade,
     }
     return render(request, "kura/assessments/attempt_detail.html", context)
+
+
+# ==========================================
+# Grades, appeals & transcripts
+# ==========================================
+
+
+@login_required
+def course_grades_view(request, course_id):
+    """
+    Displays grade rosters and status for course staff and instructors.
+    Who can use it: Course staff and Department Heads (Admins are strictly denied).
+    Security: Admins forbidden; restricts access to assigned course staff.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    course = get_object_or_404(Course.objects.select_related("department"), id=course_id)
+
+    # Admins are strictly barred from viewing grade records.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+
+    grades = (
+        Grade.objects.filter(assessment__section__module__course=course)
+        .select_related("assessment", "student", "attempt")
+        .order_by("-graded_at")
+    )
+    can_release = can_release_grades(request.user, course)
+    grade_schemes = CourseGradeScheme.objects.filter(course=course)
+    course_results = CourseResult.objects.filter(course=course).select_related("student")
+
+    # A staff member who is also a student must not see their own draft marks here.
+    grades = grades.exclude(student=request.user)
+    course_results = course_results.exclude(student=request.user)
+
+    context = {
+        "course": course,
+        "grades": grades,
+        "can_release": can_release,
+        "can_enter_grade": is_course_staff(request.user, course)
+        and (has_role(request.user, "Instructor") or has_role(request.user, "Teaching assistant")),
+        "can_finalize_grade": is_course_staff(request.user, course) and has_role(request.user, "Instructor"),
+        "grade_schemes": grade_schemes,
+        "course_results": course_results,
+    }
+    return render(request, "kura/grades/course_grades.html", context)
+
+
+@login_required
+def grade_entry_view(request, attempt_id):
+    """
+    Enters or edits draft grading scores and feedback for an assessment attempt.
+    Who can use it: Teaching Assistants and Course Instructors.
+    Security: Creates draft grade and logs modification in GradeHistory audit ledger.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    attempt = get_object_or_404(
+        AssessmentAttempt.objects.select_related("assessment__section__module__course__department", "student"),
+        id=attempt_id,
+    )
+    course = attempt.assessment.section.module.course
+
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    # Only assigned instructors and teaching assistants may enter initial grades.
+    if not is_course_staff(request.user, course) or not (
+        has_role(request.user, "Instructor") or has_role(request.user, "Teaching assistant")
+    ):
+        raise PermissionDenied
+
+    # A student cannot use a staff assignment to mark their own attempt.
+    if attempt.student_id == request.user.id:
+        raise PermissionDenied
+
+    # A scanned paper must be submitted with a file before staff can mark it.
+    if attempt.assessment.delivery_mode == AssessmentDeliveryMode.PAPER_SCANNED:
+        if attempt.status == AttemptStatus.IN_PROGRESS or not AttemptFile.objects.filter(attempt=attempt).exists():
+            raise PermissionDenied
+
+    existing_grade = Grade.objects.filter(attempt=attempt).first()
+    initial_score = None
+    if existing_grade:
+        initial_score = existing_grade.score
+
+    form = GradeEntryForm(request.POST or None, initial={"score": initial_score})
+
+    # A manual score must fit within the assessment's configured maximum.
+    if request.method == "POST" and form.is_valid() and form.cleaned_data["score"] > attempt.assessment.max_score:
+        form.add_error("score", "Score cannot exceed the assessment maximum.")
+
+    if request.method == "POST" and form.is_valid():
+        new_score = form.cleaned_data["score"]
+        # Lock the attempt and existing grade so finalization cannot race this update.
+        with transaction.atomic():
+            AssessmentAttempt.objects.select_for_update().get(id=attempt.id)
+            existing_grade = Grade.objects.select_for_update().filter(attempt=attempt).first()
+            if existing_grade and existing_grade.status != GradeStatus.DRAFT:
+                messages.error(request, "Only draft grades can be edited here.")
+                return redirect("kura:course_grades", course_id=course.id)
+            old_score = None
+            old_status = None
+            if existing_grade:
+                old_score = existing_grade.score
+                old_status = existing_grade.status
+            grade, _ = Grade.objects.update_or_create(
+                attempt=attempt,
+                defaults={
+                    "assessment": attempt.assessment,
+                    "student": attempt.student,
+                    "grader": request.user,
+                    "score": new_score,
+                    "status": GradeStatus.DRAFT,
+                },
+            )
+
+            # Record change in immutable grade history.
+            GradeHistory.objects.create(
+                grade=grade,
+                old_score=old_score,
+                new_score=new_score,
+                old_status=old_status,
+                new_status=GradeStatus.DRAFT,
+                changed_by=request.user,
+                reason="Manual grade entry / review update.",
+            )
+
+        messages.success(request, f"Draft grade saved for {attempt.student.email}.")
+        # Record the grade entry without including the numeric score.
+        log_security_event(
+            request,
+            "grade.entered",
+            {
+                "grade_id": grade.id,
+                "assessment_id": attempt.assessment_id,
+                "student_id": attempt.student_id,
+            },
+        )
+        return redirect("kura:course_grades", course_id=course.id)
+
+    return render(request, "kura/grades/grade_entry.html", {"form": form, "attempt": attempt})
+
+
+@login_required
+def grade_finalize_view(request, grade_id):
+    """
+    Finalizes a draft grade in preparation for student release.
+    Who can use it: Instructors assigned to the course.
+    Security: Checks the instructor role and course, locks the draft, and logs the change.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Administrators cannot access or change grade records.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    # Only instructors may finalize grades, even when the grade is hidden by database row security.
+    if not has_role(request.user, "Instructor"):
+        raise PermissionDenied
+
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    grade = get_object_or_404(
+        Grade.objects.select_related("assessment__section__module__course__department"),
+        id=grade_id,
+    )
+    course = grade.assessment.section.module.course
+
+    # A student cannot finalize their own grade through a staff assignment.
+    if grade.student_id == request.user.id:
+        raise PermissionDenied
+
+    # Only an instructor assigned to this course may finalize an initial grade.
+    is_instructor = is_course_staff(request.user, course)
+    if not is_instructor:
+        raise PermissionDenied
+
+    # Lock the row and check its current status before changing it and its history.
+    with transaction.atomic():
+        grade = Grade.objects.select_for_update().get(id=grade_id)
+        if grade.status != GradeStatus.DRAFT:
+            messages.error(request, "Only draft grades can be finalized.")
+            return redirect("kura:course_grades", course_id=course.id)
+        old_status = grade.status
+        old_score = grade.score
+        grade.status = GradeStatus.FINALIZED
+        grade.finalized_by = request.user
+        grade.finalized_at = timezone.now()
+        grade.save(update_fields=["status", "finalized_by", "finalized_at"])
+
+        GradeHistory.objects.create(
+            grade=grade,
+            old_score=old_score,
+            new_score=grade.score,
+            old_status=old_status,
+            new_status=GradeStatus.FINALIZED,
+            changed_by=request.user,
+            reason="Grade finalized by instructor.",
+        )
+
+    messages.success(request, f"Grade for {grade.student.email} finalized.")
+    log_security_event(
+        request,
+        "grade.finalized",
+        {
+            "grade_id": grade.id,
+            "assessment_id": grade.assessment_id,
+            "student_id": grade.student_id,
+        },
+    )
+    return redirect("kura:course_grades", course_id=course.id)
+
+
+@login_required
+def grade_release_view(request, grade_id):
+    """
+    Releases a finalized grade to the student with step-up MFA verification.
+    Who can use it: Instructors assigned to the course with can_release_grades=True.
+    Security: Checks permission; enforces step-up OTP token; grade must be finalized.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    grade = get_object_or_404(
+        Grade.objects.select_related("assessment__section__module__course__department"),
+        id=grade_id,
+    )
+    course = grade.assessment.section.module.course
+
+    if grade.student_id == request.user.id or not can_release_grades(request.user, course):
+        raise PermissionDenied
+
+    if grade.status != GradeStatus.FINALIZED:
+        messages.error(request, "Only finalized grades can be released.")
+        return redirect("kura:course_grades", course_id=course.id)
+
+    form = GradeReleaseForm(request.POST or None)
+
+    if request.method == "POST" and form.is_valid():
+        token = form.cleaned_data["otp_token"].strip()
+
+        # Step-up authentication: verify OTP token against user's TOTP or static device.
+        totp_device = TOTPDevice.objects.filter(user=request.user, confirmed=True).first()
+        is_verified = False
+        if totp_device and verify_totp_code(totp_device, request.user, token):
+            is_verified = True
+        else:
+            static_device = StaticDevice.objects.filter(user=request.user, confirmed=True).first()
+            if static_device and static_device.verify_token(token):
+                is_verified = True
+
+        if not is_verified:
+            log_security_event(
+                request,
+                "grade.release_mfa_failed",
+                {"grade_id": grade.id},
+                logging.WARNING,
+            )
+            messages.error(request, "Invalid MFA security token for grade release authorization.")
+            return render(request, "kura/grades/grade_release.html", {"form": form, "grade": grade})
+
+        old_status = grade.status
+        with transaction.atomic():
+            grade.status = GradeStatus.RELEASED
+            grade.released_by = request.user
+            grade.released_at = timezone.now()
+            grade.save(update_fields=["status", "released_by", "released_at"])
+
+            GradeHistory.objects.create(
+                grade=grade,
+                old_score=grade.score,
+                new_score=grade.score,
+                old_status=old_status,
+                new_status=GradeStatus.RELEASED,
+                changed_by=request.user,
+                reason="Grade released to student with MFA verification.",
+            )
+
+            # Tell the student a grade is ready. No score in the email: they log in to see it.
+            grades_link = settings.SITE_URL + reverse("kura:student_grades")
+            queue_email(
+                f"grade-released:{grade.id}",
+                grade.student.email,
+                f"Grade released: {grade.assessment.title}",
+                f"Hello,\n\nA grade has been released for: {grade.assessment.title}\n\n"
+                f"Log in to Kura to see it:\n{grades_link}\n\n"
+                "This is an automatic message from Kura. Please do not reply.",
+            )
+
+        messages.success(request, f"Grade for {grade.student.email} released successfully.")
+        log_security_event(
+            request,
+            "grade.released",
+            {
+                "grade_id": grade.id,
+                "assessment_id": grade.assessment_id,
+                "student_id": grade.student_id,
+            },
+        )
+        return redirect("kura:course_grades", course_id=course.id)
+
+    return render(request, "kura/grades/grade_release.html", {"form": form, "grade": grade})

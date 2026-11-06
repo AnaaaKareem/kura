@@ -1,0 +1,42 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Grade Entry - {{ attempt.student.email }} - Kura{% endblock %}
+
+{% block content %}
+<div class="max-w-xl mx-auto space-y-6">
+    <div class="card bg-base-100 border border-base-300">
+        <div class="card-body gap-4 p-4 sm:p-6">
+            <span class="badge badge-primary font-mono text-xs">{{ attempt.assessment.section.module.course.code }}</span>
+            <h1 class="card-title text-2xl font-bold mt-2">Enter Draft Score</h1>
+            <p class="text-sm text-base-content/70">
+                Assessment: <strong>{{ attempt.assessment.title }}</strong> &bull;
+                Student: <strong>{{ attempt.student.get_full_name|default:attempt.student.email }}</strong> &bull;
+                Max Score: <strong>{{ attempt.assessment.max_score }}</strong>
+            </p>
+
+            <form method="post" class="mt-4 space-y-4">
+                {% csrf_token %}
+
+                <div class="form-control">
+                    <label for="id_score" class="label"><span class="label-text font-medium">Score Awarded</span></label>
+                    {{ form.score }}
+                    {% if form.score.errors %}
+                    <label class="label"><span class="label-text-alt text-error">{{ form.score.errors.0 }}</span></label>
+                    {% endif %}
+                </div>
+
+                <div class="form-control">
+                    <label for="id_feedback" class="label"><span class="label-text font-medium">Evaluation Feedback</span></label>
+                    {{ form.feedback }}
+                </div>
+
+                <div class="card-actions justify-end mt-6">
+                    <a href="{% url 'kura:course_grades' attempt.assessment.section.module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
+                    <button type="submit" class="btn btn-primary btn-sm">Save Draft Score</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

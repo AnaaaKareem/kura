@@ -122,4 +122,9 @@ urlpatterns = [
         name="assessment_attempt_file_upload",
     ),
     path("attempts/<uuid:attempt_id>/submit/", views.assessment_submit_view, name="assessment_submit"),
+    # Grades, appeals, results and transcripts routes
+    path("courses/<uuid:course_id>/grades/", views.course_grades_view, name="course_grades"),
+    path("attempts/<uuid:attempt_id>/grade/", views.grade_entry_view, name="grade_entry"),
+    path("grades/<uuid:grade_id>/finalize/", views.grade_finalize_view, name="grade_finalize"),
+    path("grades/<uuid:grade_id>/release/", views.grade_release_view, name="grade_release"),
 ]

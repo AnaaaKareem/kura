@@ -1223,3 +1223,52 @@ class ScannedPaperStaffUploadForm(forms.Form):
     # The view restricts this empty queryset to students enrolled in its course.
     student = forms.ModelChoiceField(queryset=User.objects.none())
     file = forms.FileField()
+
+
+# ==========================================
+# Grades, appeals & change requests forms
+# ==========================================
+
+
+class GradeEntryForm(forms.Form):
+    """
+    Form for TAs and instructors to input manual scores and feedback.
+    """
+
+    score = forms.DecimalField(
+        label="Score Awarded",
+        max_digits=6,
+        decimal_places=2,
+        min_value=0,
+        widget=forms.NumberInput(attrs={"class": "input input-bordered w-full", "step": "0.01"}),
+    )
+
+    feedback = forms.CharField(
+        label="Evaluation Feedback",
+        required=False,
+        widget=forms.Textarea(
+            attrs={
+                "class": "textarea textarea-bordered w-full",
+                "rows": 3,
+                "placeholder": "Feedback for the student...",
+            }
+        ),
+    )
+
+
+class GradeReleaseForm(forms.Form):
+    """
+    Step-up authentication form requiring MFA OTP verification before releasing grades.
+    """
+
+    otp_token = forms.CharField(
+        label="Enter 6-Digit MFA Security Code",
+        max_length=8,
+        widget=forms.TextInput(
+            attrs={
+                "class": "input input-bordered w-full font-mono text-center tracking-widest text-lg",
+                "placeholder": "123456",
+                "autofocus": "autofocus",
+            }
+        ),
+    )

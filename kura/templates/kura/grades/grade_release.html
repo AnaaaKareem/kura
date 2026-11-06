@@ -1,0 +1,40 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Step-up MFA: Release Grade - Kura{% endblock %}
+
+{% block content %}
+<div class="max-w-md mx-auto space-y-6">
+    <div class="card bg-base-100 border-2 border-primary/30">
+        <div class="card-body gap-4 p-4 sm:p-6">
+            <div class="flex items-center gap-2">
+                <span class="badge badge-warning badge-sm">Step-up Authentication</span>
+            </div>
+            <h1 class="card-title text-xl font-bold mt-2">Authorize Grade Release</h1>
+            <p class="text-xs text-base-content/70">
+                You are authorizing the irreversible release of a finalized grade for <strong>{{ grade.student.get_full_name|default:grade.student.email }}</strong> (Score: <strong>{{ grade.score }}</strong>).
+            </p>
+            <p class="text-xs text-base-content/60 mt-1">
+                Security policy mandates re-authenticating with your Multi-Factor Authentication (MFA) device before releasing grades.
+            </p>
+
+            <form method="post" class="mt-4 space-y-4">
+                {% csrf_token %}
+
+                <div class="form-control">
+                    <label for="id_otp_token" class="label"><span class="label-text font-medium text-xs">Enter 6-Digit MFA Security Code</span></label>
+                    {{ form.otp_token }}
+                    {% if form.otp_token.errors %}
+                    <label class="label"><span class="label-text-alt text-error">{{ form.otp_token.errors.0 }}</span></label>
+                    {% endif %}
+                </div>
+
+                <div class="card-actions justify-end mt-4">
+                    <a href="{% url 'kura:course_grades' grade.assessment.section.module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
+                    <button type="submit" class="btn btn-success btn-sm">Verify & Release Grade</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+
