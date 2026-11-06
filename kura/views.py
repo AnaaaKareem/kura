@@ -2785,3 +2785,433 @@ def attendance_history_view(request):
         },
     )
 
+
+import uuid
+from decimal import Decimal
+from django.http import HttpResponse
+from .forms import AssessmentAttemptStartForm, AssessmentCreateForm, AssessmentFileUploadForm, AssessmentQuestionAddForm, AssessmentQuestionFormSet, ScannedPaperStaffUploadForm
+
+def assessment_create_view(request, section_id=None, assessment_id=None):
+    """
+    Creates or edits an assessment and separates questions from its answer key.
+    Who can use it: Assigned course staff and the department head, but not Admins.
+    Security: Checks the course, locks edits after attempts, and saves the question and key together.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Administrators cannot access assessments, even if assigned to the course.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    # An edit belongs to its existing section; a new assessment uses the requested section.
+    assessment = None
+    if assessment_id:
+        assessment = get_object_or_404(
+            Assessment.objects.select_related("section__module__course__department"),
+            id=assessment_id,
+        )
+        section = assessment.section
+    else:
+        section = get_object_or_404(
+            ModuleSection.objects.select_related("module__course__department"),
+            id=section_id,
+        )
+    course = section.module.course
+
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+
+    # Prepare ordinary form fields from the existing assessment and its separate key.
+    initial = {}
+    initial_questions = [{"type": "multiple_choice", "max_words": 500}]
+    existing_keys = {}
+    builder_unavailable = False
+    questions_locked = False
+    if assessment:
+        questions_locked = AssessmentAttempt.objects.filter(assessment=assessment).exists()
+        initial = {
+            "title": assessment.title,
+            "description": assessment.description,
+            "component_type": assessment.component_type,
+            "delivery_mode": assessment.delivery_mode,
+            "max_score": assessment.max_score,
+            "max_attempts": assessment.max_attempts,
+            "opens_at": assessment.opens_at,
+            "due_date": assessment.due_date,
+            "duration_minutes": assessment.duration_minutes,
+            "lab_cidr_allowed": assessment.lab_cidr_allowed,
+            "shuffle_questions": assessment.settings_json.get("shuffle_questions", False),
+            "shuffle_options": assessment.settings_json.get("shuffle_options", False),
+            "allow_backtracking": assessment.settings_json.get("allow_backtracking", False),
+            "autosave_interval_seconds": assessment.settings_json.get("autosave_interval_seconds", 15),
+        }
+        answer_key = ExamAnswerKey.objects.filter(assessment=assessment).first()
+        existing_keys = {}
+        if answer_key:
+            existing_keys = answer_key.answer_key_json
+        initial_questions = []
+        if len(assessment.questions_json) > 20:
+            builder_unavailable = True
+        for question in assessment.questions_json:
+            key = existing_keys.get(question.get("question_id"), {})
+            question_type = question.get("type")
+            if question_type == "essay":
+                question_type = "long_text"
+            values = {
+                "type": question_type,
+                "prompt": question.get("prompt", ""),
+                "points": question.get("points"),
+                "max_words": question.get("max_words", 500),
+            }
+            if question_type == "multiple_choice":
+                options = question.get("options", [])
+                if len(options) > 8:
+                    builder_unavailable = True
+                for number, option in enumerate(options[:8], start=1):
+                    values[f"option_{number}"] = option.get("text", "")
+                    values[f"correct_{number}"] = option.get("option_id") in key.get("correct_option_ids", [])
+                values["explanation"] = key.get("explanation", "")
+            elif question_type == "matching":
+                pairs = question.get("left_prompts", [])
+                if len(pairs) > 8:
+                    builder_unavailable = True
+                used_matches = []
+                for number, pair in enumerate(pairs[:8], start=1):
+                    match = key.get("correct_pairs", {}).get(pair.get("pair_id"), "")
+                    values[f"left_{number}"] = pair.get("text", "")
+                    values[f"right_{number}"] = match
+                    used_matches.append(match)
+                extra_matches = []
+                for match in question.get("available_matches", []):
+                    if match not in used_matches:
+                        extra_matches.append(match)
+                values["extra_matches"] = "\n".join(extra_matches)
+            elif question_type == "long_text":
+                criteria = key.get("tutor_rubric", {}).get("criteria", [])
+                descriptions = []
+                for criterion in criteria:
+                    descriptions.append(criterion.get("criterion") or criterion.get("name", ""))
+                values["rubric"] = "\n".join(descriptions)
+            else:
+                builder_unavailable = True
+            initial_questions.append(values)
+
+    question_editing_disabled = questions_locked or builder_unavailable
+
+    # The locked page accepts only title, instructions, and dates, even for forged POSTs.
+    form = AssessmentCreateForm(request.POST or None, initial=initial)
+    if question_editing_disabled:
+        for name, field in form.fields.items():
+            if name not in ("title", "description", "opens_at", "due_date"):
+                field.disabled = True
+    question_data = None
+    if request.method == "POST" and not question_editing_disabled:
+        question_data = request.POST
+    question_forms = AssessmentQuestionFormSet(question_data, prefix="questions", initial=initial_questions)
+    if request.method == "POST" and form.is_valid():
+        delivery_mode = form.cleaned_data["delivery_mode"] or AssessmentDeliveryMode.ONLINE
+        if question_editing_disabled:
+            questions_valid = True
+        elif delivery_mode == AssessmentDeliveryMode.PAPER_SCANNED:
+            questions_valid = True
+        else:
+            questions_valid = question_forms.is_valid()
+
+        if questions_valid and not question_editing_disabled and delivery_mode == AssessmentDeliveryMode.ONLINE:
+            has_active_question = False
+            total_points = Decimal("0")
+            for data in question_forms.cleaned_data:
+                if data and not data.get("DELETE"):
+                    has_active_question = True
+                    total_points += data["points"]
+
+            if not has_active_question:
+                form.add_error(None, "Add at least one online question.")
+                questions_valid = False
+            elif total_points > form.cleaned_data["max_score"]:
+                # The combined question points must not exceed the assessment's maximum score.
+                form.add_error("max_score", "Maximum score cannot be less than the total question points.")
+                questions_valid = False
+        if questions_valid:
+            # Build separate documents; only explicitly chosen fields enter student-visible questions.
+            questions = []
+            answer_keys = {}
+            if not question_editing_disabled and delivery_mode == AssessmentDeliveryMode.ONLINE:
+                for question_form in question_forms.ordered_forms:
+                    index = question_forms.forms.index(question_form)
+                    data = question_form.cleaned_data
+                    if not data or data.get("DELETE"):
+                        continue
+                    question_id = f"q_{uuid.uuid4().hex}"
+                    question = {
+                        "question_id": question_id,
+                        "type": data["type"],
+                        "prompt": data["prompt"],
+                        "points": float(data["points"]),
+                    }
+                    if data["type"] == "multiple_choice":
+                        question["options"] = []
+                        correct_options = []
+                        for number in range(1, 9):
+                            option = data.get(f"option_{number}")
+                            if option:
+                                option_id = f"opt_{number}"
+                                question["options"].append({"option_id": option_id, "text": option})
+                                if data.get(f"correct_{number}"):
+                                    correct_options.append(option_id)
+                        answer_keys[question_id] = {
+                            "correct_option_ids": correct_options,
+                            "explanation": data.get("explanation", ""),
+                        }
+                    elif data["type"] == "matching":
+                        question["left_prompts"] = []
+                        question["available_matches"] = []
+                        correct_pairs = {}
+                        for number in range(1, 9):
+                            if data.get(f"left_{number}"):
+                                pair_id = f"pair_{number}"
+                                question["left_prompts"].append({"pair_id": pair_id, "text": data[f"left_{number}"]})
+                                if data[f"right_{number}"] not in question["available_matches"]:
+                                    question["available_matches"].append(data[f"right_{number}"])
+                                correct_pairs[pair_id] = data[f"right_{number}"]
+                        for match in data.get("extra_matches", "").splitlines():
+                            match = match.strip()
+                            if match and match not in question["available_matches"]:
+                                question["available_matches"].append(match)
+                        # Alphabetical order does not reveal which left item matches which answer.
+                        question["available_matches"].sort()
+                        answer_keys[question_id] = {"correct_pairs": correct_pairs}
+                    else:
+                        question["max_words"] = data["max_words"]
+                        criteria = []
+                        for line in data["rubric"].splitlines():
+                            if line.strip():
+                                criteria.append({"criterion": line.strip()})
+                        # Preserve existing detailed marking criteria when their text was not changed.
+                        rubric = {}
+                        if (
+                            assessment
+                            and index < len(initial_questions)
+                            and data["rubric"] == initial_questions[index].get("rubric", "")
+                        ):
+                            old_id = assessment.questions_json[index].get("question_id")
+                            old_rubric = existing_keys.get(old_id, {}).get("tutor_rubric", {})
+                            rubric = old_rubric.copy()
+                            criteria = old_rubric.get("criteria", criteria)
+                        rubric["max_words"] = data["max_words"]
+                        rubric["criteria"] = criteria
+                        answer_keys[question_id] = {"tutor_rubric": rubric}
+                    questions.append(question)
+
+            # Save both documents together so an assessment never has a half-written key.
+            raw_proctor = form.cleaned_data["proctor_code"]
+            settings_doc = {}
+            for name in (
+                "shuffle_questions",
+                "shuffle_options",
+                "allow_backtracking",
+                "autosave_interval_seconds",
+            ):
+                settings_doc[name] = form.cleaned_data[name]
+            with transaction.atomic():
+                if assessment:
+                    # A student start takes this same lock, so an attempt cannot slip past this check.
+                    assessment = Assessment.objects.select_for_update().get(id=assessment.id)
+                    if not questions_locked and AssessmentAttempt.objects.filter(assessment=assessment).exists():
+                        messages.error(request, "Questions are locked because students have started.")
+                        return redirect("kura:assessment_edit", assessment_id=assessment.id)
+                else:
+                    assessment = Assessment(section=section, created_by=request.user)
+                assessment.title = form.cleaned_data["title"]
+                assessment.description = form.cleaned_data["description"]
+                assessment.opens_at = form.cleaned_data["opens_at"]
+                assessment.due_date = form.cleaned_data["due_date"]
+                if not question_editing_disabled:
+                    assessment.component_type = form.cleaned_data["component_type"]
+                    assessment.delivery_mode = delivery_mode
+                    assessment.max_score = form.cleaned_data["max_score"]
+                    assessment.max_attempts = form.cleaned_data["max_attempts"]
+                    assessment.duration_minutes = form.cleaned_data["duration_minutes"]
+                    assessment.settings_json = settings_doc
+                    assessment.questions_json = questions
+                    assessment.lab_cidr_allowed = form.cleaned_data["lab_cidr_allowed"] or None
+                    if raw_proctor:
+                        assessment.proctor_code_hash = hashlib.sha256(raw_proctor.encode("utf-8")).hexdigest()
+                assessment.save()
+                if not question_editing_disabled:
+                    ExamAnswerKey.objects.update_or_create(
+                        assessment=assessment,
+                        defaults={"answer_key_json": answer_keys},
+                        create_defaults={"answer_key_json": answer_keys, "created_by": request.user},
+                    )
+            messages.success(request, "Assessment saved.")
+            return redirect("kura:assessment_detail", assessment_id=assessment.id)
+
+    return render(
+        request,
+        "kura/assessments/assessment_create.html",
+        {
+            "form": form,
+            "section": section,
+            "question_forms": question_forms,
+            "assessment": assessment,
+            "questions_locked": questions_locked,
+            "builder_unavailable": builder_unavailable,
+        },
+    )
+
+
+def assessment_question_form_view(request, section_id):
+    """
+    Returns one blank question card for the assessment builder.
+    Who can use it: Assigned course staff and the department head, but not Admins.
+    Security: Checks access to the exact section and validates the form index and type.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Prevent Admins and unrelated users from accessing assessment authoring.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+    section = get_object_or_404(ModuleSection.objects.select_related("module__course__department"), id=section_id)
+    course = section.module.course
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+
+    # Limit both the selected type and index before rendering a new card.
+    add_form = AssessmentQuestionAddForm(
+        {"type": request.GET.get("type"), "index": request.GET.get("questions-TOTAL_FORMS")}
+    )
+    if not add_form.is_valid():
+        return HttpResponse("Unable to add another question.", status=400)
+    index = add_form.cleaned_data["index"]
+    initial = [{} for unused in range(index)]
+    initial.append({"type": add_form.cleaned_data["type"], "max_words": 500})
+    question_form = AssessmentQuestionFormSet(prefix="questions", initial=initial).forms[index]
+    return render(
+        request,
+        "kura/assessments/_question_form.html",
+        {
+            "question_form": question_form,
+            "new_total": index + 1,
+        },
+    )
+
+
+def assessment_delete_view(request, assessment_id):
+    """
+    Deletes an assessment only if no student has started it.
+    Who can use it: Assigned course staff and the department head, except Admins.
+    Security: Requires POST, confirmation, course permission, and a lock against new attempts.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Check the role, method, and exact course before handling the confirmation.
+    if is_admin_course_manager(request.user):
+        raise PermissionDenied
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    assessment = get_object_or_404(
+        Assessment.objects.select_related("section__module__course__department"), id=assessment_id
+    )
+    course = assessment.section.module.course
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+    if not DeleteConfirmationForm(request.POST).is_valid():
+        messages.error(request, "Confirm assessment deletion first.")
+        return redirect("kura:assessment_detail", assessment_id=assessment.id)
+    # Share the start-attempt lock to ensure attempts cannot be deleted by a race.
+    with transaction.atomic():
+        assessment = Assessment.objects.select_for_update().get(id=assessment.id)
+        if AssessmentAttempt.objects.filter(assessment=assessment).exists():
+            messages.error(request, "This assessment has attempts and cannot be deleted.")
+            return redirect("kura:assessment_detail", assessment_id=assessment.id)
+        assessment_id = assessment.id
+        assessment.delete()
+        security_logger.info("Assessment %s deleted by %s", assessment_id, request.user.id)
+    messages.success(request, "Assessment deleted.")
+    return redirect("kura:course_detail", course_id=course.id)
+
+
+def assessment_detail_view(request, assessment_id):
+    """
+    Displays assessment overview, materials, and student attempt status.
+    Who can use it: Enrolled students, Course staff, Department Heads.
+    Security: Restricts view to authorized course members; shows student only their own attempts.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Administrators cannot access assessments, even if assigned to the course.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    assessment = get_object_or_404(
+        Assessment.objects.select_related("section__module__course__department"),
+        id=assessment_id,
+    )
+    course = assessment.section.module.course
+
+    is_head = is_department_head(request.user, course.department)
+    is_staff = is_course_staff(request.user, course)
+    enrolled = is_enrolled(request.user, course)
+
+    if not (is_head or is_staff or enrolled):
+        raise PermissionDenied
+    if not (is_head or is_staff) and not assessment.section.is_visible:
+        raise PermissionDenied
+
+    now = timezone.now()
+    is_open = assessment.opens_at <= now <= assessment.due_date
+
+    # Load attempts: staff sees all, students see strictly their own attempts.
+    if is_head or is_staff:
+        attempts = (
+            AssessmentAttempt.objects.filter(assessment=assessment).select_related("student").order_by("-started_at")
+        )
+        user_attempts_count = 0
+        can_start_attempt = False
+    else:
+        attempts = AssessmentAttempt.objects.filter(assessment=assessment, student=request.user).order_by("-started_at")
+        user_attempts_count = attempts.count()
+        can_start_attempt = is_open and (user_attempts_count < assessment.max_attempts)
+
+    # Load attached files.
+    attached_files = AssessmentFile.objects.filter(assessment=assessment).select_related("file")
+    start_form = AssessmentAttemptStartForm()
+    file_upload_form = AssessmentFileUploadForm()
+    scanned_upload_form = ScannedPaperStaffUploadForm()
+    if is_head or is_staff:
+        # Only active students enrolled in this course may be selected for a scanned script.
+        scanned_upload_form.fields["student"].queryset = (
+            User.objects.filter(
+                is_active=True,
+                enrollments__course=course,
+                enrollments__status=EnrollmentStatus.ACTIVE,
+                user_roles__role__name="Student",
+            )
+            .exclude(user_roles__role__name="Admin")
+            .distinct()
+        )
+
+    context = {
+        "assessment": assessment,
+        "is_staff": is_head or is_staff,
+        "is_open": is_open,
+        "attempts": attempts,
+        "attached_files": attached_files,
+        "can_start_attempt": can_start_attempt,
+        "start_form": start_form,
+        "file_upload_form": file_upload_form,
+        "scanned_upload_form": scanned_upload_form,
+    }
+    return render(request, "kura/assessments/assessment_detail.html", context)
+
