@@ -40,6 +40,8 @@ from .forms import (
     AdminSessionFilterForm,
     AdminSessionRevokeForm,
     AssessmentAttemptStartForm,
+    AssessmentAnswerForm,
+    AssessmentAutosaveForm,
     AssessmentCreateForm,
     AssessmentFileUploadForm,
     AssessmentQuestionAddForm,
@@ -3374,6 +3376,129 @@ def attendance_history_view(request):
     )
 
 
+# ==========================================
+# Assessments, attempts & grading
+# ==========================================
+
+
+def evaluate_attempt(attempt):
+    """
+    Evaluates student assessment responses against the isolated exam answer key.
+    Auto-grades multiple choice and matching questions; flags essays for manual grading.
+    Updates summary_score_json, status, and creates/updates a draft Grade record.
+    """
+    # Scanned papers are never automatically marked as a zero-point online exam.
+    if attempt.assessment.delivery_mode == AssessmentDeliveryMode.PAPER_SCANNED:
+        attempt.status = AttemptStatus.REQUIRES_MANUAL_GRADING
+        attempt.summary_score_json = None
+        attempt.save(update_fields=["status", "summary_score_json", "submitted_at", "submission_hash"])
+        return
+
+    answer_key_obj = ExamAnswerKey.objects.filter(assessment=attempt.assessment).first()
+    answer_key_dict = {}
+    if answer_key_obj:
+        answer_key_dict = answer_key_obj.answer_key_json
+
+    auto_graded_points = Decimal("0.00")
+    total_max_points = Decimal("0.00")
+    has_manual_questions = False
+
+    answers = attempt.answers_json or []
+    answers_by_id = {ans.get("question_id"): ans for ans in answers}
+
+    updated_answers = []
+    questions = attempt.assessment.questions_json or []
+
+    for q in questions:
+        q_id = q.get("question_id")
+        q_type = q.get("type")
+        q_points = Decimal(str(q.get("points", 0)))
+        total_max_points += q_points
+
+        student_ans = answers_by_id.get(q_id, {"question_id": q_id, "type": q_type})
+        key_data = answer_key_dict.get(q_id, {})
+
+        if q_type == "multiple_choice":
+            correct_opts = set(key_data.get("correct_option_ids", []))
+            selected_opts = set(student_ans.get("selected_option_ids", []))
+            is_correct = bool(correct_opts and correct_opts == selected_opts)
+            points_awarded = Decimal("0.00")
+            if is_correct:
+                points_awarded = q_points
+            auto_graded_points += points_awarded
+
+            student_ans["auto_evaluation"] = {
+                "is_correct": is_correct,
+                "points_awarded": float(points_awarded),
+            }
+            updated_answers.append(student_ans)
+
+        elif q_type == "matching":
+            correct_pairs = key_data.get("correct_pairs", {})
+            submitted_matches = student_ans.get("submitted_matches", [])
+            total_pairs = len(correct_pairs)
+
+            matched_count = 0
+            counted_pairs = set()
+            for item in submitted_matches:
+                p_id = item.get("pair_id")
+                chosen_val = item.get("selected_match")
+                # Old attempts may contain duplicate or unknown pair IDs; count each correct pair once.
+                if p_id in correct_pairs and p_id not in counted_pairs and correct_pairs[p_id] == chosen_val:
+                    matched_count += 1
+                    counted_pairs.add(p_id)
+
+            if total_pairs > 0:
+                fraction = Decimal(matched_count) / Decimal(total_pairs)
+                points_awarded = (q_points * fraction).quantize(Decimal("0.01"))
+            else:
+                points_awarded = Decimal("0.00")
+
+            auto_graded_points += points_awarded
+            student_ans["auto_evaluation"] = {
+                "matched_count": matched_count,
+                "total_pairs": total_pairs,
+                "points_awarded": float(points_awarded),
+            }
+            updated_answers.append(student_ans)
+
+        else:
+            # Long essay or written response requires manual instructor grading.
+            has_manual_questions = True
+            updated_answers.append(student_ans)
+
+    attempt.answers_json = updated_answers
+
+    if has_manual_questions:
+        attempt.status = AttemptStatus.REQUIRES_MANUAL_GRADING
+        is_fully_graded = False
+    else:
+        attempt.status = AttemptStatus.FULLY_GRADED
+        is_fully_graded = True
+
+    attempt.summary_score_json = {
+        "auto_graded_points": float(auto_graded_points),
+        "manual_graded_points": 0.0,
+        "total_score": float(auto_graded_points),
+        "max_possible_points": float(total_max_points),
+        "is_fully_graded": is_fully_graded,
+    }
+    attempt.save()
+
+    # If fully auto-graded, create or update a draft grade record.
+    if is_fully_graded:
+        Grade.objects.update_or_create(
+            assessment=attempt.assessment,
+            student=attempt.student,
+            defaults={
+                "attempt": attempt,
+                "score": auto_graded_points,
+                "status": GradeStatus.DRAFT,
+            },
+        )
+
+
+@login_required
 def assessment_create_view(request, section_id=None, assessment_id=None):
     """
     Creates or edits an assessment and separates questions from its answer key.
@@ -3598,6 +3723,11 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
                 "autosave_interval_seconds",
             ):
                 settings_doc[name] = form.cleaned_data[name]
+            # Remember whether this is new, and the old dates, for the notifications below.
+            is_new_assessment = assessment is None
+            old_dates = None
+            if assessment:
+                old_dates = (assessment.opens_at, assessment.due_date)
             with transaction.atomic():
                 if assessment:
                     # A student start takes this same lock, so an attempt cannot slip past this check.
@@ -3629,6 +3759,34 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
                         defaults={"answer_key_json": answer_keys},
                         create_defaults={"answer_key_json": answer_keys, "created_by": request.user},
                     )
+            # Email the enrolled students: a new assessment, or its dates moved.
+            # The dates are part of the event name, so each change is emailed once.
+            new_dates = (assessment.opens_at, assessment.due_date)
+            if is_new_assessment:
+                event_name = "assessment.created"
+            else:
+                event_name = "assessment.edited"
+            log_security_event(
+                request,
+                event_name,
+                {
+                    "assessment_id": assessment.id,
+                    "component_type": assessment.component_type,
+                    "dates_changed": old_dates != new_dates if old_dates else False,
+                },
+            )
+            if is_new_assessment:
+                queue_assessment_notification(
+                    assessment, "assessment-new", f"New {assessment.get_component_type_display()}: {assessment.title}",
+                    "A new assessment has been published in one of your courses.",
+                )
+            elif old_dates != new_dates:
+                queue_assessment_notification(
+                    assessment,
+                    f"assessment-dates-{int(new_dates[0].timestamp())}-{int(new_dates[1].timestamp())}",
+                    f"Dates changed: {assessment.title}",
+                    "The opening or due date of an assessment has changed. The new dates are below.",
+                )
             messages.success(request, "Assessment saved.")
             return redirect("kura:assessment_detail", assessment_id=assessment.id)
 
@@ -3646,6 +3804,7 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
     )
 
 
+@login_required
 def assessment_question_form_view(request, section_id):
     """
     Returns one blank question card for the assessment builder.
@@ -3686,6 +3845,7 @@ def assessment_question_form_view(request, section_id):
     )
 
 
+@login_required
 def assessment_delete_view(request, assessment_id):
     """
     Deletes an assessment only if no student has started it.
@@ -3718,11 +3878,16 @@ def assessment_delete_view(request, assessment_id):
             return redirect("kura:assessment_detail", assessment_id=assessment.id)
         assessment_id = assessment.id
         assessment.delete()
-        security_logger.info("Assessment %s deleted by %s", assessment_id, request.user.id)
+        log_security_event(
+            request,
+            "assessment.deleted",
+            {"assessment_id": assessment_id, "component_type": assessment.component_type, "dates_changed": False},
+        )
     messages.success(request, "Assessment deleted.")
     return redirect("kura:course_detail", course_id=course.id)
 
 
+@login_required
 def assessment_detail_view(request, assessment_id):
     """
     Displays assessment overview, materials, and student attempt status.
@@ -3797,3 +3962,674 @@ def assessment_detail_view(request, assessment_id):
         "scanned_upload_form": scanned_upload_form,
     }
     return render(request, "kura/assessments/assessment_detail.html", context)
+
+
+@login_required
+def scanned_paper_staff_upload_view(request, assessment_id):
+    """
+    Submits a scanned script on behalf of an enrolled student for manual marking.
+    Who can use it: Assigned course staff and the course's department head, not Admins.
+    Security: POST and CSRF, validates student enrollment and scanned file type, and saves atomically.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Reject administrators and non-POST requests before accessing assessment content.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    assessment = get_object_or_404(
+        Assessment.objects.select_related("section__module__course__department"), id=assessment_id
+    )
+    course = assessment.section.module.course
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+    if assessment.delivery_mode != AssessmentDeliveryMode.PAPER_SCANNED:
+        raise PermissionDenied
+
+    # Restrict the submitted student ID to active, enrolled non-admin students.
+    form = ScannedPaperStaffUploadForm(request.POST, request.FILES)
+    form.fields["student"].queryset = (
+        User.objects.filter(
+            is_active=True,
+            enrollments__course=course,
+            enrollments__status=EnrollmentStatus.ACTIVE,
+            user_roles__role__name="Student",
+        )
+        .exclude(user_roles__role__name="Admin")
+        .distinct()
+    )
+    if not form.is_valid():
+        messages.error(request, "Select an enrolled student and a scanned file.")
+        return redirect("kura:assessment_detail", assessment_id=assessment.id)
+
+    # Lock the assessment while choosing the student's existing or next attempt.
+    try:
+        with transaction.atomic():
+            assessment = Assessment.objects.select_for_update().get(id=assessment.id)
+            # The delivery mode may have changed while this request waited for the lock.
+            if assessment.delivery_mode != AssessmentDeliveryMode.PAPER_SCANNED:
+                raise PermissionDenied
+            attempts = AssessmentAttempt.objects.filter(assessment=assessment, student=form.cleaned_data["student"])
+            attempt = attempts.filter(status=AttemptStatus.IN_PROGRESS).select_for_update().first()
+            if not attempt:
+                attempt_count = attempts.count()
+                if attempt_count >= assessment.max_attempts:
+                    raise ValidationError("This student has no attempts remaining.")
+                attempt = AssessmentAttempt.objects.create(
+                    assessment=assessment,
+                    student=form.cleaned_data["student"],
+                    attempt_no=attempt_count + 1,
+                    expires_at=timezone.now() + timezone.timedelta(minutes=assessment.duration_minutes),
+                    ip_address=get_client_ip(request),
+                )
+
+            # Inspect and attach only a PDF or image before sealing the attempt.
+            stored_file = validate_and_save_upload(form.cleaned_data["file"], request.user)
+            if stored_file.mime_type not in {"application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp"}:
+                raise ValidationError("Upload a PDF or image of the scanned paper.")
+            AttemptFile.objects.create(attempt=attempt, file=stored_file)
+            attempt.submitted_at = timezone.now()
+            payload = (
+                f"{attempt.id}:{json.dumps(attempt.answers_json, sort_keys=True)}:{attempt.submitted_at.isoformat()}"
+            )
+            attempt.submission_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+            evaluate_attempt(attempt)
+    except ValidationError as error:
+        if hasattr(error, "message"):
+            error_message = str(error.message)
+        else:
+            error_message = str(error)
+        messages.error(request, error_message)
+        return redirect("kura:assessment_detail", assessment_id=assessment.id)
+
+    # Record the action without logging the submitted file or its contents.
+    log_security_event(
+        request,
+        "attempt.submitted",
+        {"attempt_id": attempt.id, "submission_hash": attempt.submission_hash},
+    )
+    messages.success(request, "Scanned paper submitted for manual marking.")
+    return redirect("kura:assessment_detail", assessment_id=assessment.id)
+
+
+@login_required
+def attempt_file_download_view(request, attempt_id, file_id):
+    """
+    Downloads a file attached to an assessment attempt.
+    Who can use it: The student who submitted it, assigned staff, and the department head.
+    Security: Denies Admins and checks the file belongs to this exact authorized attempt.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Administrators cannot access attempts or scanned scripts.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+    attempt = get_object_or_404(
+        AssessmentAttempt.objects.select_related("assessment__section__module__course__department"),
+        id=attempt_id,
+    )
+    course = attempt.assessment.section.module.course
+    if not (
+        attempt.student_id == request.user.id
+        or is_course_staff(request.user, course)
+        or is_department_head(request.user, course.department)
+    ):
+        raise PermissionDenied
+    if (
+        not (is_course_staff(request.user, course) or is_department_head(request.user, course.department))
+        and not attempt.assessment.section.is_visible
+    ):
+        raise PermissionDenied
+
+    # Bind the file to this attempt before sending the protected download response.
+    attachment = get_object_or_404(AttemptFile.objects.select_related("file"), attempt=attempt, file_id=file_id)
+    # Record the authorized attempt-file download without logging the file contents.
+    log_security_event(
+        request,
+        "file.downloaded",
+        {"file_id": attachment.file_id, "sha256": attachment.file.sha256_hash, "context": "attempt"},
+    )
+    return create_download_response(attachment.file)
+
+
+@login_required
+def assessment_file_upload_view(request, assessment_id):
+    """
+    Uploads course material files attached to an assessment.
+    Who can use it: Course staff and Department Heads.
+    Security: POST only; validates file magic bytes, MIME type, size cap, and hashes.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Administrators cannot access assessment materials.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    assessment = get_object_or_404(
+        Assessment.objects.select_related("section__module__course__department"),
+        id=assessment_id,
+    )
+    course = assessment.section.module.course
+
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+
+    form = AssessmentFileUploadForm(request.POST, request.FILES)
+    if form.is_valid():
+        uploaded_file = form.cleaned_data["file"]
+        try:
+            stored_file = validate_and_save_upload(uploaded_file, request.user)
+            AssessmentFile.objects.create(assessment=assessment, file=stored_file)
+            messages.success(request, f"Attached {stored_file.original_filename} to assessment.")
+        except ValidationError as e:
+            if hasattr(e, "message"):
+                error_message = str(e.message)
+            else:
+                error_message = str(e)
+            messages.error(request, error_message)
+
+    return redirect("kura:assessment_detail", assessment_id=assessment.id)
+
+
+@login_required
+def assessment_file_download_view(request, assessment_id, file_id):
+    """
+    Downloads files attached to an assessment.
+    Who can use it: Course staff and enrolled students.
+    Security: For exams, students can download only during an active In_Progress attempt.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Administrators cannot download assessment materials.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    assessment = get_object_or_404(
+        Assessment.objects.select_related("section__module__course__department"),
+        id=assessment_id,
+    )
+    course = assessment.section.module.course
+    stored_file = get_object_or_404(StoredFile, id=file_id)
+
+    # Verify file is attached to this assessment.
+    get_object_or_404(AssessmentFile, assessment=assessment, file=stored_file)
+
+    is_head = is_department_head(request.user, course.department)
+    is_staff = is_course_staff(request.user, course)
+
+    if not (is_head or is_staff):
+        if not is_enrolled(request.user, course):
+            raise PermissionDenied
+        if not assessment.section.is_visible:
+            raise PermissionDenied
+        # Students cannot download before the assessment opens.
+        if timezone.now() < assessment.opens_at:
+            raise PermissionDenied
+        # For exams or proctored assessments, verify student has an active In_Progress attempt.
+        if assessment.component_type == "exam" or assessment.proctor_code_hash or assessment.lab_cidr_allowed:
+            has_active_attempt = AssessmentAttempt.objects.filter(
+                assessment=assessment,
+                student=request.user,
+                status=AttemptStatus.IN_PROGRESS,
+                expires_at__gt=timezone.now(),
+            ).exists()
+            if not has_active_attempt:
+                raise PermissionDenied
+
+    # Record the authorized assessment-file download without logging its contents.
+    log_security_event(
+        request,
+        "file.downloaded",
+        {"file_id": stored_file.id, "sha256": stored_file.sha256_hash, "context": "assessment"},
+    )
+    return create_download_response(stored_file)
+
+
+@login_required
+def assessment_attempt_start_view(request, assessment_id):
+    """
+    Initiates a new assessment attempt for an enrolled student.
+    Who can use it: Enrolled students with remaining attempt allowances.
+    Security: Validates opening window, max attempts, lab CIDR subnet, and whiteboard proctor code.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Administrators cannot start assessment attempts.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    # Lock the assessment before reading its settings and creating the first attempt.
+    # The edit view uses the same lock, so a concurrent edit cannot change started questions.
+    with transaction.atomic():
+        assessment = get_object_or_404(Assessment.objects.select_for_update(), id=assessment_id)
+        course = assessment.section.module.course
+        if not is_enrolled(request.user, course):
+            raise PermissionDenied
+        if not assessment.section.is_visible:
+            raise PermissionDenied
+
+        now = timezone.now()
+        if now < assessment.opens_at or now > assessment.due_date:
+            log_security_event(
+                request,
+                "attempt.start_blocked",
+                {"assessment_id": assessment.id, "reason": "closed_window"},
+                logging.WARNING,
+            )
+            messages.error(request, "This assessment is currently closed.")
+            return redirect("kura:assessment_detail", assessment_id=assessment.id)
+        existing_count = AssessmentAttempt.objects.filter(assessment=assessment, student=request.user).count()
+        if existing_count >= assessment.max_attempts:
+            log_security_event(
+                request,
+                "attempt.start_blocked",
+                {"assessment_id": assessment.id, "reason": "max_attempts"},
+                logging.WARNING,
+            )
+            messages.error(request, "You have reached the maximum allowed attempts for this assessment.")
+            return redirect("kura:assessment_detail", assessment_id=assessment.id)
+
+        # Check the current lab restriction and the submitted proctor code while locked.
+        client_ip = get_client_ip(request)
+        if assessment.lab_cidr_allowed:
+            try:
+                allowed_network = ipaddress.ip_network(str(assessment.lab_cidr_allowed), strict=False)
+                if ipaddress.ip_address(client_ip) not in allowed_network:
+                    log_security_event(
+                        request,
+                        "attempt.start_blocked",
+                        {"assessment_id": assessment.id, "reason": "lab_cidr"},
+                        logging.WARNING,
+                    )
+                    messages.error(request, "Attempt must be initiated from an authorized university lab subnet.")
+                    return redirect("kura:assessment_detail", assessment_id=assessment.id)
+            except ValueError:
+                log_security_event(
+                    request,
+                    "attempt.start_blocked",
+                    {"assessment_id": assessment.id, "reason": "lab_cidr_invalid"},
+                    logging.WARNING,
+                )
+                messages.error(request, "Network verification failure.")
+                return redirect("kura:assessment_detail", assessment_id=assessment.id)
+        form = AssessmentAttemptStartForm(request.POST)
+        if assessment.proctor_code_hash:
+            if not form.is_valid():
+                log_security_event(
+                    request,
+                    "attempt.start_blocked",
+                    {"assessment_id": assessment.id, "reason": "proctor_code_missing"},
+                    logging.WARNING,
+                )
+                messages.error(request, "Proctor code is required.")
+                return redirect("kura:assessment_detail", assessment_id=assessment.id)
+            submitted_code = form.cleaned_data.get("proctor_code", "").strip()
+            if hashlib.sha256(submitted_code.encode("utf-8")).hexdigest() != assessment.proctor_code_hash:
+                log_security_event(
+                    request,
+                    "attempt.start_blocked",
+                    {"assessment_id": assessment.id, "reason": "proctor_code_invalid"},
+                    logging.WARNING,
+                )
+                messages.error(request, "Invalid whiteboard proctor code.")
+                return redirect("kura:assessment_detail", assessment_id=assessment.id)
+
+        # Create the attempt before releasing the row lock.
+        timer_expires = now + timezone.timedelta(minutes=assessment.duration_minutes)
+        attempt = AssessmentAttempt.objects.create(
+            assessment=assessment,
+            student=request.user,
+            attempt_no=existing_count + 1,
+            status=AttemptStatus.IN_PROGRESS,
+            expires_at=min(assessment.due_date, timer_expires),
+            ip_address=client_ip,
+            user_agent=request.META.get("HTTP_USER_AGENT", "")[:255],
+        )
+        # Record the new attempt only after it is safely stored.
+        log_security_event(request, "attempt.started", {"assessment_id": assessment.id, "attempt_id": attempt.id})
+    return redirect("kura:assessment_take", attempt_id=attempt.id)
+
+
+@login_required
+def assessment_take_view(request, attempt_id):
+    """
+    Renders the live exam interface with server timer countdown and autosave.
+    Who can use it: The attempting student.
+    Security: Verifies attempt ownership and never changes an attempt on GET.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Administrators cannot take assessments, even if enrolled in the course.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    attempt = get_object_or_404(
+        AssessmentAttempt.objects.select_related("assessment__section__module__course"),
+        id=attempt_id,
+        student=request.user,
+    )
+    # A hidden section cannot be accessed through a previously started attempt.
+    if not attempt.assessment.section.is_visible:
+        raise PermissionDenied
+
+    # GET must never submit an attempt; the scheduled job handles expired attempts.
+    if attempt.status != AttemptStatus.IN_PROGRESS or timezone.now() >= attempt.expires_at:
+        return redirect("kura:attempt_detail", attempt_id=attempt.id)
+
+    answers_map = {ans.get("question_id"): ans for ans in (attempt.answers_json or [])}
+    attempt_files = AttemptFile.objects.filter(attempt=attempt).select_related("file")
+
+    # Pair each displayed question with this student's saved response, never the answer key.
+    questions = []
+    for saved_question in attempt.assessment.questions_json:
+        question = saved_question.copy()
+        question["saved_answer"] = answers_map.get(question.get("question_id"), {})
+        if question.get("type") == "matching":
+            left_prompts = []
+            for saved_pair in question.get("left_prompts", []):
+                pair = saved_pair.copy()
+                for match in question["saved_answer"].get("submitted_matches", []):
+                    if match.get("pair_id") == pair.get("pair_id"):
+                        pair["selected_match"] = match.get("selected_match")
+                left_prompts.append(pair)
+            question["left_prompts"] = left_prompts
+        questions.append(question)
+
+    context = {
+        "attempt": attempt,
+        "assessment": attempt.assessment,
+        "questions": questions,
+        "answers_map": answers_map,
+        "attempt_files": attempt_files,
+        "file_form": AssessmentFileUploadForm(),
+    }
+    return render(request, "kura/assessments/assessment_take.html", context)
+
+
+@login_required
+def assessment_autosave_view(request, attempt_id):
+    """
+    Receives periodic background response autosaves via HTMX.
+    Who can use it: The attempting student.
+    Security: Enforces server-side deadline; rejects updates if expires_at is passed; tracks focus loss.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Administrators cannot submit assessment responses.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    # Validate the question identifier before using it to find the student's question.
+    lookup = AssessmentAutosaveForm(request.POST)
+    if not lookup.is_valid():
+        return HttpResponse("Unable to save this response.", status=400)
+
+    # The same attempt lock is used by submission, uploads, and the deadline job.
+    with transaction.atomic():
+        attempt = get_object_or_404(AssessmentAttempt.objects.select_for_update(), id=attempt_id, student=request.user)
+        if not attempt.assessment.section.is_visible:
+            raise PermissionDenied
+        if attempt.status != AttemptStatus.IN_PROGRESS or timezone.now() >= attempt.expires_at:
+            # This direct 403 bypasses Django's permission-exception handler.
+            log_security_event(
+                request,
+                "access.denied",
+                {"reason": "assessment_deadline_expired"},
+                logging.WARNING,
+            )
+            return HttpResponseForbidden("Assessment deadline has expired.")
+        if lookup.cleaned_data["focus_lost"]:
+            attempt.tab_focus_lost_count += 1
+            attempt.save(update_fields=["tab_focus_lost_count"])
+            # Count focus changes without recording answer text or question identifiers.
+            log_security_event(
+                request,
+                "attempt.focus_lost",
+                {"attempt_id": attempt.id, "count": attempt.tab_focus_lost_count},
+            )
+            return render(request, "kura/assessments/_autosave_status.html", {"status": "saved"})
+
+        # Find the question in this assessment and reject invented IDs or response types.
+        question = None
+        for item in attempt.assessment.questions_json:
+            if item.get("question_id") == lookup.cleaned_data["question_id"]:
+                question = item
+                break
+        if not question:
+            return HttpResponse("Unable to save this response.", status=400)
+        question_type = question.get("type")
+        if question_type == "essay":
+            question_type = "long_text"
+        if lookup.cleaned_data["response_type"] != question_type:
+            return HttpResponse("Unable to save this response.", status=400)
+        response_form = AssessmentAnswerForm(request.POST, question)
+        if not response_form.is_valid():
+            return HttpResponse("Unable to save this response.", status=400)
+
+        # Only fields for the real question are stored; forged extra pair names are ignored.
+        question_id = question["question_id"]
+        answer = {"question_id": question_id, "type": question_type, "last_updated_at": timezone.now().isoformat()}
+        if question_type == "multiple_choice":
+            answer["selected_option_ids"] = response_form.cleaned_data["selected_options"]
+        elif question_type == "matching":
+            answer["submitted_matches"] = []
+            for pair in question.get("left_prompts", []):
+                pair_id = pair["pair_id"]
+                answer["submitted_matches"].append(
+                    {
+                        "pair_id": pair_id,
+                        "selected_match": response_form.cleaned_data[f"match_{pair_id}"],
+                    }
+                )
+        elif question_type == "long_text":
+            answer["response_text"] = response_form.cleaned_data["response_text"]
+        else:
+            return HttpResponse("Unable to save this response.", status=400)
+        existing_answers = {item.get("question_id"): item for item in (attempt.answers_json or [])}
+        existing_answers[question_id] = answer
+        attempt.answers_json = list(existing_answers.values())
+        attempt.last_autosave_at = timezone.now()
+        attempt.save(update_fields=["answers_json", "last_autosave_at"])
+
+    return render(request, "kura/assessments/_autosave_status.html", {"status": "saved"})
+
+
+@login_required
+def assessment_attempt_file_upload_view(request, attempt_id):
+    """
+    Uploads a student coursework submission file for an in-progress attempt.
+    Who can use it: The attempting student.
+    Security: Validates attempt is active and unexpired; database trigger also locks files on submit.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Administrators cannot upload assessment attempt files.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    attempt = get_object_or_404(AssessmentAttempt, id=attempt_id, student=request.user)
+    if not attempt.assessment.section.is_visible:
+        raise PermissionDenied
+
+    form = AssessmentFileUploadForm(request.POST, request.FILES)
+    if form.is_valid():
+        uploaded_file = form.cleaned_data["file"]
+        try:
+            # Lock the attempt so submission cannot seal it while this file is being added.
+            with transaction.atomic():
+                attempt = AssessmentAttempt.objects.select_for_update().get(id=attempt.id, student=request.user)
+                if attempt.status != AttemptStatus.IN_PROGRESS or timezone.now() >= attempt.expires_at:
+                    raise ValidationError("Files cannot be uploaded: attempt is closed or deadline has passed.")
+                stored_file = validate_and_save_upload(uploaded_file, request.user)
+                if attempt.assessment.delivery_mode == AssessmentDeliveryMode.PAPER_SCANNED:
+                    allowed_scan_types = {"application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp"}
+                    if stored_file.mime_type not in allowed_scan_types:
+                        raise ValidationError("Upload a PDF or image of the scanned paper.")
+                if timezone.now() >= attempt.expires_at:
+                    raise ValidationError("Files cannot be uploaded: attempt is closed or deadline has passed.")
+                AttemptFile.objects.create(attempt=attempt, file=stored_file)
+            messages.success(request, f"Uploaded {stored_file.original_filename}.")
+        except ValidationError as e:
+            if hasattr(e, "message"):
+                error_message = str(e.message)
+            else:
+                error_message = str(e)
+            messages.error(request, error_message)
+
+    return redirect("kura:assessment_take", attempt_id=attempt.id)
+
+
+@login_required
+def assessment_submit_view(request, attempt_id):
+    """
+    Submits an assessment attempt, computes submission hash, and triggers auto-grading.
+    Who can use it: The attempting student.
+    Security: POST only; computes SHA-256 submission hash; locks further changes.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Administrators cannot submit assessment attempts.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    # Serialize submission with file uploads and the expiry job.
+    with transaction.atomic():
+        attempt = get_object_or_404(AssessmentAttempt.objects.select_for_update(), id=attempt_id, student=request.user)
+        if not attempt.assessment.section.is_visible:
+            raise PermissionDenied
+        if attempt.status != AttemptStatus.IN_PROGRESS:
+            messages.warning(request, "This attempt has already been submitted.")
+            return redirect("kura:attempt_detail", attempt_id=attempt.id)
+
+        # A scanned-paper attempt needs an attached script before submission.
+        if (
+            attempt.assessment.delivery_mode == AssessmentDeliveryMode.PAPER_SCANNED
+            and not AttemptFile.objects.filter(attempt=attempt).exists()
+        ):
+            messages.error(request, "Upload a PDF or image of the scanned paper.")
+            return redirect("kura:assessment_take", attempt_id=attempt.id)
+
+        # Seal the attempt and its grade together, capping the time at the deadline.
+        attempt.submitted_at = min(timezone.now(), attempt.expires_at)
+        raw_payload = (
+            f"{attempt.id}:{json.dumps(attempt.answers_json, sort_keys=True)}:{attempt.submitted_at.isoformat()}"
+        )
+        attempt.submission_hash = hashlib.sha256(raw_payload.encode("utf-8")).hexdigest()
+        evaluate_attempt(attempt)
+
+        # Email a receipt: when it was submitted, its integrity hash and the
+        # SHA-256 of each attached file. The student can use it as proof later.
+        receipt_lines = [
+            "Hello,",
+            "",
+            f"Kura received your submission for: {attempt.assessment.title}",
+            f"Submitted at: {timezone.localtime(attempt.submitted_at).strftime('%d %b %Y, %H:%M:%S')}",
+            f"Submission integrity hash (SHA-256): {attempt.submission_hash}",
+        ]
+        for attempt_file in AttemptFile.objects.filter(attempt=attempt).select_related("file"):
+            receipt_lines.append(f"File: {attempt_file.file.original_filename}  SHA-256: {attempt_file.file.sha256_hash}")
+        receipt_lines += ["", "Keep this email as your receipt. This is an automatic message from Kura."]
+        queue_email(
+            f"submission-receipt:{attempt.id}",
+            request.user.email,
+            f"Submission received: {attempt.assessment.title}",
+            "\n".join(receipt_lines),
+        )
+
+    messages.success(request, f"Assessment submitted! Integrity Hash: {attempt.submission_hash[:16]}...")
+    # Record the submission integrity hash without logging raw answers or scores.
+    log_security_event(
+        request,
+        "attempt.submitted",
+        {"attempt_id": attempt.id, "submission_hash": attempt.submission_hash},
+    )
+    return redirect("kura:attempt_detail", attempt_id=attempt.id)
+
+
+@login_required
+def attempt_detail_view(request, attempt_id):
+    """
+    Displays completed assessment attempt review and score telemetry.
+    Who can use it: The attempting student, Course staff, Department Heads.
+    Security: IDOR protection ensures students cannot inspect other students' attempts.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Administrators cannot view attempts or their marks.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    attempt = get_object_or_404(
+        AssessmentAttempt.objects.select_related("assessment__section__module__course__department", "student"),
+        id=attempt_id,
+    )
+    course = attempt.assessment.section.module.course
+
+    is_head = is_department_head(request.user, course.department)
+    is_staff = is_course_staff(request.user, course)
+
+    # Only course staff/head or the attempting student can view this attempt.
+    if not (is_head or is_staff or attempt.student_id == request.user.id):
+        raise PermissionDenied
+    if not (is_head or is_staff) and not attempt.assessment.section.is_visible:
+        raise PermissionDenied
+
+    # Staff may see the marking breakdown; students may see only the released grade.
+    summary = {}
+    released_grade = None
+    if (is_head or is_staff) and attempt.student_id != request.user.id:
+        summary = attempt.summary_score_json or {}
+    else:
+        released_grade = Grade.objects.filter(
+            attempt=attempt,
+            student=request.user,
+            status=GradeStatus.RELEASED,
+        ).first()
+
+    attempt_files = AttemptFile.objects.filter(attempt=attempt).select_related("file")
+
+    context = {
+        "attempt": attempt,
+        "assessment": attempt.assessment,
+        "is_staff": is_head or is_staff,
+        "attempt_files": attempt_files,
+        "summary": summary,
+        "released_grade": released_grade,
+    }
+    return render(request, "kura/assessments/attempt_detail.html", context)
