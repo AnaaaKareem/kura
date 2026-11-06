@@ -5642,6 +5642,187 @@ class PasskeyWebAuthnIntegrationTests(TestCase):
         self.assertEqual(data["publicKey"]["rp"]["name"], "Kura LMS")
 
 
+class DataRetentionAndIPAnonymizationTests(TestCase):
+    """
+    Tests Data retention and IP anonymization jobs.
+    Tests IPv4 and IPv6 subnet masking, management commands for anonymizing historic records,
+    and retention purging of expired sessions and obsolete logs.
+    """
+
+    def setUp(self):
+        self.student = make_user("Student", mfa_enabled=True)
+        self.dept_head = make_user("Department head", mfa_enabled=True)
+        self.dept = Department.objects.create(name="Data Privacy", code="PRIV", head_user=self.dept_head)
+        self.instructor = make_user("Instructor", mfa_enabled=True)
+
+        self.course = Course.objects.create(
+            department=self.dept,
+            code="PRIV101",
+            title="Privacy Law & Security",
+            semester="1",
+            academic_year=2026,
+            is_published=True,
+            published_by=self.dept_head,
+            published_at=timezone.now(),
+        )
+        self.module = Module.objects.create(course=self.course, title="GDPR & Law 151", is_visible=True)
+        self.section = ModuleSection.objects.create(module=self.module, title="Privacy Section", section_type="assignment")
+        self.assessment = Assessment.objects.create(
+            section=self.section,
+            title="Data Protection Exam",
+            component_type=GradeComponentType.EXAM,
+            max_score=Decimal("100.00"),
+            max_attempts=1,
+            opens_at=timezone.now() - timezone.timedelta(days=200),
+            due_date=timezone.now() - timezone.timedelta(days=190),
+            duration_minutes=60,
+            created_by=self.instructor,
+        )
+
+    def test_anonymize_ip_address_ipv4_and_ipv6(self):
+        # Subnet masking zeroes the host identifier while preserving valid IP formatting.
+        from kura.management.commands.anonymize_ips import anonymize_ip_address
+
+        # IPv4 /24 mask
+        self.assertEqual(anonymize_ip_address("192.168.1.42"), "192.168.1.0")
+        self.assertEqual(anonymize_ip_address("10.0.5.254"), "10.0.5.0")
+        self.assertEqual(anonymize_ip_address("192.168.1.0"), "192.168.1.0")
+
+        # IPv6 /48 mask
+        self.assertEqual(
+            anonymize_ip_address("2001:db8:85a3:8d3:1319:8a2e:370:7348"),
+            "2001:db8:85a3::",
+        )
+
+        # Edge cases: None, blank, and invalid strings
+        self.assertEqual(anonymize_ip_address(""), "")
+        self.assertIsNone(anonymize_ip_address(None))
+        self.assertEqual(anonymize_ip_address("not-an-ip"), "not-an-ip")
+
+    def test_anonymize_ips_command_execution(self):
+        # Records older than the retention cutoff have their IP addresses anonymized.
+        import io
+        from kura.models import AssessmentAttempt, LoginAttempt, UserSession
+
+        now = timezone.now()
+        past_date = now - timezone.timedelta(days=200)
+
+        # 1. Old session (> 180 days)
+        old_session = UserSession.objects.create(
+            user=self.student,
+            session_token_hash="a" * 64,
+            ip_address="198.51.100.77",
+            expires_at=now + timezone.timedelta(hours=1),
+        )
+        UserSession.objects.filter(id=old_session.id).update(created_at=past_date)
+
+        # 2. Recent session (< 180 days)
+        recent_session = UserSession.objects.create(
+            user=self.student,
+            session_token_hash="b" * 64,
+            ip_address="198.51.100.88",
+            expires_at=now + timezone.timedelta(hours=1),
+        )
+
+        # 3. Old login attempt
+        old_attempt = LoginAttempt.objects.create(
+            user=self.student,
+            username_attempted=self.student.email,
+            ip_address="203.0.113.15",
+            failed_count=1,
+        )
+        LoginAttempt.objects.filter(id=old_attempt.id).update(created_at=past_date)
+
+        # 4. Old assessment attempt
+        old_exam = AssessmentAttempt.objects.create(
+            assessment=self.assessment,
+            student=self.student,
+            attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED,
+            expires_at=now - timezone.timedelta(days=190),
+            ip_address="192.0.2.99",
+        )
+        AssessmentAttempt.objects.filter(id=old_exam.id).update(started_at=past_date)
+
+        # Execute anonymization command for records older than 180 days
+        out = io.StringIO()
+        call_command("anonymize_ips", days=180, stdout=out)
+
+        # Old records should have anonymized IPs (ending in .0)
+        old_session.refresh_from_db()
+        self.assertEqual(old_session.ip_address, "198.51.100.0")
+
+        old_attempt.refresh_from_db()
+        self.assertEqual(old_attempt.ip_address, "203.0.113.0")
+
+        old_exam.refresh_from_db()
+        self.assertEqual(old_exam.ip_address, "192.0.2.0")
+
+        # Recent records must retain their raw IP addresses
+        recent_session.refresh_from_db()
+        self.assertEqual(recent_session.ip_address, "198.51.100.88")
+
+    def test_anonymize_ips_command_dry_run(self):
+        # In dry-run mode, no changes are committed to the database.
+        import io
+        from kura.models import LoginAttempt
+
+        past_date = timezone.now() - timezone.timedelta(days=200)
+        attempt = LoginAttempt.objects.create(
+            user=self.student,
+            username_attempted=self.student.email,
+            ip_address="203.0.113.55",
+            failed_count=1,
+        )
+        LoginAttempt.objects.filter(id=attempt.id).update(created_at=past_date)
+
+        out = io.StringIO()
+        call_command("anonymize_ips", days=180, dry_run=True, stdout=out)
+
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.ip_address, "203.0.113.55")
+
+    def test_purge_retention_command_execution(self):
+        # Expired sessions and resolved login attempts older than cutoff are deleted.
+        import io
+        from kura.models import LoginAttempt, UserSession
+
+        now = timezone.now()
+        past_date = now - timezone.timedelta(days=200)
+
+        # Expired session older than 180 days
+        expired_old = UserSession.objects.create(
+            user=self.student,
+            session_token_hash="c" * 64,
+            expires_at=past_date,
+        )
+        # Active session
+        active_session = UserSession.objects.create(
+            user=self.student,
+            session_token_hash="d" * 64,
+            expires_at=now + timezone.timedelta(hours=2),
+        )
+
+        # Old resolved login attempt
+        old_attempt = LoginAttempt.objects.create(
+            user=self.student,
+            username_attempted=self.student.email,
+            ip_address="198.51.100.1",
+            failed_count=1,
+        )
+        LoginAttempt.objects.filter(id=old_attempt.id).update(created_at=past_date)
+
+        out = io.StringIO()
+        call_command("purge_retention", days=180, stdout=out)
+
+        # Expired session should be deleted, active session preserved
+        self.assertFalse(UserSession.objects.filter(id=expired_old.id).exists())
+        self.assertTrue(UserSession.objects.filter(id=active_session.id).exists())
+
+        # Old resolved attempt should be purged
+        self.assertFalse(LoginAttempt.objects.filter(id=old_attempt.id).exists())
+
+
 class SemesterValueMigrationTests(TestCase):
     """Verify semester values migrate forward and have a documented rollback mapping."""
 
