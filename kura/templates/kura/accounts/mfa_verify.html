@@ -34,6 +34,14 @@
                 </div>
             </form>
 
+            {% if has_passkeys %}
+            <div class="divider my-4 text-xs text-base-content/50">OR</div>
+            <div>
+                <a href="{% url 'fido2_auth' %}" class="btn btn-outline btn-secondary w-full">
+                    🔑 Verify with Passkey / Security Key
+                </a>
+            </div>
+            {% endif %}
 
             <div class="text-center mt-4">
                 <a href="{% url 'kura:login' %}" class="link link-hover text-xs text-base-content/60">

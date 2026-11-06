@@ -1,0 +1,76 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Manage Passkeys - Kura{% endblock %}
+
+{% block content %}
+<div class="max-w-3xl mx-auto mt-6">
+    <div class="flex items-center justify-between mb-6">
+        <div>
+            <h1 class="text-3xl font-bold">Hardware Security Keys & Passkeys</h1>
+            <p class="text-sm text-base-content/70 mt-1">
+                Authenticate securely using WebAuthn / FIDO2 passkeys, Touch ID, Face ID, Windows Hello, or YubiKeys.
+            </p>
+        </div>
+        <a href="{% url 'start_fido2' %}" class="btn btn-primary">
+            + Enroll New Passkey
+        </a>
+    </div>
+
+    <!-- List of registered passkeys -->
+    <div class="card bg-base-100 border border-base-300">
+        <div class="card-body gap-4 p-4 sm:p-6">
+            <h2 class="card-title text-xl mb-4">Your Enrolled Passkeys</h2>
+
+            {% if keys %}
+            <div class="overflow-x-auto">
+                <table class="table table-sm w-full">
+                    <thead class="bg-base-200">
+                        <tr>
+                            <th>Key ID</th>
+                            <th>Enrolled On</th>
+                            <th>Last Used</th>
+                            <th>Status</th>
+                            <th>Action</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for key in keys %}
+                        <tr>
+                            <td class="font-mono text-sm">Passkey #{{ key.id }}</td>
+                            <td class="text-xs">{{ key.added_on|date:"Y-m-d H:i" }}</td>
+                            <td class="text-xs">
+                                {% if key.last_used %}
+                                    {{ key.last_used|date:"Y-m-d H:i" }}
+                                {% else %}
+                                    <span class="text-base-content/40">Never</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                {% if key.enabled %}
+                                    <span class="badge badge-success badge-sm">Active</span>
+                                {% else %}
+                                    <span class="badge badge-ghost badge-sm">Disabled</span>
+                                {% endif %}
+                            </td>
+                            <td>
+                                <form method="post" action="{% url 'kura:passkey_delete' key.id %}" data-confirm-action="Remove this passkey? You will no longer be able to use it to log in.">
+                                    {% csrf_token %}
+                                    <button type="submit" class="btn btn-error btn-xs btn-outline">
+                                        Delete
+                                    </button>
+                                </form>
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+            {% else %}
+            <div class="alert alert-info shadow-sm">
+                <span>You have no security keys or passkeys enrolled yet. Click <strong>+ Enroll New Passkey</strong> to add one.</span>
+            </div>
+            {% endif %}
+        </div>
+    </div>
+</div>
+{% endblock %}
