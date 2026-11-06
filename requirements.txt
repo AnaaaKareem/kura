@@ -1,4 +1,4 @@
-Django>=6.1.2
+Django==6.1.2
 python-dotenv>=1.2.4
 psycopg2==2.9.13
 argon2-cffi==25.1.0
@@ -9,3 +9,7 @@ qrcode>=7.4.2
 nh3>=0.2.14
 markdown-it-py==4.2.0
 python-magic>=0.4.27
+django-csp>=4.0
+gunicorn>=23.0.0
+hvac>=2.4.0
+django-mfa2>=3.2.0

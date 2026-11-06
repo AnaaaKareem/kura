@@ -12,108 +12,189 @@ https://docs.djangoproject.com/en/6.1/ref/settings/
 
 import os
 from pathlib import Path
+
+from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Load environment variables from .env
-load_dotenv(BASE_DIR / '.env')
+load_dotenv(BASE_DIR / ".env")
 
 
 # Quick-start development settings - unsuitable for production
 # See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
-# SECURITY WARNING: keep the secret key used in production secret!
-SECRET_KEY = os.environ['SECRET_KEY']
+
+# Helper to read secrets from Docker secrets mount (/run/secrets/<name>) or environment variables
+def read_secret(name, fallback=""):
+    """
+    Reads a sensitive credential, checking Docker secrets (/run/secrets/<name>) first,
+    then falling back to environment variables.
+    """
+    secret_file = Path(f"/run/secrets/{name}")
+    if secret_file.is_file():
+        try:
+            return secret_file.read_text().strip()
+        except OSError:
+            pass
+    return os.environ.get(name.upper(), fallback)
+
 
 # SECURITY WARNING: don't run with debug turned on in production!
-DEBUG = os.environ.get('DEBUG', 'False') == 'True'
+DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
 
-ALLOWED_HOSTS = os.environ.get('ALLOWED_HOSTS', 'localhost,127.0.0.1').split(',')
+# The secret key signs session cookies, CSRF tokens and password-reset links.
+# Anyone who knows it can forge them, so it must never be written in this file.
+# It comes from the Docker secret (production) or SECRET_KEY in .env (development).
+SECRET_KEY = read_secret("django_secret_key", os.environ.get("SECRET_KEY", ""))
+
+# In development (DEBUG on), allow a throwaway key so the project still starts.
+if DEBUG and not SECRET_KEY:
+    SECRET_KEY = "django-insecure-local-development-only"
+
+# In production, refuse to start with a missing, placeholder or short key.
+# Crashing here is safer than quietly running with a key an attacker could guess.
+# 50 characters is the minimum Django's own deployment check asks for.
+if not DEBUG:
+    if not SECRET_KEY or SECRET_KEY.startswith("django-insecure-") or len(SECRET_KEY) < 50:
+        raise ImproperlyConfigured(
+            "SECRET_KEY is missing or too weak. Run secrets/generate_secrets.sh "
+            "or set a random SECRET_KEY of at least 50 characters."
+        )
+
+ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,testserver").split(",")
 
 
 # Application definition
 
 INSTALLED_APPS = [
-    'django.contrib.admin',
-    'django.contrib.auth',
-    'django.contrib.contenttypes',
-    'django.contrib.sessions',
-    'django.contrib.messages',
-    'django.contrib.staticfiles',
-    'axes',
-    'django_otp',
-    'django_otp.plugins.otp_totp',
-    'django_otp.plugins.otp_static',
-    'two_factor',
-    'kura.apps.KuraConfig',
+    "django.contrib.admin",
+    "django.contrib.auth",
+    "django.contrib.contenttypes",
+    "django.contrib.sessions",
+    "django.contrib.messages",
+    "django.contrib.staticfiles",
+    # Content Security Policy
+    "csp",
+    # Brute-force protection
+    "axes",
+    # Two-factor authentication
+    "django_otp",
+    "django_otp.plugins.otp_totp",
+    "django_otp.plugins.otp_static",
+    "two_factor",
+    "mfa",
+    "kura.apps.KuraConfig",
 ]
 
-AUTH_USER_MODEL = 'kura.User'
+AUTH_USER_MODEL = "kura.User"
+
+# Match the existing django-mfa2 primary key without changing its database column.
+DEFAULT_AUTO_FIELD = "django.db.models.AutoField"
 
 AUTHENTICATION_BACKENDS = [
-    'axes.backends.AxesStandaloneBackend',
-    'kura.backends.KuraAuthBackend',
+    # Axes backend checks for lockout state before standard auth
+    "axes.backends.AxesStandaloneBackend",
+    # Kura backend enforces administrative locks and constant-time checks
+    "kura.backends.KuraAuthBackend",
 ]
 
 MIDDLEWARE = [
-    'django.middleware.security.SecurityMiddleware',
-    'axes.middleware.AxesMiddleware',
-    'django.contrib.sessions.middleware.SessionMiddleware',
-    'django.middleware.common.CommonMiddleware',
-    'django.middleware.csrf.CsrfViewMiddleware',
-    'django.contrib.auth.middleware.AuthenticationMiddleware',
-    'django_otp.middleware.OTPMiddleware',
-    'kura.middleware.SessionValidationMiddleware',
-    'kura.middleware.SecurityEnforcementMiddleware',
-    'django.contrib.messages.middleware.MessageMiddleware',
-    'django.middleware.clickjacking.XFrameOptionsMiddleware',
+    "django.middleware.security.SecurityMiddleware",
+    # Content Security Policy header enforcement
+    "csp.middleware.CSPMiddleware",
+    "django.contrib.sessions.middleware.SessionMiddleware",
+    "django.middleware.common.CommonMiddleware",
+    "django.middleware.csrf.CsrfViewMiddleware",
+    "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # Enforces database Row-Level Security (RLS) context based on authenticated user
+    "kura.middleware.RowLevelSecurityMiddleware",
+    # Attaches verified OTP device state to request.user
+    "django_otp.middleware.OTPMiddleware",
+    "django.contrib.messages.middleware.MessageMiddleware",
+    # Validates against revoked sessions
+    "kura.middleware.SessionValidationMiddleware",
+    # Enforces first-login password rotation and mandatory MFA setup
+    "kura.middleware.SecurityEnforcementMiddleware",
+    # Enforces burst rate limits on sensitive endpoints
+    "kura.middleware.RateLimitMiddleware",
+    "django.middleware.clickjacking.XFrameOptionsMiddleware",
+    # Tracks failed login attempts and applies lockout rules
+    "axes.middleware.AxesMiddleware",
 ]
 
-ROOT_URLCONF = 'config.urls'
+ROOT_URLCONF = "config.urls"
 
 TEMPLATES = [
     {
-        'BACKEND': 'django.template.backends.django.DjangoTemplates',
-        'DIRS': [],
-        'APP_DIRS': True,
-        'OPTIONS': {
-            'context_processors': [
-                'django.template.context_processors.request',
-                'django.contrib.auth.context_processors.auth',
-                'django.contrib.messages.context_processors.messages',
+        "BACKEND": "django.template.backends.django.DjangoTemplates",
+        "DIRS": [BASE_DIR / "templates"],
+        "APP_DIRS": True,
+        "OPTIONS": {
+            "context_processors": [
+                "django.template.context_processors.request",
+                "django.contrib.auth.context_processors.auth",
+                "django.contrib.messages.context_processors.messages",
             ],
         },
     },
 ]
 
-WSGI_APPLICATION = 'config.wsgi.application'
+WSGI_APPLICATION = "config.wsgi.application"
 
 
 # Database
 # https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
 DATABASES = {
-    'default': {
-        'ENGINE': 'django.db.backends.postgresql',
-        'NAME': os.environ['DATABASE_NAME'],
-        'USER': os.environ['DATABASE_USER'],
-        'PASSWORD': os.environ['DATABASE_PASSWORD'],
-        'HOST': os.environ.get('DATABASE_HOST', 'localhost'),
-        'PORT': os.environ.get('DATABASE_PORT', '5432'),
+    "default": {
+        "ENGINE": "django.db.backends.postgresql",
+        "NAME": os.environ.get("DATABASE_NAME", "kura"),
+        "USER": os.environ.get("DATABASE_USER", "kura-admin"),
+        "PASSWORD": read_secret("db_password", os.environ.get("DATABASE_PASSWORD", "")),
+        "HOST": os.environ.get("DATABASE_HOST", "localhost"),
+        "PORT": os.environ.get("DATABASE_PORT", "5432"),
     }
 }
 
+# ==============================================================================
+# Database Mutual TLS (mTLS) Settings (Hop 2: Django -> PostgreSQL)
+# Security: enforces verify-full SSL mode and client certificates in production.
+# When DB_SSL_MODE is omitted (development/testing), standard connection is used.
+# ==============================================================================
+DB_OPTIONS = {}
+DB_SSL_MODE = os.environ.get("DB_SSL_MODE", "")
+if DB_SSL_MODE:
+    DB_OPTIONS["sslmode"] = DB_SSL_MODE
+    if os.environ.get("DB_SSL_ROOTCERT"):
+        DB_OPTIONS["sslrootcert"] = os.environ.get("DB_SSL_ROOTCERT")
+    if os.environ.get("DB_SSL_CERT"):
+        DB_OPTIONS["sslcert"] = os.environ.get("DB_SSL_CERT")
+    if os.environ.get("DB_SSL_KEY"):
+        DB_OPTIONS["sslkey"] = os.environ.get("DB_SSL_KEY")
 
-# Password hashing
-# https://docs.djangoproject.com/en/6.1/topics/auth/passwords/
+if DB_OPTIONS:
+    DATABASES["default"]["OPTIONS"] = DB_OPTIONS
 
-PASSWORD_HASHERS = [
-    'django.contrib.auth.hashers.Argon2PasswordHasher',
-    'django.contrib.auth.hashers.PBKDF2PasswordHasher',
-    'django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher',
-]
+# Temporary database users from Vault (production / Docker only).
+# When on, Django uses kura/vault_postgres/base.py: Django's normal PostgreSQL
+# backend, except that each new connection logs in with a 15-minute user from
+# Vault instead of DATABASE_USER / DATABASE_PASSWORD. The TLS options above
+# (CA, client certificate and key) still apply. Off for local development and tests.
+VAULT_DATABASE_CREDENTIALS = os.environ.get("VAULT_DATABASE_CREDENTIALS", "False").lower() in ("true", "1")
+if VAULT_DATABASE_CREDENTIALS:
+    DATABASES["default"]["ENGINE"] = "kura.vault_postgres"
+
+# A second connection to the SAME database, used only to save quarantined
+# uploads (kura/files.py). Uploads often run inside transaction.atomic(); when
+# an infected file is rejected that transaction is rolled back, which would
+# also undo a quarantine record saved on the normal connection. This
+# connection commits on its own, so the record is kept. In tests it points at
+# the test database ("MIRROR").
+DATABASES["quarantine"] = dict(DATABASES["default"])
+DATABASES["quarantine"]["TEST"] = {"MIRROR": "default"}
 
 
 # Password validation
@@ -121,17 +202,22 @@ PASSWORD_HASHERS = [
 
 AUTH_PASSWORD_VALIDATORS = [
     {
-        'NAME': 'django.contrib.auth.password_validation.UserAttributeSimilarityValidator',
+        "NAME": "django.contrib.auth.password_validation.UserAttributeSimilarityValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.MinimumLengthValidator',
-        'OPTIONS': {'min_length': 12},
+        "NAME": "django.contrib.auth.password_validation.MinimumLengthValidator",
+        "OPTIONS": {
+            "min_length": 12,
+        },
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.CommonPasswordValidator',
+        "NAME": "django.contrib.auth.password_validation.CommonPasswordValidator",
     },
     {
-        'NAME': 'django.contrib.auth.password_validation.NumericPasswordValidator',
+        "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
+    },
+    {
+        "NAME": "kura.validators.BreachedPasswordValidator",
     },
 ]
 
@@ -139,9 +225,9 @@ AUTH_PASSWORD_VALIDATORS = [
 # Internationalization
 # https://docs.djangoproject.com/en/6.1/topics/i18n/
 
-LANGUAGE_CODE = 'en-us'
+LANGUAGE_CODE = "en-us"
 
-TIME_ZONE = 'Africa/Cairo'
+TIME_ZONE = "Africa/Cairo"
 
 USE_I18N = True
 
@@ -151,18 +237,207 @@ USE_TZ = True
 # Static files (CSS, JavaScript, Images)
 # https://docs.djangoproject.com/en/6.1/howto/static-files/
 
-STATIC_URL = 'static/'
-STATICFILES_DIRS = [BASE_DIR / 'static']
+STATIC_URL = "/static/"
+STATICFILES_DIRS = [BASE_DIR / "static"]
+STATIC_ROOT = BASE_DIR / "staticfiles"
+MEDIA_URL = "/media/"
 
 
-# Email
-# https://docs.djangoproject.com/en/6.1/topics/email/#topic-email-configuration
+# Email configuration
+# Kura assumes kura.edu is a real domain with normal email. Views only put
+# emails in the outbox (OutgoingEmail); the send_queued_emails command sends them.
+# Development prints emails to the console. In Docker, Django hands email to the
+# Postfix relay ("relay" service) on a private network; only the relay can reach
+# the internet and log in to the mail provider (docker/postfix/README.md).
+if DEBUG:
+    EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
+else:
+    EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
+# Where the relay listens. STARTTLS is required; Django checks the relay's
+# certificate against Kura's internal CA (SSL_CERT_FILE in docker-compose.yml).
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "localhost")
+EMAIL_PORT = int(os.environ.get("EMAIL_PORT", 587))
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "False").lower() in ("true", "1")
+EMAIL_TIMEOUT = 10
+# Every Kura email comes from this one address (the relay refuses any other).
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "Kura <noreply@kura.edu>")
+# Links in emails are built from this fixed address, never from the Host header
+# a visitor sent (which an attacker could choose: "password reset poisoning").
+SITE_URL = os.environ.get("SITE_URL", "http://localhost:8000").rstrip("/")
 
+# Use PostgreSQL for Registrar search limits so all application workers share them.
+CACHES = {
+    "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
+    "search_limits": {
+        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+        "LOCATION": "kura_search_cache",
+        "OPTIONS": {"MAX_ENTRIES": 1000000},
+    },
+}
+
+
+# Password hashing with Argon2id primary
+PASSWORD_HASHERS = [
+    "django.contrib.auth.hashers.Argon2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2PasswordHasher",
+    "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
+    "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
+    "django.contrib.auth.hashers.ScryptPasswordHasher",
+]
+
+
+# Authentication and login routing
+LOGIN_URL = "kura:login"
+LOGIN_REDIRECT_URL = "kura:home"
+
+
+# Brute-force protection via django-axes
 AXES_FAILURE_LIMIT = 5
 AXES_COOLOFF_TIME = 1
 AXES_RESET_ON_SUCCESS = True
-AXES_LOCKOUT_PARAMETERS = ['ip_address', ['username', 'ip_address']]
-AXES_LOCKOUT_CALLABLE = 'kura.views.axes_lockout_callable'
+AXES_LOCKOUT_PARAMETERS = ["ip_address", ["username", "ip_address"]]
+AXES_LOCKOUT_CALLABLE = "kura.views.axes_lockout_callable"
+# Axes must lock out the real visitor's IP, not the WAF's, so it uses the same
+# client-IP function as the rest of Kura.
+AXES_CLIENT_IP_CALLABLE = "kura.views.get_client_ip"
 
-if DEBUG:
-    EMAIL_BACKEND = 'django.core.mail.backends.console.EmailBackend'
+
+# Real client IP behind the proxies (Nginx -> Coraza WAF -> Gunicorn).
+# Every request reaches Django from the WAF, so REMOTE_ADDR is always the WAF's
+# address. The WAF sends the visitor's address in the X-Real-IP header.
+# Only set TRUST_PROXY_IP_HEADER=True where Gunicorn requires a client
+# certificate (docker-compose.yml), because then only the WAF can connect and
+# set that header. With runserver anyone could send X-Real-IP and fake their IP,
+# so it is off by default.
+TRUST_PROXY_IP_HEADER = os.environ.get("TRUST_PROXY_IP_HEADER", "False").lower() in ("true", "1")
+
+
+# ==========================================
+# Hardening & Security Settings
+# ==========================================
+
+# Cookie security attributes
+SESSION_COOKIE_SECURE = not DEBUG
+SESSION_COOKIE_HTTPONLY = True
+SESSION_COOKIE_SAMESITE = "Lax"
+SESSION_COOKIE_AGE = 1800  # 30-minute idle session timeout
+SESSION_EXPIRE_AT_BROWSER_CLOSE = True
+
+CSRF_COOKIE_SECURE = not DEBUG
+CSRF_COOKIE_HTTPONLY = True
+CSRF_COOKIE_SAMESITE = "Lax"
+# Use Kura's generic denial page when Django rejects a CSRF token.
+CSRF_FAILURE_VIEW = "kura.views.csrf_failure_view"
+
+# Frame protection and MIME sniffing defense
+X_FRAME_OPTIONS = "DENY"
+SECURE_CONTENT_TYPE_NOSNIFF = True
+SECURE_REFERRER_POLICY = "same-origin"
+
+# HTTP Strict Transport Security (HSTS) in production
+if not DEBUG:
+    SECURE_HSTS_SECONDS = 31536000
+    SECURE_HSTS_INCLUDE_SUBDOMAINS = True
+    SECURE_HSTS_PRELOAD = True
+    SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "True").lower() == "true"
+
+# Trust X-Forwarded-Proto header passed by the Nginx reverse proxy
+SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
+USE_X_FORWARDED_HOST = True
+
+# Content Security Policy (django-csp 4.0+) - strict no-inline-scripts
+CONTENT_SECURITY_POLICY = {
+    "DIRECTIVES": {
+        "default-src": ("'self'",),
+        "script-src": ("'self'",),
+        "style-src": ("'self'",),
+        "img-src": ("'self'", "data:"),
+        "font-src": ("'self'",),
+        "connect-src": ("'self'",),
+        "frame-ancestors": ("'none'",),
+        "form-action": ("'self'",),
+    }
+}
+
+# Security events go to the console so Docker can collect them without writing
+# files inside the read-only application container.
+LOGGING = {
+    "version": 1,
+    "disable_existing_loggers": False,
+    "formatters": {
+        "security": {
+            "format": "time=%(asctime)s level=%(levelname)s logger=%(name)s %(message)s",
+            "datefmt": "%Y-%m-%dT%H:%M:%S%z",
+        },
+    },
+    "handlers": {
+        "console": {
+            "class": "logging.StreamHandler",
+            "formatter": "security",
+        },
+    },
+    "root": {
+        "handlers": ["console"],
+        "level": "WARNING",
+    },
+    "loggers": {
+        "kura.security": {
+            "handlers": ["console"],
+            "level": "INFO",
+            "propagate": False,
+        },
+        "kura.vault": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        "django.request": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        "django.security": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        "axes": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+    },
+}
+
+# ==============================================================================
+# ClamAV Antivirus Scanner Settings
+# Security: scans all uploaded files in memory via clamd INSTREAM protocol.
+# ==============================================================================
+CLAMAV_HOST = os.environ.get("CLAMAV_HOST", "clamav")
+CLAMAV_PORT = int(os.environ.get("CLAMAV_PORT", "3310"))
+# Strict mode: in production (DEBUG=False) ClamAV failure fails closed (rejects uploads).
+# In local development (DEBUG=True), failure logs a warning and allows local testing.
+if "CLAMAV_REQUIRED" in os.environ:
+    CLAMAV_REQUIRED = os.environ["CLAMAV_REQUIRED"].lower() in ("true", "1")
+else:
+    CLAMAV_REQUIRED = not DEBUG
+CLAMAV_TIMEOUT_SECONDS = int(os.environ.get("CLAMAV_TIMEOUT_SECONDS", "10"))
+
+# ==============================================================================
+# HashiCorp Vault Integration Settings
+# Security: Transit encryption for User.mfa_secret (authenticator seeds).
+# Django talks HTTPS to Vault and checks Vault's certificate with our internal CA.
+# It logs in with an AppRole (role ID + secret ID from Docker secrets) and gets
+# a 15-minute token that may only encrypt/decrypt with the kura-mfa key.
+# ==============================================================================
+VAULT_URL = os.environ.get("VAULT_URL", "https://vault:8200")
+VAULT_CA_CERT = os.environ.get("VAULT_CA_CERT", "/certs/internal/ca.crt")
+VAULT_ROLE_ID = read_secret("vault_role_id")
+VAULT_SECRET_ID = read_secret("vault_secret_id")
+
+# When False (default when DEBUG=True), Django gracefully falls back to direct
+# storage for local development unless VAULT_ENABLED=True is explicitly set.
+if "VAULT_ENABLED" in os.environ:
+    VAULT_ENABLED = os.environ["VAULT_ENABLED"].lower() in ("true", "1")
+else:
+    VAULT_ENABLED = not DEBUG
+VAULT_TRANSIT_KEY = os.environ.get("VAULT_TRANSIT_KEY", "kura-mfa")
+VAULT_TRANSIT_MOUNT = os.environ.get("VAULT_TRANSIT_MOUNT", "transit")
+VAULT_DB_MOUNT = os.environ.get("VAULT_DB_MOUNT", "database")
+VAULT_DB_ROLE = os.environ.get("VAULT_DB_ROLE", "kura-app")
+
+# ==============================================================================
+# Multi-Factor Authentication (django-mfa2 / FIDO2 / WebAuthn Passkeys)
+# ==============================================================================
+MFA_SERVER_PATH = "mfa/"
+FIDO_SERVER_ID = os.environ.get("FIDO_SERVER_ID", "localhost")
+FIDO_SERVER_NAME = "Kura LMS"
+MFA_METHODS = ["FIDO2"]
+MFA_ALWAYS_RESTART = False
+MFA_REDIRECT_AFTER_REGISTRATION = "kura:passkey_manage"
+MFA_SUCCESS_REGISTRATION_MSG = "Passkey successfully enrolled."
+MFA_LOGIN_CALLBACK = "kura.views.mfa_login_callback"

@@ -1,0 +1,17 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Page Not Found (404) - Kura{% endblock %}
+
+{% block content %}
+<div class="max-w-md mx-auto mt-12 text-center space-y-4">
+    <div class="text-6xl font-extrabold text-warning">404</div>
+    <h1 class="text-2xl font-bold">Page Not Found</h1>
+    <p class="text-sm text-base-content/70">
+        The requested learning resource, course record, or assessment could not be located.
+    </p>
+    <div class="pt-4">
+        <a href="{% url 'kura:home' %}" class="btn btn-primary btn-sm">Return to Dashboard</a>
+    </div>
+</div>
+{% endblock %}
+

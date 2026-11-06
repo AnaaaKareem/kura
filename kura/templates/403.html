@@ -1,0 +1,17 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Access Denied (403) - Kura{% endblock %}
+
+{% block content %}
+<div class="max-w-md mx-auto mt-12 text-center space-y-4">
+    <div class="text-6xl font-extrabold text-error">403</div>
+    <h1 class="text-2xl font-bold">Access Denied</h1>
+    <p class="text-sm text-base-content/70">
+        You do not have the required permissions or assigned role to view this academic resource.
+    </p>
+    <div class="pt-4">
+        <a href="{% url 'kura:home' %}" class="btn btn-primary btn-sm">Return to Dashboard</a>
+    </div>
+</div>
+{% endblock %}
+
