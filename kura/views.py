@@ -125,6 +125,7 @@ from .permissions import (
     is_lead_instructor,
 )
 from .templatetags.markdown import render_markdown
+from .vault import decrypt_mfa_secret, encrypt_mfa_secret
 
 security_logger = logging.getLogger("kura.security")
 
@@ -353,6 +354,57 @@ def queue_assessment_notification(assessment, event_name, subject, opening_line)
         )
 
 
+def verify_totp_code(device, user, code):
+    """
+    Checks a 6-digit authenticator-app code for one TOTP device.
+    Used in three places: the login MFA step, MFA setup and grade release.
+    Security:
+    - The real seed is read from User.mfa_secret and decrypted by Vault in
+      memory. TOTPDevice.key only holds a random placeholder, so the database
+      never contains a usable seed.
+    - Keeps django-otp's protections: throttling (a delay after wrong codes)
+      and replay protection (an accepted code cannot be used a second time).
+    - If Vault cannot be reached the code is refused (fail closed). Recovery
+      codes still work, because they do not need Vault.
+    """
+    # django-otp throttling: after wrong codes, the user must wait before trying again.
+    verify_allowed, _ = device.verify_is_allowed()
+    if not verify_allowed:
+        return False
+
+    # Ask Vault to decrypt the seed. A Vault failure is logged inside
+    # decrypt_mfa_secret and must not count as the user's mistake.
+    try:
+        seed_hex = decrypt_mfa_secret(user.mfa_secret)
+    except ValidationError:
+        # Vault errors are system failures, not failed user verification attempts.
+        log_security_event(None, "auth.mfa.vault_unavailable", {}, logging.ERROR)
+        return False
+
+    # The user must have a seed, and the code must be plain digits.
+    if not seed_hex or not (code.isascii() and code.isdigit()):
+        device.throttle_increment(commit=True)
+        return False
+
+    # Work out the expected code for the current 30-second window (and the
+    # allowed windows either side for clock drift) and compare. min_t is one
+    # past the last accepted window, so an old code cannot be replayed.
+    totp = TOTP(bytes.fromhex(seed_hex), device.step, device.t0, device.digits, device.drift)
+    totp.time = time.time()
+    if not totp.verify(int(code), device.tolerance, device.last_t + 1):
+        device.throttle_increment(commit=True)
+        return False
+
+    # Correct code: remember this window (blocks replay), keep the clock drift,
+    # clear the wrong-code counter and record when the device was last used.
+    device.last_t = totp.t()
+    device.drift = totp.drift
+    device.throttle_reset(commit=False)
+    device.set_last_used_timestamp(commit=False)
+    device.save()
+    return True
+
+
 def create_user_session(request, user):
     """
     Creates a new tracked UserSession record for an authenticated user.
@@ -504,9 +556,9 @@ def login_view(request):
 
 def mfa_verify_view(request):
     """
-    Verifies the TOTP code or recovery code during two-factor login.
+    Verifies the TOTP code, backup code, or WebAuthn/FIDO2 Passkey during two-factor login.
     Who can use it: Users who successfully passed password authentication.
-    Security: Validates a one-time code against the user’s enrolled devices.
+    Security: Validates one-time code or WebAuthn assertion challenge against enrolled credentials.
 """
     # Retrieve user ID stored during step 1 authentication.
     user_id = request.session.get("pre_mfa_user_id")
@@ -514,6 +566,13 @@ def mfa_verify_view(request):
         return redirect("kura:login")
 
     user = get_object_or_404(User, id=user_id)
+    # Store base_username so django-mfa2 WebAuthn endpoints know which user is authenticating
+    request.session["base_username"] = user.email
+
+    from mfa.models import User_Keys
+
+    has_passkeys = User_Keys.objects.filter(username=user.email, key_type="FIDO2", enabled=True).exists()
+
     form = MFAVerifyForm(request.POST or None)
 
     if request.method == "POST" and form.is_valid():
@@ -521,13 +580,15 @@ def mfa_verify_view(request):
 
         # Check TOTP devices first.
         verified = False
+        verification_method = "totp"
         for device in TOTPDevice.objects.filter(user=user, confirmed=True):
-            if device.verify_token(code):
+            if verify_totp_code(device, user, code):
                 verified = True
                 break
 
         # Check static recovery backup codes if TOTP did not match.
         if not verified:
+            verification_method = "recovery_code"
             for static_device in StaticDevice.objects.filter(user=user):
                 if static_device.verify_token(code):
                     verified = True
@@ -535,11 +596,19 @@ def mfa_verify_view(request):
 
         # Reject invalid codes with generic error.
         if not verified:
+            log_security_event(
+                request,
+                "auth.mfa.failed",
+                {"method_tried": "totp_or_recovery_code"},
+                logging.WARNING,
+            )
             messages.error(request, "Invalid security code.")
-            return render(request, "kura/accounts/mfa_verify.html", {"form": form})
+            return render(request, "kura/accounts/mfa_verify.html", {"form": form, "has_passkeys": has_passkeys})
 
         # Complete login and clean up pre-mfa session marker.
+        log_security_event(request, "auth.mfa.ok", {"method": verification_method})
         request.session.pop("pre_mfa_user_id", None)
+        request.session.pop("base_username", None)
         login(request, user, backend="kura.backends.KuraAuthBackend")
         user.last_login = timezone.now()
         user.save(update_fields=["last_login"])
@@ -551,7 +620,7 @@ def mfa_verify_view(request):
 
         return redirect("kura:home")
 
-    return render(request, "kura/accounts/mfa_verify.html", {"form": form})
+    return render(request, "kura/accounts/mfa_verify.html", {"form": form, "has_passkeys": has_passkeys})
 
 
 @login_required
@@ -1092,38 +1161,69 @@ def password_reset_confirm_view(request, token):
     return render(request, "kura/accounts/password_reset_confirm.html", {"form": form})
 
 
+@login_required
 def mfa_setup_view(request):
     """
     Configures TOTP authenticator app and generates backup recovery codes.
     Who can use it: Authenticated users.
     Security: Uses local qrcode library (no external calls) and shows recovery codes once.
+    The authenticator seed is encrypted by Vault before it is saved (User.mfa_secret);
+    TOTPDevice.key is only a random placeholder. If Vault is unavailable, setup stops.
 """
-    # Fetch or create an unconfirmed TOTP device for this user.
+    form = MFAVerifyForm(request.POST or None)
+
+    # Fetch or create the TOTP device. It keeps django-otp's confirmed flag,
+    # throttling and replay state; its own "key" is a random placeholder.
     device, _ = TOTPDevice.objects.get_or_create(
         user=request.user,
         name="default",
         defaults={"confirmed": False},
     )
 
+    try:
+        # First visit: make a new 20-byte seed and save it encrypted by Vault.
+        # The database only ever receives the ciphertext ("vault:v1:...").
+        if not request.user.mfa_secret:
+            request.user.mfa_secret = encrypt_mfa_secret(random_hex(20))
+            request.user.save(update_fields=["mfa_secret"])
+
+        # Decrypt the seed in memory only, to draw the QR code.
+        seed_hex = decrypt_mfa_secret(request.user.mfa_secret)
+    except ValidationError:
+        # Vault is down or sealed: show the page with a warning instead of a
+        # QR code (the template shows it), and answer 503 "Service Unavailable".
+        return render(request, "kura/accounts/mfa_setup.html", {"form": form, "qr_code_url": None}, status=503)
+
+    # Build the standard "otpauth://" link that authenticator apps read from the
+    # QR code (Base32 seed, SHA1, 6 digits, 30-second period, issuer "Kura").
+    otpauth_query = urllib.parse.urlencode(
+        {
+            "secret": b32encode(bytes.fromhex(seed_hex)).decode("ascii"),
+            "algorithm": "SHA1",
+            "digits": device.digits,
+            "period": device.step,
+            "issuer": "Kura",
+        }
+    )
+    otpauth_url = f"otpauth://totp/{urllib.parse.quote('Kura:' + request.user.email)}?{otpauth_query}"
+
     # Generate QR code in memory as an SVG data URI.
-    qr_img = qrcode.make(device.config_url, image_factory=qrcode.image.svg.SvgPathImage)
+    qr_img = qrcode.make(otpauth_url, image_factory=qrcode.image.svg.SvgPathImage)
     svg_data = qr_img.to_string().decode("utf-8")
     qr_code_data_uri = f"data:image/svg+xml;utf8,{urllib.parse.quote(svg_data)}"
-
-    form = MFAVerifyForm(request.POST or None)
 
     if request.method == "POST" and form.is_valid():
         code = form.cleaned_data["code"].strip()
 
         # Verify the user correctly entered the code from their authenticator app.
-        if device.verify_token(code):
+        if verify_totp_code(device, request.user, code):
             device.confirmed = True
             device.save()
 
             # Set mfa_enabled on the user model.
-            request.user.mfa_secret = device.key
             request.user.mfa_enabled = True
-            request.user.save(update_fields=["mfa_secret", "mfa_enabled"])
+            request.user.save(update_fields=["mfa_enabled"])
+            log_security_event(request, "auth.mfa.setup_completed", {})
 
             # Create or get static device for 10 single-use recovery codes.
             static_device, _ = StaticDevice.objects.get_or_create(
@@ -1141,6 +1241,9 @@ def mfa_setup_view(request):
                 StaticToken.objects.create(device=static_device, token=token_val)
                 recovery_codes.append(token_val)
 
+            # Record regeneration without ever recording the recovery codes themselves.
+            log_security_event(request, "auth.recovery_codes.regenerated", {})
+
             # Store recovery codes in session to display once on completion page.
             request.session["recovery_codes"] = recovery_codes
             return redirect("kura:mfa_setup_complete")
@@ -1157,6 +1260,7 @@ def mfa_setup_view(request):
     )
 
 
+@login_required
 def mfa_setup_complete_view(request):
     """
     Displays the 10 static recovery codes once after MFA setup.
