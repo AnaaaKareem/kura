@@ -11,6 +11,7 @@
                 MFA is mandatory for all accounts on Kura. Scan the QR code below using your authenticator app (such as Google Authenticator or 1Password), then enter the code to confirm.
             </p>
 
+            {% if qr_code_url %}
             <!-- QR Code generated locally with Python qrcode library -->
             <div class="mt-4 flex justify-center">
                 <div class="p-3 bg-white border border-base-300 rounded-box shadow-inner">
@@ -40,6 +41,12 @@
                     </button>
                 </div>
             </form>
+            {% else %}
+            <!-- Vault is unavailable, so no seed can be created or read. -->
+            <div role="alert" class="alert alert-warning">
+                <span>Authenticator setup is unavailable right now. Please try again later.</span>
+            </div>
+            {% endif %}
         </div>
     </div>
 </div>

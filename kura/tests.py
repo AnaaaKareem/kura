@@ -32,7 +32,14 @@ from unittest.mock import MagicMock, call, patch
 
 from .files import check_signature_age, scan_file_for_malware, validate_and_save_upload
 from .forms import PasswordChangeForm
-from .views import log_security_event, queue_assessment_notification, queue_email
+from .vault import (
+    decrypt_mfa_secret,
+    encrypt_mfa_secret,
+    get_dynamic_database_credentials,
+    get_vault_client,
+)
+from .views import log_security_event, queue_assessment_notification, queue_email, verify_totp_code
+from .vault import database_login_cache
 from .models import (
     OutgoingEmail,
     OutgoingEmailStatus,
@@ -333,6 +340,75 @@ class ClamAVVirusScanningTests(TransactionTestCase):
         stored_file = validate_and_save_upload(clean_file, self.user)
         self.assertIsNotNone(stored_file.id)
         self.assertEqual(stored_file.content.content, pdf_bytes)
+
+
+class VaultIntegrationTests(TestCase):
+    """
+    Tests HashiCorp Vault integration.
+    Verifies Transit encryption for MFA secrets, dynamic database credentials,
+    PKI certificate issuance, and development fallbacks.
+    """
+
+    def test_transit_encryption_fallback_when_vault_disabled(self):
+        # In development mode (VAULT_ENABLED=False), secrets are stored directly as requested.
+        secret = "JBSWY3DPEHPK3PXP"
+        with override_settings(VAULT_ENABLED=False):
+            encrypted = encrypt_mfa_secret(secret)
+            self.assertEqual(encrypted, secret)
+
+            decrypted = decrypt_mfa_secret(encrypted)
+            self.assertEqual(decrypted, secret)
+
+            # None and empty inputs return None
+            self.assertIsNone(encrypt_mfa_secret(None))
+            self.assertIsNone(decrypt_mfa_secret(None))
+
+    @patch("kura.vault.get_vault_client")
+    @override_settings(VAULT_ENABLED=True)
+    def test_transit_encrypt_mfa_secret_with_vault(self, mock_get_client):
+        # With Vault enabled, secret is base64-encoded and encrypted via Transit engine.
+        mock_client = MagicMock()
+        mock_client.secrets.transit.encrypt_data.return_value = {
+            "data": {
+                "ciphertext": "vault:v1:YWJjZGVmMTIzNDU2",
+            }
+        }
+        mock_get_client.return_value = mock_client
+
+        raw_secret = "JBSWY3DPEHPK3PXP"
+        ciphertext = encrypt_mfa_secret(raw_secret)
+
+        self.assertEqual(ciphertext, "vault:v1:YWJjZGVmMTIzNDU2")
+        mock_client.secrets.transit.encrypt_data.assert_called_once()
+
+    @patch("kura.vault.get_vault_client")
+    @override_settings(VAULT_ENABLED=True)
+    def test_transit_decrypt_mfa_secret_with_vault(self, mock_get_client):
+        # Ciphertext with 'vault:v1:' prefix is decrypted back to plaintext string.
+        mock_client = MagicMock()
+        # "JBSWY3DPEHPK3PXP" in base64 is "SkJTV1kzRFBFSFBLM1BYUA=="
+        mock_client.secrets.transit.decrypt_data.return_value = {
+            "data": {
+                "plaintext": "SkJTV1kzRFBFSFBLM1BYUA==",
+            }
+        }
+        mock_get_client.return_value = mock_client
+
+        decrypted = decrypt_mfa_secret("vault:v1:YWJjZGVmMTIzNDU2")
+        self.assertEqual(decrypted, "JBSWY3DPEHPK3PXP")
+
+    @patch("kura.vault.get_vault_client")
+    @override_settings(VAULT_ENABLED=True)
+    def test_transit_encryption_fails_closed_on_vault_error(self, mock_get_client):
+        # In production, if Vault is unreachable, encryption fails closed to protect secret integrity.
+        from hvac.exceptions import VaultError
+        mock_client = MagicMock()
+        mock_client.secrets.transit.encrypt_data.side_effect = VaultError("Connection refused")
+        mock_get_client.return_value = mock_client
+
+        with self.assertRaises(ValidationError) as ctx:
+            encrypt_mfa_secret("MYSECRET")
+        self.assertIn("MFA secret encryption failed", str(ctx.exception))
 
 
 class SemesterValueMigrationTests(TestCase):
@@ -747,6 +823,160 @@ class ClientIPLockoutTests(TestCase):
             HTTP_X_REAL_IP="203.0.113.7",
         )
         self.assertNotEqual(response.status_code, 302)
+
+
+@override_settings(VAULT_ENABLED=False)
+class VaultTOTPSeedTests(TestCase):
+    """
+    Authenticator (TOTP) seeds live only in User.mfa_secret, encrypted by Vault.
+    TOTPDevice.key is a random placeholder. With Vault off (as in these tests)
+    mfa_secret holds the seed as-is; Vault calls are replaced with mocks where
+    a test needs to see ciphertext or a Vault failure.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.seed_hex = random_hex(20)
+        self.user = make_user("Student")
+        self.user.mfa_secret = self.seed_hex
+        self.user.save(update_fields=["mfa_secret"])
+        self.device = TOTPDevice.objects.get(user=self.user, name="default")
+
+    def current_code(self, seed_hex):
+        # Work out the code an authenticator app with this seed shows right now.
+        totp = TOTP(bytes.fromhex(seed_hex), self.device.step, self.device.t0, self.device.digits, self.device.drift)
+        totp.time = time.time()
+        return str(totp.token()).zfill(self.device.digits)
+
+    def test_same_code_cannot_be_used_twice(self):
+        code = self.current_code(self.seed_hex)
+        self.assertTrue(verify_totp_code(self.device, self.user, code))
+        self.assertFalse(verify_totp_code(self.device, self.user, code))
+
+    def test_code_from_the_placeholder_key_is_rejected(self):
+        # TOTPDevice.key is not the seed, so a code made from it must not work.
+        self.assertNotEqual(self.device.key, self.seed_hex)
+        self.assertFalse(verify_totp_code(self.device, self.user, self.current_code(self.device.key)))
+
+    def test_wrong_code_counts_towards_throttling(self):
+        self.assertFalse(verify_totp_code(self.device, self.user, "000000x"))
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.throttling_failure_count, 1)
+
+    def test_vault_failure_rejects_code_without_blaming_the_user(self):
+        # Vault down: the right code is refused (fail closed) but is not counted
+        # as a wrong guess, so the user is not throttled for Vault's problem.
+        with patch("kura.views.decrypt_mfa_secret", side_effect=ValidationError("Vault down")):
+            self.assertFalse(verify_totp_code(self.device, self.user, self.current_code(self.seed_hex)))
+        self.device.refresh_from_db()
+        self.assertEqual(self.device.throttling_failure_count, 0)
+
+    def test_setup_saves_only_vault_ciphertext(self):
+        new_user = make_user("Student", mfa_enabled=False)
+        self.client.force_login(new_user)
+        seeds_given_to_vault = []
+
+        def fake_encrypt(seed_hex):
+            seeds_given_to_vault.append(seed_hex)
+            return "vault:v1:fake-ciphertext"
+
+        with patch("kura.views.encrypt_mfa_secret", side_effect=fake_encrypt), patch(
+            "kura.views.decrypt_mfa_secret", side_effect=lambda ciphertext: seeds_given_to_vault[0]
+        ):
+            response = self.client.get(reverse("kura:mfa_setup"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "data:image/svg+xml;utf8,")
+        new_user.refresh_from_db()
+        self.assertEqual(new_user.mfa_secret, "vault:v1:fake-ciphertext")
+        # The device's own key is NOT the seed that went to Vault.
+        device = TOTPDevice.objects.get(user=new_user, name="default")
+        self.assertNotEqual(device.key, seeds_given_to_vault[0])
+
+    def test_setup_confirms_with_a_code_from_the_new_seed(self):
+        new_user = make_user("Student", mfa_enabled=False)
+        self.client.force_login(new_user)
+        self.client.get(reverse("kura:mfa_setup"))
+        new_user.refresh_from_db()
+        response = self.client.post(reverse("kura:mfa_setup"), {"code": self.current_code(new_user.mfa_secret)})
+        self.assertRedirects(response, reverse("kura:mfa_setup_complete"))
+        self.assertTrue(TOTPDevice.objects.get(user=new_user, name="default").confirmed)
+
+    def test_setup_shows_503_when_vault_is_down(self):
+        new_user = make_user("Student", mfa_enabled=False)
+        self.client.force_login(new_user)
+        with patch("kura.views.encrypt_mfa_secret", side_effect=ValidationError("Vault down")):
+            response = self.client.get(reverse("kura:mfa_setup"))
+        self.assertEqual(response.status_code, 503)
+        self.assertContains(response, "unavailable right now", status_code=503)
+        self.assertNotContains(response, "TOTP QR Code", status_code=503)
+        new_user.refresh_from_db()
+        self.assertIsNone(new_user.mfa_secret)
+
+    @override_settings(VAULT_ENABLED=True)
+    def test_plain_text_seed_is_refused_when_vault_is_on(self):
+        with self.assertRaises(ValidationError):
+            decrypt_mfa_secret(self.seed_hex)
+
+    @override_settings(
+        VAULT_URL="https://vault:8200",
+        VAULT_CA_CERT="/certs/internal/ca.crt",
+        VAULT_ROLE_ID="test-role-id",
+        VAULT_SECRET_ID="test-secret-id",
+    )
+    def test_vault_client_checks_certificate_and_logs_in_with_approle(self):
+        with patch("kura.vault.hvac.Client") as mock_client_class:
+            client = get_vault_client()
+        mock_client_class.assert_called_once_with(url="https://vault:8200", verify="/certs/internal/ca.crt")
+        client.auth.approle.login.assert_called_once_with(role_id="test-role-id", secret_id="test-secret-id")
+
+    def test_command_moves_old_plain_text_seed_into_mfa_secret(self):
+        # Simulate a user enrolled before stage 2: seed in TOTPDevice.key, no mfa_secret.
+        old_seed = self.device.key
+        self.user.mfa_secret = None
+        self.user.save(update_fields=["mfa_secret"])
+
+        with patch(
+            "kura.management.commands.encrypt_totp_seeds.encrypt_mfa_secret", return_value="vault:v1:moved"
+        ) as mock_encrypt:
+            call_command("encrypt_totp_seeds", stdout=StringIO())
+
+        mock_encrypt.assert_called_once_with(old_seed)
+        self.user.refresh_from_db()
+        self.device.refresh_from_db()
+        self.assertEqual(self.user.mfa_secret, "vault:v1:moved")
+        self.assertNotEqual(self.device.key, old_seed)
+
+    def test_command_keeps_the_users_authenticator_app_working(self):
+        # With Vault off the "ciphertext" is the seed itself, so the old app code still works.
+        old_seed = self.device.key
+        self.user.mfa_secret = None
+        self.user.save(update_fields=["mfa_secret"])
+        output = StringIO()
+        call_command("encrypt_totp_seeds", stdout=output)
+        self.assertIn("Moved 1", output.getvalue())
+        self.user.refresh_from_db()
+        self.device.refresh_from_db()
+        self.assertTrue(verify_totp_code(self.device, self.user, self.current_code(old_seed)))
+
+        # Running it again changes nothing.
+        output = StringIO()
+        call_command("encrypt_totp_seeds", stdout=output)
+        self.assertIn("Moved 0", output.getvalue())
+
+    def test_command_stops_and_changes_nothing_when_vault_is_down(self):
+        old_seed = self.device.key
+        self.user.mfa_secret = None
+        self.user.save(update_fields=["mfa_secret"])
+        with patch(
+            "kura.management.commands.encrypt_totp_seeds.encrypt_mfa_secret", side_effect=ValidationError("Vault down")
+        ):
+            with self.assertRaises(CommandError):
+                call_command("encrypt_totp_seeds", stdout=StringIO())
+        self.user.refresh_from_db()
+        self.device.refresh_from_db()
+        self.assertIsNone(self.user.mfa_secret)
+        self.assertEqual(self.device.key, old_seed)
 
 
 def fake_clamav_reply(reply):
