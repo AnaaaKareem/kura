@@ -6,6 +6,10 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
+    # Wait 7 days after a release before proposing it, so a broken or
+    # malicious release is usually found and pulled before we are offered it.
+    cooldown:
+      default-days: 7
 
   # Maintain GitHub Actions workflow dependencies
   - package-ecosystem: "github-actions"
@@ -13,4 +17,8 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
+    # Wait 7 days after a release before proposing it, so a broken or
+    # malicious release is usually found and pulled before we are offered it.
+    cooldown:
+      default-days: 7
 

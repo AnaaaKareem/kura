@@ -2176,7 +2176,9 @@ class FileUploadsAndDownloadsTests(TestCase):
         samples = [
             ("tiny.gif", base64.b64decode("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="), "image/gif"),
             ("tiny.webp", base64.b64decode("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA"), "image/webp"),
-            ("table.csv", b"name,score\nAlice,10\nBob,20\n", "text/csv"),
+            # Different libmagic versions call plain CSV "text/csv" (macOS) or
+            # "text/plain" (Ubuntu); both are on the allowlist.
+            ("table.csv", b"name,score\nAlice,10\nBob,20\n", ("text/csv", "text/plain")),
             ("notes.md", b"# Title\n\nThis is **bold** markdown text.\n", "text/plain"),
             ("clip.mp4", b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom", "video/mp4"),
             ("sound.mp3", (bytes.fromhex("fffb9064") + bytes(413)) * 4, "audio/mpeg"),
@@ -2193,7 +2195,11 @@ class FileUploadsAndDownloadsTests(TestCase):
         for filename, content, expected_mime in samples:
             with self.subTest(filename=filename):
                 stored = validate_and_save_upload(SimpleUploadedFile(filename, content), self.instructor)
-                self.assertEqual(stored.mime_type, expected_mime)
+                # A sample may list more than one acceptable type (see table.csv).
+                if isinstance(expected_mime, tuple):
+                    self.assertIn(stored.mime_type, expected_mime)
+                else:
+                    self.assertEqual(stored.mime_type, expected_mime)
                 self.assertEqual(stored.content.content, content)
         self.assertEqual(mock_scan.call_count, len(samples))
 

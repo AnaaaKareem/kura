@@ -25,7 +25,10 @@ class BreachedPasswordValidator:
         Raises ValidationError if the password is found in a breach.
         """
         # Send only a short hash prefix so the plaintext password stays on this server.
-        sha1_hash = hashlib.sha1(password.encode("utf-8")).hexdigest().upper()
+        # SHA-1 is required here because HaveIBeenPwned's range API is indexed by
+        # SHA-1. It is only a lookup key (never used to store or sign anything),
+        # so usedforsecurity=False says exactly that.
+        sha1_hash = hashlib.sha1(password.encode("utf-8"), usedforsecurity=False).hexdigest().upper()  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1
         prefix = sha1_hash[:5]
         suffix = sha1_hash[5:]
 
@@ -45,7 +48,8 @@ class BreachedPasswordValidator:
                         )
         except urllib.error.URLError as error:
             # Network failures log a warning rather than blocking valid password updates
-            logger.warning("Breached password lookup timed out or failed: %s", error)
+            # Only the network error is logged, never the password or its hash.
+            logger.warning("Breached password lookup timed out or failed: %s", error)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
 
     def get_help_text(self):
         """
