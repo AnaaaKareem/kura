@@ -40,6 +40,7 @@ from .vault import (
 )
 from .views import log_security_event, queue_assessment_notification, queue_email, verify_totp_code
 from .vault import database_login_cache
+from .vault_postgres.base import DatabaseWrapper as VaultDatabaseWrapper
 from .models import (
     OutgoingEmail,
     OutgoingEmailStatus,
@@ -6055,6 +6056,108 @@ class VaultTOTPSeedTests(TestCase):
         self.device.refresh_from_db()
         self.assertIsNone(self.user.mfa_secret)
         self.assertEqual(self.device.key, old_seed)
+
+
+class VaultDatabaseLoginTests(TestCase):
+    """
+    Stage 3a: Django logs in to PostgreSQL with temporary users from Vault.
+    kura/vault.py caches one login per worker; kura/vault_postgres/base.py uses it
+    for every new connection. Vault itself is replaced by a mock here.
+    """
+
+    def setUp(self):
+        # Start every test with an empty cache (it is shared by the whole process).
+        database_login_cache["username"] = ""
+        database_login_cache["password"] = ""
+        database_login_cache["refresh_after"] = 0
+        self.addCleanup(database_login_cache.update, {"username": "", "password": "", "refresh_after": 0})
+
+    def fake_vault_client(self, username="kura_dyn_test", lease_seconds=900):
+        # A pretend Vault client that hands out one temporary login.
+        client = MagicMock()
+        client.secrets.database.generate_credentials.return_value = {
+            "data": {"username": username, "password": "temporary-password"},
+            "lease_duration": lease_seconds,
+        }
+        return client
+
+    @patch("kura.vault.get_vault_client")
+    def test_login_comes_from_the_kura_app_role(self, mock_get_client):
+        mock_get_client.return_value = self.fake_vault_client()
+        login = get_dynamic_database_credentials()
+        self.assertEqual(login["username"], "kura_dyn_test")
+        self.assertEqual(login["password"], "temporary-password")
+        mock_get_client.return_value.secrets.database.generate_credentials.assert_called_once_with(
+            name="kura-app", mount_point="database"
+        )
+
+    @patch("kura.vault.get_vault_client")
+    def test_login_is_reused_instead_of_asking_vault_every_time(self, mock_get_client):
+        mock_get_client.return_value = self.fake_vault_client()
+        for _ in range(5):
+            get_dynamic_database_credentials()
+        self.assertEqual(mock_get_client.return_value.secrets.database.generate_credentials.call_count, 1)
+
+    @patch("kura.vault.get_vault_client")
+    def test_new_login_is_fetched_five_minutes_before_expiry(self, mock_get_client):
+        mock_get_client.return_value = self.fake_vault_client(lease_seconds=900)
+        before = time.time()
+        get_dynamic_database_credentials()
+        # 900 second lease, so a new login is due after about 600 seconds.
+        self.assertAlmostEqual(database_login_cache["refresh_after"], before + 600, delta=5)
+
+        # Pretend those 10 minutes have passed: the next call asks Vault again.
+        database_login_cache["refresh_after"] = time.time() - 1
+        mock_get_client.return_value = self.fake_vault_client(username="kura_dyn_second")
+        self.assertEqual(get_dynamic_database_credentials()["username"], "kura_dyn_second")
+
+    @patch("kura.vault.get_vault_client", side_effect=Exception("Vault is sealed"))
+    def test_vault_failure_raises_validation_error(self, mock_get_client):
+        with self.assertRaises(ValidationError):
+            get_dynamic_database_credentials()
+
+    @patch("kura.vault_postgres.base.get_dynamic_database_credentials")
+    def test_backend_uses_vault_login_and_keeps_tls_options(self, mock_get_login):
+        mock_get_login.return_value = {"username": "kura_dyn_test", "password": "temporary-password"}
+        settings_dict = dict(connection.settings_dict)
+        settings_dict["USER"] = "kura-admin"
+        settings_dict["PASSWORD"] = "fixed-password-must-not-be-used"
+        settings_dict["OPTIONS"] = {
+            "sslmode": "verify-full",
+            "sslrootcert": "/certs/internal/ca.crt",
+            "sslcert": "/certs/internal/web.crt",
+            "sslkey": "/certs/internal/web.key",
+        }
+        params = VaultDatabaseWrapper(settings_dict).get_connection_params()
+        self.assertEqual(params["user"], "kura_dyn_test")
+        self.assertEqual(params["password"], "temporary-password")
+        self.assertEqual(params["sslmode"], "verify-full")
+        self.assertEqual(params["sslcert"], "/certs/internal/web.crt")
+
+    @patch("kura.vault_postgres.base.get_dynamic_database_credentials", side_effect=ValidationError("down"))
+    def test_backend_reports_vault_failure_as_database_error(self, mock_get_login):
+        from django.db.utils import OperationalError
+
+        with self.assertRaises(OperationalError):
+            VaultDatabaseWrapper(dict(connection.settings_dict)).get_connection_params()
+
+    def test_setting_switches_the_database_backend(self):
+        # Load the settings in a fresh process with the switch on and off.
+        environment = os.environ.copy()
+        environment["DJANGO_SETTINGS_MODULE"] = "config.settings"
+        environment["DEBUG"] = "True"
+        engines = []
+        for switch in ["True", "False"]:
+            environment["VAULT_DATABASE_CREDENTIALS"] = switch
+            result = subprocess.run(
+                [sys.executable, "-c", "from django.conf import settings; print(settings.DATABASES['default']['ENGINE'])"],
+                cwd=settings.BASE_DIR,
+                env=environment,
+                capture_output=True,
+                text=True,
+            )
+            engines.append(result.stdout.strip())
+        self.assertEqual(engines, ["kura.vault_postgres", "django.db.backends.postgresql"])
 
 
 def fake_clamav_reply(reply):
