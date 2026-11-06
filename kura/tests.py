@@ -5428,6 +5428,85 @@ class RowLevelSecurityAndPostgresRolesTests(TestCase):
         self.assertEqual(result, str(self.student_a.id))
 
 
+class PostgreSQLEncryptedBackupAndPITRTests(TestCase):
+    """
+    Tests Encrypted backups with Point-In-Time Recovery (PITR).
+    Verifies AES-256 encryption key entropy, pgBackRest configuration,
+    PostgreSQL continuous WAL archiving parameters, and disaster recovery scripts.
+    """
+
+    def setUp(self):
+        from pathlib import Path
+        from django.conf import settings
+        self.base_dir = Path(settings.BASE_DIR)
+
+    def test_backup_encryption_key_validity_and_entropy(self):
+        # The AES-256 backup encryption key must exist and possess high cryptographic entropy.
+        from kura.management.commands.verify_backup_config import calculate_shannon_entropy
+
+        key_path = self.base_dir / "secrets" / "backup_encryption_key.txt"
+        self.assertTrue(key_path.exists(), "Backup encryption key file must exist in secrets/")
+
+        key_content = key_path.read_text(encoding="utf-8").strip()
+        self.assertGreaterEqual(len(key_content), 32, "Encryption key must be at least 32 characters for AES-256")
+
+        entropy = calculate_shannon_entropy(key_content)
+        self.assertGreaterEqual(entropy, 3.5, "Encryption key must exhibit high cryptographic entropy")
+
+    def test_pgbackrest_config_security_attributes(self):
+        # pgbackrest.conf must enforce AES-256-CBC cipher and point to the secret key file.
+        conf_path = self.base_dir / "docker" / "postgres" / "pgbackrest.conf"
+        self.assertTrue(conf_path.exists(), "pgbackrest.conf must exist")
+
+        content = conf_path.read_text(encoding="utf-8")
+        self.assertIn("repo1-cipher-type=aes-256-cbc", content)
+        self.assertIn("repo1-cipher-pass=file:/run/secrets/backup_encryption_key", content)
+        self.assertIn("repo1-retention-full=", content)
+        self.assertIn("[kura]", content)
+
+    def test_postgresql_wal_archiving_config(self):
+        # postgresql.conf must configure continuous WAL archiving for point-in-time recovery.
+        conf_path = self.base_dir / "docker" / "postgres" / "postgresql.conf"
+        self.assertTrue(conf_path.exists(), "postgresql.conf must exist")
+
+        content = conf_path.read_text(encoding="utf-8")
+        self.assertIn("wal_level = replica", content)
+        self.assertIn("archive_mode = on", content)
+        self.assertIn("archive_command = 'pgbackrest --stanza=kura archive-push %p'", content)
+        self.assertIn("restore_command = 'pgbackrest --stanza=kura archive-get %f \"%p\"'", content)
+
+    def test_backup_and_restore_scripts_attributes(self):
+        # Shell scripts for backup and PITR restore must be executable and contain safety checks.
+        import os
+
+        backup_sh = self.base_dir / "docker" / "postgres" / "backup.sh"
+        restore_sh = self.base_dir / "docker" / "postgres" / "restore.sh"
+
+        self.assertTrue(backup_sh.exists())
+        self.assertTrue(restore_sh.exists())
+
+        # Check executable permissions
+        self.assertTrue(os.access(backup_sh, os.X_OK))
+        self.assertTrue(os.access(restore_sh, os.X_OK))
+
+        backup_text = backup_sh.read_text(encoding="utf-8")
+        self.assertIn("set -euo pipefail", backup_text)
+        self.assertIn("pgbackrest", backup_text)
+
+        restore_text = restore_sh.read_text(encoding="utf-8")
+        self.assertIn("set -euo pipefail", restore_text)
+        self.assertIn("--type=time", restore_text)
+        self.assertIn("--target-action=promote", restore_text)
+
+    def test_verify_backup_config_management_command(self):
+        # The verify_backup_config management command runs cleanly without errors.
+        import io
+        out = io.StringIO()
+        call_command("verify_backup_config", stdout=out)
+        output = out.getvalue()
+        self.assertIn("All backup and disaster recovery security checks passed", output)
+
+
 class PasskeyWebAuthnIntegrationTests(TestCase):
     """
     Tests Passkeys (WebAuthn / FIDO2) with django-mfa2.
