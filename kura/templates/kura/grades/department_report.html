@@ -1,0 +1,87 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Department Summary Report - {{ department.name }} - Kura{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <div>
+            <span class="badge badge-primary font-mono text-xs">{{ department.code }}</span>
+            <h1 class="text-2xl font-bold mt-2">{{ department.name }} Department Report</h1>
+            <p class="text-sm text-base-content/70">
+                Institutional performance metrics, student enrollment totals, and curriculum results.
+            </p>
+        </div>
+    </div>
+
+    <!-- Summary Metrics -->
+    <div class="grid grid-cols-1 md:grid-cols-3 gap-6">
+        <div class="card bg-base-100 border border-base-300">
+            <div class="card-body gap-4 p-4 text-center sm:p-6">
+                <span class="text-xs uppercase font-bold text-base-content/60 tracking-wider">Active Courses</span>
+                <div class="text-3xl font-bold text-primary mt-2">{{ courses|length }}</div>
+            </div>
+        </div>
+        <div class="card bg-base-100 border border-base-300">
+            <div class="card-body gap-4 p-4 text-center sm:p-6">
+                <span class="text-xs uppercase font-bold text-base-content/60 tracking-wider">Active Student Enrollments</span>
+                <div class="text-3xl font-bold text-secondary mt-2">{{ enrollment_count }}</div>
+            </div>
+        </div>
+        <div class="card bg-base-100 border border-base-300">
+            <div class="card-body gap-4 p-4 text-center sm:p-6">
+                <span class="text-xs uppercase font-bold text-base-content/60 tracking-wider">Released Average Grade</span>
+                <div class="text-3xl font-bold text-success mt-2">
+                    {% if avg_score %}{{ avg_score }}%{% else %}N/A{% endif %}
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Course List in Department -->
+    <div class="card bg-base-100 border border-base-300 overflow-hidden">
+        <div class="p-4 border-b border-base-200">
+            <h3 class="font-bold text-base">Department Courses Overview</h3>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="table table-sm w-full text-xs">
+                <thead class="bg-base-200">
+                    <tr>
+                        <th>Code</th>
+                        <th>Title</th>
+                        <th>Term</th>
+                        <th>Status</th>
+                        <th>Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for c in courses %}
+                    <tr>
+                        <td class="font-mono font-bold">{{ c.code }}</td>
+                        <td>{{ c.title }}</td>
+                        <td>{{ c.semester|capfirst }} {{ c.academic_year }}</td>
+                        <td>
+                            {% if c.is_published %}
+                            <span class="badge badge-success badge-xs">Published</span>
+                            {% else %}
+                            <span class="badge badge-ghost badge-xs">Draft</span>
+                            {% endif %}
+                        </td>
+                        <td>
+                            <a href="{% url 'kura:course_grades' c.id %}" class="btn btn-outline btn-xs">
+                                View Gradebook
+                            </a>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="5" class="text-center py-6 text-base-content/50">No courses listed in this department.</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

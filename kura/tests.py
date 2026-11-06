@@ -774,6 +774,23 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
             with self.subTest(url=url):
                 self.assertEqual(self.client.get(url).status_code, 403)
 
+    def test_admin_cannot_use_student_or_department_roles_to_view_grades(self):
+        # Admin restrictions still apply when another role would otherwise allow access.
+        admin = make_user("Admin", mfa_enabled=True)
+        UserRole.objects.create(user=admin, role=Role.objects.get(name="Student"))
+        UserRole.objects.create(user=admin, role=Role.objects.get(name="Department head"))
+        self.dept.head_user = admin
+        self.dept.save(update_fields=["head_user"])
+        self.client.force_login(admin)
+
+        for url in (
+            reverse("kura:student_grades"),
+            reverse("kura:student_transcript"),
+            reverse("kura:department_reports", kwargs={"department_id": self.dept.id}),
+        ):
+            with self.subTest(url=url):
+                self.assertEqual(self.client.get(url).status_code, 403)
+
     def test_admin_cannot_use_assessment_or_grade_action_urls(self):
         # Direct URLs must not bypass the Admin restriction for assessment or grade actions.
         admin = make_user("Admin", mfa_enabled=True)
@@ -1536,6 +1553,32 @@ class CourseResultsAndTranscriptsTests(TestCase):
         self.assertEqual(transcript_resp.status_code, 200)
         self.assertContains(transcript_resp, "PHYS201")
         self.assertContains(transcript_resp, "86.00%")
+
+
+class DepartmentReportsTests(TestCase):
+    """
+    Tests Institutional reporting and cross-department protection.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.head_a = make_user("Department head", mfa_enabled=True)
+        self.head_b = make_user("Department head", mfa_enabled=True)
+        self.dept_a = Department.objects.create(name="History", code="HIST", head_user=self.head_a)
+        self.dept_b = Department.objects.create(name="Music", code="MUS", head_user=self.head_b)
+
+    def test_head_can_view_own_department_report(self):
+        # Head of Dept A views their department report.
+        self.client.force_login(self.head_a)
+        response = self.client.get(reverse("kura:department_reports", kwargs={"department_id": self.dept_a.id}))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "History Department Report")
+
+    def test_head_cannot_view_other_department_report(self):
+        # Head of Dept A tries to view Dept B's report; receives 403 Forbidden.
+        self.client.force_login(self.head_a)
+        response = self.client.get(reverse("kura:department_reports", kwargs={"department_id": self.dept_b.id}))
+        self.assertEqual(response.status_code, 403)
 
 
 class SecurityLoggingTests(TestCase):

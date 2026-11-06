@@ -147,4 +147,5 @@ urlpatterns = [
     ),
     path("courses/<uuid:course_id>/results/release/", views.course_result_release_view, name="course_result_release"),
     path("transcript/", views.student_transcript_view, name="student_transcript"),
+    path("departments/<int:department_id>/reports/", views.department_reports_view, name="department_reports"),
 ]
