@@ -140,4 +140,11 @@ urlpatterns = [
         views.grade_change_request_review_view,
         name="grade_change_request_review",
     ),
+    path(
+        "courses/<uuid:course_id>/results/calculate/",
+        views.course_result_calculate_view,
+        name="course_result_calculate",
+    ),
+    path("courses/<uuid:course_id>/results/release/", views.course_result_release_view, name="course_result_release"),
+    path("transcript/", views.student_transcript_view, name="student_transcript"),
 ]
