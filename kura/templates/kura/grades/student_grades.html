@@ -1,0 +1,104 @@
+{% extends "kura/base.html" %}
+
+{% block title %}My Grades - Kura{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
+        <div>
+            <h1 class="text-2xl font-bold">My Grades & Academic Feedback</h1>
+            <p class="text-sm text-base-content/70 mt-1">
+                Official released assessment grades and tutor evaluations.
+            </p>
+        </div>
+        <a href="{% url 'kura:student_transcript' %}" class="btn btn-outline btn-sm">
+            View Official Transcript
+        </a>
+    </div>
+
+    <!-- Released Grades Table -->
+    <div class="card bg-base-100 border border-base-300 overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="table table-sm w-full text-sm">
+                <thead class="bg-base-200">
+                    <tr>
+                        <th>Course</th>
+                        <th>Assessment</th>
+                        <th>Category</th>
+                        <th>Score</th>
+                        <th>Released At</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for g in grades %}
+                    <tr>
+                        <td class="font-bold">{{ g.assessment.section.module.course.code }}</td>
+                        <td>
+                            <div class="font-semibold">{{ g.assessment.title }}</div>
+                            <div class="text-xs text-base-content/60">{{ g.assessment.section.module.title }}</div>
+                        </td>
+                        <td><span class="badge badge-ghost badge-xs uppercase font-mono">{{ g.assessment.component_type }}</span></td>
+                        <td class="font-bold text-primary">{{ g.score }} / {{ g.assessment.max_score }}</td>
+                        <td class="text-xs text-base-content/60">{{ g.released_at|date:"Y-m-d H:i" }}</td>
+                        <td>
+                            <a href="{% url 'kura:grade_appeal_create' g.id %}" class="btn btn-outline btn-xs">
+                                Appeal Grade
+                            </a>
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" class="text-center py-8 text-base-content/50">
+                            No grades have been released to your account yet.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+
+    <!-- Student's Existing Appeals -->
+    {% if appeals %}
+    <div class="card bg-base-100 border border-base-300 overflow-hidden">
+        <div class="p-4 border-b border-base-200">
+            <h3 class="font-bold text-base">My Submitted Grade Appeals</h3>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="table table-sm w-full text-xs">
+                <thead class="bg-base-200">
+                    <tr>
+                        <th>Assessment</th>
+                        <th>Disputed Score</th>
+                        <th>Status</th>
+                        <th>Submitted</th>
+                        <th>Reviewer Response</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for app in appeals %}
+                    <tr>
+                        <td class="font-semibold">{{ app.grade.assessment.title }}</td>
+                        <td class="font-bold">{{ app.grade.score }}</td>
+                        <td>
+                            {% if app.status == 'approved' %}
+                            <span class="badge badge-success badge-xs">Approved</span>
+                            {% elif app.status == 'rejected' %}
+                            <span class="badge badge-error badge-xs">Rejected</span>
+                            {% else %}
+                            <span class="badge badge-warning badge-xs">Pending Review</span>
+                            {% endif %}
+                        </td>
+                        <td>{{ app.created_at|date:"Y-m-d" }}</td>
+                        <td>{{ app.response|default:"Awaiting instructor decision." }}</td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+</div>
+{% endblock %}
+

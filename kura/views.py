@@ -53,6 +53,8 @@ from .forms import (
     EnrollmentForm,
     EnrollmentFilterForm,
     EnrollmentSearchForm,
+    GradeAppealForm,
+    GradeAppealReviewForm,
     GradeEntryForm,
     GradeReleaseForm,
     LoginForm,
@@ -4949,3 +4951,139 @@ def grade_release_view(request, grade_id):
         return redirect("kura:course_grades", course_id=course.id)
 
     return render(request, "kura/grades/grade_release.html", {"form": form, "grade": grade})
+
+
+@login_required
+def student_grades_view(request):
+    """
+    Displays released assessment grades for the logged-in student.
+    Who can use it: Students.
+    Security: Strictly filters by status=RELEASED and student=request.user (IDOR defense).
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # An Admin role must not grant access to marks, even alongside a Student role.
+    if has_role(request.user, "Admin") or not has_role(request.user, "Student"):
+        raise PermissionDenied
+
+    # Students strictly see only their own released grades.
+    released_grades = (
+        Grade.objects.filter(
+            student=request.user,
+            status=GradeStatus.RELEASED,
+        )
+        .select_related("assessment__section__module__course")
+        .order_by("-released_at")
+    )
+
+    # Load existing appeals submitted by this student.
+    appeals = GradeAppeal.objects.filter(grade__student=request.user).select_related("grade__assessment")
+
+    return render(
+        request,
+        "kura/grades/student_grades.html",
+        {
+            "grades": released_grades,
+            "appeals": appeals,
+        },
+    )
+
+
+@login_required
+def grade_appeal_create_view(request, grade_id):
+    """
+    Files a formal student appeal disputing an assessment score.
+    Who can use it: The evaluated student on a released grade.
+    Security: Verifies grade.student == request.user and grade is RELEASED (prevents IDOR).
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Administrators cannot access grades through an appeal.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    grade = get_object_or_404(
+        Grade.objects.select_related("assessment__section__module__course"),
+        id=grade_id,
+        student=request.user,
+    )
+
+    if grade.status != GradeStatus.RELEASED:
+        raise PermissionDenied
+
+    form = GradeAppealForm(request.POST or None)
+
+    if request.method == "POST" and form.is_valid():
+        reason = form.cleaned_data["reason"].strip()
+        appeal = GradeAppeal.objects.create(
+            grade=grade,
+            reason=reason,
+            status=AppealStatus.PENDING,
+        )
+        # Record the appeal ID and state, never the student's written reason.
+        log_security_event(request, "appeal.created", {"appeal_id": appeal.id, "status": appeal.status})
+        messages.success(request, "Your grade appeal has been submitted for instructor review.")
+        return redirect("kura:student_grades")
+
+    return render(request, "kura/grades/appeal_create.html", {"form": form, "grade": grade})
+
+
+@login_required
+def grade_appeal_review_view(request, appeal_id):
+    """
+    Reviews a student grade appeal and writes a formal verdict.
+    Who can use it: Course instructors and Department Heads.
+    Security: Restricts access to assigned course staff; records reviewer notes and timestamp.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Administrators cannot access grades through an appeal.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    appeal = get_object_or_404(
+        GradeAppeal.objects.select_related("grade__assessment__section__module__course__department", "grade__student"),
+        id=appeal_id,
+    )
+    course = appeal.grade.assessment.section.module.course
+
+    # A student cannot review their own appeal as course staff.
+    if appeal.grade.student_id == request.user.id:
+        raise PermissionDenied
+
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+
+    form = GradeAppealReviewForm(request.POST or None, initial={"status": appeal.status, "response": appeal.response})
+
+    if request.method == "POST" and form.is_valid():
+        appeal.status = form.cleaned_data["status"]
+        appeal.response = form.cleaned_data["response"].strip()
+        appeal.reviewed_by = request.user
+        appeal.resolved_at = timezone.now()
+        appeal.save(update_fields=["status", "response", "reviewed_by", "resolved_at"])
+        # Record the decision status without logging the private response text.
+        log_security_event(request, "appeal.decided", {"appeal_id": appeal.id, "status": appeal.status})
+
+        # Tell the student their appeal was decided (each decision once).
+        grades_link = settings.SITE_URL + reverse("kura:student_grades")
+        queue_email(
+            f"appeal-decided:{appeal.id}:{int(appeal.resolved_at.timestamp())}",
+            appeal.grade.student.email,
+            f"Grade appeal decided: {appeal.grade.assessment.title}",
+            f"Hello,\n\nYour grade appeal for {appeal.grade.assessment.title} has been reviewed "
+            f"(status: {appeal.get_status_display()}).\n\n"
+            f"Log in to Kura to read the response:\n{grades_link}\n\n"
+            "This is an automatic message from Kura. Please do not reply.",
+        )
+
+        messages.success(request, f"Appeal verdict recorded for {appeal.grade.student.email}.")
+        return redirect("kura:course_grades", course_id=course.id)
+
+    return render(request, "kura/grades/appeal_review.html", {"form": form, "appeal": appeal})

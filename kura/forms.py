@@ -1272,3 +1272,46 @@ class GradeReleaseForm(forms.Form):
             }
         ),
     )
+
+
+class GradeAppealForm(forms.Form):
+    """
+    Form for students to formally dispute a released grade.
+    """
+
+    reason = forms.CharField(
+        label="Detailed Appeal Rationale",
+        widget=forms.Textarea(
+            attrs={
+                "class": "textarea textarea-bordered w-full",
+                "rows": 4,
+                "placeholder": "Explain the specific grounds for appealing this grade...",
+            }
+        ),
+    )
+
+
+class GradeAppealReviewForm(forms.Form):
+    """
+    Form for instructors to submit their verdict on a student grade appeal.
+    """
+
+    status = forms.ChoiceField(
+        label="Appeal Verdict",
+        choices=[
+            (AppealStatus.APPROVED, "Approve Appeal"),
+            (AppealStatus.REJECTED, "Reject Appeal"),
+        ],
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+    response = forms.CharField(
+        label="Written Decision & Notes",
+        widget=forms.Textarea(
+            attrs={
+                "class": "textarea textarea-bordered w-full",
+                "rows": 3,
+                "placeholder": "Explain the reasoning for this verdict...",
+            }
+        ),
+    )
