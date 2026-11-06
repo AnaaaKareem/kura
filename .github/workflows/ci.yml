@@ -83,6 +83,14 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
+      # Secrets and certificates are never committed (.gitignore), so CI makes
+      # its own throwaway ones with the same scripts a developer uses. The
+      # backup-key and mTLS-certificate tests then check real files.
+      - name: Create Throwaway Secrets and Internal Certificates
+        run: |
+          sh secrets/generate_secrets.sh
+          sh certs/generate_internal_mtls_certs.sh
+
       - name: Run Full Test Suite with PostgreSQL 17
         env:
           DATABASE_NAME: kura
