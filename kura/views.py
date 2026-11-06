@@ -71,6 +71,7 @@ from .forms import (
     TAAssignForm,
 )
 from .models import (
+    QuarantinedFile,
     AppealStatus,
     Assessment,
     AssessmentAttempt,
@@ -114,6 +115,7 @@ from .models import (
 )
 from .permissions import (
     can_access_learning_records,
+    can_manage_quarantine,
     can_release_grades,
     has_role,
     is_course_staff,
@@ -1103,6 +1105,60 @@ def user_sessions_view(request):
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
     return redirect("kura:admin_sessions")
+
+
+@login_required
+def quarantine_list_view(request):
+    """
+    Lists uploads that ClamAV rejected and quarantined, newest first.
+    Who can use it: Admins only.
+    Security: checks the Admin role first; shows only details (who, when, file
+    name, size, SHA-256, detection), never the file itself. There is no download.
+    """
+    # Only Admins may see quarantined uploads.
+    if not can_manage_quarantine(request.user):
+        raise PermissionDenied
+
+    # Load the newest 200 records. defer("content") leaves the infected bytes
+    # in the database: the list never needs them.
+    quarantined_files = (
+        QuarantinedFile.objects.select_related("uploaded_by").defer("content").order_by("-created_at")[:200]
+    )
+    return render(request, "kura/accounts/quarantine_list.html", {"quarantined_files": quarantined_files})
+
+
+@login_required
+def quarantine_delete_view(request, quarantined_file_id):
+    """
+    Permanently deletes one quarantined upload after an Admin has looked at it.
+    Who can use it: Admins only.
+    Security: POST only with CSRF token, Admin role check, explicit confirmation
+    checkbox (DeleteConfirmationForm), and the deletion is written to the security log.
+    """
+    # Deleting changes data, so only POST is allowed.
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    # Only Admins may delete quarantined uploads.
+    if not can_manage_quarantine(request.user):
+        raise PermissionDenied
+
+    # Load the record without its bytes, or show a 404 page.
+    quarantined_file = get_object_or_404(QuarantinedFile.objects.defer("content"), id=quarantined_file_id)
+
+    # The Admin must tick the confirmation box.
+    form = DeleteConfirmationForm(request.POST)
+    if not form.is_valid():
+        messages.error(request, "Tick the box to confirm the deletion.")
+        return redirect("kura:quarantine_list")
+
+    # Delete it and record who deleted which file (by hash) in the security log.
+    sha256_hash = quarantined_file.sha256_hash
+    quarantined_file.delete()
+    log_security_event(request, "quarantine.deleted", {"sha256": sha256_hash})
+
+    messages.success(request, "Quarantined file deleted.")
+    return redirect("kura:quarantine_list")
 
 
 @login_required

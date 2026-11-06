@@ -30,10 +30,11 @@ from django_otp.plugins.otp_totp.models import TOTPDevice
 from django_otp.util import random_hex
 from unittest.mock import MagicMock, call, patch
 
-from .files import validate_and_save_upload
+from .files import check_signature_age, scan_file_for_malware, validate_and_save_upload
 from .forms import PasswordChangeForm
 from .views import log_security_event
 from .models import (
+    QuarantinedFile,
     ALLOWED_UPLOAD_MIME_TYPES,
     AcademicLevel,
     Assessment,
@@ -185,6 +186,128 @@ class RateLimitingTests(TestCase):
             last_status = resp.status_code
 
         self.assertEqual(last_status, 429)
+
+
+class ClamAVVirusScanningTests(TransactionTestCase):
+    """
+    Tests ClamAV virus scanning of uploaded files.
+    Security: Verifies that infected files are detected in memory and rejected,
+    clean files pass, production fail-closed behavior works, and dev fallback works.
+    """
+
+    # Rejected uploads are saved through the separate "quarantine" connection,
+    # which only sees committed rows. TransactionTestCase really commits, so the
+    # uploader exists for that connection.
+    databases = {"default", "quarantine"}
+
+    @classmethod
+    def tearDownClass(cls):
+        # Put back the seeded roles that TransactionTestCase removed.
+        super().tearDownClass()
+        reseed_roles_after_flush()
+
+    def setUp(self):
+        self.user = make_user("Instructor", mfa_enabled=True)
+
+    @patch("socket.socket")
+    def test_clean_file_passes_scan(self, mock_socket_cls):
+        # A clean file returns 'stream: OK' from ClamAV and completes without error.
+        mock_socket = MagicMock()
+        mock_socket.recv.side_effect = [b"stream: OK\x00", b""]
+        mock_socket_cls.return_value = mock_socket
+
+        pdf_bytes = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF"
+        scan_file_for_malware(pdf_bytes)
+        self.assertTrue(mock_socket.sendall.called)
+
+    @patch("socket.socket")
+    def test_malicious_eicar_file_is_detected_and_raises_validation_error(self, mock_socket_cls):
+        # An infected file (EICAR signature) is detected by ClamAV and raises ValidationError.
+        mock_socket = MagicMock()
+        mock_socket.recv.side_effect = [b"stream: Eicar-Signature FOUND\x00", b""]
+        mock_socket_cls.return_value = mock_socket
+
+        eicar_bytes = b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+        with self.assertRaises(ValidationError) as ctx:
+            scan_file_for_malware(eicar_bytes)
+
+        self.assertIn("The uploaded file failed security scanning.", str(ctx.exception))
+
+    @patch("socket.socket")
+    @override_settings(CLAMAV_REQUIRED=False)
+    def test_unreachable_clamav_in_development_falls_back(self, mock_socket_cls):
+        # In development mode (CLAMAV_REQUIRED=False), unreachable daemon logs warning and allows upload.
+        mock_socket = MagicMock()
+        mock_socket.connect.side_effect = OSError("Connection refused")
+        mock_socket_cls.return_value = mock_socket
+
+        pdf_bytes = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF"
+        # Should fall back cleanly without raising ValidationError
+        scan_file_for_malware(pdf_bytes)
+
+    @patch("socket.socket")
+    @override_settings(CLAMAV_REQUIRED=True)
+    def test_unreachable_clamav_in_production_fails_closed(self, mock_socket_cls):
+        # In production mode (CLAMAV_REQUIRED=True), unreachable daemon fails closed for safety.
+        mock_socket = MagicMock()
+        mock_socket.connect.side_effect = OSError("Connection refused")
+        mock_socket_cls.return_value = mock_socket
+
+        pdf_bytes = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF"
+        with self.assertRaises(ValidationError) as ctx:
+            scan_file_for_malware(pdf_bytes)
+
+        self.assertIn("Antivirus service is unavailable. Upload rejected for safety.", str(ctx.exception))
+
+    @patch("socket.socket")
+    @override_settings(CLAMAV_REQUIRED=True)
+    def test_production_rejects_empty_or_incomplete_scanner_response(self, mock_socket_cls):
+        # A dropped connection or unexpected reply is not proof that the file is clean.
+        for reply in (b"", b"stream: OK", b"unexpected response\x00"):
+            with self.subTest(reply=reply):
+                mock_socket = MagicMock()
+                mock_socket.recv.side_effect = [reply, b""]
+                mock_socket_cls.return_value = mock_socket
+                with self.assertRaises(ValidationError):
+                    scan_file_for_malware(b"sample bytes")
+
+    @patch("socket.socket")
+    def test_validate_and_save_upload_aborts_on_malware_before_db_write(self, mock_socket_cls):
+        # When an infected file is uploaded, validate_and_save_upload raises ValidationError
+        # and stores zero rows in StoredFile and FileContent.
+        mock_socket = MagicMock()
+        mock_socket.recv.side_effect = [b"stream: Win.Trojan.Agent FOUND\x00", b""]
+        mock_socket_cls.return_value = mock_socket
+
+        infected_file = SimpleUploadedFile(
+            "virus.pdf",
+            b"%PDF-1.4 malicious content",
+            content_type="application/pdf",
+        )
+
+        initial_file_count = StoredFile.objects.count()
+        initial_content_count = FileContent.objects.count()
+
+        with self.assertRaises(ValidationError):
+            validate_and_save_upload(infected_file, self.user)
+
+        # Confirm no database rows were created for the malicious file
+        self.assertEqual(StoredFile.objects.count(), initial_file_count)
+        self.assertEqual(FileContent.objects.count(), initial_content_count)
+
+    @patch("socket.socket")
+    def test_validate_and_save_upload_succeeds_on_clean_file(self, mock_socket_cls):
+        # A clean file passes virus scanning and is persisted with its metadata and hash.
+        mock_socket = MagicMock()
+        mock_socket.recv.side_effect = [b"stream: OK\x00", b""]
+        mock_socket_cls.return_value = mock_socket
+
+        pdf_bytes = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF"
+        clean_file = SimpleUploadedFile("clean_lab.pdf", pdf_bytes, content_type="application/pdf")
+
+        stored_file = validate_and_save_upload(clean_file, self.user)
+        self.assertIsNotNone(stored_file.id)
+        self.assertEqual(stored_file.content.content, pdf_bytes)
 
 
 class SemesterValueMigrationTests(TestCase):
@@ -599,3 +722,153 @@ class ClientIPLockoutTests(TestCase):
             HTTP_X_REAL_IP="203.0.113.7",
         )
         self.assertNotEqual(response.status_code, 302)
+
+
+def fake_clamav_reply(reply):
+    """
+    Test helper: a pretend ClamAV socket that answers every command with `reply`.
+    Used for scan results ("stream: ... FOUND") and version replies.
+    """
+    fake_socket = MagicMock()
+    fake_socket.recv.return_value = reply
+    return fake_socket
+
+
+class ClamAVQuarantineTests(TransactionTestCase):
+    """
+    Uploads rejected by ClamAV are quarantined (stage "ClamAV"): kept for 7 days
+    with who/what/when, never stored as a normal file, and visible only to Admins.
+    TransactionTestCase because the quarantine connection only sees committed rows.
+    """
+
+    databases = {"default", "quarantine"}
+
+    @classmethod
+    def tearDownClass(cls):
+        # Put back the seeded roles that TransactionTestCase removed.
+        super().tearDownClass()
+        reseed_roles_after_flush()
+
+    def setUp(self):
+        self.user = make_user("Student")
+        self.eicar_bytes = b"X5O!P%@AP[4\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*"
+
+    def upload_rejected_as(self, detection, filename="homework.pdf"):
+        # Upload a file while ClamAV (mocked) reports `detection`.
+        reply = f"stream: {detection} FOUND\x00".encode()
+        upload = SimpleUploadedFile(filename, self.eicar_bytes, content_type="application/pdf")
+        with patch("socket.socket", return_value=fake_clamav_reply(reply)):
+            with self.assertRaises(ValidationError) as context:
+                validate_and_save_upload(upload, self.user)
+        return context.exception
+
+    def test_infected_upload_is_quarantined_not_stored(self):
+        error = self.upload_rejected_as("Eicar-Test-Signature")
+        self.assertIn("failed security scanning", str(error))
+        self.assertEqual(StoredFile.objects.count(), 0)
+
+        quarantined = QuarantinedFile.objects.get()
+        self.assertEqual(quarantined.uploaded_by, self.user)
+        self.assertEqual(quarantined.original_filename, "homework.pdf")
+        self.assertEqual(quarantined.detection, "Eicar-Test-Signature")
+        self.assertEqual(quarantined.size_bytes, len(self.eicar_bytes))
+        self.assertEqual(quarantined.sha256_hash, hashlib.sha256(self.eicar_bytes).hexdigest())
+        self.assertEqual(bytes(quarantined.content), self.eicar_bytes)
+
+    def test_encrypted_and_macro_detections_are_quarantined_too(self):
+        for detection in ["Heuristics.Encrypted.Zip", "Heuristics.OLE2.ContainsMacros"]:
+            with self.subTest(detection=detection):
+                self.upload_rejected_as(detection)
+                self.assertTrue(QuarantinedFile.objects.filter(detection=detection).exists())
+
+    def test_quarantine_record_survives_the_upload_transaction_rollback(self):
+        # Most upload views run inside transaction.atomic(); the rejection rolls it back.
+        try:
+            with transaction.atomic():
+                self.upload_rejected_as("Eicar-Test-Signature")
+                raise ValidationError("the view gives up")
+        except ValidationError:
+            pass
+        self.assertEqual(QuarantinedFile.objects.count(), 1)
+
+    @override_settings(CLAMAV_REQUIRED=True)
+    def test_scanner_outage_is_not_quarantined(self):
+        broken_socket = MagicMock()
+        broken_socket.connect.side_effect = OSError("Connection refused")
+        upload = SimpleUploadedFile("notes.pdf", b"%PDF-1.4 notes", content_type="application/pdf")
+        with patch("socket.socket", return_value=broken_socket):
+            with self.assertRaises(ValidationError):
+                validate_and_save_upload(upload, self.user)
+        self.assertEqual(QuarantinedFile.objects.count(), 0)
+
+    def test_security_log_records_details_and_escapes_the_file_name(self):
+        with self.assertLogs("kura.security", level="WARNING") as captured:
+            self.upload_rejected_as("Eicar-Test-Signature", filename="evil\nFAKE LOG LINE.pdf")
+        log_line = captured.output[0]
+        self.assertIn(str(self.user.id), log_line)
+        self.assertIn(hashlib.sha256(self.eicar_bytes).hexdigest(), log_line)
+        self.assertIn('detection="Eicar-Test-Signature"', log_line)
+        self.assertIn('event=file.quarantined', log_line)
+        # The newline in the name is written as \\n, so no fake second log line appears.
+        self.assertNotIn("\n", log_line)
+
+    def test_old_signatures_log_a_warning(self):
+        old_reply = b"ClamAV 1.5.4/27000/Mon Jan  5 09:00:00 2026\x00"
+        with patch("socket.create_connection", return_value=fake_clamav_reply(old_reply)):
+            with self.assertLogs("kura.security", level="WARNING") as captured:
+                check_signature_age()
+        self.assertIn("event=clamav.signatures_old", captured.output[0])
+        self.assertIn("age_days=", captured.output[0])
+
+    def test_fresh_signatures_log_nothing(self):
+        today = timezone.now().strftime("%a %b %d %H:%M:%S %Y")
+        fresh_reply = f"ClamAV 1.5.4/27999/{today}\x00".encode()
+        with patch("socket.create_connection", return_value=fake_clamav_reply(fresh_reply)):
+            with self.assertNoLogs("kura.security", level="WARNING"):
+                check_signature_age()
+
+    def test_purge_deletes_only_quarantined_files_older_than_seven_days(self):
+        self.upload_rejected_as("Old-Signature")
+        self.upload_rejected_as("New-Signature")
+        QuarantinedFile.objects.filter(detection="Old-Signature").update(
+            created_at=timezone.now() - timezone.timedelta(days=8)
+        )
+        call_command("purge_quarantine", stdout=StringIO())
+        remaining = list(QuarantinedFile.objects.values_list("detection", flat=True))
+        self.assertEqual(remaining, ["New-Signature"])
+
+    def test_admin_sees_details_but_never_the_file(self):
+        self.upload_rejected_as("Eicar-Test-Signature")
+        admin = make_user("Admin")
+        self.client.force_login(admin)
+        response = self.client.get(reverse("kura:quarantine_list"))
+        self.assertContains(response, "Eicar-Test-Signature")
+        self.assertContains(response, hashlib.sha256(self.eicar_bytes).hexdigest())
+        self.assertNotContains(response, "EICAR-STANDARD-ANTIVIRUS-TEST-FILE")
+        # No link anywhere on the page points at a download URL.
+        self.assertNotContains(response, '/download/"')
+
+    def test_other_roles_cannot_see_or_delete_quarantine(self):
+        self.upload_rejected_as("Eicar-Test-Signature")
+        quarantined = QuarantinedFile.objects.get()
+        for role_name in ["Student", "Instructor", "Registrar", "Department head"]:
+            with self.subTest(role=role_name):
+                self.client.force_login(make_user(role_name))
+                self.assertEqual(self.client.get(reverse("kura:quarantine_list")).status_code, 403)
+                delete_url = reverse("kura:quarantine_delete", kwargs={"quarantined_file_id": quarantined.id})
+                self.assertEqual(self.client.post(delete_url, {"confirm": "on"}).status_code, 403)
+        self.assertTrue(QuarantinedFile.objects.filter(id=quarantined.id).exists())
+
+    def test_admin_delete_needs_post_and_confirmation(self):
+        self.upload_rejected_as("Eicar-Test-Signature")
+        quarantined = QuarantinedFile.objects.get()
+        self.client.force_login(make_user("Admin"))
+        delete_url = reverse("kura:quarantine_delete", kwargs={"quarantined_file_id": quarantined.id})
+
+        self.assertEqual(self.client.get(delete_url).status_code, 405)
+        self.client.post(delete_url, {})
+        self.assertTrue(QuarantinedFile.objects.filter(id=quarantined.id).exists())
+
+        response = self.client.post(delete_url, {"confirm": "on"})
+        self.assertRedirects(response, reverse("kura:quarantine_list"))
+        self.assertFalse(QuarantinedFile.objects.filter(id=quarantined.id).exists())

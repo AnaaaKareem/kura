@@ -20,6 +20,12 @@ urlpatterns = [
     # User sessions management
     path("account/sessions/", views.user_sessions_view, name="user_sessions"),
     path("admin/sessions/", views.admin_sessions_view, name="admin_sessions"),
+    path("admin/quarantine/", views.quarantine_list_view, name="quarantine_list"),
+    path(
+        "admin/quarantine/<uuid:quarantined_file_id>/delete/",
+        views.quarantine_delete_view,
+        name="quarantine_delete",
+    ),
     path("admin/sessions/revoke/", views.admin_sessions_revoke_view, name="admin_sessions_revoke"),
     # Admin management routes
     path("admin/staff/", views.staff_list_view, name="staff_list"),
