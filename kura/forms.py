@@ -1315,3 +1315,55 @@ class GradeAppealReviewForm(forms.Form):
             }
         ),
     )
+
+
+class GradeChangeRequestForm(forms.Form):
+    """
+    Form for instructors to request a formal score change on a released grade.
+    """
+
+    proposed_score = forms.DecimalField(
+        label="Proposed New Score",
+        max_digits=6,
+        decimal_places=2,
+        min_value=0,
+        widget=forms.NumberInput(attrs={"class": "input input-bordered w-full", "step": "0.01"}),
+    )
+
+    reason = forms.CharField(
+        label="Justification for Post-Release Change",
+        widget=forms.Textarea(
+            attrs={
+                "class": "textarea textarea-bordered w-full",
+                "rows": 3,
+                "placeholder": "Provide detailed justification for department head review...",
+            }
+        ),
+    )
+
+
+class GradeChangeRequestReviewForm(forms.Form):
+    """
+    Form for department heads to approve or reject a requested grade modification.
+    """
+
+    decision = forms.ChoiceField(
+        label="Decision",
+        choices=[
+            (ChangeRequestStatus.APPROVED, "Approve Change Request"),
+            (ChangeRequestStatus.REJECTED, "Reject Change Request"),
+        ],
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+    review_note = forms.CharField(
+        label="Head of Department Review Note (Optional)",
+        required=False,
+        widget=forms.Textarea(
+            attrs={
+                "class": "textarea textarea-bordered w-full",
+                "rows": 2,
+                "placeholder": "Comments on approval or grounds for rejection...",
+            }
+        ),
+    )

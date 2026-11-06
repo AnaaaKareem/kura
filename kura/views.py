@@ -55,6 +55,8 @@ from .forms import (
     EnrollmentSearchForm,
     GradeAppealForm,
     GradeAppealReviewForm,
+    GradeChangeRequestForm,
+    GradeChangeRequestReviewForm,
     GradeEntryForm,
     GradeReleaseForm,
     LoginForm,
@@ -5087,3 +5089,146 @@ def grade_appeal_review_view(request, appeal_id):
         return redirect("kura:course_grades", course_id=course.id)
 
     return render(request, "kura/grades/appeal_review.html", {"form": form, "appeal": appeal})
+
+
+@login_required
+def grade_change_request_create_view(request, grade_id):
+    """
+    Submits a formal request to alter an already released grade.
+    Who can use it: Course instructors.
+    Security: Restricted to released grades; enforces one pending request per grade.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Administrators cannot access grades through change requests.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    grade = get_object_or_404(
+        Grade.objects.select_related("assessment__section__module__course__department", "student"),
+        id=grade_id,
+    )
+    course = grade.assessment.section.module.course
+
+    # A student cannot manage their own grade through a staff assignment.
+    if grade.student_id == request.user.id:
+        raise PermissionDenied
+
+    if not is_course_staff(request.user, course):
+        raise PermissionDenied
+
+    if grade.status != GradeStatus.RELEASED:
+        messages.error(request, "Grade change requests only apply to already released grades.")
+        return redirect("kura:course_grades", course_id=course.id)
+
+    # Check for existing pending request.
+    if GradeChangeRequest.objects.filter(grade=grade, status=ChangeRequestStatus.PENDING).exists():
+        messages.warning(request, "A pending change request already exists for this grade.")
+        return redirect("kura:course_grades", course_id=course.id)
+
+    form = GradeChangeRequestForm(request.POST or None, initial={"proposed_score": grade.score})
+
+    if request.method == "POST" and form.is_valid():
+        proposed = form.cleaned_data["proposed_score"]
+        reason = form.cleaned_data["reason"].strip()
+
+        change_request = GradeChangeRequest.objects.create(
+            grade=grade,
+            requested_by=request.user,
+            current_score=grade.score,
+            proposed_score=proposed,
+            reason=reason,
+            status=ChangeRequestStatus.PENDING,
+        )
+        # Record the request ID and decision state, never the proposed score or reason.
+        log_security_event(
+            request,
+            "grade.change_requested",
+            {"request_id_obj": change_request.id, "decision": change_request.status},
+        )
+        messages.success(request, "Grade change request submitted for Department Head approval.")
+        return redirect("kura:course_grades", course_id=course.id)
+
+    return render(request, "kura/grades/change_request_create.html", {"form": form, "grade": grade})
+
+
+@login_required
+def grade_change_request_review_view(request, request_id):
+    """
+    Department Head decision on a post-release grade change request.
+    Who can use it: Department Head of the course's department.
+    Security: Enforces no self-approval; on approval, updates grade and logs GradeHistory.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Administrators cannot review requests containing grades.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    change_request = get_object_or_404(
+        GradeChangeRequest.objects.select_related(
+            "grade__assessment__section__module__course__department", "requested_by"
+        ),
+        id=request_id,
+    )
+    course = change_request.grade.assessment.section.module.course
+    dept = course.department
+
+    # A student cannot review a change to their own grade.
+    if change_request.grade.student_id == request.user.id:
+        raise PermissionDenied
+
+    if not is_department_head(request.user, dept):
+        raise PermissionDenied
+
+    # Security rule from spec: no self-approval.
+    if change_request.requested_by_id == request.user.id:
+        raise PermissionDenied
+
+    form = GradeChangeRequestReviewForm(request.POST or None)
+
+    if request.method == "POST" and form.is_valid():
+        decision = form.cleaned_data["decision"]
+        review_note = form.cleaned_data["review_note"].strip()
+
+        with transaction.atomic():
+            change_request.status = decision
+            change_request.reviewed_by = request.user
+            change_request.review_note = review_note
+            change_request.reviewed_at = timezone.now()
+            change_request.save()
+
+            # Record the decision without logging review notes or score values.
+            log_security_event(
+                request,
+                "grade.change_decided",
+                {"request_id_obj": change_request.id, "decision": decision},
+            )
+
+            if decision == ChangeRequestStatus.APPROVED:
+                grade = change_request.grade
+                old_score = grade.score
+                grade.score = change_request.proposed_score
+                grade.save(update_fields=["score"])
+
+                # Immutable audit log with department head approval.
+                GradeHistory.objects.create(
+                    grade=grade,
+                    old_score=old_score,
+                    new_score=grade.score,
+                    old_status=GradeStatus.RELEASED,
+                    new_status=GradeStatus.RELEASED,
+                    changed_by=change_request.requested_by,
+                    approved_by=request.user,
+                    reason=change_request.reason,
+                    change_request=change_request,
+                )
+
+        messages.success(request, f"Grade change request {decision.lower()} successfully.")
+        return redirect("kura:course_grades", course_id=course.id)
+
+    return render(request, "kura/grades/change_request_review.html", {"form": form, "change_request": change_request})
