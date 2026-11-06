@@ -1,0 +1,70 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Class Timetable & Schedules - Kura{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <div>
+        <h1 class="text-2xl font-bold">Class Timetable & Meeting Slots</h1>
+        <p class="text-sm text-base-content/70 mt-1">
+            Weekly class schedule, lecture halls, and lab room allocations.
+        </p>
+    </div>
+
+    <div class="card bg-base-100 border border-base-300 overflow-hidden">
+        <div class="overflow-x-auto">
+            <table class="table table-sm w-full text-sm">
+                <thead class="bg-base-200">
+                    <tr>
+                        <th>Course</th>
+                        <th>Format</th>
+                        <th>Day & Time</th>
+                        <th>Location</th>
+                        <th>Instructor</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for schedule in schedules %}
+                    <tr>
+                        <td>
+                            <div class="font-semibold">{{ schedule.course.code }}</div>
+                            <div class="text-xs text-base-content/60">{{ schedule.course.title }}</div>
+                        </td>
+                        <td>
+                            <span class="badge badge-info badge-sm uppercase">{{ schedule.session_type }}</span>
+                        </td>
+                        <td>
+                            <div class="font-semibold">{{ schedule.day|capfirst }}</div>
+                            <div class="text-xs text-base-content/60 font-mono">{{ schedule.start_time|time:"H:i" }} &ndash; {{ schedule.end_time|time:"H:i" }}</div>
+                        </td>
+                        <td>
+                            <span class="font-medium">{{ schedule.location }}</span>
+                        </td>
+                        <td>
+                            <div class="text-xs">{{ schedule.instructor.get_full_name|default:schedule.instructor.email }}</div>
+                        </td>
+                        <td>
+                            {% if schedule.can_manage %}
+                            <a class="btn btn-ghost btn-xs" href="{% url 'kura:schedule_edit' schedule.id %}">Edit</a>
+                            <form method="post" action="{% url 'kura:schedule_delete' schedule.id %}">
+                                {% csrf_token %}
+                                <label><input type="checkbox" name="confirm" required> Confirm delete</label>
+                                <button type="submit" class="btn btn-outline btn-xs">Delete</button>
+                            </form>
+                            {% endif %}
+                        </td>
+                    </tr>
+                    {% empty %}
+                    <tr>
+                        <td colspan="6" class="text-center py-6 text-base-content/50">
+                            No class meeting slots scheduled.
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+</div>
+{% endblock %}

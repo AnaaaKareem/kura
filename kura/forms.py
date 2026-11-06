@@ -767,3 +767,73 @@ class MarkdownPreviewForm(forms.Form):
     content_body = forms.CharField(required=False, widget=forms.Textarea)
 
 
+
+class ScheduleForm(forms.Form):
+    """
+    Form for course instructors to define recurring class timetables.
+    Enforces that class end time must be after start time.
+    """
+
+    session_type = forms.ChoiceField(
+        label="Session Format",
+        choices=SessionType.choices,
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+    day = forms.ChoiceField(
+        label="Day of Week",
+        choices=DayOfWeek.choices,
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+    start_time = forms.TimeField(
+        label="Start Time",
+        widget=forms.TimeInput(attrs={"class": "input input-bordered w-full", "type": "time"}),
+    )
+
+    end_time = forms.TimeField(
+        label="End Time",
+        widget=forms.TimeInput(attrs={"class": "input input-bordered w-full", "type": "time"}),
+    )
+
+    location = forms.CharField(
+        label="Classroom / Lab Location",
+        max_length=150,
+        widget=forms.TextInput(
+            attrs={
+                "class": "input input-bordered w-full",
+                "placeholder": "e.g. Hall A, Science Building",
+            }
+        ),
+    )
+
+    recurrence_start = forms.DateField(
+        label="Term Start Date",
+        widget=forms.DateInput(attrs={"class": "input input-bordered w-full", "type": "date"}),
+    )
+
+    recurrence_end = forms.DateField(
+        label="Term End Date",
+        widget=forms.DateInput(attrs={"class": "input input-bordered w-full", "type": "date"}),
+    )
+
+    instructor = forms.ModelChoiceField(
+        label="Assigned Instructor",
+        queryset=User.objects.filter(is_active=True),
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
+
+    def clean(self):
+        """
+        Checks that a scheduled class ends after it starts.
+        """
+        cleaned_data = super().clean()
+        start_time = cleaned_data.get("start_time")
+        end_time = cleaned_data.get("end_time")
+
+        # Validate that class end time is strictly after start time.
+        if start_time and end_time and end_time <= start_time:
+            self.add_error("end_time", "Class end time must be strictly later than start time.")
+
+        return cleaned_data
+
