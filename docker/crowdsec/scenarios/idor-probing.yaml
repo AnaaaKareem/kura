@@ -1,0 +1,18 @@
+# ==============================================================================
+# CrowdSec scenario: More than 30 access-denied pages from one IP in 5 minutes (ID guessing)
+# A "leaky bucket": each matching event adds one drop; drops leak out at a
+# steady rate. If the bucket overflows (more than 30 events faster than the
+# leak), an alert is raised and the remediation profile bans the IP.
+# ==============================================================================
+type: leaky
+name: kura/idor-probing
+description: "More than 30 access-denied pages from one IP in 5 minutes (ID guessing)"
+filter: "evt.Meta.service == 'kura' && evt.Meta.log_type == 'access.denied'"
+groupby: evt.Meta.source_ip
+capacity: 30
+leakspeed: "10s"
+blackhole: 5m
+labels:
+  remediation: true
+  service: kura
+  type: scan

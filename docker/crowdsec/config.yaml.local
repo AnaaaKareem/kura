@@ -1,0 +1,13 @@
+# ==============================================================================
+# CrowdSec settings that override the image's /etc/crowdsec/config.yaml
+# (CrowdSec merges any *.local file over the matching config file).
+# ==============================================================================
+
+# Serve Prometheus metrics on all interfaces of the container (port 6060), so
+# Alloy can scrape them over the internal "observability" network. No port is
+# published to the host.
+prometheus:
+  enabled: true
+  level: full
+  listen_addr: 0.0.0.0
+  listen_port: 6060

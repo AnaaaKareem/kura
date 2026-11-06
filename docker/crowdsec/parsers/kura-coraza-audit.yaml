@@ -1,0 +1,21 @@
+# ==============================================================================
+# CrowdSec parser (stage s01-parse): Coraza WAF audit records (JSON).
+# The WAF container prints access lines AND JSON audit records; only the JSON
+# records (lines starting with "{") are parsed here. The client IP is the real
+# visitor (the WAF trusts X-Real-IP from nginx only).
+# ==============================================================================
+filter: "evt.Parsed.program == 'coraza_audit' && evt.Parsed.message startsWith '{'"
+onsuccess: next_stage
+name: kura/coraza-audit
+description: "Parse Coraza WAF JSON audit records"
+statics:
+  # Read the JSON into evt.Unmarshaled.waf.
+  - target: evt.Unmarshaled
+    expression: UnmarshalJSON(evt.Parsed.message, evt.Unmarshaled, "waf")
+  - meta: source_ip
+    expression: evt.Unmarshaled.waf.transaction.client_ip
+  # is_interrupted = the WAF blocked this request.
+  - meta: log_type
+    expression: "evt.Unmarshaled.waf.transaction.is_interrupted == true ? 'waf_block' : 'waf_audit'"
+  - meta: service
+    value: kura

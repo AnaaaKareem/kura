@@ -1,0 +1,15 @@
+# Load only Kura's firewall after Docker has started.
+[Unit]
+Description=Kura host nftables firewall
+After=network-pre.target docker.service
+Before=network.target
+
+# Keep the rules in the kernel after the nft command exits.
+[Service]
+Type=oneshot
+ExecStart=/usr/sbin/nft -f /etc/kura/kura.nft
+RemainAfterExit=yes
+
+# Start the firewall when the host enters its normal multi-user mode.
+[Install]
+WantedBy=multi-user.target

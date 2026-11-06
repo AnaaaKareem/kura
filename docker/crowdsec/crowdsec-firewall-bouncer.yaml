@@ -1,0 +1,36 @@
+# ==============================================================================
+# CrowdSec nftables Firewall Bouncer Configuration
+#
+# Connects to CrowdSec Local API (LAPI) and synchronizes banned IPs directly
+# into the Linux kernel nftables set 'crowdsec_blacklists'.
+# ==============================================================================
+
+mode: nftables
+update_frequency: 10s
+log_mode: stdout
+log_level: info
+
+# CrowdSec Local API connection (bound to loopback on port 8085)
+api_url: http://127.0.0.1:8085/
+# The owner must put the generated bouncer key in the root-only installed
+# configuration file. This empty value deliberately cannot authenticate.
+api_key: ""
+
+# The bouncer uses these names for the sets created by kura.nft.
+blacklists_ipv4: crowdsec_blacklists
+blacklists_ipv6: crowdsec6_blacklists
+
+# Set-only mode updates existing sets and does not create its own chains.
+nftables:
+  ipv4:
+    enabled: true
+    set-only: true
+    table: kura_host
+    chain: input
+    family: inet
+  ipv6:
+    enabled: true
+    set-only: true
+    table: kura_host
+    chain: input
+    family: inet

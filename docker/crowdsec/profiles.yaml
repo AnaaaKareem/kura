@@ -1,0 +1,26 @@
+# ==============================================================================
+# CrowdSec Remediation Profiles (profiles.yaml)
+#
+# Decides what happens when a scenario raises an alert for an IP address.
+# Profiles are checked from top to bottom; "on_success: break" stops at the
+# first one that applies.
+# ==============================================================================
+
+# 1. Repeat offenders: an IP that was already banned at least twice in the
+#    last 24 hours (so this is its 3rd alert or more) is banned for 24 hours.
+name: repeat_offender_24h
+filters:
+  - Alert.Remediation == true && Alert.GetScope() == "Ip" && GetDecisionsSinceCount(Alert.GetValue(), "24h") >= 2
+decisions:
+  - type: ban
+    duration: 24h
+on_success: break
+---
+# 2. Everyone else: a 4-hour ban.
+name: default_ip_remediation
+filters:
+  - Alert.Remediation == true && Alert.GetScope() == "Ip"
+decisions:
+  - type: ban
+    duration: 4h
+on_success: break

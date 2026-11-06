@@ -490,6 +490,82 @@ services:
   # Security: monitors Nginx access/error logs, detects brute-force attacks
   # and web exploitation, generates dynamic 4-hour bans pushed to nftables.
   # ============================================================================
+  crowdsec:
+    image: crowdsecurity/crowdsec:v1.8.2@sha256:65b74942f7e7ed5c60fde4ac15fc4ba715904c398c8b16dd451f4907d90347d4
+    container_name: kura-crowdsec
+    restart: unless-stopped
+    ports:
+      # Exposes Local API on loopback only for the firewall bouncer
+      - "127.0.0.1:8085:8080"
+    environment:
+      # crowdsecurity/linux adds the base parsers the others depend on.
+      COLLECTIONS: "crowdsecurity/linux crowdsecurity/nginx crowdsecurity/http-cve crowdsecurity/base-http-scenarios"
+      BOUNCER_KEY_FIREWALL_FILE: /run/secrets/crowdsec_bouncer_key
+    volumes:
+      - ./docker/crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml:ro
+      - ./docker/crowdsec/profiles.yaml:/etc/crowdsec/profiles.yaml:ro
+      # Turns on Prometheus metrics on :6060 for Alloy (WP3).
+      - ./docker/crowdsec/config.yaml.local:/etc/crowdsec/config.yaml.local:ro
+      # Kura's own parsers, whitelist and scenarios (docker/crowdsec/README.md).
+      - ./docker/crowdsec/parsers/kura-django-logfmt.yaml:/etc/crowdsec/parsers/s01-parse/kura-django-logfmt.yaml:ro
+      - ./docker/crowdsec/parsers/kura-coraza-audit.yaml:/etc/crowdsec/parsers/s01-parse/kura-coraza-audit.yaml:ro
+      - ./docker/crowdsec/parsers/kura-whitelist.yaml:/etc/crowdsec/parsers/s02-enrich/kura-whitelist.yaml:ro
+      - ./docker/crowdsec/scenarios/login-bruteforce.yaml:/etc/crowdsec/scenarios/kura-login-bruteforce.yaml:ro
+      - ./docker/crowdsec/scenarios/mfa-bruteforce.yaml:/etc/crowdsec/scenarios/kura-mfa-bruteforce.yaml:ro
+      - ./docker/crowdsec/scenarios/idor-probing.yaml:/etc/crowdsec/scenarios/kura-idor-probing.yaml:ro
+      - ./docker/crowdsec/scenarios/waf-repeat-offender.yaml:/etc/crowdsec/scenarios/kura-waf-repeat-offender.yaml:ro
+      - ./docker/crowdsec/scenarios/reset-abuse.yaml:/etc/crowdsec/scenarios/kura-reset-abuse.yaml:ro
+      - crowdsec_data:/var/lib/crowdsec/data
+      - crowdsec_config:/etc/crowdsec
+    secrets:
+      - crowdsec_bouncer_key
+    # No "frontend": CrowdSec reads every log through the Docker API proxy and
+    # needs no access to nginx, cloudflared or the WAF over the network.
+    networks:
+      - observability
+      # Gives CrowdSec read-only access to container logs through the proxy.
+      - docker_api
+    # Hardened like the other services. CrowdSec writes only to its two volumes
+    # (/etc/crowdsec, /var/lib/crowdsec/data) and /tmp.
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Resource limits to prevent DoS
+    mem_limit: 512m
+    cpus: 0.5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+    depends_on:
+      - nginx
+    healthcheck:
+      # Check that CrowdSec can authenticate to its own Local API.
+      test: ["CMD", "cscli", "lapi", "status"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # NOTE: the CrowdSec nftables firewall bouncer is NOT a container.
+  # CrowdSec publishes it as a Linux host package (crowdsec-firewall-bouncer-nftables),
+  # not as a Docker image, so it is installed on the host in the host-layer step.
+  # It reads bans from the CrowdSec Local API on 127.0.0.1:8085 (published above).
+
+  # ============================================================================
+  # Cloudflare Tunnel Service (cloudflared)
+  # Security: outbound-only encrypted tunnel to Cloudflare Edge.
+  # Requires zero public inbound ports open on host firewall (ports 80/443 closed).
+  # Read-only root filesystem, dropped capabilities, token injected via secret.
+  # ============================================================================
   loki:
     image: grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
     container_name: kura-loki
