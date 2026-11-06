@@ -7045,6 +7045,68 @@ class PasskeyAddedAuditTests(TestCase):
                 self.client.post("/mfa/fido2/complete_reg", data="{}", content_type="application/json")
 
 
+class PasskeyOnlyMfaUrlsTests(TestCase):
+    """
+    Only django-mfa2's passkey (FIDO2) pages are published (config/urls.py).
+    Its TOTP, email, recovery, U2F and "trusted device" pages must not exist.
+    """
+
+    def setUp(self):
+        self.user = make_user("Student")
+        self.client.force_login(self.user)
+
+    def test_unused_mfa_pages_are_not_reachable(self):
+        # Each of these was published by include("mfa.urls") before.
+        unused_paths = [
+            "/mfa/",
+            "/mfa/td/",
+            "/mfa/td/add",
+            "/mfa/td/send_link",
+            "/mfa/u2f/checkTrusted",
+            "/mfa/totp/start/",
+            "/mfa/email/start/",
+            "/mfa/recovery/start",
+            "/mfa/u2f/",
+            "/mfa/selct_method",
+            "/mfa/toggleKey",
+            "/mfa/delete",
+            "/mfa/fido2/recheck",
+        ]
+        for unused_path in unused_paths:
+            with self.subTest(path=unused_path):
+                self.assertEqual(self.client.get(unused_path).status_code, 404)
+
+    def test_passkey_pages_keep_their_addresses(self):
+        # The library's templates and JavaScript use these names, so they must
+        # still resolve to the same addresses as before.
+        expected = {
+            "start_fido2": "/mfa/fido2/",
+            "fido2_begin_reg": "/mfa/fido2/begin_reg",
+            "fido2_complete_reg": "/mfa/fido2/complete_reg",
+            "fido2_auth": "/mfa/fido2/auth",
+            "fido2_begin_auth": "/mfa/fido2/begin_auth",
+            "fido2_complete_auth": "/mfa/fido2/complete_auth",
+            "mfa_reset_cookie": "/mfa/reset",
+        }
+        for name, address in expected.items():
+            with self.subTest(name=name):
+                self.assertEqual(reverse(name), address)
+
+    def test_passkey_start_page_still_works(self):
+        # The "add a passkey" page renders for a signed-in user.
+        self.assertEqual(self.client.get("/mfa/fido2/").status_code, 200)
+
+    def test_passkey_registration_needs_a_signed_in_user(self):
+        # Without a full login, every registration step sends the visitor to
+        # the login page and never hands out a registration challenge.
+        self.client.logout()
+        for address in ["/mfa/fido2/", "/mfa/fido2/begin_reg", "/mfa/fido2/complete_reg"]:
+            with self.subTest(address=address):
+                response = self.client.get(address)
+                self.assertEqual(response.status_code, 302)
+                self.assertIn(reverse("kura:login"), response["Location"])
+
+
 class WriteAppMetricsTests(TestCase):
     """WP3: write_app_metrics prints counts in Prometheus text format and nothing personal."""
 
