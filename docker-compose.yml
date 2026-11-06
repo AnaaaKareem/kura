@@ -252,6 +252,134 @@ services:
   # NETBIRD_BIND_ADDRESS: 127.0.0.1 (default, this computer only) or 0.0.0.0 on
   # the VM so admins on the LAN can reach it.
   # ============================================================================
+  netbird-proxy:
+    image: nginx:1.31.8-alpine@sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606
+    container_name: kura-netbird-proxy
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /var/cache/nginx:size=32M,mode=1777
+      - /var/run:size=8M,mode=1777
+      - /tmp:size=16M,mode=1777
+    ports:
+      - "${NETBIRD_BIND_ADDRESS:-127.0.0.1}:443:443"
+    volumes:
+      - ./docker/netbird/server/nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      # Only its own certificate and key (from Vault's CA).
+      - ./certs/internal/netbird.crt:/etc/nginx/certs/netbird.crt:ro
+      - ./certs/internal/netbird.key:/etc/nginx/certs/netbird.key:ro
+    networks:
+      netbird:
+        # Fixed: netbird-server trusts forwarded client addresses only from here.
+        ipv4_address: 172.28.40.10
+        # Lets containers on this network (and test clients) reach it by name.
+        aliases: [netbird.kura.lan]
+    # nginx's master starts as root to bind 443 and read its key, then workers drop privileges.
+    cap_drop:
+      - ALL
+    cap_add:
+      - NET_BIND_SERVICE
+      - CHOWN
+      - SETUID
+      - SETGID
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: 0.25
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+    depends_on:
+      - netbird-server
+      - netbird-dashboard
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --no-check-certificate --spider https://127.0.0.1:443/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  netbird-server:
+    image: netbirdio/netbird-server:0.82.0@sha256:7b5b53b2dc8bc25639f791cf72d47cf86911894ff3f8a97cb79bab9be958109c
+    container_name: kura-netbird-server
+    restart: unless-stopped
+    read_only: true
+    # Config (with its secret keys) comes from secrets/netbird_config.yaml.
+    command: ["--config", "/run/secrets/netbird_config"]
+    environment:
+      # Only true while docker/netbird/server/setup-netbird.sh runs: lets the
+      # one-time /api/setup call also create an access token for scripting.
+      NB_SETUP_PAT_ENABLED: "${NETBIRD_SETUP_PAT_ENABLED:-false}"
+    volumes:
+      # NetBird's database (peers, users, policies; sensitive fields encrypted).
+      - netbird_server_data:/var/lib/netbird
+      # Scratch space on disk (not memory): the one-time GeoLite location
+      # database download unpacks several hundred MB of CSV files here.
+      - netbird_server_tmp:/tmp
+    secrets:
+      - netbird_config
+    ports:
+      # STUN: lets admin devices discover their public address for direct
+      # (peer-to-peer) connections. Without it, traffic falls back to the relay.
+      - "${NETBIRD_BIND_ADDRESS:-127.0.0.1}:3478:3478/udp"
+    networks:
+      - netbird
+    # Runs as root inside the image, but with every Linux capability removed.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # 512 MB: importing the location database on first start needs the room.
+    mem_limit: 512m
+    cpus: 0.5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+
+  netbird-dashboard:
+    image: netbirdio/dashboard:v2.96.0-rootless@sha256:0f0097965c36bd4702eae6cdb007d6398ea7783f3d395942c909c7fb55a827d4
+    container_name: kura-netbird-dashboard
+    restart: unless-stopped
+    environment:
+      # Where the dashboard (running in the admin's browser) finds the server.
+      NETBIRD_MGMT_API_ENDPOINT: "https://netbird.kura.lan"
+      NETBIRD_MGMT_GRPC_API_ENDPOINT: "https://netbird.kura.lan"
+      # Login through NetBird's embedded identity provider.
+      AUTH_AUDIENCE: "netbird-dashboard"
+      AUTH_CLIENT_ID: "netbird-dashboard"
+      AUTH_CLIENT_SECRET: ""
+      AUTH_AUTHORITY: "https://netbird.kura.lan/oauth2"
+      USE_AUTH0: "false"
+      AUTH_SUPPORTED_SCOPES: "openid profile email groups"
+      AUTH_REDIRECT_URI: "/nb-auth"
+      AUTH_SILENT_REDIRECT_URI: "/nb-silent-auth"
+      # TLS is done by netbird-proxy, not by the dashboard's own nginx.
+      LETSENCRYPT_DOMAIN: "none"
+    networks:
+      - netbird
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: 0.25
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+
+  # ============================================================================
+  # Mail Relay (Postfix, built from docker/postfix on a pinned Alpine image)
+  # Django -> relay (STARTTLS, Vault certificate) -> mail provider (TLS checked,
+  # login from the smtp_relay_credentials secret). Accepts mail only from the
+  # private "mail" network and only from noreply@kura.edu. The only Kura
+  # container with internet access for email. See docker/postfix/README.md.
+  # ============================================================================
   relay:
     build:
       context: ./docker/postfix
@@ -954,6 +1082,62 @@ services:
   # Security: establishes an encrypted peer-to-peer WireGuard mesh connecting
   # administrators directly to internal monitoring and management interfaces.
   # Keeps Grafana (3000) and Prometheus (9090) invisible to the public internet.
+  # ============================================================================
+  netbird:
+    # Only started with "docker compose --profile remote-access up -d", once the
+    # NetBird server and setup key exist. See docker/netbird/README.md.
+    profiles: ["remote-access"]
+    image: netbirdio/netbird:0.82.0@sha256:eca5b274c635bfbb04ec6724a0712d1146190dd450eea199eeb83916fdd94965
+    container_name: kura-netbird
+    restart: unless-stopped
+    network_mode: host
+    # The self-hosted server's name, reached through netbird-proxy on this host.
+    extra_hosts:
+      - "netbird.kura.lan:127.0.0.1"
+    environment:
+      # Kura's own NetBird server (netbird-server / netbird-proxy above).
+      NB_MANAGEMENT_URL: "https://netbird.kura.lan"
+      # Joins the "Kura servers" group (setup-netbird.sh wrote this key).
+      NB_SETUP_KEY_FILE: /run/secrets/netbird_setup_key
+      NB_HOSTNAME: kura-vm
+      NB_LOG_LEVEL: info
+      # NetBird has no "trust this CA" option; Go programs read SSL_CERT_FILE,
+      # so the client trusts exactly Kura's CA (which signed netbird.kura.lan).
+      SSL_CERT_FILE: /etc/kura/ca.crt
+    volumes:
+      - /lib/modules:/lib/modules:ro
+      - netbird_data:/var/lib/netbird
+      - ./certs/internal/ca.crt:/etc/kura/ca.crt:ro
+    secrets:
+      - netbird_setup_key
+    cap_drop:
+      - ALL
+    # NET_ADMIN: create the wt0 VPN interface and routes. NET_RAW: the raw
+    # socket WireGuard uses (refused without it: "failed to create ipv4 raw
+    # socket"). SYS_MODULE: load the wireguard kernel module if missing.
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_MODULE
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    cpus: 0.5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+
+  # ============================================================================
+  # Secrets & Cryptographic Management (HashiCorp Vault)
+  # Encrypts authenticator (TOTP) seeds with its Transit engine; Django only
+  # ever stores the ciphertext. HTTPS only (certificate from our internal CA).
+  # Set up once with docker/vault/init-vault.sh, and unsealed by hand after
+  # each restart (see docker/vault/README.md). Isolated on backend.
   # ============================================================================
   vault:
     image: hashicorp/vault:2.2.1@sha256:962a92876e168d68eaaa24b0b8b49bbce1cb63024060a67bba95cd158a366fc2
