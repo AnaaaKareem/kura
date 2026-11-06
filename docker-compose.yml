@@ -1,14 +1,538 @@
 services:
-  postgres:
-    image: postgres:17
-    environment:
-      POSTGRES_DB: ${DATABASE_NAME}
-      POSTGRES_USER: ${DATABASE_USER}
-      POSTGRES_PASSWORD: ${DATABASE_PASSWORD}
-    ports:
-      - "5432:5432"
+  # ============================================================================
+  # Database Service (PostgreSQL 17, pgEdge image with pgAudit and pgBackRest)
+  # Security: isolated on internal network, read-only root, dropped capabilities,
+  # secrets-backed password, mutual TLS certificates, explicit resource limits.
+  # ============================================================================
+  db:
+    image: ghcr.io/pgedge/pgedge-postgres:17-spock5-standard@sha256:6d2fb528a11a059d07247e38b38e601a3795d1ab2bfd78ad945f9e77227c0a15
+    container_name: kura-db
+    restart: unless-stopped
+    read_only: true
+    # Writable in-memory RAM partitions: temp files, PostgreSQL Unix sockets
+    # (used by the health check and pgBackRest), and pgBackRest log files.
+    tmpfs:
+      - /tmp:size=128M,mode=1777
+      - /var/run/postgresql:size=16M,mode=1777
+      - /var/log/pgbackrest:size=64M,mode=1777
     volumes:
-      - postgres_data:/var/lib/postgresql/data
+      # pgEdge layout: the cluster lives in /var/lib/pgsql/17/data (the image
+      # pre-creates this path with the correct postgres ownership).
+      - postgres_data:/var/lib/pgsql/17/data
+      # pgBackRest WAL archive and backup repository storage.
+      - postgres_backups:/var/lib/pgbackrest
+      # Mutual TLS: PostgreSQL's own certificate and key, plus the CA certificate
+      # used to check client certificates. Only these three files are mounted, so
+      # this container never sees another service's key or the CA private key.
+      - ./certs/internal/ca.crt:/var/lib/postgresql/certs/ca.crt:ro
+      - ./certs/internal/db.crt:/var/lib/postgresql/certs/db.crt:ro
+      - ./certs/internal/db.key:/var/lib/postgresql/certs/db.key:ro
+      # Runs once on first start: creates the least-privilege roles and grants.
+      - ./docker/postgres/init-roles.sql:/docker-entrypoint-initdb.d/01-init-roles.sql:ro
+      # pgBackRest configuration (points at the pgEdge data path).
+      - ./docker/postgres/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      # Backup and restore operators available inside the container.
+      - ./docker/postgres/backup.sh:/usr/local/bin/backup.sh:ro
+      - ./docker/postgres/restore.sh:/usr/local/bin/restore.sh:ro
+      # Custom PostgreSQL server configuration (SSL/mTLS, WAL archiving, pgAudit).
+      - ./docker/postgres/postgresql.conf:/etc/postgresql/postgresql.conf:ro
+      - ./docker/postgres/pgaudit.conf:/etc/postgresql/pgaudit.conf:ro
+      # Client authentication rules (certificate + password policies).
+      - ./docker/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    networks:
+      - backend
+    secrets:
+      - db_password
+      - backup_encryption_key
+    environment:
+      # Standard official-style entrypoint variables supported by the pgEdge image.
+      POSTGRES_DB: kura
+      POSTGRES_USER: kura-admin
+      POSTGRES_PASSWORD_FILE: /run/secrets/db_password
+      # UTF-8 database with page checksums (the image defaults to a C locale).
+      POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C.UTF-8 --data-checksums
+      PGDATA: /var/lib/pgsql/17/data
+    # Point the server at the mounted configuration and authentication files,
+    # overriding the default copies generated inside the data directory.
+    command:
+      - -c
+      - config_file=/etc/postgresql/postgresql.conf
+      - -c
+      - hba_file=/etc/postgresql/pg_hba.conf
+    # Drop all Linux capabilities and only retain minimal permissions required
+    # for the entrypoint to set data folder ownership and drop to user postgres
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - SETUID
+      - SETGID
+      - DAC_OVERRIDE
+    security_opt:
+      - no-new-privileges:true
+    # Resource limits to prevent denial-of-service / resource starvation
+    mem_limit: 1536m
+    cpus: 1.5
+    deploy:
+      resources:
+        limits:
+          cpus: "1.5"
+          memory: 1536M
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U kura-admin -d kura"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
 
+  # ============================================================================
+  # Application Service (Django WSGI running on Gunicorn)
+  # Security: non-root user (kura, UID 10001), read-only root filesystem,
+  # zero capabilities (cap_drop ALL), memory/CPU limits, Docker secrets.
+  # ============================================================================
+  web:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: kura-web:latest
+    container_name: kura-web
+    restart: unless-stopped
+    read_only: true
+    # Writable in-memory RAM partitions for Python temporary files and runtime sockets
+    tmpfs:
+      - /tmp:size=256M,mode=1777
+      - /run:size=16M,mode=1777
+      # Writable state for Gunicorn's control server on a read-only filesystem
+      - /app/.gunicorn:size=16M,mode=1777
+    volumes:
+      - static_data:/app/staticfiles
+      # Only Django's own certificate and key, plus the CA certificate.
+      - ./certs/internal/ca.crt:/certs/internal/ca.crt:ro
+      - ./certs/internal/web.crt:/certs/internal/web.crt:ro
+      - ./certs/internal/web.key:/certs/internal/web.key:ro
+    # app: only the WAF can reach Django, so the WAF cannot be bypassed.
+    # backend: so Django can reach PostgreSQL, Vault and ClamAV.
+    # mail: so Django can hand email to the Postfix relay (nothing else is there).
+    # Not on frontend (Nginx/cloudflared) or observability.
+    networks:
+      - app
+      - backend
+      - mail
+    # No db_password here: that is the kura-admin (superuser) password. Django
+    # logs in as kura_app with its certificate, so it never needs it. If Django
+    # were ever broken into, the attacker must not find the superuser password.
+    # Migrations use the separate "migrate" service below instead.
+    secrets:
+      - django_secret_key
+      # Django's AppRole login for Vault (written by docker/vault/init-vault.sh).
+      - vault_role_id
+      - vault_secret_id
+    environment:
+      DEBUG: "False"
+      DATABASE_NAME: kura
+      # Django logs in as temporary users from Vault (15 minutes each, members
+      # of the least-privilege role kura_app), not a fixed account. See
+      # kura/vault_postgres/base.py. Migrations use the "migrate" service.
+      VAULT_DATABASE_CREDENTIALS: "True"
+      DATABASE_HOST: db
+      DATABASE_PORT: "5432"
+      # KURA_PUBLIC_HOSTNAME is the Cloudflare Tunnel hostname, set in .env
+      # on the server (e.g. KURA_PUBLIC_HOSTNAME=kura.yourdomain.com).
+      ALLOWED_HOSTS: "localhost,127.0.0.1,web,${KURA_PUBLIC_HOSTNAME:-kura.example.com}"
+      CLAMAV_HOST: "clamav"
+      CLAMAV_PORT: "3310"
+      CLAMAV_REQUIRED: "True"
+      # HTTPS: Django checks Vault's certificate against our internal CA.
+      VAULT_URL: "https://vault:8200"
+      VAULT_CA_CERT: "/certs/internal/ca.crt"
+      VAULT_ENABLED: "True"
+      MTLS_ENABLED: "True"
+      # Trust the WAF's X-Real-IP header for the visitor's IP. Safe only because
+      # MTLS_ENABLED makes Gunicorn require a client certificate, and Django is
+      # only reachable from the WAF (app network). See config/settings.py.
+      TRUST_PROXY_IP_HEADER: "True"
+      # Email: Django hands mail to the Postfix relay with STARTTLS. Python's
+      # default TLS checks use SSL_CERT_FILE, so the relay's certificate is
+      # checked against Kura's internal CA (and nothing else is trusted).
+      EMAIL_HOST: "relay"
+      EMAIL_PORT: "25"
+      EMAIL_USE_TLS: "True"
+      SSL_CERT_FILE: "/certs/internal/ca.crt"
+      DEFAULT_FROM_EMAIL: "Kura <noreply@kura.edu>"
+      # Links in emails always point here (never at the Host header a visitor sent).
+      SITE_URL: "https://${KURA_PUBLIC_HOSTNAME:-kura.example.com}"
+      DB_SSL_MODE: "verify-full"
+      DB_SSL_ROOTCERT: "/certs/internal/ca.crt"
+      DB_SSL_CERT: "/certs/internal/web.crt"
+      DB_SSL_KEY: "/certs/internal/web.key"
+    # Unprivileged user requires no kernel capabilities
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # Resource limits
+    mem_limit: 2048m
+    cpus: 2.0
+    deploy:
+      resources:
+        limits:
+          cpus: "2.0"
+          memory: 2048M
+        reservations:
+          cpus: "0.5"
+          memory: 512M
+    # Django needs the database and Vault (for its database login).
+    depends_on:
+      db:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import os, ssl, urllib.request; mtls = os.environ.get('MTLS_ENABLED', 'False').lower() in ('true', '1'); ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile='/certs/internal/ca.crt') if mtls else None; ctx.load_cert_chain('/certs/internal/web.crt', '/certs/internal/web.key') if mtls else None; ctx.check_hostname = False if mtls else None; urllib.request.urlopen('https://127.0.0.1:8443/login/' if mtls else 'http://127.0.0.1:8000/login/', context=ctx)"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ============================================================================
+  # Database Migrations (one-off job, never left running)
+  # Runs "manage.py migrate" as kura-admin, the database owner, because creating
+  # and changing tables needs more rights than kura_app has. It is the only Kura
+  # container given the kura-admin password, and it exits when it is done.
+  # The "tools" profile stops "docker compose up" from starting it. Run it with:
+  #   docker compose run --rm migrate
+  # ============================================================================
+  migrate:
+    image: kura-web:latest
+    profiles: ["tools"]
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M,mode=1777
+    command: ["python", "manage.py", "migrate", "--noinput"]
+    volumes:
+      # Only the CA certificate, to check it is really talking to our database.
+      - ./certs/internal/ca.crt:/certs/internal/ca.crt:ro
+    # backend only: it needs the database and nothing else.
+    networks:
+      - backend
+    secrets:
+      - db_password
+      - django_secret_key
+    environment:
+      DEBUG: "False"
+      DATABASE_NAME: kura
+      DATABASE_USER: kura-admin
+      DATABASE_HOST: db
+      DATABASE_PORT: "5432"
+      # Migrations never encrypt anything, so this job does not talk to Vault.
+      VAULT_ENABLED: "False"
+      # Password login (pg_hba.conf "scram-sha-256") inside TLS, and the
+      # database's certificate must be signed by our CA and named "db".
+      DB_SSL_MODE: "verify-full"
+      DB_SSL_ROOTCERT: "/certs/internal/ca.crt"
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    depends_on:
+      db:
+        condition: service_healthy
+
+  # ============================================================================
+  # Self-hosted NetBird VPN server (admin access only), v0.82.0.
+  #   netbird-proxy     nginx, TLS on 443 for https://netbird.kura.lan (Vault cert)
+  #   netbird-server    management + signal + relay + STUN + login (embedded IdP)
+  #   netbird-dashboard the admin web interface
+  # Admins install the NetBird app; nothing here is exposed through Cloudflare.
+  # Set up once with docker/netbird/server/setup-netbird.sh (admin, MFA, groups,
+  # policy, setup keys). See docker/netbird/README.md.
+  # NETBIRD_BIND_ADDRESS: 127.0.0.1 (default, this computer only) or 0.0.0.0 on
+  # the VM so admins on the LAN can reach it.
+  # ============================================================================
+  relay:
+    build:
+      context: ./docker/postfix
+    image: kura-relay:latest
+    container_name: kura-relay
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16M,mode=1777
+      # Postfix's own state; must belong to the "postfix" user (UID 100, GID 101).
+      - /var/lib/postfix:size=16M,uid=100,gid=101,mode=0700
+      - /run:size=8M
+    volumes:
+      # The mail queue survives restarts, so no email is lost while the provider is down.
+      - relay_queue:/var/spool/postfix
+      - ./docker/postfix/main.cf:/etc/postfix/main.cf:ro
+      # Only the relay's own certificate and key (from Vault's CA).
+      - ./certs/internal/relay.crt:/etc/postfix/tls/relay.crt:ro
+      - ./certs/internal/relay.key:/etc/postfix/tls/relay.key:ro
+    secrets:
+      - smtp_relay_credentials
+    # mail: Django reaches the relay here (internal, fixed subnet in main.cf).
+    # mail_egress: the relay's only route to the internet (the mail provider).
+    networks:
+      - mail
+      - mail_egress
+    # Postfix starts as root to open port 25 and fix its queue folders, then
+    # runs its workers as the unprivileged "postfix" user.
+    cap_drop:
+      - ALL
+    cap_add:
+      - CHOWN
+      - DAC_OVERRIDE
+      - FOWNER
+      - SETUID
+      - SETGID
+      - NET_BIND_SERVICE
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: 0.25
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+        reservations:
+          cpus: "0.05"
+          memory: 32M
+    healthcheck:
+      test: ["CMD", "postfix", "status"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ============================================================================
+  # Reverse Proxy Service (Nginx Alpine)
+  # Security: TLS 1.3 only, HSTS, rate limits, 25MB body limit, server tokens hidden,
+  # read-only root, dropped capabilities, isolated on frontend network.
+  # ============================================================================
+  clamav:
+    image: clamav/clamav-debian:1.5.4@sha256:c21aa18cc0a358678255a3dfb343a4555b58f71b97d7b869df8fdf7ea0a5b4b1
+    container_name: kura-clamav
+    restart: unless-stopped
+    read_only: true
+    # Start as the scanner user without granting root capabilities.
+    user: "1000:1000"
+    entrypoint: /init-unprivileged
+    # Scanner sockets and logs need writable temporary storage.
+    tmpfs:
+      - /tmp:size=128M,mode=1777
+      - /var/log/clamav:size=16M,uid=1000,gid=1000,mode=0750
+    volumes:
+      - clamav_db:/var/lib/clamav
+      # Kura's scanner settings: reject encrypted files, Office macros and
+      # files too large/deep to scan (see docker/clamav/clamd.conf).
+      - ./docker/clamav/clamd.conf:/etc/clamav/clamd.conf:ro
+    # backend: Django sends files here to be scanned.
+    # clamav_updates: lets freshclam download new virus signatures from the
+    # internet (backend is internal and has no internet route). No other
+    # container is on clamav_updates, so Nginx and the WAF cannot reach ClamAV.
+    networks:
+      - backend
+      - clamav_updates
+    # Drop all kernel capabilities
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    # ClamAV signature database requires around 1-1.5 GB memory
+    mem_limit: 1536m
+    cpus: 1.0
+    deploy:
+      resources:
+        limits:
+          cpus: "1.0"
+          memory: 1536M
+        reservations:
+          cpus: "0.2"
+          memory: 512M
+    healthcheck:
+      test: ["CMD", "clamdscan", "--ping", "1"]
+      interval: 15s
+      timeout: 5s
+      retries: 5
+      start_period: 180s
+
+  # ============================================================================
+  # Intrusion Detection & Prevention Service (CrowdSec IDS/IPS)
+  # Security: monitors Nginx access/error logs, detects brute-force attacks
+  # and web exploitation, generates dynamic 4-hour bans pushed to nftables.
+  # ============================================================================
+  vault:
+    image: hashicorp/vault:2.2.1@sha256:962a92876e168d68eaaa24b0b8b49bbce1cb63024060a67bba95cd158a366fc2
+    container_name: kura-vault
+    restart: unless-stopped
+    command: server
+    read_only: true
+    tmpfs:
+      - /tmp:size=16M,mode=1777
+    environment:
+      # Used by the vault command line tool inside the container (setup,
+      # unseal, health check): talk HTTPS to itself and check the certificate.
+      VAULT_ADDR: "https://127.0.0.1:8200"
+      VAULT_CACERT: "/vault/tls/ca.crt"
+      VAULT_CONFIG_DIR: "/vault/config"
+    volumes:
+      - ./docker/vault/config/vault.hcl:/vault/config/vault.hcl:ro
+      # The "kura-web" policy that init-vault.sh loads into Vault.
+      - ./docker/vault/policies:/vault/policies:ro
+      # Only Vault's own certificate and key, plus the CA certificate.
+      - ./certs/internal/ca.crt:/vault/tls/ca.crt:ro
+      - ./certs/internal/vault.crt:/vault/tls/vault.crt:ro
+      - ./certs/internal/vault.key:/vault/tls/vault.key:ro
+      - vault_data:/vault/file
+    networks:
+      - backend
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 0.5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+    healthcheck:
+      # "vault status" exits 0 when unsealed and 2 when sealed. Both mean the
+      # server is running; a sealed Vault is reported by the alerts (stage 6).
+      test: ["CMD-SHELL", "vault status > /dev/null; [ $$? -le 2 ]"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+# ==============================================================================
+# Isolated Networks
+# frontend: for reverse proxy (Nginx) and external traffic ingress
+# app: only the WAF and Django (internal: true), so the WAF cannot be skipped
+# backend: strictly internal network (internal: true); no internet access
+# observability: isolated metrics and log collection network
+# ==============================================================================
+networks:
+  frontend:
+    driver: bridge
+    # Fixed subnet so Nginx and cloudflared can have fixed addresses, which the
+    # real-client-IP settings in Nginx and the WAF depend on.
+    ipam:
+      config:
+        - subnet: 172.28.10.0/24
+          # Automatic addresses come only from .128-.255, so they can never
+          # clash with the fixed ones (.10 cloudflared, .20 nginx).
+          ip_range: 172.28.10.128/25
+  # Only the WAF and Django. internal: no internet route.
+  app:
+    driver: bridge
+    internal: true
+  backend:
+    driver: bridge
+    internal: true
+  observability:
+    driver: bridge
+  # Only the Docker API proxy, Alloy and CrowdSec may reach this internal network.
+  docker_api:
+    driver: bridge
+    internal: true
+  # Django -> mail relay only. internal: no internet. Fixed subnet because the
+  # relay's main.cf only accepts mail from 172.28.30.0/24.
+  mail:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.28.30.0/24
+  # The relay's outbound route to the mail provider (nothing else joins it).
+  mail_egress:
+    driver: bridge
+  # The NetBird server, its dashboard and its TLS proxy. Fixed subnet because
+  # netbird-server trusts forwarded addresses only from the proxy at .10.
+  netbird:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.40.0/24
+          ip_range: 172.28.40.128/25
+  # Outbound-only route for ClamAV signature updates (nothing else joins it).
+  clamav_updates:
+    driver: bridge
+
+# ==============================================================================
+# Persistent Named Volumes
+# ==============================================================================
 volumes:
   postgres_data:
+    # Keep pgEdge on a fresh volume. The similarly named kura_postgres_data
+    # volume is an older cluster and does not use the pgEdge data-directory layout.
+    name: kura_pgedge_postgres_data
+  static_data:
+    name: kura_static_data
+  clamav_db:
+    name: kura_clamav_db
+  crowdsec_data:
+    name: kura_crowdsec_data
+  crowdsec_config:
+    name: kura_crowdsec_config
+  loki_data:
+    name: kura_loki_data
+  # Alloy's persistent positions let it resume reading without replaying history.
+  alloy_data:
+    name: kura_alloy_data
+  prometheus_data:
+    name: kura_prometheus_data
+  grafana_data:
+    name: kura_grafana_data
+  netbird_data:
+    name: kura_netbird_data
+  vault_data:
+    name: kura_vault_data
+  postgres_backups:
+    name: kura_postgres_backups
+  relay_queue:
+    name: kura_relay_queue
+  netbird_server_data:
+    name: kura_netbird_server_data
+  netbird_server_tmp:
+    name: kura_netbird_server_tmp
+
+# ==============================================================================
+# Docker Secrets
+# Credentials are read from files and mounted into /run/secrets in RAM
+# ==============================================================================
+secrets:
+  db_password:
+    file: ./secrets/db_password.txt
+  backup_encryption_key:
+    file: ./secrets/backup_encryption_key.txt
+  django_secret_key:
+    file: ./secrets/django_secret_key.txt
+  crowdsec_bouncer_key:
+    file: ./secrets/crowdsec_bouncer_key.txt
+  cloudflare_tunnel_token:
+    file: ./secrets/cloudflare_tunnel_token.txt
+  grafana_admin_password:
+    file: ./secrets/grafana_admin_password.txt
+  telegram_bot_token:
+    file: ./secrets/telegram_bot_token.txt
+  telegram_chat_id:
+    file: ./secrets/telegram_chat_id.txt
+  netbird_setup_key:
+    file: ./secrets/netbird_setup_key.txt
+  netbird_config:
+    file: ./secrets/netbird_config.yaml
+  smtp_relay_credentials:
+    file: ./secrets/smtp_relay_credentials.txt
+  vault_role_id:
+    file: ./secrets/vault_role_id.txt
+  vault_secret_id:
+    file: ./secrets/vault_secret_id.txt
