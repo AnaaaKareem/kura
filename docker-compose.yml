@@ -566,6 +566,53 @@ services:
   # Requires zero public inbound ports open on host firewall (ports 80/443 closed).
   # Read-only root filesystem, dropped capabilities, token injected via secret.
   # ============================================================================
+  cloudflared:
+    # Only started with "docker compose --profile remote-access up -d", once a
+    # real tunnel token is in secrets/cloudflare_tunnel_token.txt (otherwise it
+    # restarts in a loop). See docker/cloudflare/README.md.
+    profiles: ["remote-access"]
+    image: cloudflare/cloudflared:2026.10.7@sha256:4955524aeaa379e154023d5a027c250f7b35041a2e7e950cf13f144bc9b9c5ba
+    container_name: kura-cloudflared
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=32M,mode=1777
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN_FILE: /run/secrets/cloudflare_tunnel_token
+    volumes:
+      - ./docker/cloudflare/config.yml:/etc/cloudflared/config.yml:ro
+      # Nginx's public certificate, so cloudflared can VERIFY it is talking to
+      # our Nginx (instead of "No TLS Verify"). See docker/cloudflare/README.md.
+      - ./certs/kura.crt:/etc/cloudflared/origin-ca.crt:ro
+    secrets:
+      - cloudflare_tunnel_token
+    networks:
+      frontend:
+        # Fixed address: Nginx trusts CF-Connecting-IP only from here.
+        ipv4_address: 172.28.10.10
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    cpus: 0.5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    depends_on:
+      - nginx
+
+  # ============================================================================
+  # Log Aggregation Service (Grafana Loki)
+  # Security: tamper-resistant log store, enforces mandatory 180-day retention
+  # (4320h) per Egyptian Law No. 175 and LMS specification, internal network only.
+  # ============================================================================
   loki:
     image: grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
     container_name: kura-loki
