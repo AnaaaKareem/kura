@@ -385,6 +385,51 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
         self.assertFalse(AttemptFile.objects.filter(attempt=attempt).exists())
         self.assertFalse(StoredFile.objects.filter(original_filename="script.txt").exists())
 
+    def test_course_staff_can_submit_and_download_scanned_paper_for_student(self):
+        # Assigned staff may submit an enrolled student's scanned script for manual grading.
+        self.assessment.delivery_mode = "paper_scanned"
+        self.assessment.save(update_fields=["delivery_mode"])
+        self.client.force_login(self.instructor)
+        upload = SimpleUploadedFile("scan.pdf", b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF", content_type="application/pdf")
+        response = self.client.post(
+            reverse("kura:scanned_paper_staff_upload", kwargs={"assessment_id": self.assessment.id}),
+            {"student": str(self.student.id), "file": upload},
+        )
+        self.assertEqual(response.status_code, 302)
+        attempt = AssessmentAttempt.objects.get(assessment=self.assessment, student=self.student)
+        self.assertEqual(attempt.status, AttemptStatus.REQUIRES_MANUAL_GRADING)
+        self.assertFalse(Grade.objects.filter(attempt=attempt).exists())
+        attempt_file = AttemptFile.objects.get(attempt=attempt)
+        download = self.client.get(reverse("kura:attempt_file_download", kwargs={
+            "attempt_id": attempt.id, "file_id": attempt_file.file.id,
+        }))
+        self.assertEqual(download.status_code, 200)
+        self.assertEqual(download.content, bytes(attempt_file.file.content.content))
+
+        # The review page links staff to the existing manual grading form.
+        review = self.client.get(reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id}))
+        self.assertContains(review, reverse("kura:grade_entry", kwargs={"attempt_id": attempt.id}))
+        invalid_grade = self.client.post(reverse("kura:grade_entry", kwargs={"attempt_id": attempt.id}), {
+            "score": "101.00", "feedback": "Above the maximum.",
+        })
+        self.assertContains(invalid_grade, "Score cannot exceed the assessment maximum.")
+        self.assertFalse(Grade.objects.filter(attempt=attempt).exists())
+        grade_response = self.client.post(reverse("kura:grade_entry", kwargs={"attempt_id": attempt.id}), {
+            "score": "75.00", "feedback": "Reviewed scanned script.",
+        })
+        self.assertEqual(grade_response.status_code, 302)
+        grade = Grade.objects.get(attempt=attempt)
+        self.assertEqual(grade.status, GradeStatus.DRAFT)
+        self.assertTrue(GradeHistory.objects.filter(grade=grade, changed_by=self.instructor).exists())
+
+        # A different student cannot retrieve the same script by guessing its URL.
+        outsider = make_user("Student", mfa_enabled=True)
+        self.client.force_login(outsider)
+        denied = self.client.get(reverse("kura:attempt_file_download", kwargs={
+            "attempt_id": attempt.id, "file_id": attempt_file.file.id,
+        }))
+        self.assertEqual(denied.status_code, 403)
+
     def test_scanned_paper_staff_upload_checks_staff_and_student_enrollment(self):
         # Neither unassigned staff nor an unrelated student can be used for a paper upload.
         self.assessment.delivery_mode = "paper_scanned"
@@ -400,6 +445,22 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
         response = self.client.post(url, {"student": str(outsider.id), "file": upload})
         self.assertEqual(response.status_code, 302)
         self.assertFalse(AssessmentAttempt.objects.filter(assessment=self.assessment, student=outsider).exists())
+
+    def test_scanned_paper_cannot_be_marked_without_a_submitted_script(self):
+        # Staff cannot record a mark for an unfinished or empty scanned attempt.
+        self.assessment.delivery_mode = "paper_scanned"
+        self.assessment.save(update_fields=["delivery_mode"])
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment, student=self.student, attempt_no=1,
+            expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1",
+        )
+        self.client.force_login(self.instructor)
+        url = reverse("kura:grade_entry", kwargs={"attempt_id": attempt.id})
+        self.assertEqual(self.client.post(url, {"score": "75"}).status_code, 403)
+        attempt.status = AttemptStatus.REQUIRES_MANUAL_GRADING
+        attempt.save(update_fields=["status"])
+        self.assertEqual(self.client.post(url, {"score": "75"}).status_code, 403)
+        self.assertFalse(Grade.objects.filter(attempt=attempt).exists())
 
     def test_student_cannot_start_from_wrong_ip_range(self):
         # Starting an attempt from outside the lab CIDR subnet is rejected.
@@ -638,6 +699,26 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
         self.assertNotContains(response, "Evaluation Summary")
         self.assertNotContains(response, "73 / 100")
 
+    def test_registrar_instructor_cannot_access_instructional_content_or_grades(self):
+        # The Registrar restriction still applies if the same account is an assigned instructor.
+        UserRole.objects.create(user=self.instructor, role=Role.objects.get(name="Registrar"))
+        self.client.force_login(self.instructor)
+        urls = [
+            reverse("kura:course_detail", kwargs={"course_id": self.course.id}),
+            reverse("kura:module_create", kwargs={"course_id": self.course.id}),
+            reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id}),
+            reverse("kura:assessment_create", kwargs={"section_id": self.section.id}),
+            reverse("kura:course_grades", kwargs={"course_id": self.course.id}),
+        ]
+        for url in urls:
+            with self.subTest(url=url):
+                self.assertEqual(self.client.get(url).status_code, 403)
+        # Enrollment remains available, but a direct POST cannot create instructional content.
+        self.assertEqual(self.client.get(reverse("kura:enrollment_list")).status_code, 200)
+        response = self.client.post(reverse("kura:module_create", kwargs={"course_id": self.course.id}), {"title": "Forbidden"})
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(Module.objects.filter(course=self.course, title="Forbidden").exists())
+
     def test_admin_with_course_assignment_cannot_open_assessment_or_attempt(self):
         # An Admin role must override a matching course staff assignment.
         admin = make_user("Admin", mfa_enabled=True)
@@ -840,6 +921,130 @@ class AutoGradingTests(TestCase):
         grade = Grade.objects.get(assessment=self.assessment, student=self.student)
         self.assertEqual(grade.score, Decimal("15.00"))
         self.assertEqual(grade.status, GradeStatus.DRAFT)
+
+
+# ==========================================
+# Grades, appeals & transcripts tests
+# ==========================================
+
+class InstructorAndTAGradingTests(TestCase):
+    """
+    Tests TA draft grading, instructor finalization, and MFA release.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.instructor = make_user("Instructor", mfa_enabled=True)
+        self.ta = make_user("Teaching assistant", mfa_enabled=True)
+        self.student = make_user("Student", mfa_enabled=True)
+        self.department = Department.objects.create(name="Art", code="ART")
+
+        # Provision TOTP device for instructor step-up authentication.
+        self.device = TOTPDevice.objects.create(user=self.instructor, name="default", confirmed=True)
+
+        StudentProfile.objects.create(user=self.student, department=self.department, current_level="level_4", matriculation_year=2026)
+        self.course = Course.objects.create(
+            department=self.department,
+            code="ART101",
+            title="Art History",
+            semester="1",
+            academic_year=2026,
+            is_published=True,
+            published_by=self.instructor,
+            published_at=timezone.now(),
+        )
+        CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True)
+        CourseStaff.objects.create(course=self.course, user=self.ta, staff_role="teaching_assistant", can_release_grades=False)
+        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
+
+        self.module = Module.objects.create(course=self.course, title="Renaissance", is_visible=True)
+        self.section = ModuleSection.objects.create(module=self.module, title="Essays", section_type="coursework")
+        self.assessment = Assessment.objects.create(
+            section=self.section,
+            title="Renaissance Essay",
+            component_type=GradeComponentType.COURSEWORK,
+            max_score=Decimal("100.00"),
+            max_attempts=1,
+            opens_at=timezone.now() - timezone.timedelta(hours=1),
+            due_date=timezone.now() + timezone.timedelta(hours=2),
+            duration_minutes=60,
+            created_by=self.instructor,
+        )
+        self.attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment,
+            student=self.student,
+            attempt_no=1,
+            status=AttemptStatus.REQUIRES_MANUAL_GRADING,
+            expires_at=timezone.now() + timezone.timedelta(minutes=30),
+            ip_address="127.0.0.1",
+        )
+
+    def test_ta_cannot_finalize_or_release_grade(self):
+        # TA attempts to finalize or release a grade; both actions return 403 Forbidden.
+        grade = Grade.objects.create(
+            assessment=self.assessment,
+            student=self.student,
+            attempt=self.attempt,
+            grader=self.ta,
+            score=Decimal("80.00"),
+            status=GradeStatus.DRAFT,
+        )
+
+        self.client.force_login(self.ta)
+
+        # Finalize attempt by TA
+        finalize_resp = self.client.post(reverse("kura:grade_finalize", kwargs={"grade_id": grade.id}))
+        self.assertEqual(finalize_resp.status_code, 403)
+
+        # Release attempt by TA
+        release_resp = self.client.post(
+            reverse("kura:grade_release", kwargs={"grade_id": grade.id}),
+            {"otp_token": "123456"},
+        )
+        self.assertEqual(release_resp.status_code, 403)
+
+    def test_department_head_cannot_enter_initial_grade(self):
+        # The head supervises grades but does not directly score initial attempts.
+        head = make_user("Department head")
+        self.department.head_user = head
+        self.department.save(update_fields=["head_user"])
+        self.client.force_login(head)
+        response = self.client.post(reverse("kura:grade_entry", kwargs={"attempt_id": self.attempt.id}), {"score": "80"})
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(Grade.objects.filter(attempt=self.attempt).exists())
+
+    def test_finalized_grade_cannot_be_edited_as_draft(self):
+        # Editing a finalized score must not silently return it to draft.
+        grade = Grade.objects.create(assessment=self.assessment, student=self.student, attempt=self.attempt,
+                                     grader=self.ta, score=Decimal("80.00"), status=GradeStatus.FINALIZED)
+        self.client.force_login(self.ta)
+        self.client.post(reverse("kura:grade_entry", kwargs={"attempt_id": self.attempt.id}), {"score": "90"})
+        grade.refresh_from_db()
+        self.assertEqual(grade.status, GradeStatus.FINALIZED)
+        self.assertEqual(grade.score, Decimal("80.00"))
+
+    def test_department_head_cannot_finalize_initial_grade(self):
+        # Department heads approve later changes but do not finalize initial grades.
+        head = make_user("Department head")
+        self.department.head_user = head
+        self.department.save(update_fields=["head_user"])
+        grade = Grade.objects.create(assessment=self.assessment, student=self.student, attempt=self.attempt,
+                                     grader=self.ta, score=Decimal("80.00"), status=GradeStatus.DRAFT)
+        self.client.force_login(head)
+        response = self.client.post(reverse("kura:grade_finalize", kwargs={"grade_id": grade.id}))
+        self.assertEqual(response.status_code, 403)
+        grade.refresh_from_db()
+        self.assertEqual(grade.status, GradeStatus.DRAFT)
+
+    def test_instructor_cannot_revert_released_grade_to_finalized(self):
+        # A repeated finalize request must not change an already released grade.
+        grade = Grade.objects.create(assessment=self.assessment, student=self.student, attempt=self.attempt,
+                                     grader=self.ta, score=Decimal("80.00"), status=GradeStatus.RELEASED)
+        self.client.force_login(self.instructor)
+        self.client.post(reverse("kura:grade_finalize", kwargs={"grade_id": grade.id}))
+        grade.refresh_from_db()
+        self.assertEqual(grade.status, GradeStatus.RELEASED)
+        self.assertFalse(GradeHistory.objects.filter(grade=grade).exists())
 
 
 class SecurityLoggingTests(TestCase):
