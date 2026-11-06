@@ -229,3 +229,23 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Docker Compose Secrets
+secrets/*.txt
+
+# TLS Certificates
+certs/*.key
+certs/*.crt
+certs/**/*.key
+certs/**/*.crt
+
+
+
+# CA serial number file (local state)
+certs/**/*.srl
+
+# Metrics files written by the cron jobs on a developer machine (WP3/WP11).
+var/
+
+# NetBird server configuration with secret keys (docker/netbird/server/generate-config.sh).
+secrets/*.yaml

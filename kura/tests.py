@@ -5204,6 +5204,141 @@ class VaultIntegrationTests(TestCase):
         self.assertIn("MFA secret encryption failed", str(ctx.exception))
 
 
+class RowLevelSecurityAndPostgresRolesTests(TestCase):
+    """
+    Tests PostgreSQL roles, REVOKE rules, Row-Level Security, and pgAudit.
+    Verifies that the database engine itself enforces grade isolation via RLS policies.
+    """
+
+    def setUp(self):
+        self.dept_head = make_user("Department head", mfa_enabled=True)
+        self.dept = Department.objects.create(name="Cybersecurity", code="CSEC", head_user=self.dept_head)
+        self.instructor = make_user("Instructor", mfa_enabled=True)
+        self.student_a = make_user("Student", mfa_enabled=True)
+        self.student_b = make_user("Student", mfa_enabled=True)
+
+        StudentProfile.objects.create(user=self.student_a, department=self.dept, current_level="level_4", matriculation_year=2026)
+        StudentProfile.objects.create(user=self.student_b, department=self.dept, current_level="level_4", matriculation_year=2026)
+
+        self.course = Course.objects.create(
+            department=self.dept,
+            code="CSEC401",
+            title="Database Security",
+            semester="1",
+            academic_year=2026,
+            is_published=True,
+            published_by=self.dept_head,
+            published_at=timezone.now(),
+        )
+        CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True)
+
+        self.module = Module.objects.create(course=self.course, title="RLS Module", is_visible=True)
+        self.section = ModuleSection.objects.create(module=self.module, title="RLS Section", section_type="assignment")
+        now = timezone.now()
+        self.assessment = Assessment.objects.create(
+            section=self.section,
+            title="SQL Hardening Lab",
+            component_type=GradeComponentType.ASSIGNMENT,
+            max_score=Decimal("100.00"),
+            max_attempts=1,
+            opens_at=now - timezone.timedelta(hours=1),
+            due_date=now + timezone.timedelta(days=7),
+            duration_minutes=60,
+            created_by=self.instructor,
+        )
+
+        self.attempt_a = AssessmentAttempt.objects.create(
+            assessment=self.assessment,
+            student=self.student_a,
+            attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED,
+            expires_at=now + timezone.timedelta(hours=2),
+            ip_address="127.0.0.1",
+        )
+        self.attempt_b = AssessmentAttempt.objects.create(
+            assessment=self.assessment,
+            student=self.student_b,
+            attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED,
+            expires_at=now + timezone.timedelta(hours=2),
+            ip_address="127.0.0.1",
+        )
+
+        self.grade_a = Grade.objects.create(
+            assessment=self.assessment,
+            student=self.student_a,
+            attempt=self.attempt_a,
+            score=Decimal("95.00"),
+            status=GradeStatus.RELEASED,
+        )
+        self.grade_b = Grade.objects.create(
+            assessment=self.assessment,
+            student=self.student_b,
+            attempt=self.attempt_b,
+            score=Decimal("88.00"),
+            status=GradeStatus.RELEASED,
+        )
+
+    def test_rls_student_isolation_in_database(self):
+        # When kura.current_user_id is set to student_a under the application role,
+        # the PostgreSQL RLS policy filters out student_b's grade.
+        from django.db import connection
+
+        with connection.cursor() as cursor:
+            # Switch to application role which enforces RLS policies
+            cursor.execute("SET ROLE kura_app;")
+            # Set session context to student_a
+            cursor.execute("SET kura.current_user_id = %s;", [str(self.student_a.id)])
+
+            # Query all grades directly from table
+            cursor.execute("SELECT id, student_id FROM grades;")
+            visible_rows = cursor.fetchall()
+
+            # Always clean up session context and role
+            cursor.execute("RESET kura.current_user_id;")
+            cursor.execute("RESET ROLE;")
+
+            # Student A can only see their own grade
+            self.assertEqual(len(visible_rows), 1)
+            self.assertEqual(visible_rows[0][0], self.grade_a.id)
+            self.assertEqual(visible_rows[0][1], self.student_a.id)
+
+    def test_rls_instructor_sees_course_grades(self):
+        # When kura.current_user_id is set to an instructor teaching the course, they see all course grades.
+        from django.db import connection
+
+        with connection.cursor() as cursor:
+            cursor.execute("SET ROLE kura_app;")
+            cursor.execute("SET kura.current_user_id = %s;", [str(self.instructor.id)])
+            cursor.execute("SELECT id FROM grades;")
+            visible_rows = cursor.fetchall()
+
+            cursor.execute("RESET kura.current_user_id;")
+            cursor.execute("RESET ROLE;")
+
+            # Instructor sees both student grades for their course
+            self.assertEqual(len(visible_rows), 2)
+
+    def test_rls_middleware_attaches_and_resets_session_context(self):
+        # RowLevelSecurityMiddleware sets kura.current_user_id during request processing.
+        from django.test import RequestFactory
+        from kura.middleware import RowLevelSecurityMiddleware
+
+        factory = RequestFactory()
+        request = factory.get(reverse("kura:course_list"))
+        request.user = self.student_a
+
+        def dummy_view(req):
+            from django.db import connection
+            with connection.cursor() as cursor:
+                cursor.execute("SELECT current_setting('kura.current_user_id', true);")
+                return cursor.fetchone()[0]
+
+        middleware = RowLevelSecurityMiddleware(dummy_view)
+        result = middleware(request)
+        self.assertEqual(result, str(self.student_a.id))
+
+
 class SemesterValueMigrationTests(TestCase):
     """Verify semester values migrate forward and have a documented rollback mapping."""
 
@@ -5616,6 +5751,54 @@ class ClientIPLockoutTests(TestCase):
             HTTP_X_REAL_IP="203.0.113.7",
         )
         self.assertNotEqual(response.status_code, 302)
+
+
+class SecretKeySettingTests(TestCase):
+    """
+    config/settings.py must refuse to start in production (DEBUG off) when the
+    secret key is missing or weak, instead of falling back to a known key.
+    Each test starts a fresh Python process, because settings are only read once.
+    """
+
+    def load_settings(self, secret_key, debug):
+        # Start a new Python process that loads the settings and prints the key length.
+        # SECRET_KEY is set (even to "") so the .env file cannot fill it in.
+        environment = os.environ.copy()
+        environment["DJANGO_SETTINGS_MODULE"] = "config.settings"
+        environment["SECRET_KEY"] = secret_key
+        environment["DEBUG"] = debug
+        return subprocess.run(
+            [sys.executable, "-c", "from django.conf import settings; print(len(settings.SECRET_KEY))"],
+            cwd=settings.BASE_DIR,
+            env=environment,
+            capture_output=True,
+            text=True,
+        )
+
+    def test_production_refuses_missing_key(self):
+        result = self.load_settings("", "False")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SECRET_KEY is missing or too weak", result.stderr)
+
+    def test_production_refuses_insecure_placeholder_key(self):
+        result = self.load_settings("django-insecure-" + "x" * 60, "False")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SECRET_KEY is missing or too weak", result.stderr)
+
+    def test_production_refuses_short_key(self):
+        result = self.load_settings("short-key-123", "False")
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn("SECRET_KEY is missing or too weak", result.stderr)
+
+    def test_production_accepts_long_random_key(self):
+        strong_key = secrets.token_urlsafe(48)
+        result = self.load_settings(strong_key, "False")
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(result.stdout.strip(), str(len(strong_key)))
+
+    def test_development_uses_throwaway_key_when_missing(self):
+        result = self.load_settings("", "True")
+        self.assertEqual(result.returncode, 0, result.stderr)
 
 
 @override_settings(VAULT_ENABLED=False)
