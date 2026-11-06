@@ -1,0 +1,9 @@
+# Keep eight weekly copies of Kura job logs without restarting containers.
+/var/log/kura/*.log {
+    weekly
+    rotate 8
+    missingok
+    notifempty
+    compress
+    copytruncate
+}
