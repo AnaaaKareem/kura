@@ -1,0 +1,370 @@
+{
+  "title": "Kura Security Overview",
+  "uid": "kura-security-overview",
+  "tags": ["kura", "security"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-3h", "to": "now" },
+  "refresh": "1m",
+  "panels": [
+    {
+      "type": "row",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+      "id": 1,
+      "title": "Authentication"
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 0, "y": 1, "w": 12, "h": 7 },
+      "id": 2,
+      "title": "Failed logins over time",
+      "description": "Failed authentication attempts per 5 minutes from the Django app's auth.login.failed events. A rising line means password guessing; django-axes throttles, CrowdSec may need a new rule.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"auth.login.failed\" [5m]))",
+          "legendFormat": "failed logins per 5m",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "table",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 12, "y": 1, "w": 12, "h": 7 },
+      "id": 3,
+      "title": "Top 10 IPs by failed logins (last hour)",
+      "description": "Which address produced the most failed logins in the last hour. Attackers appear here before they break in; ban or investigate the top address, never the users.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(10, sum by (ip) (count_over_time({service=\"web\"} | logfmt | event=\"auth.login.failed\" [1h])))",
+          "instant": true,
+          "queryType": "instant"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "Value" }]
+      },
+      "transformations": [
+        { "id": "organize", "options": { "renameByName": { "Value": "failed logins", "ip": "attacker IP" } } }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 0, "y": 8, "w": 8, "h": 6 },
+      "id": 4,
+      "title": "MFA failures per 10m",
+      "description": "Second-factor verification failures (auth.mfa.failed) per 10 minutes. More than a few suggests someone is trying to get past stolen passwords.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"auth.mfa.failed\" [10m]))",
+          "legendFormat": "MFA failures per 10m",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 8, "y": 8, "w": 8, "h": 6 },
+      "id": 5,
+      "title": "Lockouts per 5m",
+      "description": "Failed logins that django-axes answered with an automatic lockout (reason=locked). Shows brute force being stopped by the app itself.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"auth.login.failed\" | reason=\"locked\" [5m]))",
+          "legendFormat": "locked attempts per 5m",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 16, "y": 8, "w": 8, "h": 6 },
+      "id": 6,
+      "title": "CSRF failures per 10m",
+      "description": "Requests rejected for a missing or wrong CSRF token (access.csrf_failed). The signature of a cross-site request forgery attempt or a broken script.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"access.csrf_failed\" [10m]))",
+          "legendFormat": "CSRF failures per 10m",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "row",
+      "gridPos": { "x": 0, "y": 14, "w": 24, "h": 1 },
+      "id": 7,
+      "title": "Authorization and firewall"
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 0, "y": 15, "w": 12, "h": 7 },
+      "id": 8,
+      "title": "Access denials over time",
+      "description": "Permission checks that refused a request (access.denied) per 5 minutes. Steady traffic from one address suggests probing other users' IDs (IDOR).",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"access.denied\" [5m]))",
+          "legendFormat": "denied requests per 5m",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "table",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 12, "y": 15, "w": 12, "h": 7 },
+      "id": 9,
+      "title": "Top 10 denied paths (last hour)",
+      "description": "Which URLs were most often refused. Paths probed in bulk reveal what an attacker was looking for; confirm each path really is protected.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(10, sum by (path) (count_over_time({service=\"web\"} | logfmt | event=\"access.denied\" [1h])))",
+          "instant": true,
+          "queryType": "instant"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "unit": "short", "min": 0 },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "Value" }]
+      },
+      "transformations": [
+        { "id": "organize", "options": { "renameByName": { "Value": "denials", "path": "denied path" } } }
+      ]
+    },
+    {
+      "type": "table",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 0, "y": 22, "w": 12, "h": 7 },
+      "id": 10,
+      "title": "WAF blocks by rule ID (last hour)",
+      "description": "The Coraza WAF's blocked transactions grouped by the rule ID that fired. Frequent rule IDs say which attack class is hitting the site.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "topk(10, sum by (rule_id) (count_over_time({service=\"waf\"} | rule_id != \"\" [1h])))",
+          "instant": true,
+          "queryType": "instant"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" }, "unit": "short", "min": 0 },
+        "overrides": []
+      },
+      "options": {
+        "showHeader": true,
+        "sortBy": [{ "desc": true, "displayName": "Value" }]
+      },
+      "transformations": [
+        { "id": "organize", "options": { "renameByName": { "Value": "blocks", "rule_id": "WAF rule ID" } } }
+      ]
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 12, "y": 22, "w": 12, "h": 7 },
+      "id": 11,
+      "title": "CrowdSec active decisions",
+      "description": "How many ban decisions CrowdSec currently has (so how many addresses the firewall refuses right now), split by reason.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (reason) (crowdsec_active_decisions)",
+          "legendFormat": "{{reason}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "row",
+      "gridPos": { "x": 0, "y": 29, "w": 24, "h": 1 },
+      "id": 12,
+      "title": "Uploads and staff changes"
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 0, "y": 30, "w": 8, "h": 7 },
+      "id": 13,
+      "title": "Quarantined uploads per 5m",
+      "description": "Uploads ClamAV flagged as malware and quarantined (file.quarantined), per 5 minutes. Any nonzero value means someone tried to upload malware.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"file.quarantined\" [5m]))",
+          "legendFormat": "quarantined per 5m",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "table",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 8, "y": 30, "w": 16, "h": 7 },
+      "id": 14,
+      "title": "Recent quarantined files",
+      "description": "The latest quarantined malware uploads with the ClamAV detection name and the file's SHA-256, for investigating what the user tried to upload.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service=\"web\"} | logfmt | event=\"file.quarantined\"",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": { "color": { "mode": "thresholds" } },
+        "overrides": []
+      },
+      "options": { "showHeader": true },
+      "transformations": [
+        { "id": "organize", "options": {
+          "renameByName": { "Time": "time", "detection": "detection", "sha256": "SHA-256", "filename": "filename" }
+        } }
+      ]
+    },
+    {
+      "type": "logs",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 0, "y": 37, "w": 24, "h": 7 },
+      "id": 15,
+      "title": "Recent admin role changes",
+      "description": "Every staff role change as a raw log line (admin.role.changed). Role changes are the strongest way to gain privilege on Kura, so each one gets a look.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service=\"web\"} | logfmt | event=\"admin.role.changed\"",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": false
+      }
+    }
+  ],
+  "timepicker": {},
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "links": []
+}

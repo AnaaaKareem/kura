@@ -1,0 +1,164 @@
+{
+  "title": "Kura Academic Activity",
+  "uid": "kura-activity",
+  "tags": ["kura", "activity"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-7d", "to": "now" },
+  "refresh": "1m",
+  "panels": [
+    {
+      "type": "row",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+      "id": 1,
+      "title": "Assessments and submissions (counts only — no personal data)"
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 0, "y": 1, "w": 12, "h": 7 },
+      "id": 2,
+      "title": "Submissions per hour",
+      "description": "Attempt submissions (attempt.submitted) per hour. Shows when the site is actually used and when exams cluster; shows no student names.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"attempt.submitted\" [1h]))",
+          "legendFormat": "submissions per hour",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 12, "y": 1, "w": 12, "h": 7 },
+      "id": 3,
+      "title": "Assessments created per day",
+      "description": "New assessments created (assessment.created) per day. Activity of the teaching staff over time.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"assessment.created\" [1d]))",
+          "legendFormat": "assessments per day",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "row",
+      "gridPos": { "x": 0, "y": 8, "w": 24, "h": 1 },
+      "id": 4,
+      "title": "Grades and appeals"
+    },
+    {
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 5 },
+      "id": 7,
+      "title": "Open appeals",
+      "description": "Number of appeals awaiting a decision. This count needs the application metrics job planned in WP3.",
+      "targets": [
+        { "refId": "A", "expr": "kura_pending_appeals", "legendFormat": "open appeals" }
+      ],
+      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
+      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 0, "y": 9, "w": 12, "h": 7 },
+      "id": 5,
+      "title": "Grades released per day",
+      "description": "Finalized grades released to students (grade.released) per day. The observable outcome of the two-stage grading process.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"grade.released\" [1d]))",
+          "legendFormat": "grades released per day",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 12, "y": 9, "w": 12, "h": 7 },
+      "id": 6,
+      "title": "Appeals: requests vs decisions per day",
+      "description": "Grade change requests (grade.change_requested) and committee decisions (grade.change_decided) per day. Requests meeting decisions shows the appeals queue health.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"grade.change_requested\" [1d]))",
+          "legendFormat": "requests per day",
+          "queryType": "range"
+        },
+        {
+          "refId": "B",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"grade.change_decided\" [1d]))",
+          "legendFormat": "decisions per day",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "multi", "sort": "none" }
+      }
+    }
+  ],
+  "timepicker": {},
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "links": []
+}

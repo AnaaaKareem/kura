@@ -1,0 +1,143 @@
+# ==============================================================================
+# Kura LMS - Loki SIEM Security Detection & Alerting Rules
+#
+# LogQL alerting rules evaluated by Loki's Ruler against the `fake` tenant
+# (Loki authentication is disabled, so all rules live in the `fake` folder).
+# Each rule is grouped with `sum` or `sum by (...)` only, never per-user
+# labels, and alerts are sent to Alertmanager
+# (alertmanager_url is set in docker/loki/loki.yml).
+#
+# The events come from WP1's structured logging: the Django app (service
+# "web") writes key=value (logfmt) lines with event="auth.login.failed" and
+# friends, and every service's container name kura-<name> becomes the Loki
+# service label in Alloy.
+# ==============================================================================
+
+groups:
+  - name: kura-security-alerts
+    rules:
+      # 1. Overall login brute force: many failed logins in 5 minutes,
+      #    whichever address they come from.
+      - alert: BruteForceLogin
+        expr: sum(count_over_time({service="web"} | logfmt | event="auth.login.failed" [5m])) > 20
+        labels:
+          severity: warning
+        annotations:
+          summary: "Unusually many failed logins"
+          description: "More than 20 login attempts failed within 5 minutes. This can be password guessing across many accounts; check the login pages and the broken-access log."
+
+      # 2. One address alone failing many logins: classic password guessing,
+      #    grouped per attacking IP address (never per user).
+      - alert: SingleIpBruteForce
+        expr: sum by (ip) (count_over_time({service="web"} | logfmt | event="auth.login.failed" [5m])) > 10
+        labels:
+          severity: warning
+        annotations:
+          summary: "Password guessing from one address"
+          description: "The address {{ $labels.ip }} failed more than 10 logins within 5 minutes. django-axes should already be throttling it; check whether CrowdSec needs a new rule as well."
+
+      # 3. Many failed second-factor (MFA) attempts within 10 minutes.
+      - alert: MfaFailuresSpike
+        expr: sum(count_over_time({service="web"} | logfmt | event="auth.mfa.failed" [10m])) > 10
+        labels:
+          severity: warning
+        annotations:
+          summary: "Many failed MFA attempts"
+          description: "More than 10 second-factor codes failed within 10 minutes. Possible attempts to break into accounts whose passwords were leaked or guessed."
+
+      # 4. Any staff role change is worth a note in the admin channel.
+      - alert: AdminRoleChanged
+        expr: count_over_time({service="web"} | logfmt | event="admin.role.changed" [5m]) >= 1
+        labels:
+          severity: warning
+        annotations:
+          summary: "A user's role was changed"
+          description: "A staff member's role (for example Student to Instructor) was changed within the last 5 minutes. Confirm the change was deliberate."
+
+      # 5. ClamAV found malware in an uploaded file; it was quarantined.
+      - alert: MalwareUploaded
+        expr: count_over_time({service="web"} | logfmt | event="file.quarantined" [5m]) >= 1
+        labels:
+          severity: critical
+        annotations:
+          summary: "Malware was found in an upload"
+          description: "ClamAV flagged an uploaded file in the last 5 minutes and it was quarantined. The file cannot be downloaded; review the file and the uploader's account."
+
+      # 6. One address denied many times: probing URLs it is not allowed
+      #    to see (typical for IDOR experiments), grouped per address.
+      - alert: AccessDeniedSpike
+        expr: sum by (ip) (count_over_time({service="web"} | logfmt | event="access.denied" [5m])) > 30
+        labels:
+          severity: warning
+        annotations:
+          summary: "Access-denied storm from one address"
+          description: "The address {{ $labels.ip }} received more than 30 permission denials within 5 minutes. This looks like probing other users' IDs (IDOR); check which paths were requested."
+
+      # 7. Many failed CSRF checks can mean an active cross-site request
+      #    forgery attempt (or a script without the token).
+      - alert: CsrfFailures
+        expr: sum(count_over_time({service="web"} | logfmt | event="access.csrf_failed" [10m])) > 10
+        labels:
+          severity: warning
+        annotations:
+          summary: "Many failed CSRF checks"
+          description: "More than 10 requests failed the CSRF token check within 10 minutes, the signature of an attempted cross-site request forgery."
+
+      # 8. A grade-release MFA confirmation failed: nobody's grades move
+      #    without the instructor's second factor, so this is notable.
+      - alert: GradeReleaseMfaFailed
+        expr: count_over_time({service="web"} | logfmt | event="grade.release_mfa_failed" [5m]) >= 1
+        labels:
+          severity: warning
+        annotations:
+          summary: "Grade release MFA failed"
+          description: "An instructor failed the second-factor check that guards releasing finalized grades within the last 5 minutes. Confirm it was the teacher making a typo."
+
+      # 9. The WAF blocked many requests: the JSON audit lines already only
+      #    record relevant (blocked or 5xx) transactions (SecAuditLogParts).
+      - alert: WafBlockSpike
+        expr: sum(count_over_time({service="waf"} | json | transaction_response_status="403" [5m])) > 50
+        labels:
+          severity: warning
+        annotations:
+          summary: "Many requests blocked by the firewall"
+          description: "The Coraza WAF returned 403 to more than 50 requests within 5 minutes. An attack pattern may be against the site; inspect the rule IDs in the audit log."
+
+      # 10. Vault logged error lines: encryption of MFA seeds or temporary
+      #     database users may be failing.
+      - alert: VaultErrors
+        expr: sum(count_over_time({service="vault"} | json | error!="" [5m])) >= 1
+        labels:
+          severity: critical
+        annotations:
+          summary: "Vault logged an error"
+          description: "Vault produced at least one error line within 5 minutes. Without Vault, logins and grade release fail."
+
+      # 11. PostgreSQL itself reported failed password authentication:
+      #     a credential guessing attack against the database port.
+      - alert: DbAuthFailures
+        expr: count_over_time({service="db"} |= "password authentication failed" [5m]) > 5
+        labels:
+          severity: critical
+        annotations:
+          summary: "Failed database password attempts"
+          description: "PostgreSQL rejected more than 5 passwords within 5 minutes. mTLS should keep strangers out; check which client address got through to the port."
+
+      # 12. The mail relay bounced notification emails: recipients or the
+      #     upstream account are broken.
+      - alert: RelayBounces
+        expr: count_over_time({service="relay"} |= "status=bounced" [10m]) >= 1
+        labels:
+          severity: warning
+        annotations:
+          summary: "Notification emails bounced"
+          description: "The mail relay bounced at least one notification email within 10 minutes. Check the outbox address and the upstream relay account."
+
+      # 13. ClamAV is unavailable, so uploads cannot be virus-checked.
+      - alert: ClamAvUnavailable
+        expr: count_over_time({service="clamav"} | logfmt | event="clamav.unavailable" [5m]) >= 1
+        labels:
+          severity: critical
+        annotations:
+          summary: "Virus scanner is unavailable"
+          description: "The app could not reach ClamAV within the last 5 minutes, so it refused new uploads. Restart or fix the virus scanner container."

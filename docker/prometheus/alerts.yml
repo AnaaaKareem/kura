@@ -1,0 +1,192 @@
+# ==============================================================================
+# Prometheus Alerting Rules (alerts.yml)
+#
+# Infrastructure alerting rules for Kura, one group per concern. Every rule
+# has a `severity` (critical = phone call, warning = check in the morning)
+# and a plain-English `summary` and `description`, which are the texts the
+# owner receives by email and Telegram (WP4 of docs/INFRASTRUCTURE_HANDOFF.md).
+#
+# Metric names that do not exist yet come from later work (blackbox and
+# node exporter in WP3, textfile metrics in WP11); the thresholds follow the
+# handoff table so the alerts start working as soon as those metrics appear.
+# ==============================================================================
+
+groups:
+  # ------------------------------------------------------------------
+  # Availability: the site itself, Vault and every monitored container.
+  # ------------------------------------------------------------------
+  - name: availability
+    rules:
+      # The public website does not answer through the blackbox probe.
+      - alert: KuraSiteDown
+        expr: probe_success{job="site"} == 0
+        for: 3m
+        labels:
+          severity: critical
+        annotations:
+          summary: "The Kura website is not answering"
+          description: "The public health check has failed for more than 3 minutes. Students cannot reach the site or the exams behind it."
+
+      # Vault is sealed, so Django cannot encrypt MFA seeds or mint DB users.
+      - alert: VaultSealed
+        expr: vault_core_unsealed == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Vault is sealed or unreachable"
+          description: "Vault has been unresponsive or sealed for more than 2 minutes. Logins and grade release will fail until it is unsealed."
+
+      # Any scrape target (Prometheus job) has been unreachable for 2 minutes.
+      - alert: ServiceDown
+        expr: up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Service {{ $labels.job }} is down"
+          description: "The monitored target {{ $labels.instance }} (job {{ $labels.job }}) has been unreachable for more than 2 minutes."
+
+      # The PostgreSQL database stopped answering the exporter.
+      - alert: PostgresDown
+        expr: pg_up == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "PostgreSQL is down"
+          description: "The database stopped answering for more than 2 minutes. The whole site depends on it."
+
+  # ------------------------------------------------------------------
+  # Certificates: public site certificate, internal mTLS certificates,
+  # and the renewal job that keeps the internal ones fresh.
+  # ------------------------------------------------------------------
+  - name: certificates
+    rules:
+      # The public certificate seen by browsers expires within 14 days.
+      - alert: PublicCertExpiring
+        expr: probe_ssl_earliest_cert_expiry - time() < 14 * 86400
+        labels:
+          severity: warning
+        annotations:
+          summary: "Public TLS certificate expires within 14 days"
+          description: "The certificate for {{ $labels.instance }} expires soon ({{ $value | humanizeDuration }} of validity left). Renew it before browsers refuse the site."
+
+      # An internal (mTLS) certificate expires within 7 days.
+      - alert: InternalCertExpiring
+        expr: kura_cert_expiry_timestamp_seconds - time() < 7 * 86400
+        labels:
+          severity: critical
+        annotations:
+          summary: "Internal certificate {{ $labels.service }} expires within 7 days"
+          description: "The internal certificate for {{ $labels.service }} expires in {{ $value | humanizeDuration }}. Services will start failing TLS handshakes when it lapses."
+
+      # The certificate renewal job has not succeeded for more than 8 days.
+      - alert: CertRenewalFailing
+        expr: time() - kura_job_last_success_timestamp_seconds{job="cert-renewal"} > 8 * 86400
+        labels:
+          severity: critical
+        annotations:
+          summary: "Certificate renewal has not succeeded for over 8 days"
+          description: "The renewal job last succeeded more than 8 days ago. Internal certificates will expire soon; check the renewal script and its Vault access."
+
+  # ------------------------------------------------------------------
+  # Backups and mail: pgBackRest finishes, offsite copy arrives,
+  # and the email outbox keeps moving.
+  # ------------------------------------------------------------------
+  - name: backups_and_email
+    rules:
+      # Same result as above, for the second (offsite) backup repository.
+      - alert: OffsiteBackupStale
+        expr: time() - kura_job_last_success_timestamp_seconds{job="backup-offsite"} > 26 * 3600
+        labels:
+          severity: critical
+        annotations:
+          summary: "No successful offsite backup for over 26 hours"
+          description: "The last offsite backup push succeeded more than 26 hours ago. If the main datacenter is lost, recent data would be missing."
+
+      # The differential backup job has not succeeded in more than 26 hours.
+      - alert: BackupStale
+        expr: time() - max(kura_job_last_success_timestamp_seconds{job=~"backup-full|backup-diff"}) > 26 * 3600
+        labels:
+          severity: critical
+        annotations:
+          summary: "No successful backup for over 26 hours"
+          description: "The backup job last succeeded more than 26 hours ago. Check pgBackRest and the backup container logs."
+
+      # The outbox has had a pending email queue head for over 15 minutes.
+      - alert: OutboxStuck
+        expr: kura_outbox_oldest_pending_seconds > 900
+        labels:
+          severity: warning
+        annotations:
+          summary: "Email outbox is stuck"
+          description: "The oldest unsent notification email has been waiting more than 15 minutes. Students may miss assessment reminders."
+
+      # Emails are failing to send.
+      - alert: EmailFailures
+        expr: increase(kura_outbox_failed_total[1h]) > 0
+        labels:
+          severity: warning
+        annotations:
+          summary: "Notification emails are failing"
+          description: "At least one notification email failed to send in the last hour. Check the relay container and the outbox error column."
+
+  # ------------------------------------------------------------------
+  # Host resources (node exporter, [VM] only) and database capacity.
+  # ------------------------------------------------------------------
+  - name: resources
+    rules:
+      # Less than 10% of a disk's space is free.
+      # Ignore in-memory and read-only system images (always "full" by design;
+      # a live test showed a false alarm for Docker Desktop's read-only erofs).
+      - alert: DiskAlmostFull
+        expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|erofs|ramfs|devtmpfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|erofs|ramfs|devtmpfs"} < 0.10) and on(device, mountpoint, fstype) node_filesystem_readonly == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Disk {{ $labels.mountpoint }} is almost full"
+          description: "Less than 10% of the disk at {{ $labels.mountpoint }} is free. Emails, backups and logs will start failing."
+
+      # Less than 10% of the host memory is available for 10 minutes.
+      - alert: HighMemory
+        expr: node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes < 0.10
+        for: 10m
+        labels:
+          severity: warning
+        annotations:
+          summary: "Host memory is almost exhausted"
+          description: "Available memory has been below 10% for more than 10 minutes. Services may be killed by the kernel (OOM)."
+
+      # More than 80% of PostgreSQL's allowed connections are in use.
+      - alert: TooManyDbConnections
+        expr: sum(pg_stat_activity_count) > 0.80 * max(pg_settings_max_connections)
+        labels:
+          severity: warning
+        annotations:
+          summary: "PostgreSQL is near its connection limit"
+          description: "More than 80% of the allowed database connections are in use. New logins (temporary Vault users) may start failing."
+
+  # ------------------------------------------------------------------
+  # Intrusion prevention and metrics self-monitoring.
+  # ------------------------------------------------------------------
+  - name: security_and_selfcheck
+    rules:
+      # Active CrowdSec bans grew by more than 20 in 10 minutes.
+      - alert: CrowdSecBanSpike
+        expr: (sum(cs_active_decisions) - sum(cs_active_decisions offset 10m)) > 20
+        labels:
+          severity: warning
+        annotations:
+          summary: "CrowdSec is banning many IPs"
+          description: "More than 20 active ban decisions appeared in 10 minutes. This looks like an attack in progress; check the CrowdSec decisions list."
+
+      # The textfile metrics (cron jobs, app counters) stopped being updated.
+      - alert: MetricsJobStale
+        expr: time() - node_textfile_mtime_seconds{file=~".*kura_app.prom"} > 600
+        labels:
+          severity: warning
+        annotations:
+          summary: "App metrics file stopped updating"
+          description: "The metrics textfile has not been refreshed for more than 10 minutes. The cron job that writes it may be broken, so alerts on backups and the outbox would go silent."

@@ -1,0 +1,92 @@
+# ==============================================================================
+# Prometheus Alertmanager Configuration (alertmanager.yml)
+#
+# Groups alert notifications from Prometheus and Loki, routes every alert to
+# the default receiver and additionally sends critical alerts to Telegram
+# (WP4 of docs/INFRASTRUCTURE_HANDOFF.md).
+#
+# Credentials are never written here: the Telegram bot token and chat ID are
+# read from files mounted as Docker secrets (secrets/telegram_bot_token.txt,
+# secrets/telegram_chat_id.txt). Alertmanager supports both *_file settings
+# since earlier versions; this pinned v0.34.2 supports bot_token_file and
+# chat_id_file (checked against the v0.34.2 configuration documentation,
+# 6 November 2026).
+#
+# Email: every alert is emailed through Kura's Postfix relay. The address
+# below is the owner's address for now (6 November 2026); change the
+# "to:" line in the email-alerts receiver to send alerts elsewhere.
+# ==============================================================================
+
+global:
+  # How long to wait before treating an alert with no end time as resolved.
+  resolve_timeout: 5m
+
+route:
+  # Group by alert name and severity, so e.g. all critical alerts arrive in
+  # one Telegram message instead of one message per alert.
+  group_by: ["alertname", "severity"]
+  receiver: "email-alerts"
+  # Wait briefly for related alerts to arrive together, then re-send the
+  # group every 5 minutes if something new fired, and repeat the last
+  # notification after 4 hours so alerts are never forgotten.
+  group_wait: 30s
+  group_interval: 5m
+  repeat_interval: 4h
+  routes:
+    # Critical alerts go to Telegram. `continue: true` makes Alertmanager also
+    # try the next route below, which sends everything to email.
+    - matchers:
+        - severity="critical"
+      receiver: telegram-alerts
+      continue: true
+      # Wake up the phone at night: repeat critical alerts every hour.
+      repeat_interval: 1h
+
+    # EVERY alert (critical ones too) goes to email. This route is needed: the
+    # top-level "receiver" above is only used for alerts that match NO child
+    # route, so without it critical alerts reached Telegram but never email.
+    # (Found by a live test on 6 November 2026.)
+    - receiver: email-alerts
+
+receivers:
+  # Every alert by email, through the Postfix relay (docker/postfix/).
+  - name: "email-alerts"
+    email_configs:
+      # Where every alert email goes.
+      - to: anaaakareem@gmail.com
+        from: noreply@kura.edu
+        smarthost: relay:25
+        # The relay requires STARTTLS and presents a certificate from Kura's
+        # internal CA; server_name must match the name in that certificate.
+        require_tls: true
+        tls_config:
+          ca_file: /certs/ca.crt
+          server_name: relay
+        send_resolved: true
+
+  # Telegram for critical alerts only. The bot token and chat ID live in
+  # Docker secrets; this file lists only the paths they are mounted at.
+  - name: "telegram-alerts"
+    telegram_configs:
+      - bot_token_file: /run/secrets/telegram_bot_token
+        chat_id_file: /run/secrets/telegram_chat_id
+        send_resolved: true
+        # Plain text (empty parse mode): avoids Markdown/HTML escaping bugs
+        # in alert text that contains angle brackets or underscores.
+        parse_mode: ""
+        message: >-
+          Kura LMS alert [{{ .Status }}]:
+          {{ .CommonLabels.alertname }} (severity {{ .CommonLabels.severity }}):
+          {{ .CommonAnnotations.summary }}
+          {{ .CommonAnnotations.description }}
+
+# While Vault is sealed or down, mute the generic "ServiceDown" alert for the
+# web service: VaultSealed is the more useful alert here, and the paired
+# ServiceDown would only duplicate the page.
+inhibit_rules:
+  - name: vault-sealed-mutes-web-servicedown
+    source_matchers:
+      - alertname="VaultSealed"
+    target_matchers:
+      - alertname="ServiceDown"
+      - job="web"

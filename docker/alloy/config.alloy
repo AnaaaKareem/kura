@@ -1,0 +1,458 @@
+// Alloy collects Docker container logs and Nginx's rotated access/error files.
+// Only service, stream, and level become Loki labels; request details remain
+// structured metadata so user, path, and address values do not create streams.
+
+// Keep Alloy's own diagnostics readable in Docker's container log.
+logging {
+  level  = "info"
+  format = "logfmt"
+}
+
+// Discover containers through the internal read-only socket proxy, not the Docker socket.
+discovery.docker "containers" {
+  host = "tcp://docker-api-proxy:2375"
+}
+
+// Keep only Kura containers and replace their names with a short service label.
+discovery.relabel "kura_containers" {
+  targets = discovery.docker.containers.targets
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/kura-.*"
+    action        = "keep"
+  }
+
+  // Keep only containers started by THIS Compose project ("kura"). Other local
+  // containers that happen to be named kura-* (e.g. a developer's test
+  // database) must not be mixed into Kura's logs.
+  rule {
+    source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
+    regex         = "kura"
+    action        = "keep"
+  }
+
+  rule {
+    source_labels = ["__meta_docker_container_name"]
+    regex         = "/kura-(.*)"
+    target_label  = "service"
+    replacement   = "$1"
+  }
+
+  // Retain only the Docker ID needed by the source and the low-cardinality service.
+  rule {
+    action = "labelkeep"
+    regex  = "__meta_docker_container_id|service"
+  }
+}
+
+// Read container stdout/stderr through the proxy and unpack Docker's JSON envelope.
+loki.source.docker "containers" {
+  host       = "tcp://docker-api-proxy:2375"
+  targets    = discovery.relabel.kura_containers.output
+  labels     = {}
+  forward_to = [loki.process.docker_envelope.receiver]
+}
+
+// Extract the Docker log message, timestamp, and stdout/stderr stream label.
+loki.process "docker_envelope" {
+  stage.docker {}
+  forward_to = [loki.process.pipeline.receiver]
+}
+
+// Nginx needs no file reader: the official nginx image links
+// /var/log/nginx/access.log to /dev/stdout and error.log to /dev/stderr, so its
+// logs arrive through the Docker source above as service="nginx". Access lines
+// are recognised by their shape (they start with the client IP and " - ").
+
+// Parse each service separately, keeping searchable details out of Loki labels.
+// Note: stage.static_labels sets a FIXED label value (e.g. level="warning");
+// stage.labels copies an EXTRACTED field into a label (level = "" means "use
+// the extracted field named level"). Mixing them up silently sets nothing.
+loki.process "pipeline" {
+  // Read Django's logfmt fields and put event names in structured metadata.
+  stage.match {
+    selector = "{service=\"web\"}"
+
+    stage.logfmt {
+      mapping = { level = "", logger = "", event = "" }
+    }
+
+    stage.labels {
+      values = { level = "" }
+    }
+
+    stage.structured_metadata {
+      values = { event = "" }
+    }
+  }
+
+  // Parse JSON audit records from Coraza and retain their attack context as metadata.
+  stage.match {
+    selector = "{service=\"waf\"} |~ \"^\\\\{\""
+
+    stage.json {
+      expressions = {
+        client_ip = "transaction.client_ip",
+        uri       = "transaction.request.uri",
+        // There is no response status in the audit record; is_interrupted=true
+        // means the WAF blocked the request.
+        action    = "transaction.is_interrupted",
+      }
+    }
+
+    // The pinned Coraza image leaves messages[*].data empty; the rule number
+    // only appears inside each message's text, like [id \"942100\"]. Take the
+    // FIRST one: it is the rule that detected the attack (later ones are the
+    // anomaly-score totals such as 949110). Checked against a real block.
+    stage.regex {
+      expression = "\\[id \\\\\"(?P<rule_id>[0-9]+)\\\\\"\\]"
+    }
+
+    stage.structured_metadata {
+      values = {
+        client_ip = "",
+        uri       = "",
+        rule_id   = "",
+        action    = "",
+      }
+    }
+
+    // Coraza's audit stream contains relevant 4xx/5xx transactions.
+    stage.static_labels {
+      values = { level = "warning" }
+    }
+  }
+
+  // Keep the WAF's plain combined access lines searchable by IP and URI.
+  // The request id is matched as any non-space value, because the header is
+  // "-" whenever the request arrived without an x-request-id.
+  stage.match {
+    selector = "{service=\"waf\"} |~ \"^[0-9a-fA-F:.]+ \""
+
+    stage.regex {
+      expression = "^(?P<client_ip>\\S+) .* (?P<uri>\\S+) HTTP/[0-9.]+ (?P<status>[0-9]{3}) .* (?P<request_id>\\S+) (?P<request_time>\\S+)$"
+    }
+
+    stage.structured_metadata {
+      values = {
+        client_ip    = "",
+        uri          = "",
+        status       = "",
+        request_id   = "",
+        request_time = "",
+      }
+    }
+
+    stage.static_labels {
+      values = { level = "info" }
+    }
+
+    stage.match {
+      selector = "{service=\"waf\"} |~ \" [45][0-9]{2} \""
+      stage.static_labels {
+        values = { level = "warning" }
+      }
+    }
+  }
+
+  // Parse Vault's JSON audit records without making request paths or users labels.
+  stage.match {
+    selector = "{service=\"vault\"} |~ \"^\\\\{\""
+
+    stage.json {
+      expressions = {
+        audit_type    = "type",
+        request_path  = "request.path",
+        display_name  = "auth.display_name",
+        error         = "error",
+      }
+    }
+
+    stage.structured_metadata {
+      values = {
+        audit_type   = "",
+        request_path = "",
+        display_name = "",
+        error        = "",
+      }
+    }
+
+    stage.static_labels {
+      values = { level = "info" }
+    }
+
+    // Flag audit lines mentioning an error for closer inspection.
+    stage.match {
+      selector = "{service=\"vault\"} |~ \"error.+[a-zA-Z0-9]\""
+      stage.static_labels {
+        values = { level = "warning" }
+      }
+    }
+  }
+
+  // Mark PostgreSQL pgAudit entries as info and retain their user@database identity.
+  stage.match {
+    selector = "{service=\"db\"} |= \"AUDIT:\""
+
+    stage.regex {
+      expression = "^(?P<timestamp>\\S+ \\S+) \\[\\d+\\] (?P<user_db>[^ ]+) AUDIT:"
+    }
+
+    stage.static_labels {
+      values = { level = "info" }
+    }
+
+    stage.structured_metadata {
+      values = { user_db = "" }
+    }
+  }
+
+  // Surface PostgreSQL fatal and error lines for authentication and database failures.
+  stage.match {
+    selector = "{service=\"db\"} |~ \"(FATAL|ERROR)\""
+    stage.static_labels {
+      values = { level = "error" }
+    }
+  }
+
+  // Parse Postfix delivery status and assign a useful severity to each result.
+  stage.match {
+    selector = "{service=\"relay\"} |~ \"status=(sent|deferred|bounced)\""
+
+    stage.regex {
+      expression = "status=(?P<delivery_status>sent|deferred|bounced)"
+    }
+
+    stage.structured_metadata {
+      values = { delivery_status = "" }
+    }
+
+    stage.match {
+      selector = "{service=\"relay\"} |~ \"status=sent\""
+      stage.static_labels {
+        values = { level = "info" }
+      }
+    }
+
+    stage.match {
+      selector = "{service=\"relay\"} |~ \"status=deferred\""
+      stage.static_labels {
+        values = { level = "warning" }
+      }
+    }
+
+    stage.match {
+      selector = "{service=\"relay\"} |~ \"status=bounced\""
+      stage.static_labels {
+        values = { level = "error" }
+      }
+    }
+  }
+
+  // Extract text log severity from ClamAV, CrowdSec, and Cloudflare Tunnel.
+  stage.match {
+    selector = "{service=~\"clamav|crowdsec|cloudflared\"}"
+
+    stage.regex {
+      expression = "(?i)(?P<level>debug|info|warn(?:ing)?|error|fatal)"
+    }
+
+    stage.labels {
+      values = { level = "" }
+    }
+  }
+
+  // Parse Nginx's combined-format request fields into metadata, not labels.
+  // Same as the WAF stage: the request id is "-" when the header is absent,
+  // so the regex accepts any non-space value there.
+  stage.match {
+    selector = "{service=\"nginx\"} |~ \"^[0-9a-fA-F.:]+ - \""
+
+    stage.regex {
+      expression = "^(?P<client_ip>\\S+) .* (?P<uri>\\S+) HTTP/[0-9.]+ (?P<status>[0-9]{3}) .* (?P<request_id>\\S+) (?P<request_time>\\S+)$"
+    }
+
+    stage.structured_metadata {
+      values = {
+        client_ip    = "",
+        uri          = "",
+        status       = "",
+        request_id   = "",
+        request_time = "",
+      }
+    }
+
+    stage.static_labels {
+      values = { level = "info" }
+    }
+
+    stage.match {
+      selector = "{service=\"nginx\"} |~ \"^[0-9a-fA-F.:]+ - \" |~ \" [45][0-9]{2} \""
+      stage.static_labels {
+        values = { level = "warning" }
+      }
+    }
+  }
+
+  // Keep only the three approved low-cardinality labels on every Loki stream.
+  stage.label_keep {
+    values = ["service", "stream", "level"]
+  }
+
+  forward_to = [loki.write.local_loki.receiver]
+}
+
+// Write all processed logs to the local Loki service.
+loki.write "local_loki" {
+  endpoint {
+    url = "http://loki:3100/loki/api/v1/push"
+  }
+}
+
+// Buffer collected metric samples and send them to Prometheus over remote write.
+prometheus.remote_write "local_prometheus" {
+  endpoint {
+    url = "http://prometheus:9090/api/v1/write"
+  }
+}
+
+// Send Alloy's own health metrics through the same remote-write path.
+prometheus.scrape "alloy" {
+  targets = [
+    { "__address__" = "127.0.0.1:12345" },
+  ]
+  forward_to = [prometheus.remote_write.local_prometheus.receiver]
+}
+
+// Scrape Vault telemetry over HTTPS and verify its certificate with Kura's CA.
+prometheus.scrape "vault" {
+  targets      = [{ "__address__" = "vault:8200" }]
+  scheme       = "https"
+  metrics_path = "/v1/sys/metrics"
+  params       = { "format" = ["prometheus"] }
+
+  tls_config {
+    ca_file = "/etc/alloy/certs/ca.crt"
+  }
+
+  forward_to = [prometheus.remote_write.local_prometheus.receiver]
+}
+
+// ---------------------------------------------------------------------------
+// WP3: metrics. Alloy collects everything internal and remote-writes it to
+// Prometheus, so Prometheus never needs to join the internal networks.
+// ---------------------------------------------------------------------------
+
+// CrowdSec serves Prometheus metrics on :6060 (docker/crowdsec/config.yaml.local),
+// reached over the "observability" network.
+prometheus.scrape "crowdsec" {
+  targets    = [{ "__address__" = "crowdsec:6060" }]
+  forward_to = [prometheus.remote_write.local_prometheus.receiver]
+}
+
+// Host metrics and script-health files.
+//  - procfs/sysfs/rootfs point at the host's /proc, /sys and / mounted
+//    read-only by docker-compose.yml (on the Mac these show Docker's VM).
+//  - textfile: every *.prom file the cron jobs write (job success times,
+//    certificate expiry, write_app_metrics counts).
+prometheus.exporter.unix "host" {
+  procfs_path = "/host/proc"
+  sysfs_path  = "/host/sys"
+  rootfs_path = "/host/root"
+
+  // The textfile collector is not on by default: switch it on for the .prom files.
+  enable_collectors = ["textfile"]
+
+  textfile {
+    directory = "/var/lib/kura-metrics"
+  }
+}
+
+prometheus.scrape "host" {
+  targets    = prometheus.exporter.unix.host.targets
+  job_name   = "host"
+  forward_to = [prometheus.remote_write.local_prometheus.receiver]
+}
+
+// Probes ("is it answering?") from Alloy's point of view:
+//  - site:        the public login page through Cloudflare (end to end);
+//                 KURA_PUBLIC_HOSTNAME comes from .env via docker-compose.yml
+//  - vault:       Vault's health endpoint answers 200 only when unsealed
+//                 (503 when sealed), checked with Kura's internal CA
+//  - loki_ready:  Loki's readiness page (Loki's image cannot run its own
+//                 Docker health check)
+prometheus.exporter.blackbox "probes" {
+  config = "{ modules: { http_2xx: { prober: http, timeout: 5s }, vault_unsealed: { prober: http, timeout: 5s, http: { valid_status_codes: [200], tls_config: { ca_file: /etc/alloy/certs/ca.crt } } } } }"
+
+  target {
+    name    = "site"
+    address = "https://" + sys.env("KURA_PUBLIC_HOSTNAME") + "/login/"
+    module  = "http_2xx"
+  }
+
+  target {
+    name    = "vault"
+    address = "https://vault:8200/v1/sys/health"
+    module  = "vault_unsealed"
+  }
+
+  target {
+    name    = "loki_ready"
+    address = "http://loki:3100/ready"
+    module  = "http_2xx"
+  }
+}
+
+// All three probes come out of one exporter with the same "instance", so give
+// each its own labels from the address it checks: instance = the URL, and
+// job = site / vault / loki_ready (used by docker/prometheus/alerts.yml).
+// Without this Prometheus merges them into one series.
+discovery.relabel "probes" {
+  targets = prometheus.exporter.blackbox.probes.targets
+
+  rule {
+    source_labels = ["__param_target"]
+    target_label  = "instance"
+  }
+
+  rule {
+    source_labels = ["__param_target"]
+    regex         = "https://[^/]+/login/"
+    target_label  = "job"
+    replacement   = "site"
+  }
+
+  rule {
+    source_labels = ["__param_target"]
+    regex         = "https://vault:8200/.*"
+    target_label  = "job"
+    replacement   = "vault"
+  }
+
+  rule {
+    source_labels = ["__param_target"]
+    regex         = "http://loki:3100/.*"
+    target_label  = "job"
+    replacement   = "loki_ready"
+  }
+}
+
+prometheus.scrape "probes" {
+  targets    = discovery.relabel.probes.output
+  forward_to = [prometheus.remote_write.local_prometheus.receiver]
+}
+
+// PostgreSQL statistics (connections, transactions, sizes) as the read-only
+// role "alloy". It logs in with Alloy's Vault-issued client certificate only
+// (pg_hba.conf, docker/postgres/monitor-role.sql) and checks the database's
+// certificate against Kura's CA (verify-full). No password exists.
+prometheus.exporter.postgres "kura" {
+  data_source_names = ["postgresql://alloy@db:5432/kura?sslmode=verify-full&sslrootcert=/etc/alloy/certs/ca.crt&sslcert=/etc/alloy/certs/alloy.crt&sslkey=/etc/alloy/certs/alloy.key"]
+}
+
+prometheus.scrape "postgres" {
+  targets    = prometheus.exporter.postgres.kura.targets
+  job_name   = "postgres"
+  forward_to = [prometheus.remote_write.local_prometheus.receiver]
+}

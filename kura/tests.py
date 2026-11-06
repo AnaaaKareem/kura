@@ -5642,6 +5642,70 @@ class PasskeyWebAuthnIntegrationTests(TestCase):
         self.assertEqual(data["publicKey"]["rp"]["name"], "Kura LMS")
 
 
+class LokiSIEMAlertRulesTests(TestCase):
+    """
+    Tests Loki SIEM alert rules.
+    Verifies that security alerting rules are defined with valid LogQL expressions,
+    alert severities, descriptions, and that Loki Ruler is properly wired to Alertmanager.
+    """
+
+    def setUp(self):
+        from pathlib import Path
+        from django.conf import settings
+        self.base_dir = Path(settings.BASE_DIR)
+        self.rules_file_fake = self.base_dir / "docker" / "loki" / "rules" / "fake" / "kura-alerts.yml"
+        self.rules_directory_tenant = self.base_dir / "docker" / "loki" / "rules" / "kura"
+        self.loki_conf = self.base_dir / "docker" / "loki" / "loki.yml"
+        self.compose_file = self.base_dir / "docker-compose.yml"
+
+    def test_loki_rules_files_exist(self):
+        # Loki uses the fake tenant when auth is disabled, so only that rules file should exist.
+        self.assertTrue(self.rules_file_fake.exists(), "Rules file for default tenant must exist")
+        self.assertFalse(self.rules_directory_tenant.exists(), "Duplicate kura tenant rules must not exist")
+
+    def test_all_siem_alert_rules_present(self):
+        # All 13 security alerts from the handoff's WP4 table must be defined.
+        expected_alerts = [
+            "BruteForceLogin",
+            "SingleIpBruteForce",
+            "MfaFailuresSpike",
+            "AdminRoleChanged",
+            "MalwareUploaded",
+            "AccessDeniedSpike",
+            "CsrfFailures",
+            "GradeReleaseMfaFailed",
+            "WafBlockSpike",
+            "VaultErrors",
+            "DbAuthFailures",
+            "RelayBounces",
+            "ClamAvUnavailable",
+        ]
+        content = self.rules_file_fake.read_text(encoding="utf-8")
+        for alert_name in expected_alerts:
+            self.assertIn(f"- alert: {alert_name}", content, f"Alert {alert_name} must be defined in SIEM rules")
+
+    def test_alert_rules_have_required_metadata(self):
+        # Each alert must have severity (warning or critical), summary, and description.
+        content = self.rules_file_fake.read_text(encoding="utf-8")
+        self.assertIn("severity: critical", content)
+        self.assertIn("severity: warning", content)
+        self.assertIn("summary:", content)
+        self.assertIn("description:", content)
+        self.assertIn("count_over_time", content)
+
+    def test_loki_ruler_configuration(self):
+        # loki.yml must configure the Ruler component and point to Alertmanager.
+        content = self.loki_conf.read_text(encoding="utf-8")
+        self.assertIn("ruler:", content)
+        self.assertIn("directory: /etc/loki/rules", content)
+        self.assertIn("alertmanager_url: http://alertmanager:9093", content)
+
+    def test_docker_compose_mounts_loki_rules(self):
+        # docker-compose.yml must mount the rules directory into the Loki container.
+        content = self.compose_file.read_text(encoding="utf-8")
+        self.assertIn("./docker/loki/rules:/etc/loki/rules:ro", content)
+
+
 class DataRetentionAndIPAnonymizationTests(TestCase):
     """
     Tests Data retention and IP anonymization jobs.
@@ -5821,6 +5885,53 @@ class DataRetentionAndIPAnonymizationTests(TestCase):
 
         # Old resolved attempt should be purged
         self.assertFalse(LoginAttempt.objects.filter(id=old_attempt.id).exists())
+
+
+class IncidentResponseRunbookTests(TestCase):
+    """
+    Tests Incident response runbook.
+    Verifies that the runbook exists, covers all 6 critical security incident scenarios,
+    cites statutory compliance requirements (Law 175/2018 & NIST SP 800-61), and references
+    valid disaster recovery scripts and emergency mitigation commands.
+    """
+
+    def setUp(self):
+        from pathlib import Path
+        from django.conf import settings
+        self.base_dir = Path(settings.BASE_DIR)
+        self.runbook_path = self.base_dir / "docs" / "INCIDENT_RESPONSE.md"
+
+    def test_runbook_file_exists(self):
+        # The incident-response runbook is kept with the other project documentation.
+        self.assertTrue(self.runbook_path.exists(), "docs/INCIDENT_RESPONSE.md must exist")
+
+    def test_runbook_covers_all_scenarios(self):
+        # Must document procedures for all 6 scenarios.
+        content = self.runbook_path.read_text(encoding="utf-8")
+        scenarios = [
+            "Scenario 1: Compromised User Account",
+            "Scenario 2: Active Web Exploitation & WAF Infiltration",
+            "Scenario 3: Malicious File Upload Detected",
+            "Scenario 4: Database Tampering or Unauthorized Grade Alteration",
+            "Scenario 5: Internal mTLS Certificate Expiration or Breach",
+            "Scenario 6: Distributed Denial of Service (DDoS)",
+        ]
+        for scenario in scenarios:
+            self.assertIn(scenario, content, f"Runbook must cover '{scenario}'")
+
+    def test_runbook_contains_emergency_tools_and_commands(self):
+        # Must include actionable commands for tools used in Kura.
+        content = self.runbook_path.read_text(encoding="utf-8")
+        self.assertIn("cscli decisions add", content, "Must explain CrowdSec IP banning")
+        self.assertIn("generate_internal_mtls_certs.sh", content, "Must explain mTLS certificate regeneration")
+        self.assertIn("pgbackrest", content, "Must explain PITR database restoration")
+        self.assertIn("sha256sum", content, "Must explain cryptographic evidence hashing")
+
+    def test_runbook_cites_legal_and_security_standards(self):
+        # Must cite NIST SP 800-61 and Egyptian Anti-Cybercrime Law (Law No. 175 of 2018).
+        content = self.runbook_path.read_text(encoding="utf-8")
+        self.assertIn("NIST SP 800-61", content)
+        self.assertIn("Law No. 175 of 2018", content)
 
 
 class SemesterValueMigrationTests(TestCase):
@@ -6916,3 +7027,24 @@ class PasskeyAddedAuditTests(TestCase):
         with patch("mfa.FIDO2.complete_reg", return_value=JsonResponse({"status": "ERR"})):
             with self.assertNoLogs("kura.security", level="INFO"):
                 self.client.post("/mfa/fido2/complete_reg", data="{}", content_type="application/json")
+
+
+class WriteAppMetricsTests(TestCase):
+    """WP3: write_app_metrics prints counts in Prometheus text format and nothing personal."""
+
+    def test_counts_are_printed_in_prometheus_format(self):
+        student = make_user("Student")
+        queue_email("metrics-test:1", student.email, "Subject", "Body")
+        OutgoingEmail.objects.filter(event_key="metrics-test:1").update(
+            created_at=timezone.now() - timezone.timedelta(seconds=120)
+        )
+        output = StringIO()
+        call_command("write_app_metrics", stdout=output)
+        text = output.getvalue()
+        self.assertIn("# TYPE kura_outbox_pending gauge", text)
+        self.assertIn("kura_outbox_pending 1", text)
+        self.assertIn("kura_outbox_failed_total 0", text)
+        oldest_line = [line for line in text.splitlines() if line.startswith("kura_outbox_oldest_pending_seconds ")][0]
+        self.assertGreaterEqual(int(oldest_line.split()[1]), 120)
+        # Counts only: the address must never appear in metrics.
+        self.assertNotIn(student.email, text)
