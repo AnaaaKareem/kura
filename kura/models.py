@@ -979,6 +979,44 @@ class FileContent(models.Model):
         return f"Binary Content for {self.file_id}"
 
 
+class QuarantinedFile(models.Model):
+    """
+    An upload that ClamAV rejected (a virus, an encrypted file, or a macro).
+    The bytes are kept for 7 days so an Admin can investigate, then deleted by
+    the purge_quarantine command. Kept apart from stored_files on purpose: the
+    normal download view only serves StoredFile, so these bytes can never be
+    downloaded through the website.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    uploaded_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="quarantined_files"
+    )
+    original_filename = models.CharField(max_length=255)
+    # Same 25 MiB ceiling as normal uploads.
+    size_bytes = models.BigIntegerField(validators=[MinValueValidator(1), MaxValueValidator(MAX_UPLOAD_BYTES)])
+    sha256_hash = FixedCharField(max_length=SHA256_HEX)
+    # What ClamAV reported, e.g. "Eicar-Test-Signature" or "Heuristics.Encrypted.Zip".
+    detection = models.CharField(max_length=255)
+    content = models.BinaryField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "quarantined_files"
+        constraints = [
+            models.CheckConstraint(
+                condition=models.Q(size_bytes__gt=0) & models.Q(size_bytes__lte=MAX_UPLOAD_BYTES),
+                name="quarantined_file_size_within_limit",
+            ),
+        ]
+
+    def __str__(self):
+        """
+        Formats this model's identifying fields for readable display.
+        """
+        return f"Quarantined {self.original_filename} ({self.detection})"
+
+
 class SectionItemFile(models.Model):
     """
     Course material files attached to section items.

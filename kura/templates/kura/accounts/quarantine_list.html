@@ -1,0 +1,48 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Quarantined uploads - Kura{% endblock %}
+
+{% block content %}
+<!-- Admin-only list of uploads that ClamAV rejected. The files themselves are never offered for download. -->
+<div class="space-y-6">
+    <header>
+        <h1 class="text-2xl font-bold">Quarantined uploads</h1>
+        <p>Files rejected by the virus scanner in the last 7 days. They are deleted automatically after 7 days.
+           Look up a SHA-256 hash on a malware database (for example VirusTotal) to learn more about a file.</p>
+    </header>
+
+    <div class="overflow-x-auto bg-base-100 border border-base-300 rounded-box">
+        <table class="table table-sm w-full">
+            <caption class="sr-only">Quarantined uploads</caption>
+            <thead class="bg-base-200">
+                <tr><th>Uploaded</th><th>Uploaded by</th><th>File name</th><th>Size</th><th>Detection</th><th>SHA-256</th><th>Action</th></tr>
+            </thead>
+            <tbody>
+                {% for quarantined_file in quarantined_files %}
+                <tr>
+                    <td>{{ quarantined_file.created_at|date:"Y-m-d H:i" }}</td>
+                    <td>{{ quarantined_file.uploaded_by.email }}</td>
+                    <td class="break-all">{{ quarantined_file.original_filename }}</td>
+                    <td>{{ quarantined_file.size_bytes|filesizeformat }}</td>
+                    <td><span class="badge badge-error badge-outline">{{ quarantined_file.detection }}</span></td>
+                    <td class="font-mono text-xs break-all">{{ quarantined_file.sha256_hash }}</td>
+                    <td>
+                        <!-- Deleting needs POST, the CSRF token and a ticked confirmation box. -->
+                        <form method="post" action="{% url 'kura:quarantine_delete' quarantined_file.id %}" class="flex items-center gap-2">
+                            {% csrf_token %}
+                            <label class="flex items-center gap-1 text-xs">
+                                <input type="checkbox" name="confirm" class="checkbox checkbox-xs" required>
+                                Confirm
+                            </label>
+                            <button type="submit" class="btn btn-error btn-xs">Delete</button>
+                        </form>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr><td colspan="7">No quarantined uploads.</td></tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}

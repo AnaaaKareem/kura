@@ -22,6 +22,15 @@ def is_admin_course_manager(user):
     return has_role(user, "Admin")
 
 
+def can_manage_quarantine(user):
+    """
+    Checks whether the user may see and delete quarantined uploads (files ClamAV rejected).
+    Rule: system security and maintenance belong to the Admin role only.
+    """
+    # Only the Admin system role may review infected uploads.
+    return has_role(user, "Admin")
+
+
 def can_access_learning_records(user):
     """
     Checks whether the user is allowed to access learning records and grades.
