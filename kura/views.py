@@ -2737,3 +2737,51 @@ def attendance_manual_record_view(request, session_id):
 
     return redirect("kura:attendance_session_detail", session_id=session.id)
 
+
+
+
+def attendance_history_view(request):
+    """
+    Displays attendance records.
+    Who can use it: Students (own records only), Staff (assigned courses).
+    Security: IDOR protection; students are strictly restricted to their own attendance entries.
+"""
+    if has_role(request.user, "Student"):
+        # Students strictly see only their own attendance records.
+        records = (
+            AttendanceRecord.objects.filter(
+                student=request.user,
+            )
+            .select_related("session__module__course")
+            .order_by("-verified_at")
+        )
+        is_staff_view = False
+    else:
+        # Staff see records for their taught courses.
+        # Stale staff assignments must not reveal student attendance.
+        staff_roles = []
+        if has_role(request.user, "Instructor"):
+            staff_roles.extend(["lead_instructor", "co_instructor"])
+        if has_role(request.user, "Teaching assistant"):
+            staff_roles.append("teaching_assistant")
+        staff_courses = CourseStaff.objects.filter(user=request.user, staff_role__in=staff_roles).values_list(
+            "course_id", flat=True
+        )
+        records = (
+            AttendanceRecord.objects.filter(
+                session__module__course_id__in=staff_courses,
+            )
+            .select_related("student", "session__module__course", "recorded_by")
+            .order_by("-verified_at")
+        )
+        is_staff_view = True
+
+    return render(
+        request,
+        "kura/attendance/history.html",
+        {
+            "records": records,
+            "is_staff_view": is_staff_view,
+        },
+    )
+
