@@ -659,6 +659,7 @@ def logout_view(request):
     return redirect("kura:login")
 
 
+@login_required
 def home_view(request):
     """
     Main dashboard displaying the work areas available to the user's roles.
@@ -5371,3 +5372,42 @@ def student_transcript_view(request):
             "student_profile": student_profile,
         },
     )
+
+
+@login_required
+def department_reports_view(request, department_id):
+    """
+    Institutional reporting dashboard for Department Heads.
+    Who can use it: Department Heads for their own department.
+    Security: Cross-department access strictly forbidden.
+"""
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    # Department reports include marks, so administrators cannot view them.
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    department = get_object_or_404(Department, id=department_id)
+
+    if not is_department_head(request.user, department):
+        raise PermissionDenied
+
+    courses = Course.objects.filter(department=department).order_by("code")
+    enrollment_count = Enrollment.objects.filter(course__department=department, status=EnrollmentStatus.ACTIVE).count()
+    results = CourseResult.objects.filter(course__department=department, status=GradeStatus.RELEASED)
+    avg_score = None
+    if results.exists():
+        avg_score = sum(r.final_score for r in results) / results.count()
+
+    rounded_average = None
+    if avg_score:
+        rounded_average = round(avg_score, 2)
+    context = {
+        "department": department,
+        "courses": courses,
+        "enrollment_count": enrollment_count,
+        "avg_score": rounded_average,
+    }
+    return render(request, "kura/grades/department_report.html", context)
