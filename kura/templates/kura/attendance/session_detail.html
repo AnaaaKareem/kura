@@ -110,7 +110,7 @@
                 <h3 class="card-title text-base font-bold">Manual Roll Entry</h3>
                 <p class="text-xs text-base-content/70">Manually record or correct a student's attendance. A written justification reason is mandatory.</p>
 
-                <form method="post" action="{% url 'kura:attendance_manual_record' session.id %}" class="mt-3 space-y-3">
+                <form method="post" action="{% url 'kura:attendance_manual_record' session.id %}" class="mt-3 space-y-3">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
                     {% csrf_token %}
                     <div class="form-control">
                         <label class="label"><span class="label-text text-xs font-medium">Student</span></label>

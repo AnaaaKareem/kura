@@ -14,4 +14,8 @@ RUN apk add --no-cache postfix cyrus-sasl cyrus-sasl-login ca-certificates
 COPY main.cf /etc/postfix/main.cf
 
 # Run Postfix in the foreground so Docker can watch it and see its log.
+# There is no USER line on purpose: Postfix's master process must start as
+# root to open its queue, then runs every mail-handling process as the
+# unprivileged "postfix" user by itself.
+# nosemgrep: dockerfile.security.missing-user.missing-user
 CMD ["postfix", "start-fg"]

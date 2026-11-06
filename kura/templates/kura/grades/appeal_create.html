@@ -12,7 +12,7 @@
                 Dispute assessment: <strong>{{ grade.assessment.title }}</strong> &bull; Released Score: <strong>{{ grade.score }} / {{ grade.assessment.max_score }}</strong>
             </p>
 
-            <form method="post" class="mt-4 space-y-4">
+            <form method="post" class="mt-4 space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
                 {% csrf_token %}
 
                 <div class="form-control">

@@ -30,7 +30,7 @@
                 <div class="text-base-content/50 mt-1">Requested by: {{ change_request.requested_by.get_full_name|default:change_request.requested_by.email }}</div>
             </div>
 
-            <form method="post" class="mt-4 space-y-4">
+            <form method="post" class="mt-4 space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
                 {% csrf_token %}
 
                 <div class="form-control">
