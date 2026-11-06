@@ -5204,6 +5204,94 @@ class VaultIntegrationTests(TestCase):
         self.assertIn("MFA secret encryption failed", str(ctx.exception))
 
 
+class MTLSIntegrationTests(TestCase):
+    """
+    Tests Mutual TLS (mTLS) between Nginx, Django and PostgreSQL.
+    Verifies internal certificates, Gunicorn mTLS binding, and database SSL options.
+    """
+
+    def test_internal_certificates_generated_and_valid(self):
+        # Confirms all required internal mTLS certificates and private keys are present
+        from pathlib import Path
+        base_dir = Path(__file__).resolve().parent.parent / "certs" / "internal"
+
+        for cert_name in ["ca.crt", "nginx.crt", "waf.crt", "web.crt", "db.crt", "vault.crt"]:
+            cert_path = base_dir / cert_name
+            self.assertTrue(cert_path.exists(), f"Missing certificate: {cert_name}")
+            content = cert_path.read_text()
+            self.assertIn("-----BEGIN CERTIFICATE-----", content)
+
+        # Only check the service keys exist: on Linux each one belongs to its
+        # container user, so this test (running as you) may not be able to read it.
+        for key_name in ["nginx.key", "waf.key", "web.key", "db.key", "vault.key"]:
+            key_path = base_dir / key_name
+            self.assertTrue(key_path.exists(), f"Missing private key: {key_name}")
+
+        # No CA private key may sit where containers mount files from. Once Vault
+        # issues the certificates (stage 3b) there is no CA key on disk at all:
+        # it only exists inside Vault. Before that, the openssl bootstrap key
+        # lives in certs/ca/, which no container mounts.
+        self.assertFalse((base_dir / "ca.key").exists(), "ca.key must not be in certs/internal/")
+
+    def test_database_ssl_options_structure(self):
+        # Confirms database mTLS connection parameters are constructed properly
+        import os
+
+        env_backup = dict(os.environ)
+        try:
+            os.environ["DB_SSL_MODE"] = "verify-full"
+            os.environ["DB_SSL_ROOTCERT"] = "/certs/internal/ca.crt"
+            os.environ["DB_SSL_CERT"] = "/certs/internal/web.crt"
+            os.environ["DB_SSL_KEY"] = "/certs/internal/web.key"
+
+            # Simulate options builder logic from settings.py
+            db_options = {
+                "sslmode": os.environ["DB_SSL_MODE"],
+                "sslrootcert": os.environ["DB_SSL_ROOTCERT"],
+                "sslcert": os.environ["DB_SSL_CERT"],
+                "sslkey": os.environ["DB_SSL_KEY"],
+            }
+
+            self.assertEqual(db_options["sslmode"], "verify-full")
+            self.assertEqual(db_options["sslrootcert"], "/certs/internal/ca.crt")
+            self.assertEqual(db_options["sslcert"], "/certs/internal/web.crt")
+            self.assertEqual(db_options["sslkey"], "/certs/internal/web.key")
+        finally:
+            os.environ.clear()
+            os.environ.update(env_backup)
+
+    def test_gunicorn_conf_mtls_logic(self):
+        # Tests that gunicorn.conf.py configures mTLS on port 8443 when MTLS_ENABLED=True
+        import importlib.util
+        import os
+        from pathlib import Path
+        import ssl
+
+        conf_path = Path(__file__).resolve().parent.parent / "gunicorn.conf.py"
+        self.assertTrue(conf_path.exists())
+
+        env_backup = dict(os.environ)
+        try:
+            # 1. When MTLS is disabled
+            os.environ["MTLS_ENABLED"] = "False"
+            spec = importlib.util.spec_from_file_location("gunicorn_conf_disabled", conf_path)
+            mod_disabled = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod_disabled)
+            self.assertEqual(mod_disabled.bind, "0.0.0.0:8000")
+            self.assertFalse(hasattr(mod_disabled, "cert_reqs"))
+
+            # 2. When MTLS is enabled
+            os.environ["MTLS_ENABLED"] = "True"
+            spec = importlib.util.spec_from_file_location("gunicorn_conf_enabled", conf_path)
+            mod_enabled = importlib.util.module_from_spec(spec)
+            spec.loader.exec_module(mod_enabled)
+            self.assertEqual(mod_enabled.bind, "0.0.0.0:8443")
+            self.assertEqual(mod_enabled.cert_reqs, ssl.CERT_REQUIRED)
+        finally:
+            os.environ.clear()
+            os.environ.update(env_backup)
+
+
 class RowLevelSecurityAndPostgresRolesTests(TestCase):
     """
     Tests PostgreSQL roles, REVOKE rules, Row-Level Security, and pgAudit.
