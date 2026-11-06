@@ -1,0 +1,35 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Appeal Grade - {{ grade.assessment.title }} - Kura{% endblock %}
+
+{% block content %}
+<div class="max-w-xl mx-auto space-y-6">
+    <div class="card bg-base-100 border border-base-300">
+        <div class="card-body gap-4 p-4 sm:p-6">
+            <span class="badge badge-primary font-mono text-xs">{{ grade.assessment.section.module.course.code }}</span>
+            <h1 class="card-title text-2xl font-bold mt-2">File Formal Grade Appeal</h1>
+            <p class="text-sm text-base-content/70">
+                Dispute assessment: <strong>{{ grade.assessment.title }}</strong> &bull; Released Score: <strong>{{ grade.score }} / {{ grade.assessment.max_score }}</strong>
+            </p>
+
+            <form method="post" class="mt-4 space-y-4">
+                {% csrf_token %}
+
+                <div class="form-control">
+                    <label for="id_reason" class="label"><span class="label-text font-medium text-sm">Detailed Appeal Grounds</span></label>
+                    {{ form.reason }}
+                    {% if form.reason.errors %}
+                    <label class="label"><span class="label-text-alt text-error">{{ form.reason.errors.0 }}</span></label>
+                    {% endif %}
+                </div>
+
+                <div class="card-actions justify-end mt-4">
+                    <a href="{% url 'kura:student_grades' %}" class="btn btn-ghost btn-sm">Cancel</a>
+                    <button type="submit" class="btn btn-primary btn-sm">Submit Appeal</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

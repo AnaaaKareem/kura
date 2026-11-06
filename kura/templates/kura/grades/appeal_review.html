@@ -1,0 +1,44 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Review Appeal - {{ appeal.grade.student.email }} - Kura{% endblock %}
+
+{% block content %}
+<div class="max-w-xl mx-auto space-y-6">
+    <div class="card bg-base-100 border border-base-300">
+        <div class="card-body gap-4 p-4 sm:p-6">
+            <span class="badge badge-primary font-mono text-xs">{{ appeal.grade.assessment.section.module.course.code }}</span>
+            <h1 class="card-title text-xl font-bold mt-2">Review Student Grade Appeal</h1>
+            <p class="text-sm text-base-content/70">
+                Student: <strong>{{ appeal.grade.student.get_full_name|default:appeal.grade.student.email }}</strong> &bull;
+                Assessment: <strong>{{ appeal.grade.assessment.title }}</strong> &bull;
+                Current Score: <strong>{{ appeal.grade.score }}</strong>
+            </p>
+
+            <div class="p-3 bg-base-200 rounded-box text-xs mt-3">
+                <span class="font-bold text-base-content/70 uppercase">Student's Statement:</span>
+                <p class="mt-1 whitespace-pre-wrap">{{ appeal.reason }}</p>
+            </div>
+
+            <form method="post" class="mt-4 space-y-4">
+                {% csrf_token %}
+
+                <div class="form-control">
+                    <label for="id_status" class="label"><span class="label-text font-medium text-xs">Verdict</span></label>
+                    {{ form.status }}
+                </div>
+
+                <div class="form-control">
+                    <label for="id_response" class="label"><span class="label-text font-medium text-xs">Written Response & Notes</span></label>
+                    {{ form.response }}
+                </div>
+
+                <div class="card-actions justify-end mt-4">
+                    <a href="{% url 'kura:course_grades' appeal.grade.assessment.section.module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
+                    <button type="submit" class="btn btn-primary btn-sm">Record Verdict</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

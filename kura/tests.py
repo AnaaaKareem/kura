@@ -1047,6 +1047,121 @@ class InstructorAndTAGradingTests(TestCase):
         self.assertFalse(GradeHistory.objects.filter(grade=grade).exists())
 
 
+class StudentViewGradesTests(TestCase):
+    """
+    Tests Student grade view and visibility isolation.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.instructor = make_user("Instructor", mfa_enabled=True)
+        self.student_a = make_user("Student", mfa_enabled=True)
+        self.student_b = make_user("Student", mfa_enabled=True)
+        self.dept = Department.objects.create(name="Law", code="LAW")
+
+        StudentProfile.objects.create(user=self.student_a, department=self.dept, current_level="level_4", matriculation_year=2026)
+        StudentProfile.objects.create(user=self.student_b, department=self.dept, current_level="level_4", matriculation_year=2026)
+
+        self.course = Course.objects.create(
+            department=self.dept,
+            code="LAW101",
+            title="Constitutional Law",
+            semester="1",
+            academic_year=2026,
+            is_published=True,
+            published_by=self.instructor,
+            published_at=timezone.now(),
+        )
+        CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True)
+        Enrollment.objects.create(course=self.course, student=self.student_a, status=EnrollmentStatus.ACTIVE)
+        Enrollment.objects.create(course=self.course, student=self.student_b, status=EnrollmentStatus.ACTIVE)
+
+        self.module = Module.objects.create(course=self.course, title="Rights", is_visible=True)
+        self.section = ModuleSection.objects.create(module=self.module, title="Moot Court", section_type="coursework")
+
+        self.assessment_1 = Assessment.objects.create(
+            section=self.section, title="Draft Quiz", component_type=GradeComponentType.QUIZ,
+            max_score=Decimal("20.00"), max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(hours=1),
+            duration_minutes=30, created_by=self.instructor,
+        )
+        self.assessment_2 = Assessment.objects.create(
+            section=self.section, title="Finalized Brief", component_type=GradeComponentType.COURSEWORK,
+            max_score=Decimal("40.00"), max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(hours=1),
+            duration_minutes=30, created_by=self.instructor,
+        )
+        self.assessment_3 = Assessment.objects.create(
+            section=self.section, title="Released Moot", component_type=GradeComponentType.EXAM,
+            max_score=Decimal("100.00"), max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(hours=1),
+            duration_minutes=60, created_by=self.instructor,
+        )
+
+        att_1 = AssessmentAttempt.objects.create(assessment=self.assessment_1, student=self.student_a, attempt_no=1, status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1")
+        att_2 = AssessmentAttempt.objects.create(assessment=self.assessment_2, student=self.student_a, attempt_no=1, status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1")
+        att_3 = AssessmentAttempt.objects.create(assessment=self.assessment_3, student=self.student_a, attempt_no=1, status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1")
+        att_b = AssessmentAttempt.objects.create(assessment=self.assessment_3, student=self.student_b, attempt_no=1, status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1")
+
+        # Student A grades across all 3 statuses
+        Grade.objects.create(assessment=self.assessment_1, student=self.student_a, attempt=att_1, score=Decimal("18.00"), status=GradeStatus.DRAFT)
+        Grade.objects.create(assessment=self.assessment_2, student=self.student_a, attempt=att_2, score=Decimal("35.00"), status=GradeStatus.FINALIZED)
+        Grade.objects.create(assessment=self.assessment_3, student=self.student_a, attempt=att_3, score=Decimal("94.00"), status=GradeStatus.RELEASED)
+
+        # Student B released grade
+        Grade.objects.create(assessment=self.assessment_3, student=self.student_b, attempt=att_b, score=Decimal("77.00"), status=GradeStatus.RELEASED)
+
+
+class GradeAppealsTests(TestCase):
+    """
+    Tests Student grade appeals and reviewer resolution.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.instructor = make_user("Instructor", mfa_enabled=True)
+        self.student_a = make_user("Student", mfa_enabled=True)
+        self.student_b = make_user("Student", mfa_enabled=True)
+        self.dept = Department.objects.create(name="Economics", code="ECON")
+
+        StudentProfile.objects.create(user=self.student_a, department=self.dept, current_level="level_4", matriculation_year=2026)
+        StudentProfile.objects.create(user=self.student_b, department=self.dept, current_level="level_4", matriculation_year=2026)
+
+        self.course = Course.objects.create(
+            department=self.dept,
+            code="ECON201",
+            title="Macroeconomics",
+            semester="1",
+            academic_year=2026,
+            is_published=True,
+            published_by=self.instructor,
+            published_at=timezone.now(),
+        )
+        CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True)
+        Enrollment.objects.create(course=self.course, student=self.student_a, status=EnrollmentStatus.ACTIVE)
+        Enrollment.objects.create(course=self.course, student=self.student_b, status=EnrollmentStatus.ACTIVE)
+
+        self.module = Module.objects.create(course=self.course, title="Fiscal Policy", is_visible=True)
+        self.section = ModuleSection.objects.create(module=self.module, title="Midterm", section_type="exam")
+        self.assessment = Assessment.objects.create(
+            section=self.section, title="Macro Exam", component_type=GradeComponentType.EXAM,
+            max_score=Decimal("100.00"), max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(hours=1),
+            duration_minutes=60, created_by=self.instructor,
+        )
+
+        att_a = AssessmentAttempt.objects.create(assessment=self.assessment, student=self.student_a, attempt_no=1, status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1")
+        att_b = AssessmentAttempt.objects.create(assessment=self.assessment, student=self.student_b, attempt_no=1, status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1")
+
+        self.grade_a = Grade.objects.create(assessment=self.assessment, student=self.student_a, attempt=att_a, score=Decimal("70.00"), status=GradeStatus.RELEASED)
+        self.grade_b = Grade.objects.create(assessment=self.assessment, student=self.student_b, attempt=att_b, score=Decimal("65.00"), status=GradeStatus.RELEASED)
+
+    def test_student_cannot_appeal_someone_elses_grade(self):
+        # Student A attempts to appeal Student B's grade; receives 404 Not Found (IDOR defense).
+        self.client.force_login(self.student_a)
+        response = self.client.post(
+            reverse("kura:grade_appeal_create", kwargs={"grade_id": self.grade_b.id}),
+            {"reason": "Unauthorized appeal attempt."},
+        )
+        self.assertEqual(response.status_code, 404)
+
+
 class SecurityLoggingTests(TestCase):
     """
     Tests Security event logging without leaking sensitive credentials.
@@ -1731,6 +1846,12 @@ class VaultTOTPSeedTests(TestCase):
         totp.time = time.time()
         return str(totp.token()).zfill(self.device.digits)
 
+    def test_login_accepts_code_from_the_vault_seed(self):
+        response = self.client.post(reverse("kura:login"), {"email": self.user.email, "password": "ValidPassword123!"})
+        self.assertRedirects(response, reverse("kura:mfa_verify"))
+        response = self.client.post(reverse("kura:mfa_verify"), {"code": self.current_code(self.seed_hex)})
+        self.assertRedirects(response, reverse("kura:home"))
+
     def test_same_code_cannot_be_used_twice(self):
         code = self.current_code(self.seed_hex)
         self.assertTrue(verify_totp_code(self.device, self.user, code))
@@ -1753,6 +1874,14 @@ class VaultTOTPSeedTests(TestCase):
             self.assertFalse(verify_totp_code(self.device, self.user, self.current_code(self.seed_hex)))
         self.device.refresh_from_db()
         self.assertEqual(self.device.throttling_failure_count, 0)
+
+    def test_recovery_code_still_works_when_vault_is_down(self):
+        static_device = StaticDevice.objects.create(user=self.user, name="recovery", confirmed=True)
+        StaticToken.objects.create(device=static_device, token="ABCD1234")
+        self.client.post(reverse("kura:login"), {"email": self.user.email, "password": "ValidPassword123!"})
+        with patch("kura.views.decrypt_mfa_secret", side_effect=ValidationError("Vault down")):
+            response = self.client.post(reverse("kura:mfa_verify"), {"code": "ABCD1234"})
+        self.assertRedirects(response, reverse("kura:home"))
 
     def test_setup_saves_only_vault_ciphertext(self):
         new_user = make_user("Student", mfa_enabled=False)
@@ -2134,6 +2263,26 @@ class EmailNotificationTests(TestCase):
         call_command("queue_due_reminders", stdout=StringIO())
         self.assertFalse(OutgoingEmail.objects.filter(event_key__contains=str(later.id)).exists())
         self.assertEqual(OutgoingEmail.objects.count(), 0)
+
+    # --- appeal decision ------------------------------------------------------
+
+    def test_appeal_decision_is_emailed_to_the_student(self):
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment, student=self.student, expires_at=timezone.now(), ip_address="127.0.0.1",
+        )
+        grade = Grade.objects.create(
+            assessment=self.assessment, student=self.student, attempt=attempt, score=Decimal("61"),
+            status=GradeStatus.RELEASED,
+        )
+        appeal = GradeAppeal.objects.create(grade=grade, reason="Please review")
+        self.client.force_login(self.instructor)
+        self.client.post(
+            reverse("kura:grade_appeal_review", kwargs={"appeal_id": appeal.id}),
+            {"status": "approved", "response": "Marks added."},
+        )
+        notice = OutgoingEmail.objects.get(event_key__startswith=f"appeal-decided:{appeal.id}:")
+        self.assertEqual(notice.to_email, self.student.email)
+        self.assertNotIn("61", notice.body)
 
     # --- send_queued_emails ---------------------------------------------------
 

@@ -127,4 +127,7 @@ urlpatterns = [
     path("attempts/<uuid:attempt_id>/grade/", views.grade_entry_view, name="grade_entry"),
     path("grades/<uuid:grade_id>/finalize/", views.grade_finalize_view, name="grade_finalize"),
     path("grades/<uuid:grade_id>/release/", views.grade_release_view, name="grade_release"),
+    path("grades/my/", views.student_grades_view, name="student_grades"),
+    path("grades/<uuid:grade_id>/appeal/", views.grade_appeal_create_view, name="grade_appeal_create"),
+    path("appeals/<uuid:appeal_id>/review/", views.grade_appeal_review_view, name="grade_appeal_review"),
 ]
