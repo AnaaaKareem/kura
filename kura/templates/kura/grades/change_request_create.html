@@ -1,0 +1,45 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Request Grade Change - {{ grade.student.email }} - Kura{% endblock %}
+
+{% block content %}
+<div class="max-w-xl mx-auto space-y-6">
+    <div class="card bg-base-100 border border-base-300">
+        <div class="card-body gap-4 p-4 sm:p-6">
+            <span class="badge badge-primary font-mono text-xs">{{ grade.assessment.section.module.course.code }}</span>
+            <h1 class="card-title text-xl font-bold mt-2">Request Post-Release Grade Modification</h1>
+            <p class="text-sm text-base-content/70">
+                Student: <strong>{{ grade.student.get_full_name|default:grade.student.email }}</strong> &bull;
+                Assessment: <strong>{{ grade.assessment.title }}</strong> &bull;
+                Current Score: <strong>{{ grade.score }}</strong>
+            </p>
+            <p class="text-xs text-base-content/60 mt-1">
+                Security rule: Released grades cannot be directly modified. A formal change request must be submitted for Department Head approval.
+            </p>
+
+            <form method="post" class="mt-4 space-y-4">
+                {% csrf_token %}
+
+                <div class="form-control">
+                    <label for="id_proposed_score" class="label"><span class="label-text font-medium text-xs">Proposed New Score</span></label>
+                    {{ form.proposed_score }}
+                    {% if form.proposed_score.errors %}
+                    <label class="label"><span class="label-text-alt text-error">{{ form.proposed_score.errors.0 }}</span></label>
+                    {% endif %}
+                </div>
+
+                <div class="form-control">
+                    <label for="id_reason" class="label"><span class="label-text font-medium text-xs">Justification for Department Head</span></label>
+                    {{ form.reason }}
+                </div>
+
+                <div class="card-actions justify-end mt-4">
+                    <a href="{% url 'kura:course_grades' grade.assessment.section.module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
+                    <button type="submit" class="btn btn-primary btn-sm">Submit Change Request</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}
+

@@ -1162,6 +1162,61 @@ class GradeAppealsTests(TestCase):
         self.assertEqual(response.status_code, 404)
 
 
+class GradeChangeRequestsTests(TestCase):
+    """
+    Tests Post-release grade change requests and department head approval.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.head = make_user("Department head", mfa_enabled=True)
+        self.instructor = make_user("Instructor", mfa_enabled=True)
+        self.student = make_user("Student", mfa_enabled=True)
+        self.dept = Department.objects.create(name="Psychology", code="PSYC", head_user=self.head)
+
+        StudentProfile.objects.create(user=self.student, department=self.dept, current_level="level_4", matriculation_year=2026)
+        self.course = Course.objects.create(
+            department=self.dept,
+            code="PSYC101",
+            title="Cognitive Psychology",
+            semester="1",
+            academic_year=2026,
+            is_published=True,
+            published_by=self.head,
+            published_at=timezone.now(),
+        )
+        CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True)
+        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
+
+        self.module = Module.objects.create(course=self.course, title="Memory", is_visible=True)
+        self.section = ModuleSection.objects.create(module=self.module, title="Exam", section_type="exam")
+        self.assessment = Assessment.objects.create(
+            section=self.section, title="Memory Exam", component_type=GradeComponentType.EXAM,
+            max_score=Decimal("100.00"), max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(hours=1),
+            duration_minutes=60, created_by=self.instructor,
+        )
+        att = AssessmentAttempt.objects.create(assessment=self.assessment, student=self.student, attempt_no=1, status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1")
+        self.grade = Grade.objects.create(assessment=self.assessment, student=self.student, attempt=att, score=Decimal("75.00"), status=GradeStatus.RELEASED)
+
+    def test_instructor_cannot_approve_own_change_request(self):
+        # Instructor tries to approve their own request; receives 403 Forbidden.
+        change_request = GradeChangeRequest.objects.create(
+            grade=self.grade,
+            requested_by=self.instructor,
+            current_score=Decimal("75.00"),
+            proposed_score=Decimal("85.00"),
+            reason="Self-approval attempt.",
+            status=ChangeRequestStatus.PENDING,
+        )
+
+        self.client.force_login(self.instructor)
+        response = self.client.post(
+            reverse("kura:grade_change_request_review", kwargs={"request_id": change_request.id}),
+            {"decision": ChangeRequestStatus.APPROVED},
+        )
+        self.assertEqual(response.status_code, 403)
+
+
 class SecurityLoggingTests(TestCase):
     """
     Tests Security event logging without leaking sensitive credentials.
