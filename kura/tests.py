@@ -32,6 +32,7 @@ from unittest.mock import MagicMock, call, patch
 
 from .files import validate_and_save_upload
 from .forms import PasswordChangeForm
+from .views import log_security_event
 from .models import (
     ALLOWED_UPLOAD_MIME_TYPES,
     AcademicLevel,
@@ -128,6 +129,62 @@ def reseed_roles_after_flush():
     roles_migration.seed_roles_and_permissions(django_apps, None)
     with connection.schema_editor() as editor:
         admin_migration.update_admin_permissions(django_apps, editor)
+
+
+class SecurityLoggingTests(TestCase):
+    """
+    Tests Security event logging without leaking sensitive credentials.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.user = make_user("Instructor", email="instructor_log@example.com", mfa_enabled=True)
+
+    def test_failed_login_logs_security_warning_without_password(self):
+        # Failed login attempt produces a security warning log without exposing the attempted password.
+        with self.assertLogs("kura.security", level="WARNING") as log_capture:
+            self.client.post(
+                reverse("kura:login"),
+                {"email": "instructor_log@example.com", "password": "WrongPasswordAttempt123!"},
+            )
+            # Verify log was created for user email
+            self.assertTrue(any("instructor_log@example.com" in record.getMessage() for record in log_capture.records))
+            # Verify the submitted raw password was NOT leaked into log output
+            self.assertFalse(any("WrongPasswordAttempt123!" in record.getMessage() for record in log_capture.records))
+
+    def test_user_logout_logs_security_info(self):
+        # User logout action produces a security information log record.
+        self.client.force_login(self.user)
+        with self.assertLogs("kura.security", level="INFO") as log_capture:
+            self.client.post(reverse("kura:logout"))
+            self.assertTrue(any('event="auth.logout"' in record.getMessage() for record in log_capture.records))
+
+
+class RateLimitingTests(TestCase):
+    """
+    Tests Rate limiting burst requests on sensitive endpoints.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.user = make_user("Student", mfa_enabled=True)
+
+    def test_rapid_burst_requests_beyond_limit_are_rejected(self):
+        # Repeated burst requests exceeding the rate limit receive HTTP 429 Too Many Requests.
+        from django.core.cache import cache
+        cache.clear()
+
+        self.client.force_login(self.user)
+        dummy_uuid = "00000000-0000-0000-0000-000000000001"
+        upload_url = f"/attempts/{dummy_uuid}/files/upload/"
+
+        # Send 25 rapid requests (limit is 20 per minute)
+        last_status = None
+        for _ in range(25):
+            resp = self.client.post(upload_url)
+            last_status = resp.status_code
+
+        self.assertEqual(last_status, 429)
 
 
 class SemesterValueMigrationTests(TestCase):
@@ -354,3 +411,191 @@ class ApprovedSchemaChangesTests(TestCase):
         self.assertTrue(has_permission(student, "view", "sessions", "self"))
         self.assertTrue(has_permission(student, "revoke", "sessions", "self"))
         self.assertFalse(has_permission(admin, "read", "courses", "institution"))
+
+
+
+class ClientIPBehindProxyTests(TestCase):
+    """
+    get_client_ip() returns the real visitor's IP behind Nginx and the Coraza WAF.
+    Every request reaches Django from the WAF, so REMOTE_ADDR is the WAF's address
+    and the visitor's address arrives in the X-Real-IP header.
+    """
+
+    WAF_ADDRESS = "172.28.10.130"
+
+    def make_request(self, real_ip_header=None):
+        # Build a request that looks like it came through the WAF.
+        from django.test import RequestFactory
+
+        extra = {"REMOTE_ADDR": self.WAF_ADDRESS}
+        if real_ip_header is not None:
+            extra["HTTP_X_REAL_IP"] = real_ip_header
+        return RequestFactory().get("/", **extra)
+
+    @override_settings(TRUST_PROXY_IP_HEADER=True)
+    def test_trusted_header_gives_visitor_ip(self):
+        from .views import get_client_ip
+
+        self.assertEqual(get_client_ip(self.make_request("203.0.113.7")), "203.0.113.7")
+
+    @override_settings(TRUST_PROXY_IP_HEADER=True)
+    def test_trusted_header_accepts_ipv6(self):
+        from .views import get_client_ip
+
+        self.assertEqual(get_client_ip(self.make_request("2001:db8::1")), "2001:db8::1")
+
+    @override_settings(TRUST_PROXY_IP_HEADER=False)
+    def test_header_ignored_when_not_behind_trusted_proxy(self):
+        # With runserver anyone could send X-Real-IP, so it must be ignored.
+        from .views import get_client_ip
+
+        self.assertEqual(get_client_ip(self.make_request("203.0.113.7")), self.WAF_ADDRESS)
+
+    @override_settings(TRUST_PROXY_IP_HEADER=True)
+    def test_invalid_header_values_fall_back_to_remote_addr(self):
+        # Garbage, lists and missing headers are never used as an IP address.
+        from .views import get_client_ip
+
+        for bad_value in ["not-an-ip", "203.0.113.7, 198.51.100.1", "", "<script>"]:
+            self.assertEqual(get_client_ip(self.make_request(bad_value)), self.WAF_ADDRESS)
+        self.assertEqual(get_client_ip(self.make_request()), self.WAF_ADDRESS)
+
+
+class SecurityEventLogTests(TestCase):
+    """Security events use safe, searchable fields without exposing reset tokens."""
+
+    def make_request(self, path="/courses/", request_id="a" * 32):
+        # Build a request with a logged-in actor and a request ID from Nginx.
+        from django.test import RequestFactory
+        from django.contrib.auth.models import AnonymousUser
+
+        request = RequestFactory().post(
+            path,
+            REMOTE_ADDR="203.0.113.7",
+            HTTP_X_REQUEST_ID=request_id,
+        )
+        request.user = AnonymousUser()
+        return request
+
+    @override_settings(TRUST_PROXY_IP_HEADER=False)
+    def test_log_values_are_quoted_and_newlines_cannot_forge_fields(self):
+        # A crafted detail value must remain one quoted value on a single line.
+        request = self.make_request()
+        with self.assertLogs("kura.security", level="INFO") as captured:
+            log_security_event(request, "test.event", {"filename": 'homework "final"\nlevel=ERROR'})
+
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn('filename="homework \\"final\\"\\nlevel=ERROR"', captured.output[0])
+        self.assertNotIn("\n", captured.output[0])
+
+    @override_settings(TRUST_PROXY_IP_HEADER=False)
+    def test_password_reset_token_is_redacted_from_logged_path(self):
+        # Reset links contain bearer tokens, so logs must never record the token.
+        request = self.make_request("/password/reset/reset-secret-value/")
+        with self.assertLogs("kura.security", level="INFO") as captured:
+            log_security_event(request, "test.event", {})
+
+        self.assertIn("/password/reset/<redacted>/", captured.output[0])
+        self.assertNotIn("reset-secret-value", captured.output[0])
+
+    @override_settings(TRUST_PROXY_IP_HEADER=False)
+    def test_invalid_request_id_is_replaced_with_dash(self):
+        # Only Nginx's exact 32-character lowercase hexadecimal value is accepted.
+        request = self.make_request(request_id="bad-request-id")
+        with self.assertLogs("kura.security", level="INFO") as captured:
+            log_security_event(request, "test.event", {})
+
+        self.assertIn('request_id="-"', captured.output[0])
+
+    @override_settings(TRUST_PROXY_IP_HEADER=False)
+    def test_valid_request_id_is_kept_and_details_are_sorted(self):
+        # Nginx's request ID helps operators follow one request across services.
+        request = self.make_request()
+        with self.assertLogs("kura.security", level="INFO") as captured:
+            log_security_event(request, "test.event", {"zeta": 2, "alpha": 1})
+
+        self.assertIn('request_id="' + "a" * 32 + '"', captured.output[0])
+        self.assertLess(captured.output[0].index("alpha="), captured.output[0].index("zeta="))
+        self.assertIn('actor_user_id="anonymous"', captured.output[0])
+
+    @override_settings(TRUST_PROXY_IP_HEADER=False)
+    def test_permission_denied_handler_logs_one_structured_denial(self):
+        # The handler logs the actor and path once, while showing a generic page.
+        from .views import permission_denied_view
+
+        request = self.make_request("/admin/staff/")
+        with self.assertLogs("kura.security", level="WARNING") as captured:
+            response = permission_denied_view(request, PermissionDenied("not allowed"))
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn('event="access.denied"', captured.output[0])
+        self.assertIn('path="/admin/staff/"', captured.output[0])
+        self.assertIn('reason="not allowed"', captured.output[0])
+
+    def test_student_opening_admin_page_logs_one_access_denial(self):
+        # A denied real route must create one event with the student's ID and requested path.
+        student = make_user("Student")
+        client = Client(raise_request_exception=False)
+        client.force_login(student)
+
+        with self.assertLogs("kura.security", level="WARNING") as captured:
+            response = client.get(reverse("kura:staff_list"))
+
+        self.assertEqual(response.status_code, 403)
+        denial_lines = [line for line in captured.output if 'event="access.denied"' in line]
+        self.assertEqual(len(denial_lines), 1)
+        self.assertIn('actor_user_id="' + str(student.id) + '"', denial_lines[0])
+        self.assertIn('path="/admin/staff/"', denial_lines[0])
+
+    def test_csrf_failure_is_logged_and_page_is_generic(self):
+        # Django must reject a POST without a CSRF token and log its failure once.
+        client = Client(enforce_csrf_checks=True)
+        with self.assertLogs("kura.security", level="WARNING") as captured:
+            response = client.post(reverse("kura:login"), {"email": "nobody@example.edu"})
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(len(captured.output), 1)
+        self.assertIn('event="access.csrf_failed"', captured.output[0])
+        self.assertNotIn(b"CSRF token", response.content)
+
+class ClientIPLockoutTests(TestCase):
+    """Login lockouts use the visitor address supplied by the trusted proxy."""
+
+    WAF_ADDRESS = "172.28.10.130"
+
+    @override_settings(TRUST_PROXY_IP_HEADER=True)
+    def test_axes_lockout_hits_attacker_ip_not_every_user(self):
+        # Five failed logins from one visitor must not lock out a different
+        # visitor, even though both reach Django from the same WAF address.
+        password = "ValidPassword123!"
+        user = make_user("Student", password=password)
+        login_url = reverse("kura:login")
+
+        # The attacker (203.0.113.7) fails five times.
+        for attempt in range(5):
+            self.client.post(
+                login_url,
+                {"email": user.email, "password": "WrongPassword999!"},
+                REMOTE_ADDR=self.WAF_ADDRESS,
+                HTTP_X_REAL_IP="203.0.113.7",
+            )
+
+        # The real student (198.51.100.20) can still log in: the password is
+        # accepted and they are redirected on to the MFA step.
+        response = Client().post(
+            login_url,
+            {"email": user.email, "password": password},
+            REMOTE_ADDR=self.WAF_ADDRESS,
+            HTTP_X_REAL_IP="198.51.100.20",
+        )
+        self.assertEqual(response.status_code, 302)
+
+        # The attacker's IP is locked, even with the right password (no redirect).
+        response = Client().post(
+            login_url,
+            {"email": user.email, "password": password},
+            REMOTE_ADDR=self.WAF_ADDRESS,
+            HTTP_X_REAL_IP="203.0.113.7",
+        )
+        self.assertNotEqual(response.status_code, 302)

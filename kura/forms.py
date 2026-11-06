@@ -20,6 +20,75 @@ from .models import (
 )
 
 
+class AdminCourseFilterForm(forms.Form):
+    """Validate administrator course catalog filters."""
+
+    department = forms.ModelChoiceField(queryset=Department.objects.all(), required=False)
+    semester = forms.ChoiceField(choices=[("", "All semesters")] + list(SemesterType.choices), required=False)
+    year = forms.IntegerField(required=False, min_value=1900, max_value=9999)
+    published = forms.ChoiceField(choices=[("", "All statuses"), ("yes", "Published"), ("no", "Draft")], required=False)
+
+
+class AdminStaffFilterForm(forms.Form):
+    """Validate administrator staff account filters."""
+
+    q = forms.CharField(required=False, max_length=150, label="Name or email")
+    role = forms.ChoiceField(
+        required=False,
+        choices=[
+            ("", "All roles"),
+            ("Admin", "Admin"),
+            ("Registrar", "Registrar"),
+            ("Department head", "Department head"),
+            ("Instructor", "Instructor"),
+            ("Teaching assistant", "Teaching assistant"),
+        ],
+    )
+    department = forms.ModelChoiceField(queryset=Department.objects.all(), required=False)
+    status = forms.ChoiceField(
+        required=False,
+        choices=[("", "All statuses"), ("active", "Active"), ("locked", "Locked"), ("deactivated", "Deactivated")],
+    )
+
+
+class AdminSessionFilterForm(forms.Form):
+    """Validate the search and filters for the administrator's session list."""
+
+    # Limit the inputs used to search session records.
+    q = forms.CharField(required=False, max_length=150, label="Name or email")
+    ip = forms.CharField(required=False, max_length=45, label="IP address starts with")
+    role = forms.ChoiceField(
+        required=False,
+        choices=[
+            ("", "All roles"),
+            ("Admin", "Admin"),
+            ("Registrar", "Registrar"),
+            ("Department head", "Department head"),
+            ("Instructor", "Instructor"),
+            ("Teaching assistant", "Teaching assistant"),
+            ("Student", "Student"),
+        ],
+    )
+    state = forms.ChoiceField(
+        required=False,
+        choices=[
+            ("active", "Active"),
+            ("revoked", "Revoked"),
+            ("expired", "Expired"),
+        ],
+        initial="active",
+    )
+
+
+class AdminSessionRevokeForm(forms.Form):
+    """Validate which session or user's sessions an administrator wants to end."""
+
+    # Use UUID fields so malformed identifiers cannot reach the database lookup.
+    action = forms.ChoiceField(choices=[("one", "One session"), ("all", "All sessions")])
+    session_id = forms.UUIDField(required=False)
+    user_id = forms.UUIDField(required=False)
+
+
 class LoginForm(forms.Form):
     """
     Form for user authentication with email and password.
@@ -49,9 +118,6 @@ class LoginForm(forms.Form):
         ),
     )
 
-
-from django.contrib.auth.password_validation import validate_password
-from django.core.exceptions import ValidationError
 
 class PasswordChangeForm(forms.Form):
     """
@@ -202,7 +268,6 @@ class PasswordResetConfirmForm(forms.Form):
         return cleaned_data
 
 
-
 class MFAVerifyForm(forms.Form):
     """
     Form for submitting a TOTP authenticator code or recovery backup token.
@@ -220,76 +285,6 @@ class MFAVerifyForm(forms.Form):
                 "autofocus": "autofocus",
             }
         ),
-    )
-
-
-class AdminSessionFilterForm(forms.Form):
-    """Validate the search and filters for the administrator's session list."""
-
-    # Limit the inputs used to search session records.
-    q = forms.CharField(required=False, max_length=150, label="Name or email")
-    ip = forms.CharField(required=False, max_length=45, label="IP address starts with")
-    role = forms.ChoiceField(
-        required=False,
-        choices=[
-            ("", "All roles"),
-            ("Admin", "Admin"),
-            ("Registrar", "Registrar"),
-            ("Department head", "Department head"),
-            ("Instructor", "Instructor"),
-            ("Teaching assistant", "Teaching assistant"),
-            ("Student", "Student"),
-        ],
-    )
-    state = forms.ChoiceField(
-        required=False,
-        choices=[
-            ("active", "Active"),
-            ("revoked", "Revoked"),
-            ("expired", "Expired"),
-        ],
-        initial="active",
-    )
-
-
-class AdminSessionRevokeForm(forms.Form):
-    """Validate which session or user's sessions an administrator wants to end."""
-
-    # Use UUID fields so malformed identifiers cannot reach the database lookup.
-    action = forms.ChoiceField(choices=[("one", "One session"), ("all", "All sessions")])
-    session_id = forms.UUIDField(required=False)
-    user_id = forms.UUIDField(required=False)
-
-
-
-class AdminCourseFilterForm(forms.Form):
-    """Validate administrator course catalog filters."""
-
-    department = forms.ModelChoiceField(queryset=Department.objects.all(), required=False)
-    semester = forms.ChoiceField(choices=[("", "All semesters")] + list(SemesterType.choices), required=False)
-    year = forms.IntegerField(required=False, min_value=1900, max_value=9999)
-    published = forms.ChoiceField(choices=[("", "All statuses"), ("yes", "Published"), ("no", "Draft")], required=False)
-
-
-class AdminStaffFilterForm(forms.Form):
-    """Validate administrator staff account filters."""
-
-    q = forms.CharField(required=False, max_length=150, label="Name or email")
-    role = forms.ChoiceField(
-        required=False,
-        choices=[
-            ("", "All roles"),
-            ("Admin", "Admin"),
-            ("Registrar", "Registrar"),
-            ("Department head", "Department head"),
-            ("Instructor", "Instructor"),
-            ("Teaching assistant", "Teaching assistant"),
-        ],
-    )
-    department = forms.ModelChoiceField(queryset=Department.objects.all(), required=False)
-    status = forms.ChoiceField(
-        required=False,
-        choices=[("", "All statuses"), ("active", "Active"), ("locked", "Locked"), ("deactivated", "Deactivated")],
     )
 
 
@@ -364,31 +359,6 @@ class StaffCreateForm(forms.Form):
         if User.objects.filter(email=email).exists():
             raise forms.ValidationError("An account with this email already exists.")
         return email
-
-
-class AdminCourseForm(forms.ModelForm):
-    """Validate the course details an administrator may create or edit."""
-
-    # Only these course fields can be changed by the administrator's form.
-    class Meta:
-        model = Course
-        fields = ["department", "code", "title", "description", "semester", "academic_year"]
-        # Keep the description within the form card on narrow screens.
-        widgets = {
-            "description": forms.Textarea(
-                attrs={
-                    "class": "textarea textarea-bordered box-border w-full min-w-0 max-w-full",
-                }
-            ),
-        }
-
-    def clean_code(self):
-        """
-        Normalizes a course code before it is saved.
-        """
-        # Keep course codes consistent with the existing course-creation form.
-        return self.cleaned_data["code"].strip().upper()
-
 
 
 class StudentCreateForm(forms.Form):
@@ -508,6 +478,29 @@ class EnrollmentForm(forms.Form):
     )
 
 
+class AdminCourseForm(forms.ModelForm):
+    """Validate the course details an administrator may create or edit."""
+
+    # Only these course fields can be changed by the administrator's form.
+    class Meta:
+        model = Course
+        fields = ["department", "code", "title", "description", "semester", "academic_year"]
+        # Keep the description within the form card on narrow screens.
+        widgets = {
+            "description": forms.Textarea(
+                attrs={
+                    "class": "textarea textarea-bordered box-border w-full min-w-0 max-w-full",
+                }
+            ),
+        }
+
+    def clean_code(self):
+        """
+        Normalizes a course code before it is saved.
+        """
+        # Keep course codes consistent with the existing course-creation form.
+        return self.cleaned_data["code"].strip().upper()
+
 
 class CourseCreateForm(forms.Form):
     """
@@ -607,7 +600,6 @@ class CourseStaffAssignForm(forms.Form):
         required=False,
         widget=forms.CheckboxInput(attrs={"class": "checkbox checkbox-primary"}),
     )
-
 
 
 class TAAssignForm(forms.Form):
@@ -767,7 +759,6 @@ class MarkdownPreviewForm(forms.Form):
     content_body = forms.CharField(required=False, widget=forms.Textarea)
 
 
-
 class ScheduleForm(forms.Form):
     """
     Form for course instructors to define recurring class timetables.
@@ -836,7 +827,6 @@ class ScheduleForm(forms.Form):
             self.add_error("end_time", "Class end time must be strictly later than start time.")
 
         return cleaned_data
-
 
 
 class AttendanceSessionStartForm(forms.Form):
@@ -919,10 +909,6 @@ class ManualAttendanceForm(forms.Form):
         if not reason:
             raise forms.ValidationError("A written justification reason is required for manual roll entries.")
         return reason
-
-
-
-
 
 
 class AssessmentCreateForm(forms.Form):
@@ -1131,13 +1117,6 @@ class AssessmentQuestionForm(forms.Form):
         return cleaned_data
 
 
-class AssessmentQuestionAddForm(forms.Form):
-    """Validate the type and formset position for a blank question card."""
-
-    type = forms.ChoiceField(choices=AssessmentQuestionForm.base_fields["type"].choices)
-    index = forms.IntegerField(min_value=0, max_value=19)
-
-
 # Cap the formset so a forged request cannot create an unlimited number of forms.
 AssessmentQuestionFormSet = forms.formset_factory(
     AssessmentQuestionForm,
@@ -1176,8 +1155,6 @@ class AssessmentAttemptStartForm(forms.Form):
     )
 
 
-
-
 class AssessmentFileUploadForm(forms.Form):
     """
     Form for uploading files attached to assessments or student attempts.
@@ -1188,10 +1165,10 @@ class AssessmentFileUploadForm(forms.Form):
         widget=forms.FileInput(attrs={"class": "file-input file-input-bordered w-full"}),
     )
 
+
 class ScannedPaperStaffUploadForm(forms.Form):
     """Validate the student and scanned file selected by authorized course staff."""
 
     # The view restricts this empty queryset to students enrolled in its course.
     student = forms.ModelChoiceField(queryset=User.objects.none())
     file = forms.FileField()
-

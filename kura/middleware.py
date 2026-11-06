@@ -1,3 +1,6 @@
+import logging
+
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import get_user_model, logout
 from django.shortcuts import redirect
@@ -5,8 +8,10 @@ from django.urls import reverse
 from django.utils.crypto import constant_time_compare
 from django.utils import timezone
 from .models import UserSession
+from .views import get_client_ip, log_security_event
 
 User = get_user_model()
+
 
 class SessionValidationMiddleware:
     """
@@ -71,15 +76,11 @@ class SessionValidationMiddleware:
         return self.get_response(request)
 
 
-from django.conf import settings
-from django.contrib.auth.decorators import login_required
-from django.shortcuts import redirect
-from django.urls import reverse
-
-
 class SecurityEnforcementMiddleware:
     """
-    Forces users to change their password on their first login.
+    Enforces mandatory security onboarding for logged-in users:
+    forces password rotation on first login, and requires MFA setup
+    before granting access to any platform features.
     """
 
     def __init__(self, get_response):
@@ -107,6 +108,7 @@ class SecurityEnforcementMiddleware:
                 return redirect("kura:password_change")
             return self.get_response(request)
 
+        # Force mandatory MFA enrollment before accessing other pages.
         mfa_setup_url = reverse("kura:mfa_setup")
         mfa_complete_url = reverse("kura:mfa_setup_complete")
         if not request.user.mfa_enabled:
@@ -118,4 +120,81 @@ class SecurityEnforcementMiddleware:
         # Prevent browser caching of sensitive authenticated content.
         response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
         response["Pragma"] = "no-cache"
+        return response
+
+
+class RateLimitMiddleware:
+    """
+    Applies sliding-window rate limits on file uploads (20/min) and autosave calls (120/min)
+    to protect server capacity against bursts.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        path = request.path_info
+        # The real visitor's IP, not the WAF's (see get_client_ip in views.py).
+        client_ip = get_client_ip(request)
+        user_key = client_ip
+        if request.user.is_authenticated:
+            user_key = f"{request.user.id}"
+
+        limit = None
+        window = 60
+
+        if "upload" in path:
+            limit = 20
+            cache_key = f"rate_limit_upload_{user_key}"
+        elif "autosave" in path:
+            limit = 120
+            cache_key = f"rate_limit_autosave_{user_key}"
+
+        if limit:
+            from django.core.cache import cache
+            from django.http import HttpResponse
+
+            count = cache.get(cache_key, 0)
+            if count >= limit:
+                # Record only the rate-limit bucket, never a submitted filename or file data.
+                bucket = "upload" if "upload" in path else "autosave"
+                log_security_event(request, "ratelimit.hit", {"bucket": bucket}, logging.WARNING)
+                return HttpResponse("Rate limit exceeded. Please wait before retrying.", status=429)
+            cache.set(cache_key, count + 1, timeout=window)
+
+        return self.get_response(request)
+
+
+class RowLevelSecurityMiddleware:
+    """
+    Sets the active user ID in the PostgreSQL connection session for Row-Level Security.
+    Ensures database-level isolation so SQL queries only return records the user may view.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def __call__(self, request):
+        # Pass the current user ID to PostgreSQL for session-level RLS policies.
+        if request.user.is_authenticated:
+            from django.db import connection
+
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("SET kura.current_user_id = %s;", [str(request.user.id)])
+            except Exception:
+                pass
+
+        response = self.get_response(request)
+
+        # Reset session context after response to prevent connection pool leakage.
+        if request.user.is_authenticated:
+            from django.db import connection
+
+            try:
+                with connection.cursor() as cursor:
+                    cursor.execute("RESET kura.current_user_id;")
+            except Exception:
+                pass
+
         return response

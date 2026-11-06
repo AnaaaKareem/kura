@@ -1,21 +1,132 @@
 import hashlib
+import html
+import ipaddress
+import json
 import logging
+import re
 import secrets
+import time
+import urllib.parse
+import uuid
+from base64 import b32encode
+from decimal import Decimal
+import nh3
+import qrcode
+import qrcode.image.svg
+from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
-from django.core.mail import send_mail
 from django.contrib.auth.decorators import login_required
-from django.core.exceptions import PermissionDenied
-from django.http import HttpResponseForbidden, HttpResponseNotAllowed
+from django.core.mail import send_mail
+from django.core.exceptions import PermissionDenied, ValidationError
+from django.core.cache import caches
+from django.db import transaction
+from django.db.models import Avg, Prefetch, Q, Value
+from django.db.models.functions import Concat
+from django.http import HttpResponse, HttpResponseForbidden, HttpResponseNotAllowed
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django_otp.plugins.otp_static.models import StaticDevice, StaticToken
+from django_otp.oath import TOTP
+from django_otp.plugins.otp_totp.models import TOTPDevice
+from django_otp.util import random_hex
 from axes.handlers.proxy import AxesProxyHandler
-from .forms import LoginForm, PasswordChangeForm, PasswordResetRequestForm, PasswordResetConfirmForm
-from .models import Department, Role, User, UserRole, UserSession, PasswordResetToken, Schedule, Course, StudentProfile, Enrollment, GradeChangeRequest, CourseResult, GradeStatus, ChangeRequestStatus, CourseStaff, CourseStaffRole, Assessment, Grade, ModuleAttendanceSession, AttendanceRecord, AttendanceStatus, AssessmentAttempt
+
+from .files import create_download_response, validate_and_save_upload
+from .forms import (
+    AdminCourseForm,
+    AdminCourseFilterForm,
+    AdminStaffFilterForm,
+    AdminSessionFilterForm,
+    AdminSessionRevokeForm,
+    AssessmentAttemptStartForm,
+    AssessmentCreateForm,
+    AssessmentFileUploadForm,
+    AssessmentQuestionAddForm,
+    AssessmentQuestionFormSet,
+    AttendanceSessionStartForm,
+    CourseCreateForm,
+    CourseStaffAssignForm,
+    DeleteConfirmationForm,
+    EnrollmentForm,
+    EnrollmentFilterForm,
+    EnrollmentSearchForm,
+    LoginForm,
+    MFAVerifyForm,
+    ManualAttendanceForm,
+    MarkdownPreviewForm,
+    ModuleForm,
+    ModuleSectionForm,
+    PasswordChangeForm,
+    PasswordResetConfirmForm,
+    PasswordResetRequestForm,
+    ScheduleForm,
+    ScannedPaperStaffUploadForm,
+    SectionItemForm,
+    StaffCreateForm,
+    StudentCheckinForm,
+    StudentCreateForm,
+    StudentFilterForm,
+    TAAssignForm,
+)
+from .models import (
+    AppealStatus,
+    Assessment,
+    AssessmentAttempt,
+    AssessmentDeliveryMode,
+    AssessmentFile,
+    AttemptFile,
+    AttemptStatus,
+    AttendanceMethod,
+    AttendanceRecord,
+    AttendanceStatus,
+    ChangeRequestStatus,
+    Course,
+    CourseGradeScheme,
+    CourseResult,
+    CourseStaff,
+    CourseStaffRole,
+    Department,
+    Enrollment,
+    EnrollmentStatus,
+    ExamAnswerKey,
+    Grade,
+    GradeAppeal,
+    GradeChangeRequest,
+    GradeHistory,
+    GradeStatus,
+    Module,
+    ModuleAttendanceSession,
+    ModuleSection,
+    ModuleTargetLevel,
+    PasswordResetToken,
+    Role,
+    Schedule,
+    SectionItem,
+    SectionItemFile,
+    StaffProfile,
+    StoredFile,
+    StudentProfile,
+    User,
+    UserRole,
+    UserSession,
+)
+from .permissions import (
+    can_access_learning_records,
+    can_release_grades,
+    has_role,
+    is_course_staff,
+    is_admin_course_manager,
+    is_department_head,
+    is_enrolled,
+    is_lead_instructor,
+)
+from .templatetags.markdown import render_markdown
 
 security_logger = logging.getLogger("kura.security")
 
+# Keep work-area links on the dashboard and only show areas for assigned roles.
 DASHBOARD_CARDS_BY_ROLE = {
     "Admin": [
         {"title": "Staff", "description": "Create and manage staff accounts.", "url": "/admin/staff/"},
@@ -76,7 +187,101 @@ def axes_lockout_callable(request, credentials=None):
     Called by django-axes when an IP or account exceeds failure limits.
     Security: Returns a 403 response with generic messaging to prevent enumeration.
     """
+    # Axes returns this 403 directly, so log it here instead of relying on handler403.
+    log_security_event(request, "access.denied", {"reason": "axes_lockout"}, logging.WARNING)
     return HttpResponseForbidden("Account temporarily locked due to repeated failures. Please try again later.")
+
+
+def get_client_ip(request):
+    """
+    Returns the IP address of the real visitor.
+    Used by: session records, rate limits, attendance, assessment lab checks,
+    the rate-limit middleware, and django-axes (AXES_CLIENT_IP_CALLABLE).
+    Security: the X-Real-IP header is only trusted when TRUST_PROXY_IP_HEADER is
+    on (only the WAF can reach Gunicorn then). The value must be a valid IP
+    address, otherwise we fall back to REMOTE_ADDR, so a forged or garbage
+    header can never be stored or used.
+    """
+    # The address of whatever connected to Django (the WAF in production).
+    remote_addr = request.META.get("REMOTE_ADDR") or "127.0.0.1"
+
+    # Without a trusted proxy in front, the header could be faked: ignore it.
+    if not settings.TRUST_PROXY_IP_HEADER:
+        return remote_addr
+
+    # Use the visitor's address sent by the WAF, if it is a real IP address.
+    header_value = request.META.get("HTTP_X_REAL_IP", "").strip()
+    try:
+        return str(ipaddress.ip_address(header_value))
+    except ValueError:
+        return remote_addr
+
+
+def log_security_event(request, event, details, level=logging.INFO):
+    """Write one escaped, searchable security event without logging secrets.
+
+    The actor is named actor_user_id so event details can separately identify
+    the affected user without creating duplicate logfmt keys.
+    """
+    # The proxy creates lowercase hexadecimal IDs; reject anything else before logging it.
+    request_id = "-"
+    if request is not None:
+        received_request_id = request.META.get("HTTP_X_REQUEST_ID", "")
+        if re.fullmatch(r"[0-9a-f]{32}", received_request_id):
+            request_id = received_request_id
+
+    # Password-reset URLs contain bearer tokens, so replace the token before writing the path.
+    path = "-"
+    if request is not None:
+        path = re.sub(r"^/password/reset/[^/]+/", "/password/reset/<redacted>/", request.path)
+
+    # Record the request context while distinguishing the actor from event subjects.
+    parts = ["event=" + json.dumps(str(event))]
+    if request is not None:
+        actor_user_id = "anonymous"
+        if hasattr(request, "user") and request.user.is_authenticated:
+            actor_user_id = str(request.user.id)
+        parts.extend(
+            [
+                "ip=" + json.dumps(get_client_ip(request)),
+                "actor_user_id=" + json.dumps(actor_user_id),
+                "request_id=" + json.dumps(request_id),
+                "path=" + json.dumps(path),
+                "method=" + json.dumps(request.method),
+            ]
+        )
+
+    # Sort fields and encode after limiting their size, keeping every value valid JSON.
+    for key in sorted(details):
+        value = json.dumps(str(details[key])[:500])
+        parts.append(str(key) + "=" + value)
+
+    # Join first so untrusted values are never used as a logging format string.
+    line = " ".join(parts)
+    security_logger.log(level, line)
+
+
+def permission_denied_view(request, exception):
+    """Show a generic denial page and record the denied request.
+
+    Who can reach it: Any user whose request is denied, including anonymous users.
+    Security: Logs a bounded reason and request context without revealing details.
+    """
+    # Keep the exception detail short so unexpected messages cannot flood logs.
+    reason = str(exception)[:200]
+    log_security_event(request, "access.denied", {"reason": reason}, logging.WARNING)
+    return render(request, "403.html", status=403)
+
+
+def csrf_failure_view(request, reason=""):
+    """Show a generic page when Django rejects a request's CSRF token.
+
+    Who can reach it: Any user submitting a request that fails CSRF validation.
+    Security: Logs only a short framework reason and never displays it to the user.
+    """
+    # Record the CSRF denial for investigation without exposing the reason in the page.
+    log_security_event(request, "access.csrf_failed", {"reason": str(reason)[:200]}, logging.WARNING)
+    return render(request, "403.html", status=403)
 
 
 def create_user_session(request, user):
@@ -88,8 +293,8 @@ def create_user_session(request, user):
     raw_token = secrets.token_hex(32)
     token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
 
-    # Read client IP address from the request header.
-    ip_address = request.META.get("REMOTE_ADDR")
+    # Read the real visitor's IP address (not the WAF's).
+    ip_address = get_client_ip(request)
 
     # Read the client browser user agent string.
     user_agent = request.META.get("HTTP_USER_AGENT", "")[:255]
@@ -138,12 +343,23 @@ def login_view(request):
                 if password_matched_user and password_matched_user.check_password(password):
                     # Explain deactivation only to someone who proved they know the password.
                     if not password_matched_user.is_active:
-                        security_logger.warning(f"Login denied: deactivated user {email}")
+                        log_security_event(
+                            request,
+                            "auth.login.failed",
+                            {"login_identifier": email[:254], "reason": "deactivated"},
+                            logging.WARNING,
+                        )
                         messages.error(request, "This account has been deactivated. Contact the administrator.")
                         return render(request, "kura/accounts/login.html", {"form": form})
 
                     # Include the lock expiry so a locked user knows when to try again.
                     if password_matched_user.locked_until and password_matched_user.locked_until > timezone.now():
+                        log_security_event(
+                            request,
+                            "auth.login.failed",
+                            {"login_identifier": email[:254], "reason": "locked"},
+                            logging.WARNING,
+                        )
                         lock_time = timezone.localtime(password_matched_user.locked_until).strftime("%d %b, %H:%M")
                         messages.error(request, f"This account is currently locked until {lock_time}.")
                         return render(request, "kura/accounts/login.html", {"form": form})
@@ -152,29 +368,49 @@ def login_view(request):
                     is_locked_by_axes = AxesProxyHandler.is_locked(request, {"username": email})
                     if is_locked_by_axes:
                         request.axes_locked_out = False
-                        security_logger.warning(f"Login denied: locked user {email}")
+                        log_security_event(
+                            request,
+                            "auth.login.failed",
+                            {"login_identifier": email[:254], "reason": "axes_lockout"},
+                            logging.WARNING,
+                        )
                         messages.error(request, "This account is currently locked. Contact the administrator.")
                         return render(request, "kura/accounts/login.html", {"form": form})
 
                 # Keep the same response for unknown emails and incorrect passwords.
-                security_logger.warning(f"Failed authentication attempt for {email}")
+                log_security_event(
+                    request,
+                    "auth.login.failed",
+                    {"login_identifier": email[:254], "reason": "bad_credentials"},
+                    logging.WARNING,
+                )
                 messages.error(request, "Invalid email or password.")
                 return render(request, "kura/accounts/login.html", {"form": form})
 
             # Catch an account status change that happened just after authentication.
             if not user.is_active:
-                security_logger.warning(f"Login denied: inactive user {email}")
+                log_security_event(
+                    request,
+                    "auth.login.failed",
+                    {"login_identifier": email[:254], "reason": "inactive"},
+                    logging.WARNING,
+                )
                 messages.error(request, "This account has been deactivated. Contact the administrator.")
                 return render(request, "kura/accounts/login.html", {"form": form})
 
             # Show the lock expiry if an administrator locked the account during authentication.
             if user.locked_until and user.locked_until > timezone.now():
-                security_logger.warning(f"Login denied: locked user {email}")
+                log_security_event(
+                    request,
+                    "auth.login.failed",
+                    {"login_identifier": email[:254], "reason": "locked"},
+                    logging.WARNING,
+                )
                 lock_time = timezone.localtime(user.locked_until).strftime("%d %b, %H:%M")
                 messages.error(request, f"This account is currently locked until {lock_time}.")
                 return render(request, "kura/accounts/login.html", {"form": form})
 
-            security_logger.info(f"Primary credentials authenticated for {user.email}")
+            log_security_event(request, "auth.login.password_ok", {"user_id": user.id})
 
             # If user has MFA enabled, require second factor verification.
             if user.mfa_enabled:
@@ -197,6 +433,59 @@ def login_view(request):
     return render(request, "kura/accounts/login.html", {"form": form})
 
 
+def mfa_verify_view(request):
+    """
+    Verifies the TOTP code or recovery code during two-factor login.
+    Who can use it: Users who successfully passed password authentication.
+    Security: Validates a one-time code against the user’s enrolled devices.
+"""
+    # Retrieve user ID stored during step 1 authentication.
+    user_id = request.session.get("pre_mfa_user_id")
+    if not user_id:
+        return redirect("kura:login")
+
+    user = get_object_or_404(User, id=user_id)
+    form = MFAVerifyForm(request.POST or None)
+
+    if request.method == "POST" and form.is_valid():
+        code = form.cleaned_data["code"].strip()
+
+        # Check TOTP devices first.
+        verified = False
+        for device in TOTPDevice.objects.filter(user=user, confirmed=True):
+            if device.verify_token(code):
+                verified = True
+                break
+
+        # Check static recovery backup codes if TOTP did not match.
+        if not verified:
+            for static_device in StaticDevice.objects.filter(user=user):
+                if static_device.verify_token(code):
+                    verified = True
+                    break
+
+        # Reject invalid codes with generic error.
+        if not verified:
+            messages.error(request, "Invalid security code.")
+            return render(request, "kura/accounts/mfa_verify.html", {"form": form})
+
+        # Complete login and clean up pre-mfa session marker.
+        request.session.pop("pre_mfa_user_id", None)
+        login(request, user, backend="kura.backends.KuraAuthBackend")
+        user.last_login = timezone.now()
+        user.save(update_fields=["last_login"])
+        create_user_session(request, user)
+
+        # Handle first-login password rotation if needed.
+        if user.must_change_password:
+            return redirect("kura:password_change")
+
+        return redirect("kura:home")
+
+    return render(request, "kura/accounts/mfa_verify.html", {"form": form})
+
+
+@login_required
 def logout_view(request):
     """
     Logs out the user and revokes their active session record.
@@ -207,13 +496,16 @@ def logout_view(request):
         return HttpResponseNotAllowed(["POST"])
 
     # Revoke current UserSession in database.
-    user_email = "anonymous"
-    if request.user.is_authenticated:
-        user_email = request.user.email
-    security_logger.info(f"User logged out: {user_email}")
+    log_security_event(request, "auth.logout", {})
     session_id = request.session.get("user_session_id")
     if session_id:
-        UserSession.objects.filter(id=session_id, user=request.user).update(revoked_at=timezone.now())
+        revoked_count = UserSession.objects.filter(id=session_id, user=request.user).update(revoked_at=timezone.now())
+        if revoked_count:
+            log_security_event(
+                request,
+                "session.revoked",
+                {"target_user_id": request.user.id, "count": revoked_count, "by": "self"},
+            )
 
     # Clear Django authentication session.
     logout(request)
@@ -580,7 +872,7 @@ def count_upcoming_classes(course_ids, now):
     return upcoming_count
 
 
-
+@login_required
 def password_change_view(request):
     """
     Allows a user to rotate their password.
@@ -600,6 +892,7 @@ def password_change_view(request):
 
         # Keep current session logged in after password hash changes.
         update_session_auth_hash(request, request.user)
+        log_security_event(request, "auth.password.changed", {})
 
         # Mark the success message so the next page can show a clear confirmation card.
         messages.success(request, "Password updated successfully.", extra_tags="password_changed")
@@ -676,6 +969,8 @@ def password_reset_confirm_view(request, token):
 
     # Reject invalid or expired tokens.
     if not reset_record:
+        # The URL contains a secret token, so log only the redacted request path.
+        log_security_event(request, "auth.password.reset_invalid_token", {}, logging.WARNING)
         messages.error(request, "This password reset link is invalid or has expired.")
         return redirect("kura:password_reset_request")
 
@@ -696,72 +991,21 @@ def password_reset_confirm_view(request, token):
         reset_record.save()
 
         # Revoke all existing sessions for this user.
-        UserSession.objects.filter(user=user, revoked_at__isnull=True).update(revoked_at=timezone.now())
+        sessions_revoked = UserSession.objects.filter(user=user, revoked_at__isnull=True).update(
+            revoked_at=timezone.now()
+        )
+
+        # Record the account whose password changed and how many sessions were ended.
+        log_security_event(
+            request,
+            "auth.password.reset_completed",
+            {"user_id": user.id, "sessions_revoked": sessions_revoked},
+        )
 
         messages.success(request, "Your password has been reset. Please log in with your new password.")
         return redirect("kura:login")
 
     return render(request, "kura/accounts/password_reset_confirm.html", {"form": form})
-
-
-
-from django_otp.plugins.otp_static.models import StaticDevice, StaticToken
-from django_otp.plugins.otp_totp.models import TOTPDevice
-import qrcode
-import qrcode.image.svg
-import urllib.parse
-from .forms import MFAVerifyForm
-
-def mfa_verify_view(request):
-    """
-    Verifies the TOTP code or recovery code during two-factor login.
-    Who can use it: Users who successfully passed password authentication.
-    Security: Validates a one-time code against the user’s enrolled devices.
-"""
-    # Retrieve user ID stored during step 1 authentication.
-    user_id = request.session.get("pre_mfa_user_id")
-    if not user_id:
-        return redirect("kura:login")
-
-    user = get_object_or_404(User, id=user_id)
-    form = MFAVerifyForm(request.POST or None)
-
-    if request.method == "POST" and form.is_valid():
-        code = form.cleaned_data["code"].strip()
-
-        # Check TOTP devices first.
-        verified = False
-        for device in TOTPDevice.objects.filter(user=user, confirmed=True):
-            if device.verify_token(code):
-                verified = True
-                break
-
-        # Check static recovery backup codes if TOTP did not match.
-        if not verified:
-            for static_device in StaticDevice.objects.filter(user=user):
-                if static_device.verify_token(code):
-                    verified = True
-                    break
-
-        # Reject invalid codes with generic error.
-        if not verified:
-            messages.error(request, "Invalid security code.")
-            return render(request, "kura/accounts/mfa_verify.html", {"form": form})
-
-        # Complete login and clean up pre-mfa session marker.
-        request.session.pop("pre_mfa_user_id", None)
-        login(request, user, backend="kura.backends.KuraAuthBackend")
-        user.last_login = timezone.now()
-        user.save(update_fields=["last_login"])
-        create_user_session(request, user)
-
-        # Handle first-login password rotation if needed.
-        if user.must_change_password:
-            return redirect("kura:password_change")
-
-        return redirect("kura:home")
-
-    return render(request, "kura/accounts/mfa_verify.html", {"form": form})
 
 
 def mfa_setup_view(request):
@@ -846,8 +1090,7 @@ def mfa_setup_complete_view(request):
     )
 
 
-from .forms import AdminSessionFilterForm, AdminSessionRevokeForm
-from .permissions import has_role
+@login_required
 def user_sessions_view(request):
     """
     Redirects the old sessions page to the administrator's session list.
@@ -862,6 +1105,7 @@ def user_sessions_view(request):
     return redirect("kura:admin_sessions")
 
 
+@login_required
 def admin_sessions_view(request):
     """
     Lists and filters session records across the university.
@@ -913,6 +1157,7 @@ def admin_sessions_view(request):
     )
 
 
+@login_required
 def admin_sessions_revoke_view(request):
     """
     Ends one session or all active sessions belonging to a selected user.
@@ -933,30 +1178,42 @@ def admin_sessions_revoke_view(request):
     action = form.cleaned_data["action"]
     if action == "one" and form.cleaned_data["session_id"]:
         target = get_object_or_404(UserSession, id=form.cleaned_data["session_id"])
+        target_user_id = target.user_id
         sessions = UserSession.objects.filter(id=target.id)
     elif action == "all" and form.cleaned_data["user_id"]:
         target_user = get_object_or_404(User, id=form.cleaned_data["user_id"])
+        target_user_id = target_user.id
         sessions = UserSession.objects.filter(user=target_user)
     else:
         messages.error(request, "Could not end the selected session.")
         return redirect("kura:admin_sessions")
 
-    # Mark each active session revoked and record who performed the action.
+    # Mark each active session revoked and count the rows changed by this action.
+    revoked_count = 0
     for session in sessions.filter(revoked_at__isnull=True, expires_at__gt=timezone.now()):
         changed = UserSession.objects.filter(
             id=session.id,
             revoked_at__isnull=True,
             expires_at__gt=timezone.now(),
         ).update(revoked_at=timezone.now())
-        if changed:
-            security_logger.info("Session %s ended by administrator %s", session.id, request.user.id)
+        revoked_count += changed
+    if revoked_count:
+        # One event summarizes the action while keeping the affected user explicit.
+        log_security_event(
+            request,
+            "session.revoked",
+            {"target_user_id": target_user_id, "count": revoked_count, "by": "admin"},
+        )
     messages.success(request, "Selected sessions ended.")
     return redirect("kura:admin_sessions")
 
 
+# ==========================================
+# Admin features (staff & roles)
+# ==========================================
 
-from .forms import AdminCourseFilterForm, AdminStaffFilterForm, StaffCreateForm, AdminCourseForm
-from .permissions import is_admin_course_manager
+
+@login_required
 def staff_list_view(request):
     """
     Displays the list of staff accounts for administrative management.
@@ -1013,6 +1270,7 @@ def staff_list_view(request):
     )
 
 
+@login_required
 def staff_create_view(request):
     """
     Creates a new staff account and profile with an auto-generated temporary password.
@@ -1055,12 +1313,17 @@ def staff_create_view(request):
                 office_location=office_location,
             )
 
+        # Record only the new account ID and role names, never its temporary password.
+        role_names = list(UserRole.objects.filter(user=new_user).values_list("role__name", flat=True))
+        log_security_event(request, "admin.user.created", {"target_user_id": new_user.id, "roles": role_names})
+
         messages.success(request, f"Staff account created for {email}. Temporary password: {temporary_password}")
         return redirect("kura:staff_list")
 
     return render(request, "kura/accounts/staff_create.html", {"form": form})
 
 
+@login_required
 def user_deactivate_view(request, user_id):
     """
     Deactivates a user account and immediately revokes all active sessions.
@@ -1091,6 +1354,14 @@ def user_deactivate_view(request, user_id):
             revoked_at__isnull=True,
         ).update(revoked_at=timezone.now())
 
+    # Record the account change and how many sessions were invalidated.
+    log_security_event(
+        request,
+        "admin.user.deactivated",
+        {"target_user_id": target_user.id},
+        logging.WARNING,
+    )
+
     # Tell the administrator how many sessions were ended by the deactivation.
     if ended_session_count == 1:
         session_label = "session"
@@ -1100,6 +1371,7 @@ def user_deactivate_view(request, user_id):
     return redirect("kura:staff_list")
 
 
+@login_required
 def user_lock_toggle_view(request, user_id):
     """
     Toggles administrative lockout for a user account.
@@ -1123,59 +1395,21 @@ def user_lock_toggle_view(request, user_id):
     # If currently locked, unlock it; otherwise set a 24-hour lockout.
     if target_user.locked_until and target_user.locked_until > timezone.now():
         target_user.locked_until = None
+        event_name = "admin.user.unlocked"
         messages.success(request, "Account unlocked.")
     else:
         target_user.locked_until = timezone.now() + timezone.timedelta(days=1)
+        event_name = "admin.user.locked"
         lock_time = timezone.localtime(target_user.locked_until).strftime("%d %b, %H:%M")
         messages.success(request, f"Account locked until {lock_time}.")
 
     target_user.save()
+    # Record the account ID but never the lock timestamp or account email.
+    log_security_event(request, event_name, {"target_user_id": target_user.id}, logging.WARNING)
     return redirect("kura:staff_list")
 
 
-def admin_course_create_view(request):
-    """
-    Creates a draft course in any department.
-    Who can use it: Administrators.
-    Security: Checks the Admin role and validates all fields with a Django form.
-"""
-    # Do not let other roles use this institution-wide course form.
-    if not is_admin_course_manager(request.user):
-        raise PermissionDenied
-
-    # A validated POST creates a draft, never a published course.
-    form = AdminCourseForm(request.POST or None)
-    if request.method == "POST" and form.is_valid():
-        course = form.save(commit=False)
-        course.created_by = request.user
-        course.is_published = False
-        course.save()
-        messages.success(request, "Course draft created.")
-        return redirect("kura:course_detail", course_id=course.id)
-    return render(request, "kura/courses/admin_course_form.html", {"form": form, "editing": False})
-
-
-def admin_course_edit_view(request, course_id):
-    """
-    Edits course details in any department.
-    Who can use it: Administrators.
-    Security: Checks the Admin role and limits changes to the form's allowed fields.
-"""
-    # The Admin role is required before looking up the course.
-    if not is_admin_course_manager(request.user):
-        raise PermissionDenied
-
-    # Load the requested course and validate only its editable metadata.
-    course = get_object_or_404(Course, id=course_id)
-    form = AdminCourseForm(request.POST or None, instance=course)
-    if request.method == "POST" and form.is_valid():
-        form.save()
-        messages.success(request, "Course updated.")
-        return redirect("kura:course_detail", course_id=course.id)
-    return render(request, "kura/courses/admin_course_form.html", {"form": form, "editing": True, "course": course})
-
-
-
+@login_required
 def user_roles_view(request, user_id):
     """
     Manages assigned system roles for a user.
@@ -1195,6 +1429,8 @@ def user_roles_view(request, user_id):
 
         # Get existing assigned role names for target user.
         existing_roles = list(UserRole.objects.filter(user=target_user).values_list("role__name", flat=True))
+        added_roles = []
+        removed_roles = []
 
         if action == "assign":
             # Rule: Block assigning Admin to an Instructor or Teaching Assistant.
@@ -1207,17 +1443,28 @@ def user_roles_view(request, user_id):
                 messages.error(request, "Separation of duty: Administrators cannot hold grading roles.")
                 return redirect("kura:user_roles", user_id=target_user.id)
 
-            UserRole.objects.get_or_create(
+            _, created = UserRole.objects.get_or_create(
                 user=target_user,
                 role=target_role,
                 defaults={"assigned_by": request.user},
             )
+            if created:
+                added_roles.append(target_role.name)
             messages.success(request, f"Assigned role {target_role.name} to {target_user.email}.")
 
         elif action == "remove":
-            UserRole.objects.filter(user=target_user, role=target_role).delete()
+            deleted_count, _ = UserRole.objects.filter(user=target_user, role=target_role).delete()
+            if deleted_count:
+                removed_roles.append(target_role.name)
             messages.success(request, f"Removed role {target_role.name} from {target_user.email}.")
 
+        if added_roles or removed_roles:
+            log_security_event(
+                request,
+                "admin.role.changed",
+                {"target_user_id": target_user.id, "added": added_roles, "removed": removed_roles},
+                logging.WARNING,
+            )
         return redirect("kura:user_roles", user_id=target_user.id)
 
     # Load currently assigned roles and unassigned roles.
@@ -1235,7 +1482,13 @@ def user_roles_view(request, user_id):
         },
     )
 
-from .forms import StudentCreateForm, StudentFilterForm, EnrollmentFilterForm, EnrollmentSearchForm, EnrollmentForm
+
+# ==========================================
+# Registrar features (students & enrollment)
+# ==========================================
+
+
+@login_required
 def student_create_view(request):
     """
     Creates a new student account and profile with an auto-generated temporary password.
@@ -1286,12 +1539,20 @@ def student_create_view(request):
                 defaults={"assigned_by": request.user},
             )
 
+        # The new student's role and ID are safe audit details; do not record credentials.
+        log_security_event(
+            request,
+            "admin.user.created",
+            {"target_user_id": new_user.id, "roles": ["Student"]},
+        )
+
         messages.success(request, f"Student account created for {email}. Temporary password: {temporary_password}")
         return redirect("kura:enrollment_list")
 
     return render(request, "kura/accounts/student_create.html", {"form": form})
 
 
+@login_required
 def student_list_view(request):
     """
     Lists student accounts and their status for the registrar.
@@ -1333,6 +1594,7 @@ def student_list_view(request):
     return render(request, "kura/accounts/student_list.html", {"students": students, "filter_form": form, "now": now})
 
 
+@login_required
 def student_profile_view(request, student_id):
     """
     Shows a student's account details and enrollments without grades.
@@ -1351,6 +1613,7 @@ def student_profile_view(request, student_id):
     )
 
 
+@login_required
 def enrollment_search_view(request):
     """
     Finds eligible students or published courses for enrollment.
@@ -1368,11 +1631,13 @@ def enrollment_search_view(request):
     # Separate shared limits stop both one account and one IP from excessive searches.
     cache = caches["search_limits"]
     window = int(timezone.now().timestamp() // 60)
-    for value in (f"user:{request.user.id}", f"ip:{request.META.get('REMOTE_ADDR', '')}"):
+    for value in (f"user:{request.user.id}", f"ip:{get_client_ip(request)}"):
         key = "enrollment-search:" + hashlib.sha256(value.encode()).hexdigest() + f":{window}"
         # A short-lived lock makes the database cache's non-atomic increment safe.
         lock = key + ":lock"
         if not cache.add(lock, 1, timeout=120):
+            # Log only the kind of limit; do not include the search term.
+            log_security_event(request, "ratelimit.hit", {"bucket": "enrollment_search"}, logging.WARNING)
             return HttpResponse("Too many searches. Please try again later.", status=429)
         try:
             count = cache.get(key, 0) + 1
@@ -1383,6 +1648,8 @@ def enrollment_search_view(request):
         finally:
             cache.delete(lock)
         if count > 60:
+            # Keep the query out of logs because it may contain personal information.
+            log_security_event(request, "ratelimit.hit", {"bucket": "enrollment_search"}, logging.WARNING)
             return HttpResponse("Too many searches. Please try again later.", status=429)
     query = form.cleaned_data["q"]
     kind = form.cleaned_data["kind"]
@@ -1405,6 +1672,7 @@ def enrollment_search_view(request):
     return render(request, "kura/accounts/_enrollment_search.html", {"results": results, "kind": kind})
 
 
+@login_required
 def enrollment_list_view(request):
     """
     Lists course enrollments across the institution.
@@ -1438,6 +1706,7 @@ def enrollment_list_view(request):
     return render(request, "kura/accounts/enrollment_list.html", {"enrollments": enrollments, "filter_form": form})
 
 
+@login_required
 def enrollment_create_view(request):
     """
     Enrolls an active student into a published course.
@@ -1467,6 +1736,11 @@ def enrollment_create_view(request):
             existing.dropped_by = None
             existing.dropped_at = None
             existing.save()
+            log_security_event(
+                request,
+                "enrollment.created",
+                {"course_id": course.id, "student_id": student.id},
+            )
             messages.success(request, f"Re-enrolled {student.email} in {course.code}.")
             return redirect("kura:enrollment_list")
 
@@ -1477,12 +1751,14 @@ def enrollment_create_view(request):
             status=EnrollmentStatus.ACTIVE,
             enrolled_by=request.user,
         )
+        log_security_event(request, "enrollment.created", {"course_id": course.id, "student_id": student.id})
         messages.success(request, f"Enrolled {student.email} in {course.code}.")
         return redirect("kura:enrollment_list")
 
     return render(request, "kura/accounts/enrollment_create.html", {"form": form})
 
 
+@login_required
 def enrollment_drop_view(request, enrollment_id):
     """
     Drops a student from a course, recording who dropped them and preserving history.
@@ -1503,14 +1779,22 @@ def enrollment_drop_view(request, enrollment_id):
     enrollment.dropped_by = request.user
     enrollment.dropped_at = timezone.now()
     enrollment.save()
+    log_security_event(
+        request,
+        "enrollment.dropped",
+        {"course_id": enrollment.course_id, "student_id": enrollment.student_id},
+    )
 
     messages.success(request, f"Dropped {enrollment.student.email} from {enrollment.course.code}.")
     return redirect("kura:enrollment_list")
 
 
+# ==========================================
+# Courses & content management
+# ==========================================
 
-from .forms import CourseCreateForm, CourseStaffAssignForm
-from .permissions import is_department_head
+
+@login_required
 def course_list_view(request):
     """
     Displays the course catalog according to the user's role.
@@ -1574,6 +1858,53 @@ def course_list_view(request):
     )
 
 
+@login_required
+def admin_course_create_view(request):
+    """
+    Creates a draft course in any department.
+    Who can use it: Administrators.
+    Security: Checks the Admin role and validates all fields with a Django form.
+"""
+    # Do not let other roles use this institution-wide course form.
+    if not is_admin_course_manager(request.user):
+        raise PermissionDenied
+
+    # A validated POST creates a draft, never a published course.
+    form = AdminCourseForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        course = form.save(commit=False)
+        course.created_by = request.user
+        course.is_published = False
+        course.save()
+        log_security_event(request, "admin.course.created", {"course_id": course.id})
+        messages.success(request, "Course draft created.")
+        return redirect("kura:course_detail", course_id=course.id)
+    return render(request, "kura/courses/admin_course_form.html", {"form": form, "editing": False})
+
+
+@login_required
+def admin_course_edit_view(request, course_id):
+    """
+    Edits course details in any department.
+    Who can use it: Administrators.
+    Security: Checks the Admin role and limits changes to the form's allowed fields.
+"""
+    # The Admin role is required before looking up the course.
+    if not is_admin_course_manager(request.user):
+        raise PermissionDenied
+
+    # Load the requested course and validate only its editable metadata.
+    course = get_object_or_404(Course, id=course_id)
+    form = AdminCourseForm(request.POST or None, instance=course)
+    if request.method == "POST" and form.is_valid():
+        form.save()
+        log_security_event(request, "admin.course.edited", {"course_id": course.id})
+        messages.success(request, "Course updated.")
+        return redirect("kura:course_detail", course_id=course.id)
+    return render(request, "kura/courses/admin_course_form.html", {"form": form, "editing": True, "course": course})
+
+
+@login_required
 def course_create_view(request):
     """
     Allows a Department Head to draft a new course in their department.
@@ -1607,6 +1938,7 @@ def course_create_view(request):
     return render(request, "kura/courses/course_create.html", {"form": form, "department": department})
 
 
+@login_required
 def course_detail_view(request, course_id):
     """
     Displays course curriculum modules, sections, and learning materials.
@@ -1696,6 +2028,7 @@ def course_detail_view(request, course_id):
     return render(request, "kura/courses/course_detail.html", context)
 
 
+@login_required
 def course_publish_toggle_view(request, course_id):
     """
     Publishes or unpublishes a course in the department catalog.
@@ -1723,9 +2056,15 @@ def course_publish_toggle_view(request, course_id):
         messages.success(request, f"Course {course.code} is now unpublished (draft).")
 
     course.save()
+    if course.is_published:
+        event_name = "admin.course.published"
+    else:
+        event_name = "admin.course.unpublished"
+    log_security_event(request, event_name, {"course_id": course.id})
     return redirect("kura:course_detail", course_id=course.id)
 
 
+@login_required
 def course_staff_assign_view(request, course_id):
     """
     Assigns a lead instructor or co-instructor to a departmental course.
@@ -1757,18 +2096,34 @@ def course_staff_assign_view(request, course_id):
                 "assigned_by": request.user,
             },
         )
+        log_security_event(
+            request,
+            "admin.staff.assigned",
+            {
+                "course_id": course.id,
+                "target_user_id": user.id,
+                "staff_role": "teaching_assistant",
+                "can_release_grades": False,
+            },
+        )
+        # Record the course assignment without recording the staff member's email.
+        log_security_event(
+            request,
+            "admin.staff.assigned",
+            {
+                "course_id": course.id,
+                "target_user_id": user.id,
+                "staff_role": staff_role,
+                "can_release_grades": can_release,
+            },
+        )
         messages.success(request, f"Assigned {user.email} as {staff_role} in {course.code}.")
         return redirect("kura:course_detail", course_id=course.id)
 
     return render(request, "kura/courses/staff_assign.html", {"form": form, "course": course})
 
 
-import nh3
-import html
-from django.db import transaction
-from .forms import TAAssignForm, ModuleForm, DeleteConfirmationForm, ModuleSectionForm, SectionItemForm, MarkdownPreviewForm
-from .templatetags.markdown import render_markdown
-from .permissions import can_access_learning_records, is_course_staff, is_enrolled
+@login_required
 def course_ta_assign_view(request, course_id):
     """
     Assigns a teaching assistant to an instructor's course.
@@ -1803,6 +2158,7 @@ def course_ta_assign_view(request, course_id):
     return render(request, "kura/courses/ta_assign.html", {"form": form, "course": course})
 
 
+@login_required
 def module_create_view(request, course_id):
     """
     Creates a curriculum module with optional academic target levels.
@@ -1848,6 +2204,7 @@ def module_create_view(request, course_id):
     return render(request, "kura/courses/module_create.html", {"form": form, "course": course})
 
 
+@login_required
 def module_delete_view(request, module_id):
     """
     Deletes a module only when it has no student attempts or attendance records.
@@ -1883,7 +2240,7 @@ def module_delete_view(request, module_id):
             messages.error(request, "This module contains student records and cannot be deleted. Hide it instead.")
             return redirect("kura:course_detail", course_id=course.id)
         module.delete()
-        security_logger.info("Module %s deleted by %s", module_id, request.user.id)
+        log_security_event(request, "course.module.deleted", {"module_id": module_id})
     messages.success(request, "Module deleted.")
     return redirect("kura:course_detail", course_id=course.id)
 
@@ -1927,6 +2284,7 @@ def module_edit_view(request, module_id):
     return render(request, "kura/courses/module_create.html", {"form": form, "course": course, "editing": True})
 
 
+@login_required
 def section_edit_view(request, section_id):
     """
     Edits a section's title and type.
@@ -1958,6 +2316,7 @@ def section_edit_view(request, section_id):
     )
 
 
+@login_required
 def section_create_view(request, module_id):
     """
     Creates a section grouping within a curriculum module.
@@ -1991,6 +2350,7 @@ def section_create_view(request, module_id):
     return render(request, "kura/courses/section_create.html", {"form": form, "module": module})
 
 
+@login_required
 def section_delete_view(request, section_id):
     """
     Deletes an empty section or hides one containing assessment attempts.
@@ -2022,15 +2382,16 @@ def section_delete_view(request, section_id):
             section.is_visible = False
             section.save(update_fields=["is_visible"])
             messages.warning(request, "Section hidden because it contains student attempts.")
-            security_logger.info("Section %s hidden instead of deletion by %s", section.id, request.user.id)
+            log_security_event(request, "course.section.hidden", {"section_id": section.id})
         else:
             section_id = section.id
             section.delete()
-            security_logger.info("Section %s deleted by %s", section_id, request.user.id)
+            log_security_event(request, "course.section.deleted", {"section_id": section_id})
             messages.success(request, "Section deleted.")
     return redirect("kura:course_detail", course_id=course.id)
 
 
+@login_required
 def section_visibility_toggle_view(request, section_id):
     """
     Hides or releases a section without deleting its contents.
@@ -2053,11 +2414,12 @@ def section_visibility_toggle_view(request, section_id):
     # Keep the section and its attempts while changing only its visibility.
     section.is_visible = not section.is_visible
     section.save(update_fields=["is_visible"])
-    security_logger.info("Section visibility changed: section %s, actor %s", section.id, request.user.id)
+    log_security_event(request, "course.section.visibility_changed", {"section_id": section.id})
     messages.success(request, "Section visibility updated.")
     return redirect("kura:course_detail", course_id=course.id)
 
 
+@login_required
 def item_edit_view(request, item_id):
     """
     Edits a learning item while preserving existing attachments.
@@ -2103,6 +2465,7 @@ def item_edit_view(request, item_id):
     return render(request, "kura/courses/item_create.html", {"form": form, "section": section, "editing": True})
 
 
+@login_required
 def item_delete_view(request, item_id):
     """
     Deletes a learning item after confirmation.
@@ -2127,11 +2490,12 @@ def item_delete_view(request, item_id):
         return redirect("kura:course_detail", course_id=course.id)
     # Delete only the requested item and record who made the change.
     item.delete()
-    security_logger.info("Item %s deleted by %s", item_id, request.user.id)
+    log_security_event(request, "course.item.deleted", {"item_id": item_id})
     messages.success(request, "Item deleted.")
     return redirect("kura:course_detail", course_id=course.id)
 
 
+@login_required
 def item_create_view(request, section_id):
     """
     Authors a section item, sanitizes rich text via nh3, and attaches an optional file.
@@ -2196,6 +2560,7 @@ def item_create_view(request, section_id):
     return render(request, "kura/courses/item_create.html", {"form": form, "section": section})
 
 
+@login_required
 def item_preview_view(request, section_id):
     """
     Previews Markdown for an item in a course section.
@@ -2227,6 +2592,7 @@ def item_preview_view(request, section_id):
     return HttpResponse(render_markdown(clean_body))
 
 
+@login_required
 def item_visibility_toggle_view(request, item_id):
     """
     Hides a section item or releases it for students.
@@ -2267,51 +2633,7 @@ def item_visibility_toggle_view(request, item_id):
     return redirect("kura:course_detail", course_id=course.id)
 
 
-from .models import (
-    AppealStatus,
-    Assessment,
-    AssessmentAttempt,
-    AssessmentDeliveryMode,
-    AssessmentFile,
-    AttemptFile,
-    AttemptStatus,
-    AttendanceMethod,
-    AttendanceRecord,
-    AttendanceStatus,
-    ChangeRequestStatus,
-    Course,
-    CourseGradeScheme,
-    CourseResult,
-    CourseStaff,
-    CourseStaffRole,
-    Department,
-    Enrollment,
-    EnrollmentStatus,
-    ExamAnswerKey,
-    Grade,
-    GradeAppeal,
-    GradeChangeRequest,
-    GradeHistory,
-    GradeStatus,
-    Module,
-    ModuleAttendanceSession,
-    ModuleSection,
-    ModuleTargetLevel,
-    PasswordResetToken,
-    Role,
-    Schedule,
-    SectionItem,
-    SectionItemFile,
-    StaffProfile,
-    StoredFile,
-    StudentProfile,
-    User,
-    UserRole,
-    UserSession,
-)
-
-from .files import create_download_response, validate_and_save_upload
-from .models import SectionItemFile
+@login_required
 def file_download_view(request, course_id, file_id):
     """
     Permission-checked view for downloading course material files.
@@ -2365,11 +2687,21 @@ def file_download_view(request, course_id, file_id):
         if target_levels and (not student_level or student_level not in target_levels):
             raise PermissionDenied
 
+    # Record the permitted course-file download without logging its filename or contents.
+    log_security_event(
+        request,
+        "file.downloaded",
+        {"file_id": stored_file.id, "sha256": stored_file.sha256_hash, "context": "course"},
+    )
     return create_download_response(stored_file)
 
-from .forms import ScheduleForm
-from .models import Schedule, DayOfWeek, SessionType
-from .permissions import can_access_learning_records, is_course_staff, is_enrolled, is_department_head
+
+# ==========================================
+# Schedules & attendance
+# ==========================================
+
+
+@login_required
 def schedule_list_view(request):
     """
     Displays the academic meeting schedule and timetable.
@@ -2412,6 +2744,7 @@ def schedule_list_view(request):
     return render(request, "kura/attendance/schedule_list.html", {"schedules": schedules})
 
 
+@login_required
 def schedule_create_view(request, course_id):
     """
     Creates a recurring meeting schedule for a course.
@@ -2444,6 +2777,7 @@ def schedule_create_view(request, course_id):
     return render(request, "kura/attendance/schedule_create.html", {"form": form, "course": course})
 
 
+@login_required
 def schedule_edit_view(request, schedule_id):
     """
     Edits a recurring course schedule.
@@ -2484,6 +2818,7 @@ def schedule_edit_view(request, schedule_id):
     return render(request, "kura/attendance/schedule_create.html", {"form": form, "course": course, "editing": True})
 
 
+@login_required
 def schedule_delete_view(request, schedule_id):
     """
     Deletes a schedule without deleting attendance sessions.
@@ -2504,14 +2839,12 @@ def schedule_delete_view(request, schedule_id):
         return redirect("kura:schedule_list")
     # Attendance sessions remain recorded; Django clears their optional schedule link.
     schedule.delete()
-    security_logger.info("Schedule %s deleted by %s", schedule_id, request.user.id)
+    log_security_event(request, "course.schedule.deleted", {"schedule_id": schedule_id})
     messages.success(request, "Schedule deleted.")
     return redirect("kura:schedule_list")
 
 
-
-from .forms import AttendanceSessionStartForm, StudentCheckinForm, ManualAttendanceForm, DeleteConfirmationForm
-
+@login_required
 def attendance_session_start_view(request, module_id):
     """
     Launches a live attendance check-in session with a rotating passcode and QR code.
@@ -2553,6 +2886,7 @@ def attendance_session_start_view(request, module_id):
     return render(request, "kura/attendance/session_start.html", {"form": form, "module": module})
 
 
+@login_required
 def attendance_session_detail_view(request, session_id):
     """
     Displays live attendance roll for staff, including active passcode and QR code.
@@ -2605,6 +2939,7 @@ def attendance_session_detail_view(request, session_id):
     return render(request, "kura/attendance/session_detail.html", context)
 
 
+@login_required
 def attendance_session_close_view(request, session_id):
     """
     Closes an active attendance check-in session immediately.
@@ -2627,6 +2962,7 @@ def attendance_session_close_view(request, session_id):
     return redirect("kura:attendance_session_detail", session_id=session.id)
 
 
+@login_required
 def student_checkin_view(request, session_id):
     """
     Student attendance check-in using a dynamic passcode or QR scan.
@@ -2677,7 +3013,7 @@ def student_checkin_view(request, session_id):
                 method = AttendanceMethod.QR_CODE
             else:
                 method = AttendanceMethod.PASSCODE
-            client_ip = request.META.get("REMOTE_ADDR")
+            client_ip = get_client_ip(request)
 
             # Create attendance record.
             AttendanceRecord.objects.create(
@@ -2694,6 +3030,7 @@ def student_checkin_view(request, session_id):
     return render(request, "kura/attendance/checkin.html", {"form": form, "session": session})
 
 
+@login_required
 def attendance_manual_record_view(request, session_id):
     """
     Manually logs or adjusts an attendance entry with a required written justification.
@@ -2738,8 +3075,7 @@ def attendance_manual_record_view(request, session_id):
     return redirect("kura:attendance_session_detail", session_id=session.id)
 
 
-
-
+@login_required
 def attendance_history_view(request):
     """
     Displays attendance records.
@@ -2785,11 +3121,6 @@ def attendance_history_view(request):
         },
     )
 
-
-import uuid
-from decimal import Decimal
-from django.http import HttpResponse
-from .forms import AssessmentAttemptStartForm, AssessmentCreateForm, AssessmentFileUploadForm, AssessmentQuestionAddForm, AssessmentQuestionFormSet, ScannedPaperStaffUploadForm
 
 def assessment_create_view(request, section_id=None, assessment_id=None):
     """
@@ -3214,4 +3545,3 @@ def assessment_detail_view(request, assessment_id):
         "scanned_upload_form": scanned_upload_form,
     }
     return render(request, "kura/assessments/assessment_detail.html", context)
-
