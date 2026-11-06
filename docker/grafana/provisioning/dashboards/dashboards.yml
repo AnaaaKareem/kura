@@ -1,0 +1,18 @@
+# ==============================================================================
+# Grafana Dashboards Provisioning (dashboards.yml)
+#
+# Automatically loads JSON dashboard definitions into the Kura LMS folder.
+# ==============================================================================
+
+apiVersion: 1
+
+providers:
+  - name: "Kura LMS Dashboards"
+    orgId: 1
+    folder: "Kura Security & Operations"
+    type: file
+    disableDeletion: true
+    editable: true
+    options:
+      path: /etc/grafana/dashboards
+

@@ -1,0 +1,486 @@
+{
+  "title": "Kura Operations",
+  "uid": "kura-operations",
+  "tags": ["kura", "operations"],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-3h", "to": "now" },
+  "refresh": "1m",
+  "panels": [
+    {
+      "type": "row",
+      "gridPos": { "x": 0, "y": 0, "w": 24, "h": 1 },
+      "id": 1,
+      "title": "Site and secrets"
+    },
+    {
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 0, "y": 1, "w": 6, "h": 5 },
+      "id": 2,
+      "title": "Site probe",
+      "description": "1 means the public health check answers (probe_success), 0 means the site is unreachable. Backed by the site blackbox probe from WP3.",
+      "targets": [
+        { "refId": "A", "expr": "probe_success{job=\"site\"}", "legendFormat": "site probe", "queryType": "range" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "DOWN", "color": "red", "index": 0 }, "1": { "text": "UP", "color": "green", "index": 1 } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "area",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      }
+    },
+    {
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 6, "y": 1, "w": 6, "h": 5 },
+      "id": 3,
+      "title": "Vault",
+      "description": "1 means Vault is unsealed (vault_core_unsealed) and Django can encrypt MFA seeds and mint database users; 0 means logins are failing until an operator unseals it.",
+      "targets": [
+        { "refId": "A", "expr": "vault_core_unsealed", "legendFormat": "Vault", "queryType": "range" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "mappings": [
+            { "type": "value", "options": { "0": { "text": "SEALED", "color": "red", "index": 0 }, "1": { "text": "UNSEALED", "color": "green", "index": 1 } } }
+          ],
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [ { "color": "red", "value": null }, { "color": "green", "value": 1 } ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      }
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 12, "y": 1, "w": 12, "h": 5 },
+      "id": 4,
+      "title": "Internal certificate days left (per service)",
+      "description": "How many days remain for each internal mTLS certificate (from the renewal script's kura_cert_expiry_timestamp_seconds). Below 7 days the CertRenewalFailing path starts.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(kura_cert_expiry_timestamp_seconds - time()) / 86400",
+          "legendFormat": "{{service}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "short",
+          "min": 0,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 14 }, { "color": "green", "value": 30 } ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "row",
+      "gridPos": { "x": 0, "y": 6, "w": 24, "h": 1 },
+      "id": 5,
+      "title": "Jobs and email"
+    },
+    {
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 0, "y": 7, "w": 6, "h": 5 },
+      "id": 6,
+      "title": "Hours since last successful backup",
+      "description": "Age of the newest successful backup job (from the cron wrapper's kura_job_last_success_timestamp_seconds), per job label. Over 26 hours the BackupStale alert fires.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "(time() - kura_job_last_success_timestamp_seconds{job=~\"backup-diff|backup-full|backup-offsite\"}) / 3600",
+          "legendFormat": "{{job}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "unit": "h",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 20 }, { "color": "red", "value": 26 } ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      }
+    },
+    {
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 6, "y": 7, "w": 6, "h": 5 },
+      "id": 7,
+      "title": "Outbox pending",
+      "description": "Notification emails currently waiting in the queue (kura_outbox_pending from the write_app_metrics textfile). Persistently over 0 means the sender job is failing.",
+      "targets": [
+        { "refId": "A", "expr": "kura_outbox_pending", "legendFormat": "pending emails", "queryType": "range" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "unit": "short",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 1 }, { "color": "red", "value": 20 } ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      }
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 12, "y": 7, "w": 6, "h": 5 },
+      "id": 8,
+      "title": "Email failures (increase per hour)",
+      "description": "How many queued emails failed to send in each hour-long window (increase of kura_outbox_failed_total). Any value means the relay or upstream rejected mail.",
+      "targets": [
+        { "refId": "A", "expr": "increase(kura_outbox_failed_total[1h])", "legendFormat": "failures per hour", "queryType": "range" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "stat",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 18, "y": 7, "w": 6, "h": 5 },
+      "id": 9,
+      "title": "Oldest pending email (seconds)",
+      "description": "How long the oldest unsent email has been waiting (kura_outbox_oldest_pending_seconds). Over 900 seconds the OutboxStuck alert fires.",
+      "targets": [
+        { "refId": "A", "expr": "kura_outbox_oldest_pending_seconds", "legendFormat": "oldest pending", "queryType": "range" }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "thresholds" },
+          "unit": "s",
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [ { "color": "green", "value": null }, { "color": "yellow", "value": 600 }, { "color": "red", "value": 900 } ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "value",
+        "graphMode": "none",
+        "textMode": "value_and_name",
+        "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false }
+      }
+    },
+    {
+      "type": "row",
+      "gridPos": { "x": 0, "y": 12, "w": 24, "h": 1 },
+      "id": 10,
+      "title": "Host and database"
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 0, "y": 13, "w": 8, "h": 7 },
+      "id": 11,
+      "title": "Disk free percent (per mount)",
+      "description": "Free space per mounted filesystem from the node exporter. Below 10% the DiskAlmostFull alert fires; backups and email fail first.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * node_filesystem_avail_bytes / node_filesystem_size_bytes",
+          "legendFormat": "{{mountpoint}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "thresholds": {
+            "mode": "absolute",
+            "steps": [ { "color": "red", "value": null }, { "color": "yellow", "value": 20 }, { "color": "green", "value": 40 } ]
+          }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 8, "y": 13, "w": 8, "h": 7 },
+      "id": 12,
+      "title": "Memory available percent",
+      "description": "Share of the host's memory still available to processes. Below 10% the HighMemory alert fires and the kernel may kill containers.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * node_memory_MemAvailable_bytes / node_memory_MemTotal_bytes",
+          "legendFormat": "available",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 16, "y": 13, "w": 8, "h": 7 },
+      "id": 13,
+      "title": "CPU used percent",
+      "description": "Host CPU use, 100 minus the idle share of the node exporter's cpu counters. High CPU with low traffic means something is wrong.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "100 * (1 - avg by (instance) (rate(node_cpu_seconds_total{mode=\"idle\"}[5m])))",
+          "legendFormat": "CPU used ({{instance}})",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "percent",
+          "min": 0,
+          "max": 100
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 0, "y": 20, "w": 12, "h": 7 },
+      "id": 14,
+      "title": "PostgreSQL connections",
+      "description": "Open database connections counted by the PostgreSQL exporter. Above 80% of max_connections new temporary Vault users may fail to connect.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "pg_stat_activity_count",
+          "legendFormat": "{{state}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "prometheus", "uid": "prometheus" },
+      "gridPos": { "x": 12, "y": 20, "w": 12, "h": 7 },
+      "id": 15,
+      "title": "PostgreSQL transactions per second",
+      "description": "Committed transactions per second from pg_stat_database (xact_commit). A steady baseline makes crashes and stalls obvious.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(rate(pg_stat_database_xact_commit[5m]))",
+          "legendFormat": "commits/s",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "ops",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "row",
+      "gridPos": { "x": 0, "y": 27, "w": 24, "h": 1 },
+      "id": 16,
+      "title": "Mail relay"
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 0, "y": 28, "w": 8, "h": 7 },
+      "id": 17,
+      "title": "Relay: sent per 10m",
+      "description": "Postfix (service=relay) completing deliveries (status=sent). This is the healthy signal; it stops when the relay or the provider is broken.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"relay\"} |= \"status=sent\" [10m]))",
+          "legendFormat": "sent per 10m",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 8, "y": 28, "w": 8, "h": 7 },
+      "id": 18,
+      "title": "Relay: deferred per 10m",
+      "description": "Deliveries the provider asked to retry later (status=deferred). Occasional is normal; sustained deferral means the relay is stuck.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"relay\"} |= \"status=deferred\" [10m]))",
+          "legendFormat": "deferred per 10m",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 16, "y": 28, "w": 8, "h": 7 },
+      "id": 19,
+      "title": "Relay: bounced per 10m",
+      "description": "Deliveries permanently rejected by the provider (status=bounced): bad recipient or the relay account in trouble. Any bounce gets the RelayBounces alert.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum(count_over_time({service=\"relay\"} |= \"status=bounced\" [10m]))",
+          "legendFormat": "bounced per 10m",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    }
+  ],
+  "timepicker": {},
+  "templating": { "list": [] },
+  "annotations": { "list": [] },
+  "links": []
+}

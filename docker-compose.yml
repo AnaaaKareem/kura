@@ -490,6 +490,348 @@ services:
   # Security: monitors Nginx access/error logs, detects brute-force attacks
   # and web exploitation, generates dynamic 4-hour bans pushed to nftables.
   # ============================================================================
+  loki:
+    image: grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
+    container_name: kura-loki
+    restart: unless-stopped
+    command: -config.file=/etc/loki/loki.yml
+    volumes:
+      - ./docker/loki/loki.yml:/etc/loki/loki.yml:ro
+      - ./docker/loki/rules:/etc/loki/rules:ro
+      - loki_data:/var/loki
+    networks:
+      - observability
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 0.5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+    # No Docker health check: the Loki image has no shell, wget or curl, so a
+    # check inside the container can never run (it only ever reported
+    # "unhealthy"). Instead Alloy probes http://loki:3100/ready from outside
+    # (prometheus.exporter.blackbox in docker/alloy/config.alloy), and the
+    # ServiceDown / LokiNotReady alerts fire if it stops answering.
+
+  # ============================================================================
+  # Time-Series Monitoring Service (Prometheus)
+  # Security: collects internal metrics, evaluates security alerting rules,
+  # isolated on internal observability network with no public ports.
+  # ============================================================================
+  prometheus:
+    image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    container_name: kura-prometheus
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/prometheus/prometheus.yml
+      - --storage.tsdb.path=/prometheus
+      - --storage.tsdb.retention.time=180d
+      - --web.enable-lifecycle
+      # Alloy forwards scraped samples to this Prometheus remote-write endpoint.
+      - --web.enable-remote-write-receiver
+    volumes:
+      - ./docker/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - ./docker/prometheus/alerts.yml:/etc/prometheus/alerts.yml:ro
+      - prometheus_data:/prometheus
+    networks:
+      - observability
+    read_only: true
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 0.5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9090/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ============================================================================
+  # Alert Dispatcher Service (Prometheus Alertmanager)
+  # Security: groups and routes critical alerts to Telegram, uses Docker secrets
+  # for bot credentials, isolated on internal observability network.
+  # ============================================================================
+  alertmanager:
+    image: prom/alertmanager:v0.34.2@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b
+    container_name: kura-alertmanager
+    restart: unless-stopped
+    command:
+      - --config.file=/etc/alertmanager/alertmanager.yml
+      - --storage.path=/alertmanager
+    volumes:
+      - ./docker/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
+      # Only the CA certificate, to check the mail relay's certificate.
+      - ./certs/internal/ca.crt:/certs/ca.crt:ro
+    secrets:
+      - telegram_bot_token
+      - telegram_chat_id
+    networks:
+      - observability
+      # Alert emails go to the Postfix relay here (it accepts 172.28.30.0/24).
+      - mail
+    read_only: true
+    tmpfs:
+      - /alertmanager:size=32M,mode=1777
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: 0.2
+    deploy:
+      resources:
+        limits:
+          cpus: "0.2"
+          memory: 128M
+        reservations:
+          cpus: "0.05"
+          memory: 32M
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9093/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ============================================================================
+  # Unified Telemetry Collector (Grafana Alloy)
+  # Security: scrapes Nginx logs and telemetry, streams to Loki and Prometheus.
+  # Read-only log access, isolated on observability network.
+  # ============================================================================
+  alloy:
+    image: grafana/alloy:v1.21.3@sha256:8ab871206bd2d8f89277f53abffee5f452a293980788d52f85fa183a87a505a4
+    container_name: kura-alloy
+    # Match the image's data-directory owner when capabilities are dropped.
+    user: "473:473"
+    restart: unless-stopped
+    command:
+      - run
+      - --server.http.listen-addr=0.0.0.0:12345
+      - --storage.path=/var/lib/alloy/data
+      - /etc/alloy/config.alloy
+    environment:
+      # The public site address that the "site" probe checks end to end.
+      KURA_PUBLIC_HOSTNAME: "${KURA_PUBLIC_HOSTNAME:-kura.example.com}"
+    read_only: true
+    tmpfs:
+      # Alloy's temporary files stay in memory on its read-only filesystem.
+      - /tmp:size=32M,mode=1777
+    volumes:
+      - ./docker/alloy/config.alloy:/etc/alloy/config.alloy:ro
+      # Alloy trusts Vault's HTTPS server certificate using only the public CA.
+      - ./certs/internal/ca.crt:/etc/alloy/certs/ca.crt:ro
+      # Alloy's own client certificate and key, for its PostgreSQL monitoring login.
+      - ./certs/internal/alloy.crt:/etc/alloy/certs/alloy.crt:ro
+      - ./certs/internal/alloy.key:/etc/alloy/certs/alloy.key:ro
+      # Keep log offsets across restarts so old logs are not replayed.
+      - alloy_data:/var/lib/alloy/data
+      # Script-health and app-metric files written by the cron jobs (WP11).
+      # Set KURA_METRICS_DIR=/var/lib/kura-metrics in .env on the VM.
+      - ${KURA_METRICS_DIR:-./var/metrics}:/var/lib/kura-metrics:ro
+      # Host CPU, memory, disk and network figures, read-only (WP3).
+      - /proc:/host/proc:ro
+      - /sys:/host/sys:ro
+      - /:/host/root:ro
+    networks:
+      - observability
+      # Docker log access is limited by the internal socket-proxy network.
+      - docker_api
+      # WP3 metrics are scraped from Vault and other internal services here.
+      - backend
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 256m
+    cpus: 0.5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 256M
+        reservations:
+          cpus: "0.1"
+          memory: 64M
+    depends_on:
+      - loki
+      - prometheus
+
+  # ============================================================================
+  # Read-only Docker API proxy for Alloy and CrowdSec.
+  # LinuxServer's maintained compatible image is used instead of Tecnativa's
+  # because Tecnativa versions through 0.5.0 have CVE-2026-78122; the reported
+  # fix was still an open upstream pull request on 2026-11-06. LinuxServer's
+  # separate ALLOW_LOGS control lets Alloy read logs while keeping other
+  # container filesystem endpoints disabled.
+  # Image version 3.4.7, released 2026-10-27; checked 2026-11-06.
+  # ============================================================================
+  docker-api-proxy:
+    image: lscr.io/linuxserver/socket-proxy:3.4.7@sha256:4e5e59efd3338205561c54262581992036e5a36ccca97d487b1d4ec41f9adc58
+    container_name: kura-docker-api-proxy
+    restart: unless-stopped
+    read_only: true
+    tmpfs:
+      # The proxy writes its generated HAProxy configuration under /run.
+      - /run:size=16M,mode=1777
+    volumes:
+      # The socket is the proxy's only route to Docker; ACLs below limit requests.
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    # The upstream image needs root inside the container to read the Docker socket.
+    environment:
+      # Alloy needs only container and network listing, log reads, and Docker event updates.
+      CONTAINERS: "1"
+      EVENTS: "1"
+      ALLOW_LOGS: "1"
+      POST: "0"
+      # Explicitly deny archive, export, and filesystem-change inspection.
+      ALLOW_ARCHIVE: "0"
+      ALLOW_CHANGES: "0"
+      ALLOW_EXPORT: "0"
+      ALLOW_PAUSE: "0"
+      ALLOW_RESTARTS: "0"
+      ALLOW_START: "0"
+      ALLOW_STOP: "0"
+      ALLOW_TOP: "0"
+      ALLOW_UNPAUSE: "0"
+      # Disable Docker API sections that are not needed for log collection.
+      AUTH: "0"
+      BUILD: "0"
+      COMMIT: "0"
+      CONFIGS: "0"
+      DISTRIBUTION: "0"
+      EXEC: "0"
+      IMAGES: "0"
+      # CrowdSec's Docker log source calls GET /info when it starts and exits
+      # if refused (it crashed in a loop with INFO=0). Read-only system facts.
+      INFO: "1"
+      # Alloy's Docker discovery also lists networks (to label containers by
+      # network); without this every discovery refresh failed with 403 and no
+      # container logs reached Loki. Read-only: POST=0 still blocks any change.
+      NETWORKS: "1"
+      NODES: "0"
+      PLUGINS: "0"
+      SECRETS: "0"
+      SERVICES: "0"
+      SESSION: "0"
+      SWARM: "0"
+      SYSTEM: "0"
+      TASKS: "0"
+      VOLUMES: "0"
+      # The health check uses the harmless Docker ping endpoint.
+      PING: "1"
+      VERSION: "1"
+    networks:
+      # Only Alloy and CrowdSec can reach the proxy on this internal network.
+      - docker_api
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 128m
+    cpus: 0.25
+    deploy:
+      resources:
+        limits:
+          cpus: "0.25"
+          memory: 128M
+        reservations:
+          cpus: "0.05"
+          memory: 32M
+    healthcheck:
+      # A successful local ping confirms the proxy can answer read requests.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2375/_ping"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+
+  # ============================================================================
+  # Visual Operations & Security Dashboard (Grafana)
+  # Security: bound to 127.0.0.1 (loopback only) away from public internet,
+  # admin password injected via Docker secret, automatic provisioning.
+  # ============================================================================
+  grafana:
+    image: grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
+    container_name: kura-grafana
+    restart: unless-stopped
+    ports:
+      # Published on loopback only, so it cannot be reached from any network
+      # interface. The host-layer step re-binds it to the NetBird (wt0) address.
+      - "127.0.0.1:3000:3000"
+    environment:
+      GF_SECURITY_ADMIN_USER: admin
+      GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
+      # No anonymous browsing and no self sign-up: only the admin account exists.
+      GF_AUTH_ANONYMOUS_ENABLED: "false"
+      GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_SECURITY_DISABLE_GRAVATAR: "true"
+      # No outbound phone-home: usage reporting and update checks go to Grafana Labs.
+      GF_ANALYTICS_REPORTING_ENABLED: "false"
+      GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
+      # Grafana is reached through the SSH tunnel as plain localhost, so HTTPS
+      # would break the cookie on http://localhost. The tunnel encrypts it.
+      GF_SECURITY_COOKIE_SECURE: "false"
+      # Logs go to the container output where Alloy collects them.
+      GF_LOG_MODE: console
+      GF_SERVER_SERVE_FROM_SUB_PATH: "false"
+    volumes:
+      - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./docker/grafana/dashboards:/etc/grafana/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    secrets:
+      - grafana_admin_password
+    networks:
+      - observability
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 512m
+    cpus: 0.5
+    deploy:
+      resources:
+        limits:
+          cpus: "0.5"
+          memory: 512M
+        reservations:
+          cpus: "0.1"
+          memory: 128M
+    depends_on:
+      - prometheus
+      - loki
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 15s
+
+  # ============================================================================
+  # Zero-Trust WireGuard Overlay Service (NetBird Client)
+  # Security: establishes an encrypted peer-to-peer WireGuard mesh connecting
+  # administrators directly to internal monitoring and management interfaces.
+  # Keeps Grafana (3000) and Prometheus (9090) invisible to the public internet.
+  # ============================================================================
   vault:
     image: hashicorp/vault:2.2.1@sha256:962a92876e168d68eaaa24b0b8b49bbce1cb63024060a67bba95cd158a366fc2
     container_name: kura-vault

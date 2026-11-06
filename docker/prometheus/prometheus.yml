@@ -1,0 +1,23 @@
+# ==============================================================================
+# Prometheus Configuration (prometheus.yml)
+#
+# Time-series metrics engine collecting infrastructure and service telemetry.
+# Connected to the internal 'observability' network.
+# ==============================================================================
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+
+rule_files:
+  - /etc/prometheus/alerts.yml
+
+# Send fired alerts to Alertmanager
+alerting:
+  alertmanagers:
+    - static_configs:
+        - targets:
+            - alertmanager:9093
+
+# Alloy scrapes Prometheus and internal services, then forwards samples here
+# through the remote-write receiver. Prometheus needs no internal service routes.

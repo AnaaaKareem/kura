@@ -1,0 +1,72 @@
+# ==============================================================================
+# Grafana Loki Configuration (loki.yml)
+#
+# High-efficiency, tamper-resistant log aggregator.
+# Security & Regulatory Compliance:
+# Enforces a mandatory 180-day retention period (4320h) in compliance with
+# the Egyptian Anti-Cybercrime Law (Law No. 175 of 2018, Art. 2) and LMS specification.
+# ==============================================================================
+
+auth_enabled: false
+
+server:
+  http_listen_port: 3100
+  grpc_listen_port: 9096
+  log_level: info
+
+common:
+  instance_addr: 127.0.0.1
+  path_prefix: /var/loki
+  storage:
+    filesystem:
+      chunks_directory: /var/loki/chunks
+      rules_directory: /var/loki/rules
+  replication_factor: 1
+  ring:
+    kvstore:
+      store: inmemory
+
+schema_config:
+  configs:
+    - from: 2024-01-01
+      store: tsdb
+      object_store: filesystem
+      schema: v13
+      index:
+        prefix: index_
+        period: 24h
+
+# Keep logs for the legally required 180 days (4320 hours).
+limits_config:
+  retention_period: 4320h # 180 days (180 * 24 = 4320 hours)
+  # Loki v13/TSDB uses this to store Alloy's event and request fields as metadata.
+  allow_structured_metadata: true
+  reject_old_samples: true
+  reject_old_samples_max_age: 168h # 7 days
+  max_query_length: 4320h
+
+# Automated Compactor: enforces log compaction and deletes logs older than 180 days
+compactor:
+  working_directory: /var/loki/compactor
+  compaction_interval: 10m
+  retention_enabled: true
+  retention_delete_delay: 2h
+  retention_delete_worker_count: 150
+  delete_request_store: filesystem
+
+# ==============================================================================
+# Loki Ruler (SIEM Alerting Engine)
+# Evaluates LogQL security alerting rules and forwards detections to Alertmanager
+# ==============================================================================
+ruler:
+  storage:
+    type: local
+    local:
+      directory: /etc/loki/rules
+  rule_path: /tmp/loki/rules-scratch
+  alertmanager_url: http://alertmanager:9093
+  ring:
+    kvstore:
+      store: inmemory
+  enable_api: true
+  enable_sharding: false
