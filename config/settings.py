@@ -221,6 +221,16 @@ AUTH_PASSWORD_VALIDATORS = [
     },
 ]
 
+# The breached-password check (kura/validators.py) asks HaveIBeenPwned over HTTPS.
+# In Docker the web container has no internet route, so it goes through the
+# breach-proxy container, which allows only api.pwnedpasswords.com.
+# Empty (local development) means "connect directly".
+BREACH_CHECK_PROXY_URL = os.environ.get("BREACH_CHECK_PROXY_URL", "")
+# Public certificate authorities used to check HaveIBeenPwned's certificate.
+# Needed in Docker because SSL_CERT_FILE there points at Kura's internal CA only.
+# Empty means "use Python's normal certificate store".
+BREACH_CHECK_CA_FILE = os.environ.get("BREACH_CHECK_CA_FILE", "")
+
 
 # Internationalization
 # https://docs.djangoproject.com/en/6.1/topics/i18n/

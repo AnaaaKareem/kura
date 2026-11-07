@@ -1,7 +1,8 @@
 import hashlib
 import logging
-import urllib.error
+import ssl
 import urllib.request
+from django.conf import settings
 from django.core.exceptions import ValidationError
 
 logger = logging.getLogger(__name__)
@@ -36,8 +37,25 @@ class BreachedPasswordValidator:
         req = urllib.request.Request(request_url, headers={"User-Agent": "Kura-LMS-BreachedPasswordValidator"})
 
         try:
+            # Check HaveIBeenPwned's certificate against the public certificate
+            # authorities (in Docker, the default store is Kura's internal CA only).
+            if settings.BREACH_CHECK_CA_FILE:
+                tls_context = ssl.create_default_context(cafile=settings.BREACH_CHECK_CA_FILE)
+            else:
+                tls_context = ssl.create_default_context()
+
+            # In Docker, go through the breach-proxy container (the only way out);
+            # otherwise connect directly. TLS still runs end to end, so the proxy
+            # cannot see the hash prefix or the answer.
+            handlers = [urllib.request.HTTPSHandler(context=tls_context)]
+            if settings.BREACH_CHECK_PROXY_URL:
+                handlers.append(urllib.request.ProxyHandler({"https": settings.BREACH_CHECK_PROXY_URL}))
+            else:
+                handlers.append(urllib.request.ProxyHandler({}))
+            opener = urllib.request.build_opener(*handlers)
+
             # The breach service returns matching suffixes for this prefix.
-            with urllib.request.urlopen(req, timeout=self.TIMEOUT) as response:
+            with opener.open(req, timeout=self.TIMEOUT) as response:
                 content = response.read().decode("utf-8")
                 for line in content.splitlines():
                     entry_hash = line.split(":", 1)[0].strip()
@@ -46,10 +64,13 @@ class BreachedPasswordValidator:
                             "This password has appeared in a known data breach. Choose a different, unique password.",
                             code="password_breached",
                         )
-        except urllib.error.URLError as error:
-            # Network failures log a warning rather than blocking valid password updates
-            # Only the network error is logged, never the password or its hash.
-            logger.warning("Breached password lookup timed out or failed: %s", error)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
+        except OSError as error:
+            # Network failures (no route, proxy down, timeout, certificate
+            # problem) log a warning rather than blocking valid password
+            # updates. The Loki alert BreachCheckUnavailable fires on this
+            # event, so a check that keeps failing is noticed.
+            # Only the kind of error is logged, never the password or its hash.
+            logger.warning('event=auth.breach_check.unavailable error_type="%s"', type(error).__name__)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
 
     def get_help_text(self):
         """

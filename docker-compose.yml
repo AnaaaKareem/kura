@@ -116,11 +116,13 @@ services:
     # app: only the WAF can reach Django, so the WAF cannot be bypassed.
     # backend: so Django can reach PostgreSQL, Vault and ClamAV.
     # mail: so Django can hand email to the Postfix relay (nothing else is there).
+    # breach_check: so Django can reach the breach-check proxy (nothing else is there).
     # Not on frontend (Nginx/cloudflared) or observability.
     networks:
       - app
       - backend
       - mail
+      - breach_check
     # No db_password here: that is the kura-admin (superuser) password. Django
     # logs in as kura_app with its certificate, so it never needs it. If Django
     # were ever broken into, the attacker must not find the superuser password.
@@ -162,6 +164,11 @@ services:
       EMAIL_USE_TLS: "True"
       SSL_CERT_FILE: "/certs/internal/ca.crt"
       DEFAULT_FROM_EMAIL: "Kura <noreply@kura.edu>"
+      # Breached-password check: through the breach-check proxy, checking
+      # HaveIBeenPwned's certificate against the public CAs (SSL_CERT_FILE above
+      # trusts only Kura's internal CA). See config/settings.py.
+      BREACH_CHECK_PROXY_URL: "http://breach-proxy:8888"
+      BREACH_CHECK_CA_FILE: "/etc/ssl/certs/ca-certificates.crt"
       # Links in emails always point here (never at the Host header a visitor sent).
       SITE_URL: "https://${KURA_PUBLIC_HOSTNAME:-kura.example.com}"
       DB_SSL_MODE: "verify-full"
@@ -435,6 +442,46 @@ services:
       timeout: 5s
       retries: 3
       start_period: 10s
+
+  # ============================================================================
+  # Breach-check proxy (tinyproxy, built from docker/breach-proxy on a pinned
+  # Alpine image). Django has no internet route; this is its only way out, and
+  # it allows exactly one thing: an HTTPS tunnel to api.pwnedpasswords.com, for
+  # the breached-password check. Every other site gets "403 Filtered". TLS runs
+  # from Django straight to HaveIBeenPwned, so the proxy sees no data.
+  # ============================================================================
+  breach-proxy:
+    build:
+      context: ./docker/breach-proxy
+    image: kura-breach-proxy:latest
+    container_name: kura-breach-proxy
+    restart: unless-stopped
+    read_only: true
+    # breach_check: Django reaches the proxy here (internal, fixed subnet that
+    # tinyproxy.conf's "Allow" line accepts).
+    # breach_check_egress: the proxy's only route to the internet.
+    networks:
+      - breach_check
+      - breach_check_egress
+    # Runs as the unprivileged "tinyproxy" user on port 8888: no capabilities needed.
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    mem_limit: 32m
+    cpus: 0.1
+    deploy:
+      resources:
+        limits:
+          cpus: "0.1"
+          memory: 32M
+    # Healthy when tinyproxy is listening on its port.
+    healthcheck:
+      test: ["CMD", "nc", "-z", "127.0.0.1", "8888"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 5s
 
   # ============================================================================
   # Reverse Proxy Service (Nginx Alpine)
@@ -1239,6 +1286,17 @@ networks:
           ip_range: 172.28.40.128/25
   # Outbound-only route for ClamAV signature updates (nothing else joins it).
   clamav_updates:
+    driver: bridge
+  # Django -> breach-check proxy only. internal: no internet. Fixed subnet
+  # because tinyproxy.conf only accepts clients from 172.28.50.0/24.
+  breach_check:
+    driver: bridge
+    internal: true
+    ipam:
+      config:
+        - subnet: 172.28.50.0/24
+  # The breach-check proxy's outbound route (nothing else joins it).
+  breach_check_egress:
     driver: bridge
 
 # ==============================================================================
