@@ -134,7 +134,7 @@ from .permissions import (
     is_lead_instructor,
 )
 from .templatetags.markdown import render_markdown
-from .vault import decrypt_mfa_secret, encrypt_mfa_secret
+from .vault import decrypt_answer_key, decrypt_mfa_secret, encrypt_answer_key, encrypt_mfa_secret
 
 security_logger = logging.getLogger("kura.security")
 
@@ -3523,10 +3523,21 @@ def evaluate_attempt(attempt):
         attempt.save(update_fields=["status", "summary_score_json", "submitted_at", "submission_hash"])
         return
 
+    # Load the answer key; Vault decrypts it in memory only. If Vault cannot be
+    # reached, the submission is still kept (its time and hash are already set)
+    # and goes to the instructor for manual grading, instead of failing or
+    # being marked as zero.
     answer_key_obj = ExamAnswerKey.objects.filter(assessment=attempt.assessment).first()
     answer_key_dict = {}
     if answer_key_obj:
-        answer_key_dict = answer_key_obj.answer_key_json
+        try:
+            answer_key_dict = decrypt_answer_key(answer_key_obj.answer_key_json)
+        except ValidationError:
+            log_security_event(None, "assessment.answer_key_unavailable", {"attempt_id": attempt.id}, logging.ERROR)
+            attempt.status = AttemptStatus.REQUIRES_MANUAL_GRADING
+            attempt.summary_score_json = None
+            attempt.save(update_fields=["status", "summary_score_json", "submitted_at", "submission_hash"])
+            return
 
     auto_graded_points = Decimal("0.00")
     total_max_points = Decimal("0.00")
@@ -3684,10 +3695,17 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
             "allow_backtracking": assessment.settings_json.get("allow_backtracking", False),
             "autosave_interval_seconds": assessment.settings_json.get("autosave_interval_seconds", 15),
         }
+        # Decrypt the saved answer key (in memory only) so the form can show it.
+        # If Vault cannot be reached the edit page is not shown, because saving
+        # it without the old key would wipe the correct answers.
         answer_key = ExamAnswerKey.objects.filter(assessment=assessment).first()
         existing_keys = {}
         if answer_key:
-            existing_keys = answer_key.answer_key_json
+            try:
+                existing_keys = decrypt_answer_key(answer_key.answer_key_json)
+            except ValidationError:
+                messages.error(request, "This assessment cannot be edited right now. Please try again later.")
+                return redirect("kura:assessment_detail", assessment_id=assessment.id)
         initial_questions = []
         if len(assessment.questions_json) > 20:
             builder_unavailable = True
@@ -3857,6 +3875,26 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
             old_dates = None
             if assessment:
                 old_dates = (assessment.opens_at, assessment.due_date)
+            # Encrypt the answer key with Vault before saving anything. If Vault is
+            # down, nothing is saved and the form is shown again with what was typed.
+            stored_answer_keys = {}
+            if not question_editing_disabled:
+                try:
+                    stored_answer_keys = encrypt_answer_key(answer_keys)
+                except ValidationError:
+                    form.add_error(None, "The answer key could not be saved securely right now. Please try again later.")
+                    return render(
+                        request,
+                        "kura/assessments/assessment_create.html",
+                        {
+                            "form": form,
+                            "section": section,
+                            "question_forms": question_forms,
+                            "assessment": assessment,
+                            "questions_locked": questions_locked,
+                            "builder_unavailable": builder_unavailable,
+                        },
+                    )
             with transaction.atomic():
                 if assessment:
                     # A student start takes this same lock, so an attempt cannot slip past this check.
@@ -3885,8 +3923,8 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
                 if not question_editing_disabled:
                     ExamAnswerKey.objects.update_or_create(
                         assessment=assessment,
-                        defaults={"answer_key_json": answer_keys},
-                        create_defaults={"answer_key_json": answer_keys, "created_by": request.user},
+                        defaults={"answer_key_json": stored_answer_keys},
+                        create_defaults={"answer_key_json": stored_answer_keys, "created_by": request.user},
                     )
             # Email the enrolled students: a new assessment, or its dates moved.
             # The dates are part of the event name, so each change is emailed once.

@@ -33,6 +33,7 @@ from kura.models import (
     DayOfWeek,
     SectionType,
 )
+from kura.vault import encrypt_answer_key
 
 
 class Command(BaseCommand):
@@ -302,10 +303,11 @@ class Command(BaseCommand):
             },
         )
 
+        # The answer key is encrypted by Vault before it is saved, like keys saved from the web page.
         ExamAnswerKey.objects.update_or_create(
             assessment=assessment,
             defaults={
-                "answer_key_json": {"q1": {"correct_option_ids": ["opt1"]}},
+                "answer_key_json": encrypt_answer_key({"q1": {"correct_option_ids": ["opt1"]}}),
                 "created_by": instructor_user,
             },
         )

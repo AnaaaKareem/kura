@@ -1,11 +1,13 @@
 """
 HashiCorp Vault helper functions for Kura LMS:
 1. Transit engine: encrypts and decrypts MFA TOTP secret seeds (AES-256-GCM).
+   A second Transit key encrypts exam answer keys the same way.
 2. Database engine: temporary PostgreSQL users (15 minutes) for Django's connections.
 (Internal TLS certificates are issued by certs/renew-certs-from-vault.sh, not by Django.)
 """
 
 import base64
+import json
 import logging
 import time
 from django.conf import settings
@@ -20,7 +22,7 @@ def get_vault_client():
     Logs in to Vault with Kura's AppRole and returns a ready-to-use client.
     The role ID and secret ID come from Docker secrets (settings.py). Vault
     answers with a 15-minute token whose policy (docker/vault/policies/kura-web.hcl)
-    only allows encrypting and decrypting with the kura-mfa key.
+    only allows encrypting and decrypting with the kura-mfa and kura-answer-keys keys.
     verify=VAULT_CA_CERT makes the connection fail unless Vault's certificate was
     signed by our internal CA, so nothing else can pretend to be Vault.
     """
@@ -100,6 +102,77 @@ def decrypt_mfa_secret(ciphertext):
     except Exception as exc:
         logger.error('event=vault.error operation="decrypt_mfa_secret"')
         raise ValidationError("MFA secret decryption failed. The security vault is unreachable.") from exc
+
+
+def encrypt_answer_key(answer_key_dict):
+    """
+    Encrypts an exam answer key with Vault Transit (key "kura-answer-keys",
+    AES-256-GCM) before it is saved in ExamAnswerKey.answer_key_json.
+    Returns {"ciphertext": "vault:v1:..."}, which still fits the JSON field,
+    so the model does not change. Anyone reading the table directly (a database
+    dump, a backup, the read-only role or an SQL injection) sees only ciphertext.
+    With Vault disabled (local development and tests) the dictionary is kept as-is.
+    Raises ValidationError if Vault cannot be reached.
+    """
+    # In local development when Vault is disabled, keep the value as-is.
+    if not getattr(settings, "VAULT_ENABLED", False):
+        return answer_key_dict
+
+    try:
+        client = get_vault_client()
+
+        # Turn the dictionary into JSON text, then base64 (Vault Transit needs base64).
+        answer_key_text = json.dumps(answer_key_dict, sort_keys=True)
+        encoded_plaintext = base64.b64encode(answer_key_text.encode("utf-8")).decode("utf-8")
+
+        # Ask Vault to encrypt it. Vault never gives the key itself to Django.
+        response = client.secrets.transit.encrypt_data(
+            name=settings.VAULT_ANSWER_KEYS_KEY,
+            mount_point=settings.VAULT_TRANSIT_MOUNT,
+            plaintext=encoded_plaintext,
+        )
+        return {"ciphertext": response["data"]["ciphertext"]}
+
+    except Exception as exc:
+        # Only the operation is logged, never the answer key.
+        logger.error('event=vault.error operation="encrypt_answer_key"')
+        raise ValidationError("Answer key encryption failed. The security vault is unreachable.") from exc
+
+
+def decrypt_answer_key(stored_json):
+    """
+    Turns the value saved in ExamAnswerKey.answer_key_json back into the answer
+    key dictionary, in memory only (it is never saved decrypted).
+    With Vault disabled (local development and tests) the value is returned as-is.
+    With Vault on, only real Vault ciphertext is accepted: a plain answer key
+    means it was never encrypted, so it is refused (run encrypt_answer_keys).
+    Raises ValidationError if the value is not encrypted or Vault cannot be reached.
+    """
+    # In local development (Vault disabled) the answer key is stored as-is.
+    if not getattr(settings, "VAULT_ENABLED", False):
+        return stored_json
+
+    # With Vault on, refuse anything that is not Vault ciphertext.
+    ciphertext = stored_json.get("ciphertext", "")
+    if not isinstance(ciphertext, str) or not ciphertext.startswith("vault:"):
+        logger.error('event=vault.error operation="decrypt_answer_key_not_encrypted"')
+        raise ValidationError("Answer key is not encrypted.")
+
+    try:
+        client = get_vault_client()
+
+        # Ask Vault to decrypt it, then turn the base64 JSON text back into a dictionary.
+        response = client.secrets.transit.decrypt_data(
+            name=settings.VAULT_ANSWER_KEYS_KEY,
+            mount_point=settings.VAULT_TRANSIT_MOUNT,
+            ciphertext=ciphertext,
+        )
+        answer_key_text = base64.b64decode(response["data"]["plaintext"].encode("utf-8")).decode("utf-8")
+        return json.loads(answer_key_text)
+
+    except Exception as exc:
+        logger.error('event=vault.error operation="decrypt_answer_key"')
+        raise ValidationError("Answer key decryption failed. The security vault is unreachable.") from exc
 
 
 # The current temporary database login for this worker process. Every new
