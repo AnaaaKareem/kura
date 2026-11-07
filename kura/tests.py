@@ -40,7 +40,13 @@ from .vault import (
     get_dynamic_database_credentials,
     get_vault_client,
 )
-from .views import log_security_event, queue_assessment_notification, queue_email, verify_totp_code
+from .views import (
+    hash_recovery_code,
+    log_security_event,
+    queue_assessment_notification,
+    queue_email,
+    verify_totp_code,
+)
 from .vault import database_login_cache
 from .vault_postgres.base import DatabaseWrapper as VaultDatabaseWrapper
 from .models import (
@@ -803,7 +809,7 @@ class MFATests(TestCase):
         self.user.mfa_enabled = True
         self.user.save()
         static_device = StaticDevice.objects.create(user=self.user, name="recovery", confirmed=True)
-        StaticToken.objects.create(device=static_device, token="ABCD1234")
+        StaticToken.objects.create(device=static_device, token=hash_recovery_code("ABCD1234"))
 
         # Step 1: Submit password.
         response = self.client.post(
@@ -4536,7 +4542,7 @@ class InstructorAndTAGradingTests(TestCase):
 
         # 2. Release grade with MFA step-up verification
         static_device = StaticDevice.objects.create(user=self.instructor, name="backup", confirmed=True)
-        StaticToken.objects.create(device=static_device, token="888999")
+        StaticToken.objects.create(device=static_device, token=hash_recovery_code("888999"))
 
         rel_resp = self.client.post(
             reverse("kura:grade_release", kwargs={"grade_id": grade.id}),
@@ -6413,6 +6419,82 @@ class SecretKeySettingTests(TestCase):
 
 
 @override_settings(VAULT_ENABLED=False)
+class RecoveryCodeHashingTests(TestCase):
+    """
+    Recovery codes are saved only as keyed hashes (HMAC-SHA256 with SECRET_KEY),
+    so a copy of the database does not reveal them. Each code still works once,
+    at login and for grade release.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.user = make_user("Student")
+        self.static_device = StaticDevice.objects.create(user=self.user, name="recovery", confirmed=True)
+        StaticToken.objects.create(device=self.static_device, token=hash_recovery_code("ABCD1234"))
+
+    def log_in_with_code(self, code):
+        # Step 1 (password), then step 2 (the recovery code). Returns the step 2 response.
+        self.client.post(reverse("kura:login"), {"email": self.user.email, "password": "ValidPassword123!"})
+        return self.client.post(reverse("kura:mfa_verify"), {"code": code})
+
+    def test_setup_saves_only_hashes_of_the_codes_it_shows(self):
+        new_user = make_user("Student", mfa_enabled=False)
+        self.client.force_login(new_user)
+        self.client.get(reverse("kura:mfa_setup"))
+        new_user.refresh_from_db()
+        device = TOTPDevice.objects.get(user=new_user, name="default")
+        totp = TOTP(bytes.fromhex(new_user.mfa_secret), device.step, device.t0, device.digits, device.drift)
+        totp.time = time.time()
+        self.client.post(reverse("kura:mfa_setup"), {"code": str(totp.token()).zfill(device.digits)})
+
+        # The completion page shows the 10 codes once.
+        response = self.client.get(reverse("kura:mfa_setup_complete"))
+        shown_codes = response.context["recovery_codes"]
+        self.assertEqual(len(shown_codes), 10)
+
+        # The database holds 10 hashes and none of the codes themselves.
+        saved_tokens = []
+        for static_token in StaticToken.objects.filter(device__user=new_user):
+            saved_tokens.append(static_token.token)
+        self.assertEqual(len(saved_tokens), 10)
+        for code in shown_codes:
+            self.assertNotIn(code, saved_tokens)
+            self.assertIn(hash_recovery_code(code), saved_tokens)
+
+    def test_hash_depends_on_secret_key(self):
+        # Without SECRET_KEY the hash cannot be recomputed, so the 4 billion
+        # possible codes cannot simply be tried against a stolen database.
+        normal_hash = hash_recovery_code("ABCD1234")
+        with override_settings(SECRET_KEY="a-different-secret-key-" + "x" * 40):
+            other_hash = hash_recovery_code("ABCD1234")
+        self.assertNotEqual(normal_hash, other_hash)
+        self.assertEqual(len(normal_hash), 16)
+
+    def test_code_works_once_at_login(self):
+        response = self.log_in_with_code("ABCD1234")
+        self.assertRedirects(response, reverse("kura:home"))
+        self.assertFalse(StaticToken.objects.filter(device=self.static_device).exists())
+
+        # Using the same code again fails.
+        self.client.logout()
+        response = self.log_in_with_code("ABCD1234")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Invalid security code.")
+
+    def test_code_ignores_spaces_and_letter_case(self):
+        response = self.log_in_with_code("abcd 1234")
+        self.assertRedirects(response, reverse("kura:home"))
+
+    def test_code_saved_as_plain_text_is_refused(self):
+        # A code saved the old way (plain text) does not work any more.
+        StaticToken.objects.filter(device=self.static_device).delete()
+        StaticToken.objects.create(device=self.static_device, token="ABCD1234")
+        response = self.log_in_with_code("ABCD1234")
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Invalid security code.")
+
+
+@override_settings(VAULT_ENABLED=False)
 class VaultTOTPSeedTests(TestCase):
     """
     Authenticator (TOTP) seeds live only in User.mfa_secret, encrypted by Vault.
@@ -6466,7 +6548,7 @@ class VaultTOTPSeedTests(TestCase):
 
     def test_recovery_code_still_works_when_vault_is_down(self):
         static_device = StaticDevice.objects.create(user=self.user, name="recovery", confirmed=True)
-        StaticToken.objects.create(device=static_device, token="ABCD1234")
+        StaticToken.objects.create(device=static_device, token=hash_recovery_code("ABCD1234"))
         self.client.post(reverse("kura:login"), {"email": self.user.email, "password": "ValidPassword123!"})
         with patch("kura.views.decrypt_mfa_secret", side_effect=ValidationError("Vault down")):
             response = self.client.post(reverse("kura:mfa_verify"), {"code": "ABCD1234"})

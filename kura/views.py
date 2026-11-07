@@ -26,6 +26,7 @@ from django.http import HttpResponse, HttpResponseForbidden, HttpResponseNotAllo
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
+from django.utils.crypto import salted_hmac
 from django_otp.plugins.otp_static.models import StaticDevice, StaticToken
 from django_otp.oath import TOTP
 from django_otp.plugins.otp_totp.models import TOTPDevice
@@ -373,7 +374,7 @@ def verify_totp_code(device, user, code):
     - Keeps django-otp's protections: throttling (a delay after wrong codes)
       and replay protection (an accepted code cannot be used a second time).
     - If Vault cannot be reached the code is refused (fail closed). Recovery
-      codes still work, because they do not need Vault.
+      codes still work, because they do not need Vault (see hash_recovery_code).
     """
     # django-otp throttling: after wrong codes, the user must wait before trying again.
     verify_allowed, _ = device.verify_is_allowed()
@@ -411,6 +412,35 @@ def verify_totp_code(device, user, code):
     device.set_last_used_timestamp(commit=False)
     device.save()
     return True
+
+
+def hash_recovery_code(code):
+    """
+    Turns a recovery code into the value stored in StaticToken.token.
+    Used in three places: MFA setup (saving new codes), the login MFA step and
+    grade release (checking a typed code).
+    Security:
+    - The database never holds the codes themselves, only this keyed hash
+      (HMAC-SHA256 with Django's SECRET_KEY). A plain SHA-256 would not be
+      enough: codes are only 8 hex characters (about 4 billion options), so
+      someone with a copy of the database could try them all in seconds.
+      Without SECRET_KEY they cannot even start.
+    - It does not need Vault, so recovery codes still work when Vault is down
+      (that is what they are for).
+    - Changing SECRET_KEY makes every saved recovery code stop working; users
+      then create new codes on the MFA setup page.
+    """
+    # Ignore spaces and letter case, so "abcd 1234" matches the code shown as "ABCD1234".
+    normalized_code = code.replace(" ", "").upper()
+
+    # Django's salted_hmac computes HMAC-SHA256 with SECRET_KEY. The first
+    # argument (the "salt") keeps this hash different from Django's other uses
+    # of SECRET_KEY, such as session and password-reset signatures.
+    full_hash = salted_hmac("kura.recovery_code", normalized_code, algorithm="sha256").hexdigest()
+
+    # StaticToken.token holds at most 16 characters, so keep the first 16 hex
+    # characters (64 bits): far more than enough to tell 10 codes apart.
+    return full_hash[:16]
 
 
 def create_user_session(request, user):
@@ -567,6 +597,7 @@ def mfa_verify_view(request):
     Verifies the TOTP code, backup code, or WebAuthn/FIDO2 Passkey during two-factor login.
     Who can use it: Users who successfully passed password authentication.
     Security: Validates one-time code or WebAuthn assertion challenge against enrolled credentials.
+    Recovery codes are compared by keyed hash and deleted after one use.
 """
     # Retrieve user ID stored during step 1 authentication.
     user_id = request.session.get("pre_mfa_user_id")
@@ -597,8 +628,12 @@ def mfa_verify_view(request):
         # Check static recovery backup codes if TOTP did not match.
         if not verified:
             verification_method = "recovery_code"
-            for static_device in StaticDevice.objects.filter(user=user):
-                if static_device.verify_token(code):
+            # Codes are saved only as keyed hashes, so hash the typed code and look
+            # for that. django-otp's verify_token still deletes the used code (single
+            # use) and slows down repeated wrong guesses (throttling).
+            code_hash = hash_recovery_code(code)
+            for static_device in StaticDevice.objects.filter(user=user, confirmed=True):
+                if static_device.verify_token(code_hash):
                     verified = True
                     break
 
@@ -1261,6 +1296,7 @@ def mfa_setup_view(request):
     Configures TOTP authenticator app and generates backup recovery codes.
     Who can use it: Authenticated users.
     Security: Uses local qrcode library (no external calls) and shows recovery codes once.
+    Only keyed hashes of the recovery codes are saved (hash_recovery_code).
     The authenticator seed is encrypted by Vault before it is saved (User.mfa_secret);
     TOTPDevice.key is only a random placeholder. If Vault is unavailable, setup stops.
 """
@@ -1328,11 +1364,12 @@ def mfa_setup_view(request):
             # Remove any previous recovery tokens.
             StaticToken.objects.filter(device=static_device).delete()
 
-            # Generate 10 new random 8-character recovery codes.
+            # Generate 10 new random 8-character recovery codes. The user sees the
+            # codes once; the database only gets their keyed hashes.
             recovery_codes = []
             for _ in range(10):
                 token_val = secrets.token_hex(4).upper()
-                StaticToken.objects.create(device=static_device, token=token_val)
+                StaticToken.objects.create(device=static_device, token=hash_recovery_code(token_val))
                 recovery_codes.append(token_val)
 
             # Record regeneration without ever recording the recovery codes themselves.
@@ -4954,7 +4991,8 @@ def grade_release_view(request, grade_id):
     """
     Releases a finalized grade to the student with step-up MFA verification.
     Who can use it: Instructors assigned to the course with can_release_grades=True.
-    Security: Checks permission; enforces step-up OTP token; grade must be finalized.
+    Security: Checks permission; enforces step-up OTP token (or a recovery code, compared
+    by keyed hash and used once); grade must be finalized.
 """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
@@ -4984,8 +5022,9 @@ def grade_release_view(request, grade_id):
         if totp_device and verify_totp_code(totp_device, request.user, token):
             is_verified = True
         else:
+            # Recovery codes are saved as keyed hashes, so compare the hash of the typed code.
             static_device = StaticDevice.objects.filter(user=request.user, confirmed=True).first()
-            if static_device and static_device.verify_token(token):
+            if static_device and static_device.verify_token(hash_recovery_code(token)):
                 is_verified = True
 
         if not is_verified:
