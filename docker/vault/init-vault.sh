@@ -13,7 +13,8 @@
 #   2. Unseals Vault.
 #   3. Turns on the audit log (every request, with secrets hashed) to the
 #      container output, so it can be collected with the other logs.
-#   4. Creates the "kura-mfa" encryption key (Transit engine, AES-256-GCM).
+#   4. Creates the "kura-mfa" and "kura-answer-keys" encryption keys (Transit
+#      engine, AES-256-GCM).
 #   5. Sets up temporary database users (database engine): prepares the
 #      PostgreSQL roles, connects Vault as vault_admin, then changes
 #      vault_admin's password so only Vault knows it.
@@ -107,9 +108,11 @@ vault_root audit enable file file_path=stdout > /dev/null
 
 # 4. Transit engine and the key that encrypts authenticator seeds. Vault keeps
 #    the key inside; Django can only ask Vault to use it.
-echo "[4/9] Creating the kura-mfa encryption key..."
+echo "[4/9] Creating the kura-mfa and kura-answer-keys encryption keys..."
 vault_root secrets enable transit > /dev/null
 vault_root write -f transit/keys/kura-mfa type=aes256-gcm96 > /dev/null
+#    A second key, used only for exam answer keys (ExamAnswerKey.answer_key_json).
+vault_root write -f transit/keys/kura-answer-keys type=aes256-gcm96 > /dev/null
 
 # 5. Temporary database users.
 echo "[5/9] Setting up temporary database users..."

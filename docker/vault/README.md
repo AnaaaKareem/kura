@@ -47,7 +47,7 @@ also refused.
 | File | What it does |
 |---|---|
 | `config/vault.hcl` | Server settings: file storage, HTTPS only (TLS 1.3), no web UI |
-| `policies/kura-web.hcl` | Django's policy: **only** `transit/encrypt/kura-mfa`, `transit/decrypt/kura-mfa` and `database/creds/kura-app` (read) |
+| `policies/kura-web.hcl` | Django's policy: **only** encrypt and decrypt with `kura-mfa` and `kura-answer-keys`, and `database/creds/kura-app` (read) |
 | `policies/kura-cert-issuer.hcl` | The renewal script's policy: **only** `pki_int/issue/kura-service` |
 | `init-vault.sh` | One-time setup, run on the host (see below) |
 
@@ -67,7 +67,7 @@ docker compose restart web
 1. Initialises Vault with one unseal key and **shows the key straight away, once**. It's never written to disk. Keep it in a password manager.
 2. Unseals Vault. The key goes in on standard input, so it isn't visible in the process list.
 3. Turns on the audit log, which writes JSON to the container output. Secret values are replaced by `hmac-sha256:` hashes.
-4. Creates the Transit key `kura-mfa` (AES-256-GCM). It can't be exported.
+4. Creates the Transit keys `kura-mfa` (authenticator seeds) and `kura-answer-keys` (exam answer keys), both AES-256-GCM. They can't be exported.
 5. Sets up temporary database users:
    - runs `docker/postgres/vault-roles.sql`, which makes `kura_app` NOLOGIN and creates `vault_admin`
    - gives `vault_admin` a random first password

@@ -35,12 +35,15 @@ from unittest.mock import MagicMock, call, patch
 from .files import check_signature_age, scan_file_for_malware, validate_and_save_upload
 from .forms import PasswordChangeForm
 from .vault import (
+    decrypt_answer_key,
     decrypt_mfa_secret,
+    encrypt_answer_key,
     encrypt_mfa_secret,
     get_dynamic_database_credentials,
     get_vault_client,
 )
 from .views import (
+    evaluate_attempt,
     hash_recovery_code,
     log_security_event,
     queue_assessment_notification,
@@ -6416,6 +6419,228 @@ class SecretKeySettingTests(TestCase):
     def test_development_uses_throwaway_key_when_missing(self):
         result = self.load_settings("", "True")
         self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class FakeTransitVault:
+    """
+    Stands in for Vault in the answer-key tests. "Encrypting" just labels the
+    base64 text, which is enough to check that Kura sends the key through
+    Vault, with the right key name, and stores only what Vault returns.
+    """
+
+    def __init__(self):
+        self.key_names_used = []
+        self.secrets = MagicMock()
+        self.secrets.transit.encrypt_data.side_effect = self.encrypt_data
+        self.secrets.transit.decrypt_data.side_effect = self.decrypt_data
+
+    def encrypt_data(self, name, mount_point, plaintext):
+        self.key_names_used.append(name)
+        return {"data": {"ciphertext": "vault:v1:" + plaintext}}
+
+    def decrypt_data(self, name, mount_point, ciphertext):
+        self.key_names_used.append(name)
+        return {"data": {"plaintext": ciphertext.removeprefix("vault:v1:")}}
+
+
+@override_settings(VAULT_ENABLED=True)
+class AnswerKeyEncryptionTests(TestCase):
+    """
+    Exam answer keys are encrypted by Vault (key "kura-answer-keys") before they
+    are saved, and decrypted in memory only for auto-grading and editing.
+    If Vault is down, submissions still go through (to manual grading).
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.fake_vault = FakeTransitVault()
+        vault_patch = patch("kura.vault.get_vault_client", return_value=self.fake_vault)
+        vault_patch.start()
+        self.addCleanup(vault_patch.stop)
+
+        self.instructor = make_user("Instructor", mfa_enabled=True)
+        self.student = make_user("Student", mfa_enabled=True)
+        head = make_user("Department head", mfa_enabled=True)
+        department = Department.objects.create(name="Security", code="SEC", head_user=head)
+        course = Course.objects.create(
+            department=department, code="SEC101", title="Security", semester="1", academic_year=2026,
+            is_published=True, published_by=head, published_at=timezone.now(),
+        )
+        CourseStaff.objects.create(course=course, user=self.instructor, staff_role="lead_instructor")
+        module = Module.objects.create(course=course, title="Week 1", is_visible=True)
+        self.section = ModuleSection.objects.create(module=module, title="Quiz", section_type="exam")
+        now = timezone.now()
+        self.assessment = Assessment.objects.create(
+            section=self.section, title="Quiz 1", component_type=GradeComponentType.QUIZ, max_score=10,
+            max_attempts=1, opens_at=now - timezone.timedelta(hours=1), due_date=now + timezone.timedelta(days=1),
+            duration_minutes=30, created_by=self.instructor, settings_json={"autosave_interval_seconds": 15},
+            questions_json=[{"question_id": "q1", "type": "multiple_choice", "prompt": "Pick A", "points": 10,
+                             "options": [{"option_id": "a", "text": "A"}, {"option_id": "b", "text": "B"}]}],
+        )
+        ExamAnswerKey.objects.create(
+            assessment=self.assessment, created_by=self.instructor,
+            answer_key_json=encrypt_answer_key({"q1": {"correct_option_ids": ["a"]}}),
+        )
+
+    def make_submitted_attempt(self, chosen_option):
+        # A sealed attempt (time and hash set), ready for evaluate_attempt.
+        return AssessmentAttempt.objects.create(
+            assessment=self.assessment, student=self.student, attempt_no=1,
+            expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1",
+            submitted_at=timezone.now(), submission_hash="0" * 64,
+            answers_json=[{"question_id": "q1", "type": "multiple_choice", "selected_option_ids": [chosen_option]}],
+        )
+
+    def test_saved_answer_key_is_vault_ciphertext_only(self):
+        stored = ExamAnswerKey.objects.get(assessment=self.assessment).answer_key_json
+        self.assertEqual(list(stored.keys()), ["ciphertext"])
+        self.assertTrue(stored["ciphertext"].startswith("vault:v1:"))
+        self.assertNotIn("correct_option_ids", json.dumps(stored))
+        self.assertEqual(self.fake_vault.key_names_used, ["kura-answer-keys"])
+
+    def test_decrypt_gives_back_the_answer_key(self):
+        stored = ExamAnswerKey.objects.get(assessment=self.assessment).answer_key_json
+        self.assertEqual(decrypt_answer_key(stored), {"q1": {"correct_option_ids": ["a"]}})
+
+    def test_plain_answer_key_is_refused_when_vault_is_on(self):
+        with self.assertRaises(ValidationError):
+            decrypt_answer_key({"q1": {"correct_option_ids": ["a"]}})
+
+    def test_auto_grading_uses_the_decrypted_key(self):
+        attempt = self.make_submitted_attempt("a")
+        evaluate_attempt(attempt)
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.status, AttemptStatus.FULLY_GRADED)
+        self.assertEqual(attempt.summary_score_json["total_score"], 10.0)
+
+    def test_vault_down_sends_attempt_to_manual_grading(self):
+        # The submission is kept and not marked as zero; an instructor grades it.
+        attempt = self.make_submitted_attempt("a")
+        self.fake_vault.secrets.transit.decrypt_data.side_effect = ConnectionError("Vault down")
+        evaluate_attempt(attempt)
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.status, AttemptStatus.REQUIRES_MANUAL_GRADING)
+        self.assertIsNone(attempt.summary_score_json)
+        self.assertFalse(Grade.objects.filter(attempt=attempt).exists())
+
+    def test_assessment_builder_saves_only_ciphertext(self):
+        self.client.force_login(self.instructor)
+        now = timezone.now()
+        response = self.client.post(reverse("kura:assessment_create", kwargs={"section_id": self.section.id}), {
+            "title": "Quiz 2", "component_type": GradeComponentType.QUIZ, "delivery_mode": "online",
+            "max_score": "10", "max_attempts": 1, "duration_minutes": 30, "autosave_interval_seconds": 15,
+            "opens_at": (now - timezone.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"),
+            "due_date": (now + timezone.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M"),
+            "questions-TOTAL_FORMS": 1, "questions-INITIAL_FORMS": 0,
+            "questions-0-type": "multiple_choice", "questions-0-prompt": "Pick B", "questions-0-points": "10",
+            "questions-0-option_1": "A", "questions-0-option_2": "B", "questions-0-correct_2": "on",
+        })
+        new_assessment = Assessment.objects.get(title="Quiz 2")
+        self.assertRedirects(response, reverse("kura:assessment_detail", kwargs={"assessment_id": new_assessment.id}))
+        stored = new_assessment.answer_key.answer_key_json
+        self.assertEqual(list(stored.keys()), ["ciphertext"])
+        question_id = new_assessment.questions_json[0]["question_id"]
+        self.assertEqual(decrypt_answer_key(stored)[question_id]["correct_option_ids"], ["opt_2"])
+
+    def test_builder_saves_nothing_when_vault_is_down(self):
+        self.client.force_login(self.instructor)
+        self.fake_vault.secrets.transit.encrypt_data.side_effect = ConnectionError("Vault down")
+        now = timezone.now()
+        response = self.client.post(reverse("kura:assessment_create", kwargs={"section_id": self.section.id}), {
+            "title": "Quiz 3", "component_type": GradeComponentType.QUIZ, "delivery_mode": "online",
+            "max_score": "10", "max_attempts": 1, "duration_minutes": 30, "autosave_interval_seconds": 15,
+            "opens_at": (now - timezone.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"),
+            "due_date": (now + timezone.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M"),
+            "questions-TOTAL_FORMS": 1, "questions-INITIAL_FORMS": 0,
+            "questions-0-type": "multiple_choice", "questions-0-prompt": "Pick B", "questions-0-points": "10",
+            "questions-0-option_1": "A", "questions-0-option_2": "B", "questions-0-correct_2": "on",
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "could not be saved securely right now")
+        self.assertFalse(Assessment.objects.filter(title="Quiz 3").exists())
+
+    def test_edit_page_is_not_shown_when_vault_is_down(self):
+        self.client.force_login(self.instructor)
+        self.fake_vault.secrets.transit.decrypt_data.side_effect = ConnectionError("Vault down")
+        response = self.client.get(reverse("kura:assessment_edit", kwargs={"assessment_id": self.assessment.id}))
+        self.assertRedirects(
+            response,
+            reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id}),
+            fetch_redirect_response=False,
+        )
+
+    def test_command_encrypts_plain_keys_and_skips_encrypted_ones(self):
+        other = Assessment.objects.create(
+            section=self.section, title="Old quiz", component_type=GradeComponentType.QUIZ, max_score=10,
+            max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(days=1),
+            duration_minutes=30, created_by=self.instructor,
+        )
+        ExamAnswerKey.objects.create(assessment=other, created_by=self.instructor,
+                                     answer_key_json={"q1": {"correct_option_ids": ["b"]}})
+        output = StringIO()
+        call_command("encrypt_answer_keys", stdout=output)
+        self.assertIn("Encrypted 1 answer key(s); 1 were already encrypted.", output.getvalue())
+        stored = ExamAnswerKey.objects.get(assessment=other).answer_key_json
+        self.assertEqual(decrypt_answer_key(stored), {"q1": {"correct_option_ids": ["b"]}})
+        self.assertNotIn("correct_option_ids", json.dumps(stored))
+
+
+class GradeHistoryInsertOnlyTests(TestCase):
+    """
+    Migration 0016: the application role (kura_app) may add grade history rows
+    but may not change or delete them, so the grade audit log cannot be rewritten.
+    """
+
+    def setUp(self):
+        instructor = make_user("Instructor", mfa_enabled=True)
+        student = make_user("Student", mfa_enabled=True)
+        head = make_user("Department head", mfa_enabled=True)
+        department = Department.objects.create(name="History", code="HIS", head_user=head)
+        course = Course.objects.create(department=department, code="HIS101", title="History", semester="1",
+                                       academic_year=2026)
+        module = Module.objects.create(course=course, title="Week 1")
+        section = ModuleSection.objects.create(module=module, title="Exam", section_type="exam")
+        now = timezone.now()
+        assessment = Assessment.objects.create(
+            section=section, title="Exam", component_type=GradeComponentType.EXAM, max_score=10, max_attempts=1,
+            opens_at=now, due_date=now + timezone.timedelta(days=1), duration_minutes=30, created_by=instructor,
+        )
+        attempt = AssessmentAttempt.objects.create(assessment=assessment, student=student, attempt_no=1,
+                                                   expires_at=now, ip_address="127.0.0.1")
+        self.grade = Grade.objects.create(assessment=assessment, student=student, attempt=attempt, score=7)
+        self.history = GradeHistory.objects.create(grade=self.grade, new_score=7, new_status="draft",
+                                                   changed_by=instructor)
+        self.instructor = instructor
+
+    def run_as_app_role(self, sql, parameters):
+        # Run one statement as kura_app (inside a savepoint, so a refused
+        # statement does not break the rest of the test), then switch back.
+        with connection.cursor() as cursor:
+            cursor.execute("SET ROLE kura_app;")
+            try:
+                with transaction.atomic():
+                    cursor.execute(sql, parameters)
+            finally:
+                cursor.execute("RESET ROLE;")
+
+    def test_app_role_cannot_update_history(self):
+        with self.assertRaises(DatabaseError):
+            self.run_as_app_role("UPDATE grade_history SET new_score = 10 WHERE id = %s;", [self.history.id])
+        self.history.refresh_from_db()
+        self.assertEqual(self.history.new_score, 7)
+
+    def test_app_role_cannot_delete_history(self):
+        with self.assertRaises(DatabaseError):
+            self.run_as_app_role("DELETE FROM grade_history WHERE id = %s;", [self.history.id])
+        self.assertTrue(GradeHistory.objects.filter(id=self.history.id).exists())
+
+    def test_app_role_can_still_add_history(self):
+        self.run_as_app_role(
+            "INSERT INTO grade_history (grade_id, new_score, new_status, changed_by_id, changed_at) "
+            "VALUES (%s, %s, %s, %s, NOW());",
+            [self.grade.id, 8, "draft", self.instructor.id],
+        )
+        self.assertEqual(GradeHistory.objects.filter(grade=self.grade).count(), 2)
 
 
 @override_settings(VAULT_ENABLED=False)
