@@ -141,3 +141,13 @@ groups:
         annotations:
           summary: "Virus scanner is unavailable"
           description: "The app could not reach ClamAV within the last 5 minutes, so it refused new uploads. Restart or fix the virus scanner container."
+
+      # 14. The breached-password check could not reach HaveIBeenPwned (through
+      #     the breach-check proxy), so new passwords were accepted without it.
+      - alert: BreachCheckUnavailable
+        expr: sum(count_over_time({service="web"} | logfmt | event="auth.breach_check.unavailable" [15m])) >= 1
+        labels:
+          severity: warning
+        annotations:
+          summary: "Breached-password check is not working"
+          description: "At least one new password in the last 15 minutes could not be checked against HaveIBeenPwned, so it was accepted without the check. Check the breach-proxy container and its internet route."

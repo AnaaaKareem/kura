@@ -7,6 +7,7 @@ import sys
 import threading
 import time
 import unittest
+import urllib.request
 import zipfile
 from importlib import import_module
 from pathlib import Path
@@ -34,6 +35,7 @@ from unittest.mock import MagicMock, call, patch
 
 from .files import check_signature_age, scan_file_for_malware, validate_and_save_upload
 from .forms import PasswordChangeForm
+from .validators import BreachedPasswordValidator
 from .vault import (
     decrypt_answer_key,
     decrypt_mfa_secret,
@@ -5681,7 +5683,8 @@ class LokiSIEMAlertRulesTests(TestCase):
         self.assertFalse(self.rules_directory_tenant.exists(), "Duplicate kura tenant rules must not exist")
 
     def test_all_siem_alert_rules_present(self):
-        # All 13 security alerts from the handoff's WP4 table must be defined.
+        # All 13 security alerts from the handoff's WP4 table, plus
+        # BreachCheckUnavailable (fix 3), must be defined.
         expected_alerts = [
             "BruteForceLogin",
             "SingleIpBruteForce",
@@ -5696,6 +5699,7 @@ class LokiSIEMAlertRulesTests(TestCase):
             "DbAuthFailures",
             "RelayBounces",
             "ClamAvUnavailable",
+            "BreachCheckUnavailable",
         ]
         content = self.rules_file_fake.read_text(encoding="utf-8")
         for alert_name in expected_alerts:
@@ -6419,6 +6423,119 @@ class SecretKeySettingTests(TestCase):
     def test_development_uses_throwaway_key_when_missing(self):
         result = self.load_settings("", "True")
         self.assertEqual(result.returncode, 0, result.stderr)
+
+
+class BreachedPasswordCheckTests(TestCase):
+    """
+    The breached-password check asks HaveIBeenPwned (k-anonymity: only the
+    first 5 characters of the SHA-1 hash leave the server). In Docker it goes
+    through the breach-proxy container, the web container's only way out.
+    Network access is replaced with a stand-in here.
+    """
+
+    # SHA-1 of "password123" is CBFDAC6008F9CAB4083784CBD1874F76618D2A97.
+    BREACHED_PASSWORD = "password123"
+    BREACHED_SUFFIX = "C6008F9CAB4083784CBD1874F76618D2A97"
+
+    def fake_opener(self, response_text):
+        # An opener whose open() returns response_text, like HaveIBeenPwned would.
+        opener = MagicMock()
+        opener.open.return_value.__enter__.return_value.read.return_value = response_text.encode("utf-8")
+        return opener
+
+    def test_breached_password_is_rejected(self):
+        opener = self.fake_opener(f"0000000000000000000000000000000000A:1\r\n{self.BREACHED_SUFFIX}:2500\r\n")
+        with patch("kura.validators.urllib.request.build_opener", return_value=opener):
+            with self.assertRaises(ValidationError):
+                BreachedPasswordValidator().validate(self.BREACHED_PASSWORD)
+        # Only the 5-character prefix was sent.
+        sent_request = opener.open.call_args[0][0]
+        self.assertTrue(sent_request.full_url.endswith("/range/CBFDA"))
+
+    def test_password_not_in_list_is_accepted(self):
+        opener = self.fake_opener("0000000000000000000000000000000000A:1\r\n")
+        with patch("kura.validators.urllib.request.build_opener", return_value=opener):
+            BreachedPasswordValidator().validate(self.BREACHED_PASSWORD)
+
+    def test_network_failure_is_logged_without_the_password(self):
+        opener = MagicMock()
+        opener.open.side_effect = OSError("no route to host")
+        with patch("kura.validators.urllib.request.build_opener", return_value=opener):
+            with self.assertLogs("kura.validators", level="WARNING") as captured:
+                BreachedPasswordValidator().validate(self.BREACHED_PASSWORD)
+        log_text = "\n".join(captured.output)
+        self.assertIn("event=auth.breach_check.unavailable", log_text)
+        self.assertNotIn(self.BREACHED_PASSWORD, log_text)
+        self.assertNotIn("CBFDA", log_text)
+
+    @override_settings(BREACH_CHECK_PROXY_URL="http://breach-proxy:8888")
+    def test_lookup_goes_through_the_proxy_when_set(self):
+        opener = self.fake_opener("")
+        with patch("kura.validators.urllib.request.build_opener", return_value=opener) as build_opener:
+            BreachedPasswordValidator().validate("a-long-unique-test-password")
+        proxy_handlers = []
+        for handler in build_opener.call_args[0]:
+            if isinstance(handler, urllib.request.ProxyHandler):
+                proxy_handlers.append(handler)
+        self.assertEqual(len(proxy_handlers), 1)
+        self.assertEqual(proxy_handlers[0].proxies, {"https": "http://breach-proxy:8888"})
+
+    @override_settings(BREACH_CHECK_PROXY_URL="", BREACH_CHECK_CA_FILE="")
+    def test_no_proxy_means_a_direct_connection(self):
+        # An empty proxy setting also ignores any HTTPS_PROXY in the environment.
+        opener = self.fake_opener("")
+        with patch("kura.validators.urllib.request.build_opener", return_value=opener) as build_opener:
+            BreachedPasswordValidator().validate("a-long-unique-test-password")
+        for handler in build_opener.call_args[0]:
+            if isinstance(handler, urllib.request.ProxyHandler):
+                self.assertEqual(handler.proxies, {})
+
+    @override_settings(BREACH_CHECK_CA_FILE="/no/such/ca-file.crt")
+    def test_missing_ca_file_fails_open_with_a_warning(self):
+        # A wrong certificate path must not break password changes (500 error).
+        with self.assertLogs("kura.validators", level="WARNING") as captured:
+            BreachedPasswordValidator().validate("a-long-unique-test-password")
+        self.assertIn("event=auth.breach_check.unavailable", "\n".join(captured.output))
+
+
+class BreachCheckProxyConfigTests(TestCase):
+    """
+    The breach-proxy container lets the web container reach only
+    api.pwnedpasswords.com, and only the web container may use it.
+    """
+
+    def setUp(self):
+        base_dir = Path(settings.BASE_DIR)
+        self.compose_text = (base_dir / "docker-compose.yml").read_text(encoding="utf-8")
+        self.proxy_settings = (base_dir / "docker" / "breach-proxy" / "tinyproxy.conf").read_text(encoding="utf-8")
+        self.allowlist = (base_dir / "docker" / "breach-proxy" / "filter").read_text(encoding="utf-8")
+        self.dockerfile = (base_dir / "docker" / "breach-proxy" / "Dockerfile").read_text(encoding="utf-8")
+
+    def test_allowlist_has_only_haveibeenpwned(self):
+        allowed_lines = []
+        for line in self.allowlist.splitlines():
+            if line.strip():
+                allowed_lines.append(line.strip())
+        self.assertEqual(allowed_lines, [r"^api\.pwnedpasswords\.com$"])
+
+    def test_proxy_refuses_everything_else(self):
+        self.assertIn("FilterDefaultDeny Yes", self.proxy_settings)
+        self.assertIn("ConnectPort 443", self.proxy_settings)
+        self.assertIn("FilterURLs Off", self.proxy_settings)
+
+    def test_only_the_breach_check_network_may_use_the_proxy(self):
+        self.assertIn("Allow 172.28.50.0/24", self.proxy_settings)
+        self.assertIn("subnet: 172.28.50.0/24", self.compose_text)
+        breach_network = self.compose_text.split("  breach_check:\n", 1)[1].split("\n  breach_check_egress:", 1)[0]
+        self.assertIn("internal: true", breach_network)
+
+    def test_proxy_runs_unprivileged_on_a_pinned_image(self):
+        self.assertIn("USER tinyproxy", self.dockerfile)
+        self.assertRegex(self.dockerfile, r"FROM alpine:[0-9.]+@sha256:[0-9a-f]{64}")
+
+    def test_web_uses_the_proxy_and_public_certificates(self):
+        self.assertIn('BREACH_CHECK_PROXY_URL: "http://breach-proxy:8888"', self.compose_text)
+        self.assertIn('BREACH_CHECK_CA_FILE: "/etc/ssl/certs/ca-certificates.crt"', self.compose_text)
 
 
 class FakeTransitVault:
