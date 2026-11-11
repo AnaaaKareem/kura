@@ -33,7 +33,7 @@ from django_otp.plugins.otp_totp.models import TOTPDevice
 from django_otp.util import random_hex
 from unittest.mock import MagicMock, call, patch
 
-from .files import check_signature_age, scan_file_for_malware, validate_and_save_upload
+from .files import check_signature_age, create_download_response, scan_file_for_malware, validate_and_save_upload
 from .forms import PasswordChangeForm
 from .validators import BreachedPasswordValidator
 from .vault import (
@@ -8166,3 +8166,51 @@ class UserRolesInputValidationTests(TestCase):
 
         self.assertRedirects(response, self.roles_url)
         self.assertEqual(UserRole.objects.filter(user=self.target_user).count(), before)
+
+
+class DownloadFilenameHeaderTests(TestCase):
+    """
+    CFG-07: A stored filename must not be able to inject extra Content-Disposition
+    parameters, and non-ASCII names must be encoded safely.
+    """
+
+    def make_stored_file(self, filename):
+        # Build the smallest valid StoredFile plus its binary content.
+        uploader = make_user("Instructor")
+        stored_file = StoredFile.objects.create(
+            uploaded_by=uploader,
+            original_filename=filename,
+            mime_type="application/pdf",
+            size_bytes=12,
+            sha256_hash="a" * 64,
+        )
+        FileContent.objects.create(file=stored_file, content=b"%PDF-1.4 test")
+        return stored_file
+
+    def test_quote_and_parameter_text_stays_inside_the_filename(self):
+        stored_file = self.make_stored_file('a"; filename*=UTF-8\'\'evil.html')
+
+        response = create_download_response(stored_file)
+        header = response["Content-Disposition"]
+
+        self.assertTrue(header.startswith("attachment"))
+        # The double quote is escaped, so it cannot end the filename early.
+        self.assertIn('\\"', header)
+
+        # Parse the header: the injected text must be part of the filename value,
+        # not a separate filename* parameter.
+        from email.message import Message
+
+        message = Message()
+        message["Content-Disposition"] = header
+        params = message.get_params(header="content-disposition") or []
+        parameter_names = [name.lower() for name, _value in params]
+        self.assertNotIn("filename*", parameter_names)
+
+    def test_plain_filename_header(self):
+        stored_file = self.make_stored_file("notes.pdf")
+
+        response = create_download_response(stored_file)
+
+        self.assertEqual(response["Content-Disposition"], 'attachment; filename="notes.pdf"')
+        self.assertEqual(response["X-Content-Type-Options"], "nosniff")
