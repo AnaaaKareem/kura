@@ -11,3 +11,25 @@ secrets/
 certs/
 *.log
 .DS_Store
+
+# Runtime data and backups are created by the stack, never shipped in the image.
+var/
+
+# Coursework documents and diagrams are development material only.
+docs/
+make_diagram.py
+architecture.py
+token-stack.png
+
+# Developer notes and the audit task list are not needed at runtime.
+TOKEN-SAVING-STACK.md
+OWASP_REMEDIATION_TASKS.md
+
+# Tests run outside Docker (see .github/workflows/ci.yml), not in the image.
+kura/tests.py
+
+# CI workflow definitions are not needed inside the container.
+.github/
+
+# The lock file is for local tooling; the image installs requirements.txt.
+uv.lock
