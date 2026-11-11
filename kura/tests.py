@@ -8214,3 +8214,36 @@ class DownloadFilenameHeaderTests(TestCase):
 
         self.assertEqual(response["Content-Disposition"], 'attachment; filename="notes.pdf"')
         self.assertEqual(response["X-Content-Type-Options"], "nosniff")
+
+
+class NoStoreAndAutocompleteTests(TestCase):
+    """
+    LOG-06: Every authenticated response is marked no-store, including the
+    must-change-password onboarding path, and one-time codes carry the right
+    autocomplete hint.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.user = make_user("Student", mfa_enabled=True)
+
+    def test_must_change_password_page_is_not_cacheable(self):
+        # The early-return path used to skip the Cache-Control header.
+        self.user.must_change_password = True
+        self.user.save(update_fields=["must_change_password"])
+        self.client.force_login(self.user)
+
+        response = self.client.get(reverse("kura:password_change"))
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("no-store", response["Cache-Control"])
+
+    def test_grade_release_otp_has_one_time_code_autocomplete(self):
+        from .forms import GradeReleaseForm
+
+        self.assertIn('autocomplete="one-time-code"', str(GradeReleaseForm()))
+
+    def test_proctor_code_has_autocomplete_off(self):
+        from .forms import AssessmentAttemptStartForm
+
+        self.assertIn('autocomplete="off"', str(AssessmentAttemptStartForm()))
