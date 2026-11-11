@@ -7966,5 +7966,88 @@ class SessionInvalidLoggingTests(TestCase):
         self.assertTrue(any(f'actor_user_id="{self.user.id}"' in line for line in captured.output))
 
 
+class PasswordChangeNotificationTests(TestCase):
+    """
+    AUTH-05: When a user changes or resets their password, a notification email
+    is queued to their address. The email must not contain the password, the reset
+    token, or any bearer link.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.user = make_user("Student", password="OriginalPassword123!")
+
+    def test_password_change_queues_notification_email(self):
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("kura:password_change"),
+            {
+                "old_password": "OriginalPassword123!",
+                "new_password": "NewSecurePassword456!",
+                "confirm_password": "NewSecurePassword456!",
+            },
+        )
+        self.assertRedirects(response, reverse("kura:home"))
+
+        email = OutgoingEmail.objects.get(to_email=self.user.email)
+        self.assertIn("Your Kura password was changed. If this was not you, contact an administrator.", email.body)
+        self.assertNotIn("OriginalPassword123!", email.body)
+        self.assertNotIn("NewSecurePassword456!", email.body)
+
+    def test_password_reset_confirm_queues_notification_email(self):
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        PasswordResetToken.objects.create(
+            user=self.user,
+            token_hash=token_hash,
+            expires_at=timezone.now() + timezone.timedelta(minutes=30),
+        )
+
+        response = self.client.post(
+            reverse("kura:password_reset_confirm", kwargs={"token": raw_token}),
+            {
+                "new_password": "NewResetPassword789!",
+                "confirm_password": "NewResetPassword789!",
+            },
+        )
+        self.assertRedirects(response, reverse("kura:login"))
+
+        email = OutgoingEmail.objects.get(to_email=self.user.email)
+        self.assertIn("Your Kura password was changed. If this was not you, contact an administrator.", email.body)
+        self.assertNotIn(raw_token, email.body)
+        self.assertNotIn("NewResetPassword789!", email.body)
+
+    def test_failed_attempts_queue_no_email(self):
+        self.client.force_login(self.user)
+        # Failed password change (wrong old password)
+        self.client.post(
+            reverse("kura:password_change"),
+            {
+                "old_password": "WrongPassword!",
+                "new_password": "NewSecurePassword456!",
+                "confirm_password": "NewSecurePassword456!",
+            },
+        )
+        self.assertEqual(OutgoingEmail.objects.filter(to_email=self.user.email).count(), 0)
+
+        # Failed reset confirm (passwords don't match)
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        PasswordResetToken.objects.create(
+            user=self.user,
+            token_hash=token_hash,
+            expires_at=timezone.now() + timezone.timedelta(minutes=30),
+        )
+        self.client.post(
+            reverse("kura:password_reset_confirm", kwargs={"token": raw_token}),
+            {
+                "new_password": "Password1!",
+                "confirm_password": "Password2!",
+            },
+        )
+        self.assertEqual(OutgoingEmail.objects.filter(to_email=self.user.email).count(), 0)
+
+
+
 
 

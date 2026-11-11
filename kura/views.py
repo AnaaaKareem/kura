@@ -1167,6 +1167,15 @@ def password_change_view(request):
         update_session_auth_hash(request, request.user)
         log_security_event(request, "auth.password.changed", {})
 
+        # Notify the user by email that their password was changed.
+        queue_email(
+            f"password-changed:{request.user.id}:{secrets.token_hex(8)}",
+            request.user.email,
+            "Your Kura password was changed",
+            "Hello,\n\nYour Kura password was changed. If this was not you, contact an administrator.\n\n"
+            "This is an automatic message from Kura. Please do not reply.",
+        )
+
         # Mark the success message so the next page can show a clear confirmation card.
         messages.success(request, "Password updated successfully.", extra_tags="password_changed")
 
@@ -1328,6 +1337,15 @@ def password_reset_confirm_view(request, token):
             request,
             "auth.password.reset_completed",
             {"user_id": user.id, "sessions_revoked": sessions_revoked},
+        )
+
+        # Notify the user by email that their password was reset.
+        queue_email(
+            f"password-reset-complete:{user.id}:{secrets.token_hex(8)}",
+            user.email,
+            "Your Kura password was changed",
+            "Hello,\n\nYour Kura password was changed. If this was not you, contact an administrator.\n\n"
+            "This is an automatic message from Kura. Please do not reply.",
         )
 
         messages.success(request, "Your password has been reset. Please log in with your new password.")
