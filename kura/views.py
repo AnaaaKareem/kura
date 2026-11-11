@@ -1178,17 +1178,65 @@ def password_change_view(request):
     return render(request, "kura/accounts/password_change.html", {"form": form})
 
 
+def verify_second_factor(user, code):
+    """
+    Checks a typed authenticator-app code or recovery code for one user.
+    Used by the password reset page. Returns "totp", "recovery_code", or None.
+    Security: same checks as the login MFA step. django-otp throttles repeated
+    wrong guesses, and a used recovery code is deleted (single use).
+    """
+    for device in TOTPDevice.objects.filter(user=user, confirmed=True):
+        if verify_totp_code(device, user, code):
+            return "totp"
+    code_hash = hash_recovery_code(code)
+    for static_device in StaticDevice.objects.filter(user=user, confirmed=True):
+        if static_device.verify_token(code_hash):
+            return "recovery_code"
+    return None
+
+
+def create_reset_token(user):
+    """
+    Makes a single-use password reset token valid for 30 minutes.
+    Used by both reset methods (email link and authenticator code).
+    Returns (raw_token, token_record). Only the SHA-256 hash is saved.
+    """
+    raw_token = secrets.token_urlsafe(32)
+    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    record = PasswordResetToken.objects.create(
+        user=user,
+        token_hash=token_hash,
+        expires_at=timezone.now() + timezone.timedelta(minutes=30),
+    )
+    return raw_token, record
+
+
 def password_reset_request_view(request):
     """
-    Initiates a password reset by emailing a time-limited token link.
+    Starts a password reset, either by authenticator/recovery code (default) or by an emailed link.
     Who can use it: Public unauthenticated users.
-    Security: Returns the same confirmation message regardless of whether the email exists.
+    Security: Unknown emails, wrong codes and accounts without MFA all get the same
+    generic answer, so the page cannot be used to find out which accounts exist.
+    Both methods end in a single-use, 30-minute token.
 """
     form = PasswordResetRequestForm(request.POST or None)
 
     if request.method == "POST" and form.is_valid():
         email = form.cleaned_data["email"].strip().lower()
         user = User.objects.filter(email=email, is_active=True).first()
+
+        # Two-factor method: a correct code goes straight to the new-password page.
+        if form.cleaned_data["method"] == "authenticator":
+            method_used = None
+            if user:
+                method_used = verify_second_factor(user, form.cleaned_data["code"].strip())
+            if not method_used:
+                log_security_event(request, "auth.password.reset_2fa_failed", {}, logging.WARNING)
+                messages.error(request, "Invalid email address or security code.")
+                return render(request, "kura/accounts/password_reset_request.html", {"form": form})
+            raw_token, _ = create_reset_token(user)
+            log_security_event(request, "auth.password.reset_2fa_ok", {"method": method_used})
+            return redirect("kura:password_reset_confirm", token=raw_token)
 
         # At most 2 reset emails per account every 5 minutes, so nobody can flood
         # someone's inbox. Extra requests are ignored without telling the visitor.
@@ -1201,15 +1249,7 @@ def password_reset_request_view(request):
         # If the user exists, create a single-use token valid for 30 minutes.
         queued = False
         if user and recent_requests < 2:
-            raw_token = secrets.token_urlsafe(32)
-            token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
-            expires_at = timezone.now() + timezone.timedelta(minutes=30)
-
-            reset_token = PasswordResetToken.objects.create(
-                user=user,
-                token_hash=token_hash,
-                expires_at=expires_at,
-            )
+            raw_token, reset_token = create_reset_token(user)
 
             # Put the email in the outbox instead of sending it here, so the page
             # answers just as fast whether or not the account exists. The link

@@ -41,13 +41,13 @@
                             <option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option>
                         </select>
                     </label>
-                    <!-- Keep personal security links separate from work navigation. -->
+                    <!-- Keep personal security links separate from work navigation. The trigger and menu use tabindex (not a plain button) so Safari and Firefox on macOS keep focus and the menu stays open long enough to click Log out. -->
                     <div class="dropdown dropdown-end">
-                        <button type="button" class="btn btn-ghost btn-sm gap-2" aria-label="Open account menu">
+                        <div tabindex="0" role="button" class="btn btn-ghost btn-sm gap-2" aria-label="Open account menu">
                             <span class="hidden max-w-40 truncate sm:inline">{{ user.first_name }} {{ user.last_name }}</span>
                             <svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 20c.6-3.4 2.8-5.2 6.5-5.2s5.9 1.8 6.5 5.2" stroke-linecap="round"/></svg>
-                        </button>
-                        <ul class="menu dropdown-content z-30 mt-3 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg">
+                        </div>
+                        <ul tabindex="0" class="menu dropdown-content z-30 mt-3 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg">
                             <li class="menu-title">Account security</li>
                             <li><a href="{% url 'kura:passkey_manage' %}">Passkeys</a></li>
                             <li><a href="{% url 'kura:password_change' %}">Change password</a></li>

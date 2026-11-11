@@ -1,6 +1,9 @@
 {% extends "kura/base.html" %}
+{% load static %}
 
 {% block title %}MFA Configured - Recovery Codes - Kura{% endblock %}
+
+{% block head %}<link rel="stylesheet" href="{% static 'css/print.css' %}" media="print">{% endblock %}
 
 {% block content %}
 <div class="max-w-lg mx-auto mt-6">
@@ -46,5 +49,19 @@
             </div>
         </div>
     </div>
+</div>
+<!-- Paper copy: hidden on screen, the only thing shown when printing (see static/css/print.css). -->
+<div class="recovery-sheet hidden" aria-hidden="true">
+    <div class="sheet-logo">
+        <span class="sheet-mark"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round"><path d="M7 4v16M17 5 7 12l10 7"/></svg></span>
+        <span class="sheet-name">Kura</span>
+    </div>
+    <h2>Account recovery codes</h2>
+    <p>Account: {{ user.email }}<br>Printed: {% now "j F Y, H:i" %}</p>
+    <p>Use one of these codes if you lose access to your authenticator app. Each code works only once.</p>
+    <div class="sheet-codes">
+        {% for code in recovery_codes %}<div class="sheet-code">{{ code }}</div>{% endfor %}
+    </div>
+    <p class="sheet-note">Keep this page somewhere safe, such as a locked drawer. Anyone who has it can sign in as you. Do not photograph it or store it online. Generating new codes makes these ones stop working.</p>
 </div>
 {% endblock %}

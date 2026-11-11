@@ -711,11 +711,46 @@ class PasswordResetTests(TestCase):
         self.client = Client()
         self.user = make_user("Student", password="OriginalPassword123!")
 
+    def test_authenticator_method_with_recovery_code_goes_to_new_password_page(self):
+        # Default method: a correct recovery code skips email and opens the reset page.
+        device = StaticDevice.objects.create(user=self.user, name="recovery", confirmed=True)
+        StaticToken.objects.create(device=device, token=hash_recovery_code("abcd1234"))
+        response = self.client.post(
+            reverse("kura:password_reset_request"),
+            {"email": self.user.email, "method": "authenticator", "code": "abcd1234"},
+        )
+        token_record = PasswordResetToken.objects.get(user=self.user)
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response["Location"].startswith("/password/reset/"))
+        self.assertIsNone(token_record.used_at)
+
+    def test_authenticator_method_wrong_code_and_unknown_email_look_the_same(self):
+        # Wrong code and unknown email give the same generic error and no token.
+        wrong_code = self.client.post(
+            reverse("kura:password_reset_request"),
+            {"email": self.user.email, "method": "authenticator", "code": "000000"},
+        )
+        unknown = self.client.post(
+            reverse("kura:password_reset_request"),
+            {"email": "nobody@example.com", "method": "authenticator", "code": "000000"},
+        )
+        self.assertContains(wrong_code, "Invalid email address or security code.")
+        self.assertContains(unknown, "Invalid email address or security code.")
+        self.assertFalse(PasswordResetToken.objects.exists())
+
+    def test_authenticator_method_requires_a_code(self):
+        # Choosing the authenticator method with an empty code is rejected by the form.
+        response = self.client.post(
+            reverse("kura:password_reset_request"),
+            {"email": self.user.email, "method": "authenticator", "code": ""},
+        )
+        self.assertContains(response, "Enter your authenticator or recovery code.")
+
     def test_unknown_email_returns_same_generic_message(self):
         # Submitting an unknown email address returns the exact same message.
         response = self.client.post(
             reverse("kura:password_reset_request"),
-            {"email": "nonexistent_person@example.com"},
+            {"email": "nonexistent_person@example.com", "method": "email"},
         )
         self.assertRedirects(response, reverse("kura:login"))
 
@@ -7321,7 +7356,7 @@ class EmailNotificationTests(TestCase):
     # --- password reset ---------------------------------------------------
 
     def request_reset(self, email):
-        return self.client.post(reverse("kura:password_reset_request"), {"email": email})
+        return self.client.post(reverse("kura:password_reset_request"), {"email": email, "method": "email"})
 
     def test_reset_is_queued_not_sent_and_uses_the_fixed_site_url(self):
         response = self.request_reset(self.student.email)
