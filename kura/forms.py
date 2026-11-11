@@ -626,6 +626,7 @@ class CourseCreateForm(forms.Form):
     description = forms.CharField(
         label="Description",
         required=False,
+        max_length=5000,
         widget=forms.Textarea(
             attrs={
                 "class": "textarea textarea-bordered w-full",
@@ -731,6 +732,7 @@ class ModuleForm(forms.Form):
     description = forms.CharField(
         label="Description",
         required=False,
+        max_length=5000,
         widget=forms.Textarea(
             attrs={
                 "class": "textarea textarea-bordered w-full",
@@ -801,6 +803,7 @@ class SectionItemForm(forms.Form):
     content_body = forms.CharField(
         label="Content Body (Markdown)",
         required=False,
+        max_length=50000,
         widget=forms.Textarea(
             attrs={
                 "class": "textarea textarea-bordered w-full font-mono text-sm",
@@ -850,7 +853,7 @@ class MarkdownPreviewForm(forms.Form):
     """Validate the Markdown text submitted for an authorized preview."""
 
     # Empty text is valid so staff can preview while writing.
-    content_body = forms.CharField(required=False, widget=forms.Textarea)
+    content_body = forms.CharField(required=False, max_length=50000, widget=forms.Textarea)
 
 
 class ScheduleForm(forms.Form):
@@ -985,6 +988,7 @@ class ManualAttendanceForm(forms.Form):
 
     override_reason = forms.CharField(
         label="Justification Reason (Required)",
+        max_length=5000,
         widget=forms.Textarea(
             attrs={
                 "class": "textarea textarea-bordered w-full",
@@ -1021,6 +1025,7 @@ class AssessmentCreateForm(forms.Form):
     description = forms.CharField(
         label="Briefing & Instructions",
         required=False,
+        max_length=5000,
         widget=forms.Textarea(attrs={"class": "textarea textarea-bordered w-full", "rows": 3}),
     )
 
@@ -1078,6 +1083,7 @@ class AssessmentCreateForm(forms.Form):
     lab_cidr_allowed = forms.CharField(
         label="Required Lab CIDR Subnet (Optional)",
         required=False,
+        max_length=43,
         validators=[validate_cidr],
         widget=forms.TextInput(attrs={"class": "input input-bordered w-full", "placeholder": "e.g. 10.20.0.0/24"}),
     )
@@ -1341,6 +1347,7 @@ class GradeEntryForm(forms.Form):
     feedback = forms.CharField(
         label="Evaluation Feedback",
         required=False,
+        max_length=5000,
         widget=forms.Textarea(
             attrs={
                 "class": "textarea textarea-bordered w-full",
@@ -1377,6 +1384,7 @@ class GradeAppealForm(forms.Form):
 
     reason = forms.CharField(
         label="Detailed Appeal Rationale",
+        max_length=5000,
         widget=forms.Textarea(
             attrs={
                 "class": "textarea textarea-bordered w-full",
@@ -1403,6 +1411,7 @@ class GradeAppealReviewForm(forms.Form):
 
     response = forms.CharField(
         label="Written Decision & Notes",
+        max_length=5000,
         widget=forms.Textarea(
             attrs={
                 "class": "textarea textarea-bordered w-full",
@@ -1428,6 +1437,7 @@ class GradeChangeRequestForm(forms.Form):
 
     reason = forms.CharField(
         label="Justification for Post-Release Change",
+        max_length=5000,
         widget=forms.Textarea(
             attrs={
                 "class": "textarea textarea-bordered w-full",
@@ -1455,6 +1465,7 @@ class GradeChangeRequestReviewForm(forms.Form):
     review_note = forms.CharField(
         label="Head of Department Review Note (Optional)",
         required=False,
+        max_length=5000,
         widget=forms.Textarea(
             attrs={
                 "class": "textarea textarea-bordered w-full",

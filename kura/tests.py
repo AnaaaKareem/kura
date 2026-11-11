@@ -8399,3 +8399,89 @@ class UploadExtensionMatchTests(TestCase):
         stored = validate_and_save_upload(SimpleUploadedFile("REPORT.PDF", self.pdf_bytes), self.instructor)
 
         self.assertEqual(stored.original_filename, "REPORT.PDF")
+
+
+class FreeTextLengthLimitTests(TestCase):
+    """
+    INP-04: Free-text form fields have a length limit, so an over-long value
+    gives a form error instead of being stored.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.head = make_user("Department head")
+        self.instructor = make_user("Instructor")
+        self.student = make_user("Student")
+        self.dept = Department.objects.create(name="Law", code="LAW", head_user=self.head)
+        StudentProfile.objects.create(
+            user=self.student, department=self.dept, current_level="level_4", matriculation_year=2026
+        )
+        self.course = Course.objects.create(
+            department=self.dept,
+            code="LAW101",
+            title="Contract Law",
+            semester="1",
+            academic_year=2026,
+            is_published=True,
+            published_by=self.head,
+            published_at=timezone.now(),
+        )
+        CourseStaff.objects.create(
+            course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True
+        )
+        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
+
+        self.module = Module.objects.create(course=self.course, title="Formation", is_visible=True)
+        self.section = ModuleSection.objects.create(module=self.module, title="Essay", section_type="exam")
+        self.assessment = Assessment.objects.create(
+            section=self.section,
+            title="Essay",
+            component_type=GradeComponentType.EXAM,
+            max_score=Decimal("100.00"),
+            max_attempts=1,
+            opens_at=timezone.now(),
+            due_date=timezone.now() + timezone.timedelta(hours=1),
+            duration_minutes=60,
+            created_by=self.instructor,
+        )
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment,
+            student=self.student,
+            attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED,
+            expires_at=timezone.now(),
+            ip_address="127.0.0.1",
+        )
+        self.grade = Grade.objects.create(
+            assessment=self.assessment,
+            student=self.student,
+            attempt=attempt,
+            score=Decimal("70.00"),
+            status=GradeStatus.RELEASED,
+        )
+
+    def test_overlong_appeal_reason_is_rejected(self):
+        self.client.force_login(self.student)
+
+        response = self.client.post(
+            reverse("kura:grade_appeal_create", kwargs={"grade_id": self.grade.id}),
+            {"reason": "a" * 5001},
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn("reason", response.context["form"].errors)
+        self.assertFalse(GradeAppeal.objects.filter(grade=self.grade).exists())
+
+    def test_overlong_manual_attendance_reason_is_rejected(self):
+        from .forms import ManualAttendanceForm
+
+        form = ManualAttendanceForm(
+            data={
+                "student": self.student.id,
+                "status": AttendanceStatus.PRESENT,
+                "override_reason": "a" * 5001,
+            }
+        )
+
+        self.assertFalse(form.is_valid())
+        self.assertIn("override_reason", form.errors)
