@@ -281,6 +281,21 @@ def log_security_event(request, event, details, level=logging.INFO):
     security_logger.log(level, line)
 
 
+def log_invalid_form(request, form):
+    """Record a rejected form without writing any submitted value.
+
+    Who calls it: views that validate a security-relevant admin or auth form.
+    Security: logs only the form class name and the names of the invalid fields,
+    so a typed password, email or free-text value never reaches the log (LOG-03).
+    """
+    log_security_event(
+        request,
+        "input.invalid",
+        {"form": form.__class__.__name__, "fields": sorted(form.errors.keys())},
+        logging.WARNING,
+    )
+
+
 def permission_denied_view(request, exception):
     """Show a generic denial page and record the denied request.
 
@@ -1187,6 +1202,10 @@ def password_change_view(request):
 
         return redirect("kura:home")
 
+    # A rejected password submission is logged without any typed value (LOG-03).
+    if request.method == "POST" and not form.is_valid():
+        log_invalid_form(request, form)
+
     # Record a wrong current password without logging the submitted value (AUTH-07).
     if request.method == "POST" and "old_password" in form.errors:
         log_security_event(request, "auth.password_change.old_password_failed", {}, logging.WARNING)
@@ -1798,6 +1817,10 @@ def staff_create_view(request):
         messages.success(request, f"Staff account created for {email}. Temporary password: {temporary_password}")
         return redirect("kura:staff_list")
 
+    # Log the rejected fields without the typed email, name or title (LOG-03).
+    if request.method == "POST":
+        log_invalid_form(request, form)
+
     rooms = list(Room.objects.order_by("building__name", "name").values("id", "building_id", "name"))
     return render(request, "kura/accounts/staff_create.html", {"form": form, "office_rooms": rooms})
 
@@ -1823,6 +1846,8 @@ def staff_settings_view(request):
             log_security_event(request, f"admin.{kind}.saved", {"id": str(obj.pk)})
             messages.success(request, "Saved successfully.")
             return redirect("kura:staff_settings")
+        # Log which fields failed, never the submitted names or codes (LOG-03).
+        log_invalid_form(request, submitted_form)
     return render(request, "kura/accounts/staff_settings.html", {
         "department_form": department_form, "building_form": building_form, "room_form": room_form,
         "departments": Department.objects.order_by("name"),
@@ -1935,6 +1960,8 @@ def user_roles_view(request, user_id):
         # Validate the action and role ID before touching any role records.
         form = UserRoleChangeForm(request.POST)
         if not form.is_valid():
+            # Log the rejected fields, never the submitted action or role ID (LOG-03).
+            log_invalid_form(request, form)
             messages.error(request, "Choose a valid role and action.")
             return redirect("kura:user_roles", user_id=target_user.id)
 

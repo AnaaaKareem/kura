@@ -8513,3 +8513,31 @@ class AdminSettingsAuditLogTests(TestCase):
         self.assertIn(str(department.pk), output)
         # The audit line must not carry the department's free-text name.
         self.assertNotIn("Physics", output)
+
+
+class InvalidInputLoggingTests(TestCase):
+    """
+    LOG-03: A rejected admin form logs input.invalid with the form and field
+    names, and never the submitted value.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.admin = make_user("Admin", mfa_enabled=True)
+
+    def test_invalid_department_is_logged_without_values(self):
+        self.client.force_login(self.admin)
+        marker = "ZZ-unique-marker"
+
+        with self.assertLogs("kura.security", level="WARNING") as captured:
+            response = self.client.post(
+                reverse("kura:staff_settings"),
+                {"kind": "department", "code": "", "name": marker},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        output = "\n".join(captured.output)
+        self.assertIn("input.invalid", output)
+        self.assertIn("DepartmentForm", output)
+        self.assertIn("code", output)
+        self.assertNotIn(marker, output)
