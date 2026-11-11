@@ -1154,7 +1154,7 @@ def password_change_view(request):
     Who can use it: All authenticated users (mandatory on first login).
     Security: Validates current password, checks minimum 12 chars and breaches.
 """
-    form = PasswordChangeForm(request.user, request.POST or None)
+    form = PasswordChangeForm(request.user, request.POST or None, request=request)
 
     if request.method == "POST" and form.is_valid():
         new_password = form.cleaned_data["new_password"]
@@ -1186,6 +1186,10 @@ def password_change_view(request):
             return redirect("kura:mfa_setup")
 
         return redirect("kura:home")
+
+    # Record a wrong current password without logging the submitted value (AUTH-07).
+    if request.method == "POST" and "old_password" in form.errors:
+        log_security_event(request, "auth.password_change.old_password_failed", {}, logging.WARNING)
 
     return render(request, "kura/accounts/password_change.html", {"form": form})
 

@@ -8304,3 +8304,65 @@ class PasswordReuseTests(TestCase):
 
         self.user.refresh_from_db()
         self.assertTrue(self.user.check_password(self.password))
+
+
+class OldPasswordThrottleTests(TestCase):
+    """
+    AUTH-07: Wrong current passwords on the change form count as failures and
+    the account is refused after AXES_FAILURE_LIMIT attempts.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.password = "OriginalPassword123!"
+        self.user = make_user("Student", password=self.password, mfa_enabled=True)
+        self.url = reverse("kura:password_change")
+
+    def test_wrong_current_password_is_throttled(self):
+        self.client.force_login(self.user)
+
+        # Five wrong current passwords reach the axes limit.
+        for _attempt in range(5):
+            self.client.post(
+                self.url,
+                {
+                    "old_password": "WrongPassword999!",
+                    "new_password": "NewSecurePassword456!",
+                    "confirm_password": "NewSecurePassword456!",
+                },
+            )
+
+        # The sixth request is refused even though the old password is now correct.
+        response = self.client.post(
+            self.url,
+            {
+                "old_password": self.password,
+                "new_password": "NewSecurePassword456!",
+                "confirm_password": "NewSecurePassword456!",
+            },
+        )
+
+        self.assertIn(response.status_code, (200, 403, 429))
+        if response.status_code == 200:
+            self.assertIn("old_password", response.context["form"].errors)
+
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password(self.password))
+
+    def test_correct_current_password_still_changes(self):
+        # A fresh account with the right current password is not affected.
+        self.client.force_login(self.user)
+        new_password = "NewSecurePassword456!"
+
+        response = self.client.post(
+            self.url,
+            {
+                "old_password": self.password,
+                "new_password": new_password,
+                "confirm_password": new_password,
+            },
+        )
+
+        self.assertRedirects(response, reverse("kura:home"))
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password(new_password))

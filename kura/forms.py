@@ -1,4 +1,5 @@
 from django import forms
+from django.contrib.auth import authenticate
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from .models import (
@@ -171,20 +172,32 @@ class PasswordChangeForm(forms.Form):
         ),
     )
 
-    def __init__(self, user, *args, **kwargs):
+    def __init__(self, user, *args, request=None, **kwargs):
         """
         Connects this password-change form to the account being updated.
+        The request is optional so direct form use still works; when present,
+        django-axes can count a wrong current password.
         """
         self.user = user
+        self.request = request
         super().__init__(*args, **kwargs)
 
     def clean_old_password(self):
         """
         Checks that the submitted current password matches this user's password.
         """
-        # Verify that the old password matches the user's current password.
+        # Verify the old password through authenticate() so django-axes records a
+        # wrong current password and locks the account after AXES_FAILURE_LIMIT
+        # attempts, instead of allowing unlimited guessing (AUTH-07).
         old_password = self.cleaned_data.get("old_password")
-        if not self.user.check_password(old_password):
+        if self.request is not None:
+            authenticated_user = authenticate(
+                self.request, username=self.user.email, password=old_password
+            )
+            password_matches = authenticated_user is not None
+        else:
+            password_matches = self.user.check_password(old_password)
+        if not password_matches:
             raise forms.ValidationError("Current password is not correct.")
         return old_password
 
