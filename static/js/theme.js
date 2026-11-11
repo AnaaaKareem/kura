@@ -1,5 +1,46 @@
 // Keep the assessment builder usable without inline scripts or unsafe HTML insertion.
 document.addEventListener("DOMContentLoaded", function () {
+    // Filter office rooms by building without trusting the browser for validation.
+    const building = document.querySelector("[data-office-building]");
+    const room = document.querySelector("[data-office-room]");
+    const officeRooms = document.getElementById("office-rooms");
+    if (building && room && officeRooms) {
+        const rooms = JSON.parse(officeRooms.textContent);
+        const updateRooms = function () {
+            const selected = room.value;
+            room.replaceChildren(new Option("Select a room", ""));
+            rooms.forEach(function (item) {
+                if (String(item.building_id) === building.value) {
+                    room.add(new Option(item.name, item.id));
+                }
+            });
+            room.value = selected;
+            if (room.selectedIndex < 0) room.selectedIndex = 0;
+        };
+        building.addEventListener("change", updateRooms);
+        updateRooms();
+    }
+    // Copy the codes shown on this page without sending them to the server.
+    const copyRecoveryCodes = document.querySelector("[data-copy-recovery-codes]");
+    const recoveryStatus = document.querySelector("[data-recovery-status]");
+    if (copyRecoveryCodes && recoveryStatus) {
+        copyRecoveryCodes.addEventListener("click", async function () {
+            const codes = Array.from(document.querySelectorAll("[data-recovery-code]"))
+                .map(function (code) { return code.textContent.trim(); }).join("\n");
+            try {
+                await navigator.clipboard.writeText(codes);
+                recoveryStatus.textContent = "Recovery codes copied.";
+            } catch (error) {
+                recoveryStatus.textContent = "Could not copy codes. Select and copy them manually.";
+            }
+        });
+    }
+
+    // Open the browser's print dialog while the one-time codes are visible.
+    const printRecoveryCodes = document.querySelector("[data-print-recovery-codes]");
+    if (printRecoveryCodes) {
+        printRecoveryCodes.addEventListener("click", function () { window.print(); });
+    }
     // Apply the saved theme, or follow the device setting for a new browser.
     const themeSelector = document.querySelector("[data-theme-selector]");
     const savedTheme = localStorage.getItem("kura-theme") || "system";

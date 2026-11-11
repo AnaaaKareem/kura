@@ -75,6 +75,8 @@ from .models import (
     CourseStaff,
     DayOfWeek,
     Department,
+    Building,
+    Room,
     Enrollment,
     EnrollmentStatus,
     ExamAnswerKey,
@@ -1071,8 +1073,7 @@ class AdminStaffAccountsTests(TestCase):
                 "first_name": "John",
                 "last_name": "Smith",
                 "department": self.department.id,
-                "staff_title": "Associate Professor",
-                "office_location": "B204",
+                "staff_title": "Instructor",
             },
         )
         self.assertRedirects(response, reverse("kura:staff_list"))
@@ -1094,7 +1095,35 @@ class AdminStaffAccountsTests(TestCase):
         self.assertContains(response, 'name="last_name"')
         self.assertContains(response, 'autocomplete="family-name"')
         self.assertContains(response, 'name="staff_title"')
-        self.assertContains(response, 'autocomplete="organization-title"')
+        self.assertContains(response, 'name="building"')
+        self.assertContains(response, 'name="room"')
+
+    def test_admin_can_add_departments_and_offices(self):
+        self.client.force_login(self.admin)
+        url = reverse("kura:staff_settings")
+        self.assertEqual(self.client.post(url, {"kind": "department", "code": "MATH", "name": "Mathematics"}).status_code, 302)
+        self.assertEqual(self.client.post(url, {"kind": "building", "name": "Building B"}).status_code, 302)
+        building = Building.objects.get(name="Building B")
+        self.assertEqual(self.client.post(url, {"kind": "room", "building": building.pk, "name": "Room 204"}).status_code, 302)
+        self.assertTrue(Room.objects.filter(building=building, name="Room 204").exists())
+
+    def test_student_cannot_manage_offices(self):
+        self.client.force_login(self.student)
+        response = self.client.post(reverse("kura:staff_settings"), {"kind": "building", "name": "Forbidden"})
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(Building.objects.filter(name="Forbidden").exists())
+
+    def test_room_must_belong_to_selected_building(self):
+        self.client.force_login(self.admin)
+        building = Building.objects.create(name="A")
+        other = Building.objects.create(name="B")
+        room = Room.objects.create(building=other, name="204")
+        response = self.client.post(reverse("kura:staff_create"), {
+            "email": "test-office@example.com", "department": self.department.pk,
+            "staff_title": "Instructor", "building": building.pk, "room": room.pk,
+        })
+        self.assertEqual(response.status_code, 200)
+        self.assertFalse(User.objects.filter(email="test-office@example.com").exists())
 
 
     def test_staff_list_shows_department_run_by_department_head(self):

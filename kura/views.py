@@ -73,6 +73,9 @@ from .forms import (
     ScannedPaperStaffUploadForm,
     SectionItemForm,
     StaffCreateForm,
+    DepartmentForm,
+    BuildingForm,
+    RoomForm,
     StudentCheckinForm,
     StudentCreateForm,
     StudentFilterForm,
@@ -98,6 +101,8 @@ from .models import (
     CourseStaff,
     CourseStaffRole,
     Department,
+    Building,
+    Room,
     Enrollment,
     EnrollmentStatus,
     ExamAnswerKey,
@@ -1662,7 +1667,8 @@ def staff_create_view(request):
         last_name = form.cleaned_data["last_name"].strip()
         department = form.cleaned_data["department"]
         staff_title = form.cleaned_data["staff_title"].strip()
-        office_location = form.cleaned_data["office_location"].strip()
+        room = form.cleaned_data["room"]
+        office_location = str(room) if room else ""
 
         # Generate a secure 16-character temporary password.
         temporary_password = secrets.token_urlsafe(12)
@@ -1693,7 +1699,32 @@ def staff_create_view(request):
         messages.success(request, f"Staff account created for {email}. Temporary password: {temporary_password}")
         return redirect("kura:staff_list")
 
-    return render(request, "kura/accounts/staff_create.html", {"form": form})
+    rooms = list(Room.objects.order_by("building__name", "name").values("id", "building_id", "name"))
+    return render(request, "kura/accounts/staff_create.html", {"form": form, "office_rooms": rooms})
+
+
+@login_required
+def staff_settings_view(request):
+    """Manage departments and office locations. Admin only; POST and form validation protect changes."""
+    if not has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    # Bind only the submitted form so unrelated forms remain usable.
+    kind = request.POST.get("kind") if request.method == "POST" else None
+    department_form = DepartmentForm(request.POST if kind == "department" else None)
+    building_form = BuildingForm(request.POST if kind == "building" else None)
+    room_form = RoomForm(request.POST if kind == "room" else None)
+    forms = {"department": department_form, "building": building_form, "room": room_form}
+    if request.method == "POST" and kind in forms and forms[kind].is_valid():
+        forms[kind].save()
+        messages.success(request, "Saved successfully.")
+        return redirect("kura:staff_settings")
+    return render(request, "kura/accounts/staff_settings.html", {
+        "department_form": department_form, "building_form": building_form, "room_form": room_form,
+        "departments": Department.objects.order_by("name"),
+        "buildings": Building.objects.order_by("name"),
+        "rooms": Room.objects.select_related("building").order_by("building__name", "name"),
+    })
 
 
 @login_required
