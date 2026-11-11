@@ -3490,9 +3490,18 @@ class AssessmentEditLockTests(TransactionTestCase):
         instructor = make_user("Instructor", mfa_enabled=True)
         student = make_user("Student", mfa_enabled=True)
         department = Department.objects.create(name="Start locks", code="START")
-        course = Course.objects.create(department=department, code="START1", title="Locks", semester="1", academic_year=2026)
+        course = Course.objects.create(
+            department=department,
+            code="START1",
+            title="Locks",
+            semester="1",
+            academic_year=2026,
+            is_published=True,
+            published_by=instructor,
+            published_at=timezone.now(),
+        )
         Enrollment.objects.create(course=course, student=student, status=EnrollmentStatus.ACTIVE)
-        module = Module.objects.create(course=course, title="Module")
+        module = Module.objects.create(course=course, title="Module", is_visible=True)
         section = ModuleSection.objects.create(module=module, title="Exam", section_type="exam")
         now = timezone.now()
         assessment = Assessment.objects.create(section=section, title="Original", component_type=GradeComponentType.EXAM,
@@ -7614,3 +7623,131 @@ class WriteAppMetricsTests(TestCase):
         self.assertGreaterEqual(int(oldest_line.split()[1]), 120)
         # Counts only: the address must never appear in metrics.
         self.assertNotIn(student.email, text)
+
+
+class AssessmentVisibilityRulesTests(TestCase):
+    """
+    ACL-01: Students can only view or attempt assessments in published courses,
+    visible modules, and modules matching their academic target level.
+    Staff retain access even when modules are hidden or courses unpublished.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.instructor = make_user("Instructor", mfa_enabled=True)
+        self.student = make_user("Student", mfa_enabled=True)
+        self.dept = Department.objects.create(name="Computer Science", code="CS")
+
+        self.student_profile = StudentProfile.objects.create(
+            user=self.student,
+            department=self.dept,
+            current_level="level_4",
+            matriculation_year=2026,
+        )
+
+        self.course = Course.objects.create(
+            department=self.dept,
+            code="CS101",
+            title="Intro to CS",
+            semester="1",
+            academic_year=2026,
+            is_published=True,
+            published_by=self.instructor,
+            published_at=timezone.now(),
+        )
+        CourseStaff.objects.create(
+            course=self.course,
+            user=self.instructor,
+            staff_role="lead_instructor",
+            can_release_grades=True,
+        )
+        Enrollment.objects.create(
+            course=self.course,
+            student=self.student,
+            status=EnrollmentStatus.ACTIVE,
+        )
+
+        self.module = Module.objects.create(
+            course=self.course,
+            title="Module 1",
+            is_visible=True,
+        )
+        self.section = ModuleSection.objects.create(
+            module=self.module,
+            title="Section 1",
+            section_type="coursework",
+            is_visible=True,
+        )
+
+        now = timezone.now()
+        self.assessment = Assessment.objects.create(
+            section=self.section,
+            title="Assignment 1",
+            component_type=GradeComponentType.COURSEWORK,
+            max_score=Decimal("100.00"),
+            max_attempts=3,
+            opens_at=now - timezone.timedelta(hours=1),
+            due_date=now + timezone.timedelta(hours=4),
+            duration_minutes=60,
+            questions_json=[],
+            created_by=self.instructor,
+        )
+
+    def test_student_blocked_when_module_hidden(self):
+        self.module.is_visible = False
+        self.module.save()
+        self.client.force_login(self.student)
+
+        detail_url = reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id})
+        response = self.client.get(detail_url)
+        self.assertEqual(response.status_code, 403)
+
+        initial_count = AssessmentAttempt.objects.count()
+        start_url = reverse("kura:assessment_attempt_start", kwargs={"assessment_id": self.assessment.id})
+        response = self.client.post(start_url)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(AssessmentAttempt.objects.count(), initial_count)
+
+    def test_student_blocked_when_target_level_mismatch(self):
+        ModuleTargetLevel.objects.create(module=self.module, target_level="level_5")
+        self.client.force_login(self.student)
+
+        detail_url = reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id})
+        response = self.client.get(detail_url)
+        self.assertEqual(response.status_code, 403)
+
+        initial_count = AssessmentAttempt.objects.count()
+        start_url = reverse("kura:assessment_attempt_start", kwargs={"assessment_id": self.assessment.id})
+        response = self.client.post(start_url)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(AssessmentAttempt.objects.count(), initial_count)
+
+    def test_student_blocked_when_course_unpublished(self):
+        self.course.is_published = False
+        self.course.save()
+        self.client.force_login(self.student)
+
+        detail_url = reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id})
+        response = self.client.get(detail_url)
+        self.assertEqual(response.status_code, 403)
+
+        initial_count = AssessmentAttempt.objects.count()
+        start_url = reverse("kura:assessment_attempt_start", kwargs={"assessment_id": self.assessment.id})
+        response = self.client.post(start_url)
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(AssessmentAttempt.objects.count(), initial_count)
+
+    def test_eligible_student_can_view_assessment(self):
+        self.client.force_login(self.student)
+        detail_url = reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id})
+        response = self.client.get(detail_url)
+        self.assertEqual(response.status_code, 200)
+
+    def test_course_staff_can_view_hidden_module_assessment(self):
+        self.module.is_visible = False
+        self.module.save()
+        self.client.force_login(self.instructor)
+        detail_url = reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id})
+        response = self.client.get(detail_url)
+        self.assertEqual(response.status_code, 200)
+

@@ -137,6 +137,7 @@ from .permissions import (
     is_department_head,
     is_enrolled,
     is_lead_instructor,
+    student_can_see_module,
 )
 from .templatetags.markdown import render_markdown
 from .vault import decrypt_answer_key, decrypt_mfa_secret, encrypt_answer_key, encrypt_mfa_secret
@@ -3118,8 +3119,8 @@ def file_download_view(request, course_id, file_id):
     is_staff = is_course_staff(request.user, course)
     enrolled = is_enrolled(request.user, course)
 
-    # Access check: staff/head or actively enrolled student.
-    if not (is_head or is_staff or (enrolled and course.is_published and module.is_visible)):
+    # Access check: staff/head or actively enrolled student meeting module visibility rules.
+    if not (is_head or is_staff or (enrolled and student_can_see_module(request.user, course, module))):
         raise PermissionDenied
 
     # Students can download an item's file only after the item is visible and its release time passes.
@@ -3129,16 +3130,6 @@ def file_download_view(request, course_id, file_id):
         if not section_item.is_visible:
             raise PermissionDenied
         if section_item.released_at and section_item.released_at > timezone.now():
-            raise PermissionDenied
-
-    # For students, enforce academic target level requirements.
-    if not (is_head or is_staff):
-        student_profile = StudentProfile.objects.filter(user=request.user).first()
-        student_level = None
-        if student_profile:
-            student_level = student_profile.current_level
-        target_levels = list(module.target_levels.values_list("target_level", flat=True))
-        if target_levels and (not student_level or student_level not in target_levels):
             raise PermissionDenied
 
     # Record the permitted course-file download without logging its filename or contents.
@@ -4145,6 +4136,7 @@ def assessment_detail_view(request, assessment_id):
         id=assessment_id,
     )
     course = assessment.section.module.course
+    module = assessment.section.module
 
     is_head = is_department_head(request.user, course.department)
     is_staff = is_course_staff(request.user, course)
@@ -4152,8 +4144,12 @@ def assessment_detail_view(request, assessment_id):
 
     if not (is_head or is_staff or enrolled):
         raise PermissionDenied
-    if not (is_head or is_staff) and not assessment.section.is_visible:
-        raise PermissionDenied
+    if not (is_head or is_staff):
+        # Students see only published courses, visible modules and their own academic level.
+        if not student_can_see_module(request.user, course, module):
+            raise PermissionDenied
+        if not assessment.section.is_visible:
+            raise PermissionDenied
 
     now = timezone.now()
     is_open = assessment.opens_at <= now <= assessment.due_date
@@ -4399,6 +4395,7 @@ def assessment_file_download_view(request, assessment_id, file_id):
         id=assessment_id,
     )
     course = assessment.section.module.course
+    module = assessment.section.module
     stored_file = get_object_or_404(StoredFile, id=file_id)
 
     # Verify file is attached to this assessment.
@@ -4409,6 +4406,9 @@ def assessment_file_download_view(request, assessment_id, file_id):
 
     if not (is_head or is_staff):
         if not is_enrolled(request.user, course):
+            raise PermissionDenied
+        # Students see only published courses, visible modules and their own academic level.
+        if not student_can_see_module(request.user, course, module):
             raise PermissionDenied
         if not assessment.section.is_visible:
             raise PermissionDenied
@@ -4458,7 +4458,11 @@ def assessment_attempt_start_view(request, assessment_id):
     with transaction.atomic():
         assessment = get_object_or_404(Assessment.objects.select_for_update(), id=assessment_id)
         course = assessment.section.module.course
+        module = assessment.section.module
         if not is_enrolled(request.user, course):
+            raise PermissionDenied
+        # Students see only published courses, visible modules and their own academic level.
+        if not student_can_see_module(request.user, course, module):
             raise PermissionDenied
         if not assessment.section.is_visible:
             raise PermissionDenied
