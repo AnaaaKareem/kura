@@ -1341,11 +1341,45 @@ def mfa_setup_view(request):
     """
     Configures TOTP authenticator app and generates backup recovery codes.
     Who can use it: Authenticated users.
-    Security: Uses local qrcode library (no external calls) and shows recovery codes once.
-    Only keyed hashes of the recovery codes are saved (hash_recovery_code).
-    The authenticator seed is encrypted by Vault before it is saved (User.mfa_secret);
-    TOTPDevice.key is only a random placeholder. If Vault is unavailable, setup stops.
-"""
+    Security:
+    - If MFA is already enabled, requires fresh step-up authentication within 300 seconds
+      before decrypting or revealing the secret seed or allowing recovery code regeneration.
+    - Uses local qrcode library (no external calls) and shows recovery codes once.
+    - Only keyed hashes of the recovery codes are saved (hash_recovery_code).
+    - The authenticator seed is encrypted by Vault before it is saved (User.mfa_secret);
+      TOTPDevice.key is only a random placeholder. If Vault is unavailable, setup stops.
+    """
+    # Check for recent step-up reauthentication (within 300 seconds) if MFA is already active.
+    reauth_at = request.session.get("mfa_reauth_at")
+    is_fresh = False
+    if reauth_at:
+        try:
+            is_fresh = (timezone.now().timestamp() - float(reauth_at)) < 300
+        except (ValueError, TypeError):
+            is_fresh = False
+
+    if request.user.mfa_enabled and not is_fresh:
+        step_up_form = MFAVerifyForm(request.POST or None)
+        if request.method == "POST" and step_up_form.is_valid():
+            code = step_up_form.cleaned_data["code"].strip()
+            method = verify_second_factor(request.user, code)
+            if method:
+                request.session["mfa_reauth_at"] = timezone.now().timestamp()
+                log_security_event(request, "auth.mfa.reauth_ok", {"method": method})
+                return redirect("kura:mfa_setup")
+            else:
+                log_security_event(request, "auth.mfa.reauth_failed", {}, level=logging.WARNING)
+                messages.error(request, "Invalid security code. Please try again.")
+
+        return render(
+            request,
+            "kura/accounts/mfa_setup.html",
+            {
+                "form": step_up_form,
+                "needs_reauth": True,
+            },
+        )
+
     form = MFAVerifyForm(request.POST or None)
 
     # Fetch or create the TOTP device. It keeps django-otp's confirmed flag,
