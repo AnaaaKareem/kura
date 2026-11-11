@@ -80,6 +80,7 @@ from .forms import (
     StudentCreateForm,
     StudentFilterForm,
     TAAssignForm,
+    UserRoleChangeForm,
 )
 from .models import (
     OutgoingEmail,
@@ -1912,7 +1913,8 @@ def user_roles_view(request, user_id):
     """
     Manages assigned system roles for a user.
     Who can use it: System administrators.
-    Security: Admin only; enforces strict separation of duty between Admin and grading roles.
+    Security: Admin only; validates the action and role through a Django form, and
+    enforces strict separation of duty between Admin and grading roles.
 """
     # Check administrator permission.
     if not has_role(request.user, "Admin"):
@@ -1921,9 +1923,14 @@ def user_roles_view(request, user_id):
     target_user = get_object_or_404(User, id=user_id)
 
     if request.method == "POST":
-        action = request.POST.get("action")
-        role_id = request.POST.get("role_id")
-        target_role = get_object_or_404(Role, id=role_id)
+        # Validate the action and role ID before touching any role records.
+        form = UserRoleChangeForm(request.POST)
+        if not form.is_valid():
+            messages.error(request, "Choose a valid role and action.")
+            return redirect("kura:user_roles", user_id=target_user.id)
+
+        action = form.cleaned_data["action"]
+        target_role = form.cleaned_data["role_id"]
 
         # Get existing assigned role names for target user.
         existing_roles = list(UserRole.objects.filter(user=target_user).values_list("role__name", flat=True))

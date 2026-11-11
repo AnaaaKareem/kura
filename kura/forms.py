@@ -14,6 +14,7 @@ from .models import (
     Room,
     GradeComponentType,
     EnrollmentStatus,
+    Role,
     SectionType,
     SemesterType,
     SessionType,
@@ -89,6 +90,16 @@ class AdminSessionRevokeForm(forms.Form):
     action = forms.ChoiceField(choices=[("one", "One session"), ("all", "All sessions")])
     session_id = forms.UUIDField(required=False)
     user_id = forms.UUIDField(required=False)
+
+
+class UserRoleChangeForm(forms.Form):
+    """Validate an administrator's request to assign or remove a system role."""
+
+    # Only these two actions are allowed; an unknown action is rejected by the form.
+    action = forms.ChoiceField(choices=[("assign", "Assign"), ("remove", "Remove")])
+
+    # ModelChoiceField rejects a non-existent or non-numeric role ID before any query change.
+    role_id = forms.ModelChoiceField(queryset=Role.objects.all())
 
 
 class LoginForm(forms.Form):

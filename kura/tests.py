@@ -8131,3 +8131,38 @@ class GradeFinalizeInstructorOnlyTests(TestCase):
         self.grade.refresh_from_db()
         self.assertEqual(self.grade.status, GradeStatus.FINALIZED)
         self.assertTrue(GradeHistory.objects.filter(grade=self.grade, new_status=GradeStatus.FINALIZED).exists())
+
+
+class UserRolesInputValidationTests(TestCase):
+    """
+    INP-03: Invalid role-management input must be rejected without an HTTP 500
+    and without changing any UserRole rows.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.admin = make_user("Admin")
+        self.target_user = User.objects.create_user(email="role_target@example.com", password="Password12345!")
+        self.instructor_role = Role.objects.get(name="Instructor")
+        self.roles_url = reverse("kura:user_roles", kwargs={"user_id": self.target_user.id})
+
+    def test_non_numeric_role_id_is_rejected(self):
+        # A malformed role_id used to raise ValueError and return HTTP 500.
+        self.client.force_login(self.admin)
+        before = UserRole.objects.filter(user=self.target_user).count()
+
+        response = self.client.post(self.roles_url, {"action": "assign", "role_id": "abc"})
+
+        self.assertNotEqual(response.status_code, 500)
+        self.assertRedirects(response, self.roles_url)
+        self.assertEqual(UserRole.objects.filter(user=self.target_user).count(), before)
+
+    def test_unknown_action_is_rejected(self):
+        # An action outside assign/remove must not change roles.
+        self.client.force_login(self.admin)
+        before = UserRole.objects.filter(user=self.target_user).count()
+
+        response = self.client.post(self.roles_url, {"action": "bogus", "role_id": self.instructor_role.id})
+
+        self.assertRedirects(response, self.roles_url)
+        self.assertEqual(UserRole.objects.filter(user=self.target_user).count(), before)
