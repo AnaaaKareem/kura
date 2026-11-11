@@ -200,6 +200,10 @@ class PasswordChangeForm(forms.Form):
         if new_password and confirm_password and new_password != confirm_password:
             self.add_error("confirm_password", "The two password fields did not match.")
 
+        # Refuse a new password that is the same as the current one (AUTH-06).
+        if new_password and self.user.check_password(new_password):
+            self.add_error("new_password", "Choose a password you have not used for this account.")
+
         # Run configured Django password validators on the new password.
         if new_password:
             try:
@@ -305,6 +309,10 @@ class PasswordResetConfirmForm(forms.Form):
         # Check matching fields.
         if new_password and confirm_password and new_password != confirm_password:
             self.add_error("confirm_password", "The two password fields did not match.")
+
+        # Refuse a new password that is the same as the current one (AUTH-06).
+        if new_password and self.user.check_password(new_password):
+            self.add_error("new_password", "Choose a password you have not used for this account.")
 
         # Run validators against password rules.
         if new_password:
