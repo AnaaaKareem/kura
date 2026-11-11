@@ -7751,3 +7751,82 @@ class AssessmentVisibilityRulesTests(TestCase):
         response = self.client.get(detail_url)
         self.assertEqual(response.status_code, 200)
 
+
+class MfaSetupReauthTests(TestCase):
+    """
+    AUTH-02a: Users with MFA enabled must re-authenticate with their second factor
+    before the MFA setup page displays the authenticator seed or allows regenerating
+    recovery codes.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.seed_hex = random_hex(20)
+        self.user = make_user("Student", mfa_enabled=True)
+        self.user.mfa_secret = self.seed_hex
+        self.user.save(update_fields=["mfa_secret"])
+        self.device = TOTPDevice.objects.get(user=self.user, name="default")
+
+        self.static_device = StaticDevice.objects.create(user=self.user, name="recovery", confirmed=True)
+        self.initial_token = StaticToken.objects.create(
+            device=self.static_device, token=hash_recovery_code("OLDCODE1")
+        )
+
+    def current_code(self, seed_hex, at_time=None):
+        totp = TOTP(bytes.fromhex(seed_hex), self.device.step, self.device.t0, self.device.digits, self.device.drift)
+        totp.time = at_time if at_time is not None else time.time()
+        return str(totp.token()).zfill(self.device.digits)
+
+    def test_enrolled_user_get_does_not_reveal_seed_or_qr(self):
+        self.client.force_login(self.user)
+        response = self.client.get(reverse("kura:mfa_setup"))
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "otpauth")
+        self.assertNotContains(response, "data:image/svg+xml;utf8,")
+        self.assertContains(response, "Confirm Your Identity")
+
+    def test_wrong_code_keeps_seed_hidden(self):
+        self.client.force_login(self.user)
+        with self.assertLogs("kura.security", level="WARNING") as captured:
+            response = self.client.post(reverse("kura:mfa_setup"), {"code": "000000"})
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, "otpauth")
+        self.assertNotContains(response, "data:image/svg+xml;utf8,")
+        self.assertContains(response, "Invalid security code.")
+        self.assertTrue(any('event="auth.mfa.reauth_failed"' in line for line in captured.output))
+
+    def test_correct_totp_renders_setup_and_confirming_post_regenerates_codes(self):
+        self.client.force_login(self.user)
+        t0 = time.time()
+        with patch("time.time", return_value=t0):
+            code = self.current_code(self.seed_hex, at_time=t0)
+            with self.assertLogs("kura.security", level="INFO") as captured:
+                response = self.client.post(reverse("kura:mfa_setup"), {"code": code})
+        self.assertRedirects(response, reverse("kura:mfa_setup"))
+        self.assertTrue(any('event="auth.mfa.reauth_ok"' in line for line in captured.output))
+
+        # After step-up, setup page renders with QR code.
+        setup_response = self.client.get(reverse("kura:mfa_setup"))
+        self.assertEqual(setup_response.status_code, 200)
+        self.assertContains(setup_response, "data:image/svg+xml;utf8,")
+
+        # Confirming POST on the setup page with fresh time step replaces StaticToken rows.
+        t1 = t0 + 35
+        with patch("time.time", return_value=t1):
+            new_code = self.current_code(self.seed_hex, at_time=t1)
+            confirm_response = self.client.post(reverse("kura:mfa_setup"), {"code": new_code})
+        self.assertRedirects(confirm_response, reverse("kura:mfa_setup_complete"))
+
+        # Previous recovery token was deleted and replaced by 10 new tokens.
+        self.assertFalse(StaticToken.objects.filter(id=self.initial_token.id).exists())
+        self.assertEqual(StaticToken.objects.filter(device=self.static_device).count(), 10)
+
+    def test_unenrolled_user_sees_qr_code_on_first_get(self):
+        unenrolled_user = make_user("Student", mfa_enabled=False)
+        self.client.force_login(unenrolled_user)
+        response = self.client.get(reverse("kura:mfa_setup"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "data:image/svg+xml;utf8,")
+        self.assertContains(response, "Set up Multi-Factor Authentication")
+
+
