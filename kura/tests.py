@@ -8247,3 +8247,60 @@ class NoStoreAndAutocompleteTests(TestCase):
         from .forms import AssessmentAttemptStartForm
 
         self.assertIn('autocomplete="off"', str(AssessmentAttemptStartForm()))
+
+
+class PasswordReuseTests(TestCase):
+    """
+    AUTH-06: A new password must differ from the account's current password,
+    both on the change form and on the reset confirm form.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.password = "OriginalPassword123!"
+        self.user = make_user("Student", password=self.password, mfa_enabled=True)
+
+    def test_change_form_rejects_current_password(self):
+        self.client.force_login(self.user)
+        response = self.client.post(
+            reverse("kura:password_change"),
+            {
+                "old_password": self.password,
+                "new_password": self.password,
+                "confirm_password": self.password,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            "Choose a password you have not used for this account.",
+            response.context["form"].errors["new_password"],
+        )
+
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password(self.password))
+
+    def test_reset_confirm_form_rejects_current_password(self):
+        raw_token = secrets.token_urlsafe(32)
+        PasswordResetToken.objects.create(
+            user=self.user,
+            token_hash=hashlib.sha256(raw_token.encode("utf-8")).hexdigest(),
+            expires_at=timezone.now() + timezone.timedelta(minutes=30),
+        )
+
+        response = self.client.post(
+            reverse("kura:password_reset_confirm", kwargs={"token": raw_token}),
+            {
+                "new_password": self.password,
+                "confirm_password": self.password,
+            },
+        )
+
+        self.assertEqual(response.status_code, 200)
+        self.assertIn(
+            "Choose a password you have not used for this account.",
+            response.context["form"].errors["new_password"],
+        )
+
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password(self.password))
