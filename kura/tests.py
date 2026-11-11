@@ -8048,6 +8048,86 @@ class PasswordChangeNotificationTests(TestCase):
         self.assertEqual(OutgoingEmail.objects.filter(to_email=self.user.email).count(), 0)
 
 
+class GradeFinalizeInstructorOnlyTests(TestCase):
+    """
+    ACL-04: A user holding both the Instructor and Teaching assistant roles, but assigned
+    to the course only as a teaching assistant, must not finalize grades.
+    """
 
+    def setUp(self):
+        self.client = Client()
+        self.head = make_user("Department head")
+        self.student = make_user("Student")
+        self.dual_role_user = make_user("Instructor")
+        ta_role, _ = Role.objects.get_or_create(name="Teaching assistant")
+        UserRole.objects.get_or_create(user=self.dual_role_user, role=ta_role)
+        self.co_instructor = make_user("Instructor")
 
+        self.dept = Department.objects.create(name="Sociology", code="SOCI", head_user=self.head)
+        StudentProfile.objects.create(
+            user=self.student, department=self.dept, current_level="level_4", matriculation_year=2026
+        )
+        self.course = Course.objects.create(
+            department=self.dept,
+            code="SOCI101",
+            title="Introduction to Sociology",
+            semester="1",
+            academic_year=2026,
+            is_published=True,
+            published_by=self.head,
+            published_at=timezone.now(),
+        )
+        # The dual-role user is assigned only as a TA, which must not allow finalizing.
+        CourseStaff.objects.create(course=self.course, user=self.dual_role_user, staff_role="teaching_assistant")
+        CourseStaff.objects.create(course=self.course, user=self.co_instructor, staff_role="co_instructor")
+        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
 
+        self.module = Module.objects.create(course=self.course, title="Foundations", is_visible=True)
+        self.section = ModuleSection.objects.create(module=self.module, title="Midterm", section_type="exam")
+        self.assessment = Assessment.objects.create(
+            section=self.section,
+            title="Midterm Exam",
+            component_type=GradeComponentType.EXAM,
+            max_score=Decimal("100.00"),
+            max_attempts=1,
+            opens_at=timezone.now(),
+            due_date=timezone.now() + timezone.timedelta(hours=1),
+            duration_minutes=60,
+            created_by=self.co_instructor,
+        )
+        self.attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment,
+            student=self.student,
+            attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED,
+            expires_at=timezone.now(),
+            ip_address="127.0.0.1",
+        )
+        self.grade = Grade.objects.create(
+            assessment=self.assessment,
+            student=self.student,
+            attempt=self.attempt,
+            grader=self.dual_role_user,
+            score=Decimal("80.00"),
+            status=GradeStatus.DRAFT,
+        )
+
+    def test_dual_role_ta_cannot_finalize_grade(self):
+        # Instructor+TA with only a teaching_assistant assignment is refused.
+        self.client.force_login(self.dual_role_user)
+        response = self.client.post(reverse("kura:grade_finalize", kwargs={"grade_id": self.grade.id}))
+        self.assertEqual(response.status_code, 403)
+
+        self.grade.refresh_from_db()
+        self.assertEqual(self.grade.status, GradeStatus.DRAFT)
+        self.assertFalse(GradeHistory.objects.filter(grade=self.grade).exists())
+
+    def test_co_instructor_can_finalize_grade(self):
+        # A co-instructor on the course still finalizes successfully.
+        self.client.force_login(self.co_instructor)
+        response = self.client.post(reverse("kura:grade_finalize", kwargs={"grade_id": self.grade.id}))
+        self.assertRedirects(response, reverse("kura:course_grades", kwargs={"course_id": self.course.id}))
+
+        self.grade.refresh_from_db()
+        self.assertEqual(self.grade.status, GradeStatus.FINALIZED)
+        self.assertTrue(GradeHistory.objects.filter(grade=self.grade, new_status=GradeStatus.FINALIZED).exists())

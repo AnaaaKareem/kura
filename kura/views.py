@@ -132,6 +132,7 @@ from .permissions import (
     can_manage_quarantine,
     can_release_grades,
     has_role,
+    is_course_instructor,
     is_course_staff,
     is_admin_course_manager,
     is_department_head,
@@ -4973,7 +4974,8 @@ def course_grades_view(request, course_id):
         "can_release": can_release,
         "can_enter_grade": is_course_staff(request.user, course)
         and (has_role(request.user, "Instructor") or has_role(request.user, "Teaching assistant")),
-        "can_finalize_grade": is_course_staff(request.user, course) and has_role(request.user, "Instructor"),
+        # Finalizing needs a lead or co-instructor assignment; a TA assignment is not enough.
+        "can_finalize_grade": is_course_instructor(request.user, course),
         "grade_schemes": grade_schemes,
         "course_results": course_results,
     }
@@ -5110,9 +5112,9 @@ def grade_finalize_view(request, grade_id):
     if grade.student_id == request.user.id:
         raise PermissionDenied
 
-    # Only an instructor assigned to this course may finalize an initial grade.
-    is_instructor = is_course_staff(request.user, course)
-    if not is_instructor:
+    # Only a lead or co-instructor assigned to this course may finalize a grade.
+    # The spec bars teaching assistants from finalizing, even if they also hold the Instructor role.
+    if not is_course_instructor(request.user, course):
         raise PermissionDenied
 
     # Lock the row and check its current status before changing it and its history.
