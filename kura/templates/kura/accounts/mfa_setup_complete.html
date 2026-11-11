@@ -23,7 +23,7 @@
                 <div class="grid grid-cols-2 gap-3 text-center">
                     {% for code in recovery_codes %}
                     <div class="badge badge-lg badge-neutral p-3 font-semibold tracking-wider w-full">
-                        {{ code }}
+                        <span data-recovery-code>{{ code }}</span>
                     </div>
                     {% endfor %}
                 </div>
@@ -32,6 +32,12 @@
             <div role="alert" class="alert alert-warning mt-4 text-xs">
                 <span><strong>Important:</strong> These recovery codes are only displayed once and cannot be viewed again.</span>
             </div>
+
+            <div class="flex gap-2 mt-4">
+                <button type="button" class="btn btn-outline" data-copy-recovery-codes>Copy codes</button>
+                <button type="button" class="btn btn-outline" data-print-recovery-codes>Print codes</button>
+            </div>
+            <p class="text-sm" role="status" data-recovery-status></p>
 
             <div class="card-actions mt-6">
                 <a href="{% url 'kura:home' %}" class="btn btn-primary w-full">

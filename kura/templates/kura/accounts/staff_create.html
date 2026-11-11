@@ -44,6 +44,7 @@
                         <span class="label-text font-medium">Department</span>
                     </label>
                     {{ form.department }}
+                    <a class="link link-primary text-sm" href="{% url 'kura:staff_settings' %}">Manage departments and offices</a>
                     {% if form.department.errors %}
                     <label class="label"><span class="label-text-alt text-error">{{ form.department.errors.0 }}</span></label>
                     {% endif %}
@@ -60,10 +61,13 @@
                         {% endif %}
                     </div>
                     <div class="form-control">
-                        <label for="id_office_location" class="label">
-                            <span class="label-text font-medium">Office Location</span>
+                        <label for="id_building" class="label">
+                            <span class="label-text font-medium">Building</span>
                         </label>
-                        {{ form.office_location }}
+                        {{ form.building }}
+                        <label for="id_room" class="label"><span class="label-text font-medium">Room</span></label>
+                        {{ form.room }}
+                        {% if form.room.errors %}<p class="text-error">{{ form.room.errors.0 }}</p>{% endif %}
                     </div>
                 </div>
 
@@ -79,5 +83,6 @@
         </div>
     </div>
 </div>
+{{ office_rooms|json_script:"office-rooms" }}
 {% endblock %}
 

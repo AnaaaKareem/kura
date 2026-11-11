@@ -1,0 +1,24 @@
+{% extends "kura/base.html" %}
+{% block title %}Departments and offices - Kura{% endblock %}
+{% block content %}
+<div class="max-w-3xl mx-auto space-y-6">
+    <h1 class="text-2xl font-bold">Departments and offices</h1>
+    <p>Add departments, buildings, and rooms for staff accounts.</p>
+    <a href="{% url 'kura:staff_create' %}" class="link link-primary">Back to staff account creation</a>
+    <section class="card bg-base-100 p-4">
+        <h2 class="text-xl font-bold">Departments</h2>
+        <ul>{% for department in departments %}<li>{{ department }}</li>{% empty %}<li>No departments yet.</li>{% endfor %}</ul>
+        <form method="post">{% csrf_token %}<input type="hidden" name="kind" value="department">{{ department_form.as_p }}<button class="btn btn-primary btn-sm" type="submit">Add department</button></form>
+    </section>
+    <section class="card bg-base-100 p-4">
+        <h2 class="text-xl font-bold">Buildings</h2>
+        <ul>{% for building in buildings %}<li>{{ building }}</li>{% empty %}<li>No buildings yet.</li>{% endfor %}</ul>
+        <form method="post">{% csrf_token %}<input type="hidden" name="kind" value="building">{{ building_form.as_p }}<button class="btn btn-primary btn-sm" type="submit">Add building</button></form>
+    </section>
+    <section class="card bg-base-100 p-4">
+        <h2 class="text-xl font-bold">Rooms</h2>
+        <ul>{% for room in rooms %}<li>{{ room }}</li>{% empty %}<li>No rooms yet.</li>{% endfor %}</ul>
+        <form method="post">{% csrf_token %}<input type="hidden" name="kind" value="room">{{ room_form.as_p }}<button class="btn btn-primary btn-sm" type="submit">Add room</button></form>
+    </section>
+</div>
+{% endblock %}

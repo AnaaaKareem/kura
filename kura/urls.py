@@ -4,6 +4,7 @@ from . import views
 app_name = "kura"
 
 urlpatterns = [
+    path("admin/staff/settings/", views.staff_settings_view, name="staff_settings"),
     # Dashboard home page
     path("", views.home_view, name="home"),
     # Authentication routes

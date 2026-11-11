@@ -10,6 +10,8 @@ from .models import (
     Course,
     DayOfWeek,
     Department,
+    Building,
+    Room,
     GradeComponentType,
     EnrollmentStatus,
     SectionType,
@@ -288,6 +290,30 @@ class MFAVerifyForm(forms.Form):
     )
 
 
+class DepartmentForm(forms.ModelForm):
+    """Validate the department code and name."""
+
+    class Meta:
+        model = Department
+        fields = ["code", "name"]
+
+
+class BuildingForm(forms.ModelForm):
+    """Validate a building name."""
+
+    class Meta:
+        model = Building
+        fields = ["name"]
+
+
+class RoomForm(forms.ModelForm):
+    """Validate a room and its building."""
+
+    class Meta:
+        model = Room
+        fields = ["building", "name"]
+
+
 class StaffCreateForm(forms.Form):
     """
     Form used by administrators to provision a new staff account.
@@ -325,30 +351,34 @@ class StaffCreateForm(forms.Form):
         widget=forms.Select(attrs={"class": "select select-bordered w-full", "autocomplete": "off"}),
     )
 
-    staff_title = forms.CharField(
+    staff_title = forms.ChoiceField(
         label="Staff title",
-        max_length=100,
-        widget=forms.TextInput(
-            attrs={
-                "class": "input input-bordered w-full",
-                "placeholder": "e.g. Associate Professor",
-                "autocomplete": "organization-title",
-            }
-        ),
+        choices=[("", "Select a title")] + [(name, name) for name in
+                 ["Admin", "Registrar", "Department head", "Instructor", "Teaching assistant"]],
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
     )
 
-    office_location = forms.CharField(
-        label="Office location",
-        max_length=100,
-        required=False,
-        widget=forms.TextInput(
-            attrs={
-                "class": "input input-bordered w-full",
-                "placeholder": "e.g. Building B, Room 204",
-                "autocomplete": "off",
-            }
-        ),
-    )
+    building = forms.ModelChoiceField(queryset=Building.objects.order_by("name"), required=False,
+                                      widget=forms.Select(attrs={"class": "select select-bordered w-full", "data-office-building": ""}))
+    room = forms.ModelChoiceField(queryset=Room.objects.none(), required=False,
+                                  widget=forms.Select(attrs={"class": "select select-bordered w-full", "data-office-room": ""}))
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # A room is valid only when it belongs to the selected building.
+        building_id = self.data.get("building")
+        if building_id and str(building_id).isdigit():
+            self.fields["room"].queryset = Room.objects.filter(building_id=building_id).order_by("name")
+
+    def clean(self):
+        cleaned = super().clean()
+        if cleaned.get("building") and not cleaned.get("room"):
+            self.add_error("room", "Select a room in this building.")
+        if cleaned.get("room") and not cleaned.get("building"):
+            self.add_error("building", "Select a building.")
+        if cleaned.get("room") and len(str(cleaned["room"])) > 100:
+            self.add_error("room", "The building and room names together must fit within 100 characters.")
+        return cleaned
 
     def clean_email(self):
         """

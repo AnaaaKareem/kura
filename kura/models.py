@@ -446,6 +446,28 @@ class Department(models.Model):
         return f"{self.code} - {self.name}"
 
 
+class Building(models.Model):
+    """A building that contains staff offices."""
+
+    name = models.CharField(max_length=80, unique=True)
+
+    def __str__(self):
+        return self.name
+
+
+class Room(models.Model):
+    """An office room in a building."""
+
+    building = models.ForeignKey(Building, on_delete=models.PROTECT, related_name="rooms")
+    name = models.CharField(max_length=80)
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=["building", "name"], name="unique_building_room")]
+
+    def __str__(self):
+        return f"{self.building.name}, {self.name}"
+
+
 class Role(models.Model):
     """
     System roles with distinct permissions across the platform.
