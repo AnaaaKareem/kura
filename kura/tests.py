@@ -7897,4 +7897,74 @@ class RowLevelSecurityFailClosedTests(TestCase):
                 mock_close.assert_called_once()
 
 
+class SessionInvalidLoggingTests(TestCase):
+    """
+    LOG-01: SessionValidationMiddleware must log a WARNING security event
+    'session.invalid' with the specific reason (deactivated, locked, revoked, expired)
+    when ending an invalid session, capturing the actor user ID before logout.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.user = make_user("Student", mfa_enabled=True)
+        self.user_session = UserSession.objects.create(
+            user=self.user,
+            session_token_hash=secrets.token_hex(32),
+            ip_address="127.0.0.1",
+            user_agent="TestAgent",
+            expires_at=timezone.now() + timezone.timedelta(days=7),
+        )
+
+    def attach_tracked_session(self):
+        self.client.force_login(self.user)
+        session = self.client.session
+        session["user_session_id"] = str(self.user_session.id)
+        session.save()
+
+    def test_deactivated_session_is_logged_at_warning(self):
+        self.attach_tracked_session()
+        self.user.is_active = False
+        self.user.save()
+
+        with self.assertLogs("kura.security", level="WARNING") as captured:
+            response = self.client.get(reverse("kura:home"))
+        self.assertRedirects(response, reverse("kura:login"))
+        self.assertTrue(any('event="session.invalid"' in line and 'reason="deactivated"' in line for line in captured.output))
+        self.assertTrue(any(f'actor_user_id="{self.user.id}"' in line for line in captured.output))
+
+    def test_locked_session_is_logged_at_warning(self):
+        self.attach_tracked_session()
+        self.user.locked_until = timezone.now() + timezone.timedelta(hours=1)
+        self.user.save()
+
+        with self.assertLogs("kura.security", level="WARNING") as captured:
+            response = self.client.get(reverse("kura:home"))
+        self.assertRedirects(response, reverse("kura:login"))
+        self.assertTrue(any('event="session.invalid"' in line and 'reason="locked"' in line for line in captured.output))
+        self.assertTrue(any(f'actor_user_id="{self.user.id}"' in line for line in captured.output))
+
+    def test_revoked_session_is_logged_at_warning(self):
+        self.attach_tracked_session()
+        self.user_session.revoked_at = timezone.now()
+        self.user_session.save()
+
+        with self.assertLogs("kura.security", level="WARNING") as captured:
+            response = self.client.get(reverse("kura:home"))
+        self.assertRedirects(response, reverse("kura:login"))
+        self.assertTrue(any('event="session.invalid"' in line and 'reason="revoked"' in line for line in captured.output))
+        self.assertTrue(any(f'actor_user_id="{self.user.id}"' in line for line in captured.output))
+
+    def test_expired_session_is_logged_at_warning(self):
+        self.attach_tracked_session()
+        self.user_session.expires_at = timezone.now() - timezone.timedelta(minutes=5)
+        self.user_session.save()
+
+        with self.assertLogs("kura.security", level="WARNING") as captured:
+            response = self.client.get(reverse("kura:home"))
+        self.assertRedirects(response, reverse("kura:login"))
+        self.assertTrue(any('event="session.invalid"' in line and 'reason="expired"' in line for line in captured.output))
+        self.assertTrue(any(f'actor_user_id="{self.user.id}"' in line for line in captured.output))
+
+
+
 

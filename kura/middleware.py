@@ -41,6 +41,9 @@ class SessionValidationMiddleware:
 
         # Log out deactivated accounts immediately.
         if account_user and not account_user.is_active:
+            if not request.user.is_authenticated:
+                request.user = account_user
+            log_security_event(request, "session.invalid", {"reason": "deactivated"}, level=logging.WARNING)
             logout(request)
             messages.error(request, "This account has been deactivated. Contact the administrator.")
             return redirect("kura:login")
@@ -48,6 +51,9 @@ class SessionValidationMiddleware:
         # Log out locked accounts and display the unlock timestamp.
         if account_user and account_user.locked_until and account_user.locked_until > timezone.now():
             lock_time = timezone.localtime(account_user.locked_until).strftime("%d %b, %H:%M")
+            if not request.user.is_authenticated:
+                request.user = account_user
+            log_security_event(request, "session.invalid", {"reason": "locked"}, level=logging.WARNING)
             logout(request)
             messages.error(request, f"This account is currently locked until {lock_time}.")
             return redirect("kura:login")
@@ -57,19 +63,26 @@ class SessionValidationMiddleware:
             session_id = request.session.get("user_session_id")
             if session_id:
                 try:
-                    active_session = UserSession.objects.filter(
+                    user_session = UserSession.objects.filter(
                         id=session_id,
                         user=request.user,
-                        revoked_at__isnull=True,
-                        expires_at__gt=timezone.now(),
                     ).first()
 
+                    if not user_session or user_session.revoked_at is not None:
+                        reason = "revoked"
+                    elif user_session.expires_at <= timezone.now():
+                        reason = "expired"
+                    else:
+                        reason = None
+
                     # End revoked or expired sessions and ask the user to log in again.
-                    if not active_session:
+                    if reason:
+                        log_security_event(request, "session.invalid", {"reason": reason}, level=logging.WARNING)
                         logout(request)
                         messages.error(request, "Your session was ended. Please sign in again.")
                         return redirect("kura:login")
                 except (ValueError, TypeError):
+                    log_security_event(request, "session.invalid", {"reason": "revoked"}, level=logging.WARNING)
                     logout(request)
                     messages.error(request, "Your session was ended. Please sign in again.")
                     return redirect("kura:login")
