@@ -122,6 +122,26 @@ def is_course_staff(user, course):
     return False
 
 
+def is_course_instructor(user, course):
+    """
+    Checks whether the user is assigned as a lead or co-instructor on the course.
+    Rule: teaching assistants may enter grades but cannot finalize them.
+    """
+    # Anonymous or inactive users cannot be course instructors.
+    if not user or not user.is_authenticated or not user.is_active:
+        return False
+
+    # Both the Instructor role and a lead/co-instructor assignment on this course are required.
+    return (
+        has_role(user, "Instructor")
+        and CourseStaff.objects.filter(
+            course=course,
+            user=user,
+            staff_role__in=["lead_instructor", "co_instructor"],
+        ).exists()
+    )
+
+
 def is_lead_instructor(user, course):
     """
     Checks whether the user is assigned as the Lead Instructor for the course.
