@@ -8485,3 +8485,31 @@ class FreeTextLengthLimitTests(TestCase):
 
         self.assertFalse(form.is_valid())
         self.assertIn("override_reason", form.errors)
+
+
+class AdminSettingsAuditLogTests(TestCase):
+    """
+    LOG-02: A successful admin settings save writes an audit event that names
+    only the saved object's ID.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.admin = make_user("Admin", mfa_enabled=True)
+
+    def test_department_save_is_logged(self):
+        self.client.force_login(self.admin)
+
+        with self.assertLogs("kura.security", level="INFO") as captured:
+            response = self.client.post(
+                reverse("kura:staff_settings"),
+                {"kind": "department", "code": "PHYS", "name": "Physics"},
+            )
+
+        self.assertRedirects(response, reverse("kura:staff_settings"))
+        department = Department.objects.get(code="PHYS")
+        output = "\n".join(captured.output)
+        self.assertIn("admin.department.saved", output)
+        self.assertIn(str(department.pk), output)
+        # The audit line must not carry the department's free-text name.
+        self.assertNotIn("Physics", output)
