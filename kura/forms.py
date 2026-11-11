@@ -201,7 +201,7 @@ class PasswordChangeForm(forms.Form):
 
 class PasswordResetRequestForm(forms.Form):
     """
-    Form to request a password reset email link.
+    Form to start a password reset, by authenticator code (default) or email link.
     """
 
     # Email address associated with the account.
@@ -215,6 +215,38 @@ class PasswordResetRequestForm(forms.Form):
             }
         ),
     )
+
+    # How the user proves who they are. Two-factor is the default.
+    method = forms.ChoiceField(
+        label="Verify with",
+        choices=[
+            ("authenticator", "Authenticator app or recovery code (recommended)"),
+            ("email", "Email me a reset link"),
+        ],
+        initial="authenticator",
+        widget=forms.RadioSelect,
+    )
+
+    # Only needed for the authenticator method.
+    code = forms.CharField(
+        label="Authenticator or recovery code",
+        required=False,
+        max_length=20,
+        widget=forms.TextInput(
+            attrs={
+                "class": "input input-bordered w-full font-mono",
+                "placeholder": "123456",
+                "autocomplete": "one-time-code",
+            }
+        ),
+    )
+
+    def clean(self):
+        """Require the code when the authenticator method is chosen."""
+        cleaned = super().clean()
+        if cleaned.get("method") == "authenticator" and not cleaned.get("code", "").strip():
+            self.add_error("code", "Enter your authenticator or recovery code.")
+        return cleaned
 
 
 class PasswordResetConfirmForm(forms.Form):

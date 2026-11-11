@@ -1,0 +1,16 @@
+/* Printing the recovery codes: show only the clean paper sheet (A4, Kura logo). */
+@page { size: A4; margin: 18mm; }
+@media print {
+    body { background: #fff !important; color: #000 !important; }
+    body * { visibility: hidden; }
+    .recovery-sheet, .recovery-sheet * { visibility: visible; }
+    .recovery-sheet { display: block !important; position: absolute; top: 0; left: 0; width: 100%; }
+    .recovery-sheet .sheet-logo { display: flex; align-items: center; gap: 12px; border-bottom: 2px solid #000; padding-bottom: 12px; margin-bottom: 20px; }
+    .recovery-sheet .sheet-mark { width: 44px; height: 44px; border: 2px solid #000; border-radius: 10px; display: grid; place-items: center; }
+    .recovery-sheet .sheet-name { font-size: 28px; font-weight: 700; letter-spacing: 0.04em; }
+    .recovery-sheet h2 { font-size: 20px; margin: 0 0 6px; }
+    .recovery-sheet p { font-size: 13px; margin: 0 0 14px; }
+    .recovery-sheet .sheet-codes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; margin: 18px 0; }
+    .recovery-sheet .sheet-code { font-family: monospace; font-size: 18px; letter-spacing: 0.12em; border: 1px solid #000; border-radius: 6px; padding: 10px; text-align: center; }
+    .recovery-sheet .sheet-note { font-size: 12px; border-top: 1px solid #000; padding-top: 10px; }
+}

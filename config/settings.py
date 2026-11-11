@@ -15,6 +15,7 @@ from pathlib import Path
 
 from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
+from fido2.webauthn import ResidentKeyRequirement, UserVerificationRequirement
 
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
@@ -451,6 +452,10 @@ FIDO_SERVER_ID = os.environ.get("FIDO_SERVER_ID", "localhost")
 FIDO_SERVER_NAME = "Kura LMS"
 MFA_METHODS = ["FIDO2"]
 MFA_ALWAYS_RESTART = False
+# Ask for real passkeys (Windows Hello, Apple Passwords, phone, password managers)
+# first. A physical key still works; the browser lists it as one choice.
+MFA_FIDO2_RESIDENT_KEY = ResidentKeyRequirement.PREFERRED
+MFA_FIDO2_USER_VERIFICATION = UserVerificationRequirement.PREFERRED
 MFA_REDIRECT_AFTER_REGISTRATION = "kura:passkey_manage"
 MFA_SUCCESS_REGISTRATION_MSG = "Passkey successfully enrolled."
 MFA_LOGIN_CALLBACK = "kura.views.mfa_login_callback"
