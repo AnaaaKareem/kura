@@ -1,4 +1,4 @@
-from .models import CourseStaff, Enrollment, EnrollmentStatus, RolePermission, UserRole
+from .models import CourseStaff, Enrollment, EnrollmentStatus, RolePermission, StudentProfile, UserRole
 
 
 def has_role(user, role_name):
@@ -177,3 +177,28 @@ def is_enrolled(user, course):
         student=user,
         status=EnrollmentStatus.ACTIVE,
     ).exists()
+
+
+def student_can_see_module(user, course, module):
+    """
+    Checks whether a student can access a module within a course.
+    Enforces the coursework specification rule: students see only published courses,
+    visible modules, and modules matching their own academic level.
+    """
+    # Anonymous or inactive users cannot access course modules.
+    if not user or not user.is_authenticated or not user.is_active:
+        return False
+
+    # The course must be published and the module visible.
+    if not course.is_published or not module.is_visible:
+        return False
+
+    # If the module restricts access to specific target levels, verify the student's level.
+    target_levels = list(module.target_levels.values_list("target_level", flat=True))
+    if target_levels:
+        student_profile = StudentProfile.objects.filter(user=user).first()
+        student_level = student_profile.current_level if student_profile else None
+        if not student_level or student_level not in target_levels:
+            return False
+
+    return True
