@@ -1222,6 +1222,7 @@ class AssessmentAttemptStartForm(forms.Form):
             attrs={
                 "class": "input input-bordered w-full font-mono text-center tracking-wider text-lg uppercase",
                 "placeholder": "Enter whiteboard code",
+                "autocomplete": "off",
                 "autofocus": "autofocus",
             }
         ),
@@ -1341,6 +1342,7 @@ class GradeReleaseForm(forms.Form):
             attrs={
                 "class": "input input-bordered w-full font-mono text-center tracking-widest text-lg",
                 "placeholder": "123456",
+                "autocomplete": "one-time-code",
                 "autofocus": "autofocus",
             }
         ),

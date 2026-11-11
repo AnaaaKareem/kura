@@ -90,6 +90,16 @@ class SessionValidationMiddleware:
         return self.get_response(request)
 
 
+def add_no_store_headers(response):
+    """
+    Marks an authenticated response as sensitive so browsers and proxies do not cache it.
+    Used for every response path in SecurityEnforcementMiddleware, including redirects.
+    """
+    response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response["Pragma"] = "no-cache"
+    return response
+
+
 class SecurityEnforcementMiddleware:
     """
     Enforces mandatory security onboarding for logged-in users:
@@ -109,32 +119,31 @@ class SecurityEnforcementMiddleware:
 
         # Allow static files, media uploads, and logout without redirection.
         if settings.STATIC_URL and path.startswith(settings.STATIC_URL):
-            return self.get_response(request)
+            return add_no_store_headers(self.get_response(request))
         if settings.MEDIA_URL and settings.MEDIA_URL != "/" and path.startswith(settings.MEDIA_URL):
-            return self.get_response(request)
+            return add_no_store_headers(self.get_response(request))
         if path == reverse("kura:logout"):
-            return self.get_response(request)
+            return add_no_store_headers(self.get_response(request))
 
-        # Force password change on first login.
+        # Force password change on first login. The redirect and the allowed page
+        # both carry no-store, so a sensitive onboarding page is never cached.
         password_change_url = reverse("kura:password_change")
         if request.user.must_change_password:
             if path != password_change_url:
-                return redirect("kura:password_change")
-            return self.get_response(request)
+                return add_no_store_headers(redirect("kura:password_change"))
+            return add_no_store_headers(self.get_response(request))
 
         # Force mandatory MFA enrollment before accessing other pages.
         mfa_setup_url = reverse("kura:mfa_setup")
         mfa_complete_url = reverse("kura:mfa_setup_complete")
         if not request.user.mfa_enabled:
             if path not in (mfa_setup_url, mfa_complete_url, password_change_url):
-                return redirect("kura:mfa_setup")
+                return add_no_store_headers(redirect("kura:mfa_setup"))
 
         response = self.get_response(request)
 
         # Prevent browser caching of sensitive authenticated content.
-        response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
-        response["Pragma"] = "no-cache"
-        return response
+        return add_no_store_headers(response)
 
 
 class RateLimitMiddleware:
