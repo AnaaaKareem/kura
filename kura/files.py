@@ -1,6 +1,7 @@
 import hashlib
 import json
 import logging
+import os
 import socket
 import struct
 from datetime import datetime, timedelta, timezone
@@ -14,6 +15,35 @@ from .models import ALLOWED_UPLOAD_MIME_TYPES, MAX_UPLOAD_BYTES, FileContent, Qu
 
 # Logger for security events
 logger = logging.getLogger("kura.security")
+
+# Filename extensions accepted for each MIME type that validate_and_save_upload
+# allows. A PDF renamed to .html would otherwise pass the MIME check and be
+# stored under a web-page extension, so the two must agree. libmagic sometimes
+# reports an Office or OpenDocument file as application/zip, so those
+# extensions are also listed there to keep legitimate uploads working.
+ALLOWED_EXTENSIONS_BY_MIME = {
+    "application/pdf": {".pdf"},
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {".docx"},
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": {".pptx"},
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {".xlsx"},
+    "application/msword": {".doc", ".dot"},
+    "application/vnd.ms-powerpoint": {".ppt", ".pps"},
+    "application/vnd.ms-excel": {".xls"},
+    "application/vnd.oasis.opendocument.text": {".odt"},
+    "application/vnd.oasis.opendocument.presentation": {".odp"},
+    "application/vnd.oasis.opendocument.spreadsheet": {".ods"},
+    "image/png": {".png"},
+    "image/jpeg": {".jpg", ".jpeg"},
+    "image/gif": {".gif"},
+    "image/webp": {".webp"},
+    # Plain text is what libmagic reports for .txt, .md and sometimes .csv.
+    "text/plain": {".txt", ".csv", ".md"},
+    "text/csv": {".csv"},
+    "text/markdown": {".md"},
+    "video/mp4": {".mp4", ".m4v"},
+    "audio/mpeg": {".mp3"},
+    "application/zip": {".zip", ".docx", ".pptx", ".xlsx", ".odt", ".odp", ".ods"},
+}
 
 
 def sanitize_filename(filename):
@@ -231,7 +261,13 @@ def validate_and_save_upload(uploaded_file, user):
     # Calculate SHA-256 hash.
     content_sha256 = hashlib.sha256(content_bytes).hexdigest()
 
+    # The extension must match the detected type, so a valid PDF named .html
+    # cannot be stored and later downloaded under a web-page extension (INP-01).
     original_filename = sanitize_filename(uploaded_file.name)
+    extension = os.path.splitext(original_filename)[1].lower()
+    if extension not in ALLOWED_EXTENSIONS_BY_MIME.get(detected_mime_type, set()):
+        logger.warning('event=file.upload_rejected reason="extension_mismatch"')
+        raise ValidationError("The file extension does not match the detected file type.")
 
     # Save metadata to StoredFile.
     stored_file = StoredFile.objects.create(

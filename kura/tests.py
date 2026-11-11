@@ -8366,3 +8366,36 @@ class OldPasswordThrottleTests(TestCase):
         self.assertRedirects(response, reverse("kura:home"))
         self.user.refresh_from_db()
         self.assertTrue(self.user.check_password(new_password))
+
+
+class UploadExtensionMatchTests(TestCase):
+    """
+    INP-01: The filename extension must match the type libmagic detects, so a
+    valid PDF renamed to .html is not stored under a web-page extension.
+    """
+
+    def setUp(self):
+        self.instructor = make_user("Instructor")
+        self.pdf_bytes = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF"
+
+    @patch("kura.files.scan_file_for_malware")
+    def test_pdf_bytes_with_html_extension_are_rejected(self, mock_scan):
+        before = StoredFile.objects.count()
+
+        with self.assertRaises(ValidationError):
+            validate_and_save_upload(SimpleUploadedFile("x.html", self.pdf_bytes), self.instructor)
+
+        self.assertEqual(StoredFile.objects.count(), before)
+
+    @patch("kura.files.scan_file_for_malware")
+    def test_matching_pdf_extension_is_accepted(self, mock_scan):
+        stored = validate_and_save_upload(SimpleUploadedFile("report.pdf", self.pdf_bytes), self.instructor)
+
+        self.assertEqual(stored.original_filename, "report.pdf")
+        self.assertEqual(stored.mime_type, "application/pdf")
+
+    @patch("kura.files.scan_file_for_malware")
+    def test_uppercase_pdf_extension_is_accepted(self, mock_scan):
+        stored = validate_and_save_upload(SimpleUploadedFile("REPORT.PDF", self.pdf_bytes), self.instructor)
+
+        self.assertEqual(stored.original_filename, "REPORT.PDF")
