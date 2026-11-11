@@ -9,6 +9,7 @@ import magic
 from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.http import HttpResponse
+from django.utils.http import content_disposition_header
 from .models import ALLOWED_UPLOAD_MIME_TYPES, MAX_UPLOAD_BYTES, FileContent, QuarantinedFile, StoredFile
 
 # Logger for security events
@@ -273,8 +274,10 @@ def create_download_response(stored_file):
     response = HttpResponse(binary_content, content_type=stored_file.mime_type)
     safe_filename = sanitize_filename(stored_file.original_filename)
 
-    # Force browser download instead of inline execution.
-    response["Content-Disposition"] = f'attachment; filename="{safe_filename}"'
+    # Force browser download instead of inline execution. Django's helper quotes and
+    # escapes the name and adds filename*=UTF-8'' for non-ASCII names, so a stored
+    # filename containing a quote or semicolon cannot inject extra header parameters.
+    response["Content-Disposition"] = content_disposition_header(True, safe_filename)
 
     # Prevent MIME confusion attacks.
     response["X-Content-Type-Options"] = "nosniff"
