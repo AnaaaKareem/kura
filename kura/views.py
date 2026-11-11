@@ -1814,10 +1814,15 @@ def staff_settings_view(request):
     building_form = BuildingForm(request.POST if kind == "building" else None)
     room_form = RoomForm(request.POST if kind == "room" else None)
     forms = {"department": department_form, "building": building_form, "room": room_form}
-    if request.method == "POST" and kind in forms and forms[kind].is_valid():
-        forms[kind].save()
-        messages.success(request, "Saved successfully.")
-        return redirect("kura:staff_settings")
+    if request.method == "POST" and kind in forms:
+        submitted_form = forms[kind]
+        if submitted_form.is_valid():
+            obj = submitted_form.save()
+            # kind is one of the fixed keys in the forms dict, never a raw POST value,
+            # so the event name cannot be chosen by the client. Log the ID only (LOG-02).
+            log_security_event(request, f"admin.{kind}.saved", {"id": str(obj.pk)})
+            messages.success(request, "Saved successfully.")
+            return redirect("kura:staff_settings")
     return render(request, "kura/accounts/staff_settings.html", {
         "department_form": department_form, "building_form": building_form, "room_form": room_form,
         "departments": Department.objects.order_by("name"),
