@@ -3,6 +3,7 @@ import logging
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import get_user_model, logout
+from django.http import HttpResponse
 from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils.crypto import constant_time_compare
@@ -182,8 +183,15 @@ class RowLevelSecurityMiddleware:
             try:
                 with connection.cursor() as cursor:
                     cursor.execute("SET kura.current_user_id = %s;", [str(request.user.id)])
-            except Exception:
-                pass
+            except Exception as error:
+                # Fail closed: database policies treat a missing user id as unrestricted.
+                log_security_event(
+                    request,
+                    "rls.context_failed",
+                    {"error_type": error.__class__.__name__},
+                    level=logging.ERROR,
+                )
+                return HttpResponse("Service unavailable.", status=503)
 
         response = self.get_response(request)
 
@@ -194,7 +202,14 @@ class RowLevelSecurityMiddleware:
             try:
                 with connection.cursor() as cursor:
                     cursor.execute("RESET kura.current_user_id;")
-            except Exception:
-                pass
+            except Exception as error:
+                # Log reset failure and close connection so stale context cannot leak.
+                log_security_event(
+                    request,
+                    "rls.reset_failed",
+                    {"error_type": error.__class__.__name__},
+                    level=logging.WARNING,
+                )
+                connection.close()
 
         return response

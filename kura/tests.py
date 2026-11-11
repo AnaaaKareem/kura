@@ -7830,3 +7830,71 @@ class MfaSetupReauthTests(TestCase):
         self.assertContains(response, "Set up Multi-Factor Authentication")
 
 
+class RowLevelSecurityFailClosedTests(TestCase):
+    """
+    CFG-01: When RowLevelSecurityMiddleware fails to set the session user ID in PostgreSQL,
+    it must fail closed (return HTTP 503) and log an error, rather than continuing
+    with unrestricted database access.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.student = make_user("Student", mfa_enabled=True)
+
+    def test_rls_set_failure_fails_closed_and_logs_error(self):
+        from django.db.utils import OperationalError
+
+        self.client.force_login(self.student)
+        real_cursor = connection.cursor
+
+        def failing_cursor(*args, **kwargs):
+            cursor = real_cursor(*args, **kwargs)
+            real_execute = cursor.execute
+
+            def guarded_execute(sql, params=None):
+                if isinstance(sql, str) and "SET kura.current_user_id" in sql:
+                    raise OperationalError("Simulated SET failure")
+                return real_execute(sql, params)
+
+            cursor.execute = guarded_execute
+            return cursor
+
+        with patch.object(connection, "cursor", side_effect=failing_cursor):
+            with self.assertLogs("kura.security", level="ERROR") as captured:
+                response = self.client.get(reverse("kura:student_grades"))
+            self.assertEqual(response.status_code, 503)
+            self.assertTrue(any('event="rls.context_failed"' in line for line in captured.output))
+
+    def test_normal_request_returns_200(self):
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("kura:student_grades"))
+        self.assertEqual(response.status_code, 200)
+
+    def test_rls_reset_failure_logs_warning_and_closes_connection(self):
+        from django.db.utils import OperationalError
+
+        self.client.force_login(self.student)
+        real_cursor = connection.cursor
+
+        def failing_reset_cursor(*args, **kwargs):
+            cursor = real_cursor(*args, **kwargs)
+            real_execute = cursor.execute
+
+            def guarded_execute(sql, params=None):
+                if isinstance(sql, str) and "RESET kura.current_user_id" in sql:
+                    raise OperationalError("Simulated RESET failure")
+                return real_execute(sql, params)
+
+            cursor.execute = guarded_execute
+            return cursor
+
+        with patch.object(connection, "cursor", side_effect=failing_reset_cursor):
+            with patch.object(connection, "close") as mock_close:
+                with self.assertLogs("kura.security", level="WARNING") as captured:
+                    response = self.client.get(reverse("kura:student_grades"))
+                self.assertEqual(response.status_code, 200)
+                self.assertTrue(any('event="rls.reset_failed"' in line for line in captured.output))
+                mock_close.assert_called_once()
+
+
+
