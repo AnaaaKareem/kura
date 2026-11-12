@@ -14,7 +14,7 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 import hvac
 
-logger = logging.getLogger(__name__)
+from .logging_utils import log_security_event
 
 
 def get_vault_client():
@@ -64,7 +64,7 @@ def encrypt_mfa_secret(secret_plaintext):
         return response["data"]["ciphertext"]
 
     except Exception as exc:
-        logger.error('event=vault.error operation="encrypt_mfa_secret"')
+        log_security_event(None, "vault.error", {"operation": "encrypt_mfa_secret"}, level=logging.ERROR)
         raise ValidationError("MFA secret encryption failed. The security vault is unreachable.") from exc
 
 
@@ -82,7 +82,7 @@ def decrypt_mfa_secret(ciphertext):
     # With Vault on, only accept real Vault ciphertext. A plain-text seed here
     # means it was never encrypted (or someone wrote it in directly), so refuse it.
     if not ciphertext.startswith("vault:"):
-        logger.error('event=vault.error operation="decrypt_mfa_secret_invalid_ciphertext"')
+        log_security_event(None, "vault.error", {"operation": "decrypt_mfa_secret_invalid_ciphertext"}, level=logging.ERROR)
         raise ValidationError("MFA secret is not encrypted.")
 
     try:
@@ -100,7 +100,7 @@ def decrypt_mfa_secret(ciphertext):
         return base64.b64decode(encoded_plaintext.encode("utf-8")).decode("utf-8")
 
     except Exception as exc:
-        logger.error('event=vault.error operation="decrypt_mfa_secret"')
+        log_security_event(None, "vault.error", {"operation": "decrypt_mfa_secret"}, level=logging.ERROR)
         raise ValidationError("MFA secret decryption failed. The security vault is unreachable.") from exc
 
 
@@ -135,7 +135,7 @@ def encrypt_answer_key(answer_key_dict):
 
     except Exception as exc:
         # Only the operation is logged, never the answer key.
-        logger.error('event=vault.error operation="encrypt_answer_key"')
+        log_security_event(None, "vault.error", {"operation": "encrypt_answer_key"}, level=logging.ERROR)
         raise ValidationError("Answer key encryption failed. The security vault is unreachable.") from exc
 
 
@@ -155,7 +155,7 @@ def decrypt_answer_key(stored_json):
     # With Vault on, refuse anything that is not Vault ciphertext.
     ciphertext = stored_json.get("ciphertext", "")
     if not isinstance(ciphertext, str) or not ciphertext.startswith("vault:"):
-        logger.error('event=vault.error operation="decrypt_answer_key_not_encrypted"')
+        log_security_event(None, "vault.error", {"operation": "decrypt_answer_key_not_encrypted"}, level=logging.ERROR)
         raise ValidationError("Answer key is not encrypted.")
 
     try:
@@ -171,7 +171,7 @@ def decrypt_answer_key(stored_json):
         return json.loads(answer_key_text)
 
     except Exception as exc:
-        logger.error('event=vault.error operation="decrypt_answer_key"')
+        log_security_event(None, "vault.error", {"operation": "decrypt_answer_key"}, level=logging.ERROR)
         raise ValidationError("Answer key decryption failed. The security vault is unreachable.") from exc
 
 
@@ -203,7 +203,7 @@ def get_dynamic_database_credentials():
             mount_point=settings.VAULT_DB_MOUNT,
         )
     except Exception as exc:
-        logger.error('event=vault.error operation="get_dynamic_database_credentials"')
+        log_security_event(None, "vault.error", {"operation": "get_dynamic_database_credentials"}, level=logging.ERROR)
         raise ValidationError("Could not get a database login from Vault.") from exc
 
     # Remember the new login, and plan to replace it 5 minutes (300 seconds)

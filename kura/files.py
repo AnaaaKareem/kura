@@ -1,5 +1,4 @@
 import hashlib
-import json
 import logging
 import os
 import socket
@@ -11,10 +10,8 @@ from django.conf import settings
 from django.core.exceptions import ValidationError
 from django.http import HttpResponse
 from django.utils.http import content_disposition_header
+from .logging_utils import log_security_event
 from .models import ALLOWED_UPLOAD_MIME_TYPES, MAX_UPLOAD_BYTES, FileContent, QuarantinedFile, StoredFile
-
-# Logger for security events
-logger = logging.getLogger("kura.security")
 
 # Filename extensions accepted for each MIME type that validate_and_save_upload
 # allows. A PDF renamed to .html would otherwise pass the MIME check and be
@@ -101,10 +98,10 @@ def scan_file_for_malware(content_bytes):
     except (OSError, socket.timeout) as error:
         # In production (or when required), fail closed to keep the system safe.
         if scanner_is_required:
-            logger.error("event=clamav.unavailable error_type=" + json.dumps(type(error).__name__))
+            log_security_event(None, "clamav.unavailable", {"error_type": type(error).__name__}, level=logging.ERROR)
             raise ValidationError("Antivirus service is unavailable. Upload rejected for safety.")
         # In development mode, allow the upload with a warning so offline development works.
-        logger.error("event=clamav.unavailable error_type=" + json.dumps(type(error).__name__))
+        log_security_event(None, "clamav.unavailable", {"error_type": type(error).__name__}, level=logging.ERROR)
         return
     finally:
         # Always close the socket connection.
@@ -131,14 +128,14 @@ def scan_file_for_malware(content_bytes):
 
     # If ClamAV encountered an internal scanning error (e.g. stream size limit exceeded).
     if "ERROR" in scanner_response_text:
-        logger.error("event=clamav.unavailable error_type=ScannerError")
+        log_security_event(None, "clamav.unavailable", {"error_type": "ScannerError"}, level=logging.ERROR)
         if scanner_is_required:
             raise ValidationError("Security scanner encountered an error. Upload rejected.")
         return
 
     # A closed connection or malformed reply is not a successful clean scan.
     if not scanner_response.endswith((b"\x00", b"\n")) or scanner_response_text != "stream: OK":
-        logger.error("event=clamav.unavailable error_type=InvalidScannerResponse")
+        log_security_event(None, "clamav.unavailable", {"error_type": "InvalidScannerResponse"}, level=logging.ERROR)
         if scanner_is_required:
             raise ValidationError("Security scanner encountered an error. Upload rejected.")
 
@@ -162,7 +159,7 @@ def check_signature_age():
         version_reply = clamav_socket.recv(1024).decode("utf-8", errors="replace").strip("\x00\r\n ")
     except OSError as error:
         # Report an unavailable scanner without logging network details or user data.
-        logger.error("event=clamav.unavailable error_type=" + json.dumps(type(error).__name__))
+        log_security_event(None, "clamav.unavailable", {"error_type": type(error).__name__}, level=logging.ERROR)
         return
     finally:
         if clamav_socket:
@@ -171,18 +168,18 @@ def check_signature_age():
     # The third part (after the second "/") is the date of the newest signatures.
     reply_parts = version_reply.split("/")
     if len(reply_parts) != 3:
-        logger.warning("event=clamav.unavailable error_type=InvalidVersionResponse")
+        log_security_event(None, "clamav.unavailable", {"error_type": "InvalidVersionResponse"}, level=logging.WARNING)
         return
     try:
         signature_date = datetime.strptime(reply_parts[2].strip(), "%a %b %d %H:%M:%S %Y")
     except ValueError:
-        logger.warning("event=clamav.unavailable error_type=InvalidSignatureDate")
+        log_security_event(None, "clamav.unavailable", {"error_type": "InvalidSignatureDate"}, level=logging.WARNING)
         return
 
     # ClamAV reports the date in UTC. Warn when it is more than 3 days old.
     signature_age = datetime.now(timezone.utc).replace(tzinfo=None) - signature_date
     if signature_age > timedelta(days=3):
-        logger.warning("event=clamav.signatures_old age_days=" + json.dumps(str(signature_age.days)))
+        log_security_event(None, "clamav.signatures_old", {"age_days": signature_age.days}, level=logging.WARNING)
 
 
 def validate_and_save_upload(uploaded_file, user):
@@ -194,10 +191,10 @@ def validate_and_save_upload(uploaded_file, user):
     # Enforce file size limits: between 1 byte and 25 MiB.
     file_size = uploaded_file.size
     if file_size <= 0:
-        logger.warning('event=file.upload_rejected reason="empty_file"')
+        log_security_event(None, "file.upload_rejected", {"reason": "empty_file"}, level=logging.WARNING)
         raise ValidationError("Uploaded file is empty.")
     if file_size > MAX_UPLOAD_BYTES:
-        logger.warning('event=file.upload_rejected reason="size_limit"')
+        log_security_event(None, "file.upload_rejected", {"reason": "size_limit"}, level=logging.WARNING)
         raise ValidationError(f"File size exceeds the maximum limit of {MAX_UPLOAD_BYTES // (1024 * 1024)} MiB.")
 
     # Read binary content to detect real MIME type and compute hash.
@@ -210,7 +207,7 @@ def validate_and_save_upload(uploaded_file, user):
         # Only a file ClamAV rejected is quarantined; scanner outages are not.
         if error.code != "malware":
             # Scanner failures also reject the upload, but are not malware quarantines.
-            logger.warning('event=file.upload_rejected reason="scanner_unavailable"')
+            log_security_event(None, "file.upload_rejected", {"reason": "scanner_unavailable"}, level=logging.WARNING)
             raise
         detection = error.params["detection"]
         original_filename = sanitize_filename(uploaded_file.name)
@@ -229,18 +226,18 @@ def validate_and_save_upload(uploaded_file, user):
             content=content_bytes,
         )
 
-        # Quote every field so a hostile filename or scanner message cannot forge fields.
-        logger.warning(
-            "event=file.quarantined user_id="
-            + json.dumps(str(user.id))
-            + " sha256="
-            + json.dumps(content_sha256)
-            + " size="
-            + json.dumps(str(file_size))
-            + " detection="
-            + json.dumps(detection[:500])
-            + " filename="
-            + json.dumps(original_filename[:500])
+        # The helper quotes every value, so a hostile filename cannot forge fields.
+        log_security_event(
+            None,
+            "file.quarantined",
+            {
+                "user_id": user.id,
+                "sha256": content_sha256,
+                "size": file_size,
+                "detection": detection[:500],
+                "filename": original_filename[:500],
+            },
+            level=logging.WARNING,
         )
         raise
 
@@ -252,7 +249,7 @@ def validate_and_save_upload(uploaded_file, user):
 
     # Validate against allowed MIME types.
     if detected_mime_type not in ALLOWED_UPLOAD_MIME_TYPES:
-        logger.warning('event=file.upload_rejected reason="mime_type"')
+        log_security_event(None, "file.upload_rejected", {"reason": "mime_type"}, level=logging.WARNING)
         raise ValidationError(
             "This file type isn't allowed. Allowed: PDF, Word, PowerPoint, Excel, "
             "OpenDocument, CSV, text, Markdown, images (PNG, JPEG, GIF, WebP), MP4, MP3, ZIP."
@@ -266,7 +263,7 @@ def validate_and_save_upload(uploaded_file, user):
     original_filename = sanitize_filename(uploaded_file.name)
     extension = os.path.splitext(original_filename)[1].lower()
     if extension not in ALLOWED_EXTENSIONS_BY_MIME.get(detected_mime_type, set()):
-        logger.warning('event=file.upload_rejected reason="extension_mismatch"')
+        log_security_event(None, "file.upload_rejected", {"reason": "extension_mismatch"}, level=logging.WARNING)
         raise ValidationError("The file extension does not match the detected file type.")
 
     # Save metadata to StoredFile.
@@ -285,15 +282,15 @@ def validate_and_save_upload(uploaded_file, user):
     )
 
     # Record safe metadata after both the file record and its content are stored.
-    logger.info(
-        "event=file.uploaded file_id="
-        + json.dumps(str(stored_file.id))
-        + " sha256="
-        + json.dumps(content_sha256)
-        + " size="
-        + json.dumps(str(file_size))
-        + " mime="
-        + json.dumps(detected_mime_type)
+    log_security_event(
+        None,
+        "file.uploaded",
+        {
+            "file_id": stored_file.id,
+            "sha256": content_sha256,
+            "size": file_size,
+            "mime": detected_mime_type,
+        },
     )
 
     return stored_file

@@ -6534,10 +6534,10 @@ class BreachedPasswordCheckTests(TestCase):
         opener = MagicMock()
         opener.open.side_effect = OSError("no route to host")
         with patch("kura.validators.urllib.request.build_opener", return_value=opener):
-            with self.assertLogs("kura.validators", level="WARNING") as captured:
+            with self.assertLogs("kura.security", level="WARNING") as captured:
                 BreachedPasswordValidator().validate(self.BREACHED_PASSWORD)
         log_text = "\n".join(captured.output)
-        self.assertIn("event=auth.breach_check.unavailable", log_text)
+        self.assertIn('event="auth.breach_check.unavailable"', log_text)
         self.assertNotIn(self.BREACHED_PASSWORD, log_text)
         self.assertNotIn("CBFDA", log_text)
 
@@ -6566,9 +6566,9 @@ class BreachedPasswordCheckTests(TestCase):
     @override_settings(BREACH_CHECK_CA_FILE="/no/such/ca-file.crt")
     def test_missing_ca_file_fails_open_with_a_warning(self):
         # A wrong certificate path must not break password changes (500 error).
-        with self.assertLogs("kura.validators", level="WARNING") as captured:
+        with self.assertLogs("kura.security", level="WARNING") as captured:
             BreachedPasswordValidator().validate("a-long-unique-test-password")
-        self.assertIn("event=auth.breach_check.unavailable", "\n".join(captured.output))
+        self.assertIn('event="auth.breach_check.unavailable"', "\n".join(captured.output))
 
 
 class BreachCheckProxyConfigTests(TestCase):
@@ -7263,7 +7263,7 @@ class ClamAVQuarantineTests(TransactionTestCase):
         self.assertIn(str(self.user.id), log_line)
         self.assertIn(hashlib.sha256(self.eicar_bytes).hexdigest(), log_line)
         self.assertIn('detection="Eicar-Test-Signature"', log_line)
-        self.assertIn('event=file.quarantined', log_line)
+        self.assertIn('event="file.quarantined"', log_line)
         # The newline in the name is written as \\n, so no fake second log line appears.
         self.assertNotIn("\n", log_line)
 
@@ -7272,7 +7272,7 @@ class ClamAVQuarantineTests(TransactionTestCase):
         with patch("socket.create_connection", return_value=fake_clamav_reply(old_reply)):
             with self.assertLogs("kura.security", level="WARNING") as captured:
                 check_signature_age()
-        self.assertIn("event=clamav.signatures_old", captured.output[0])
+        self.assertIn('event="clamav.signatures_old"', captured.output[0])
         self.assertIn("age_days=", captured.output[0])
 
     def test_fresh_signatures_log_nothing(self):
