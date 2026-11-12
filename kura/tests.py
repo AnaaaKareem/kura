@@ -5122,8 +5122,8 @@ class RateLimitingTests(TestCase):
 
     def test_rapid_burst_requests_beyond_limit_are_rejected(self):
         # Repeated burst requests exceeding the rate limit receive HTTP 429 Too Many Requests.
-        from django.core.cache import cache
-        cache.clear()
+        from django.core.cache import caches
+        caches["ratelimit"].clear()
 
         self.client.force_login(self.user)
         dummy_uuid = "00000000-0000-0000-0000-000000000001"
@@ -8863,3 +8863,27 @@ class AbsoluteSessionLimitTests(TestCase):
             self.client.get(reverse("kura:home")),
             f"{reverse('kura:login')}?next={reverse('kura:home')}",
         )
+
+
+class SharedRateLimitCacheTests(TestCase):
+    """
+    Tests that RateLimitMiddleware stores counters in the shared DatabaseCache (AUTH-08).
+    """
+
+    def setUp(self):
+        from django.core.cache import caches
+
+        self.user = make_user("Student", mfa_enabled=True)
+        caches["default"].clear()
+        caches["ratelimit"].clear()
+
+    def test_rate_limit_counter_uses_shared_ratelimit_cache(self):
+        from django.core.cache import caches
+
+        self.client.force_login(self.user)
+        dummy_uuid = "00000000-0000-0000-0000-000000000001"
+        self.client.post(f"/attempts/{dummy_uuid}/files/upload/")
+
+        cache_key = f"rate_limit_upload_{self.user.id}"
+        self.assertEqual(caches["ratelimit"].get(cache_key), 1)
+        self.assertIsNone(caches["default"].get(cache_key))

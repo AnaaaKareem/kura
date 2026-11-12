@@ -276,12 +276,19 @@ DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "Kura <noreply@kura.ed
 # a visitor sent (which an attacker could choose: "password reset poisoning").
 SITE_URL = os.environ.get("SITE_URL", "http://localhost:8000").rstrip("/")
 
-# Use PostgreSQL for Registrar search limits so all application workers share them.
+# Use PostgreSQL for Registrar search limits and request rate limits so all
+# application workers share one counter (LocMemCache is per worker, so limits
+# otherwise multiply by the number of Gunicorn workers; AUTH-08).
 CACHES = {
     "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
     "search_limits": {
         "BACKEND": "django.core.cache.backends.db.DatabaseCache",
         "LOCATION": "kura_search_cache",
+        "OPTIONS": {"MAX_ENTRIES": 1000000},
+    },
+    "ratelimit": {
+        "BACKEND": "django.core.cache.backends.db.DatabaseCache",
+        "LOCATION": "kura_ratelimit_cache",
         "OPTIONS": {"MAX_ENTRIES": 1000000},
     },
 }
