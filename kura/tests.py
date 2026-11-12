@@ -95,6 +95,7 @@ from .models import (
     ModuleAttendanceSession,
     ModuleSection,
     ModuleTargetLevel,
+    PasswordHistory,
     PasswordResetToken,
     Role,
     RolePermission,
@@ -8315,7 +8316,7 @@ class PasswordReuseTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(
-            "Choose a password you have not used for this account.",
+            "Choose a password you have not used recently.",
             response.context["form"].errors["new_password"],
         )
 
@@ -8340,7 +8341,7 @@ class PasswordReuseTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         self.assertIn(
-            "Choose a password you have not used for this account.",
+            "Choose a password you have not used recently.",
             response.context["form"].errors["new_password"],
         )
 
@@ -8887,3 +8888,82 @@ class SharedRateLimitCacheTests(TestCase):
         cache_key = f"rate_limit_upload_{self.user.id}"
         self.assertEqual(caches["ratelimit"].get(cache_key), 1)
         self.assertIsNone(caches["default"].get(cache_key))
+
+
+class PasswordHistoryTests(TestCase):
+    """
+    Tests PasswordHistory tracking and reuse prevention for the last 5 passwords (AUTH-06).
+    """
+
+    def setUp(self):
+        self.passwords = [
+            "HistPassZero!1234",
+            "HistPassOne!1234",
+            "HistPassTwo!1234",
+            "HistPassThree!1234",
+            "HistPassFour!1234",
+            "HistPassFive!1234",
+            "HistPassSix!1234",
+        ]
+        self.user = make_user("Student", password=self.passwords[0], mfa_enabled=True)
+
+    def _change_password(self, old_pw, new_pw):
+        return self.client.post(
+            reverse("kura:password_change"),
+            {
+                "old_password": old_pw,
+                "new_password": new_pw,
+                "confirm_password": new_pw,
+            },
+        )
+
+    @patch("kura.validators.BreachedPasswordValidator.validate", return_value=None)
+    def test_password_history_enforces_five_previous_passwords_and_prunes_older(self, _mock_breach):
+        self.client.force_login(self.user)
+
+        # Rotate P0 -> P1 -> P2 -> P3 -> P4 -> P5 (5 changes: P0..P4 in history, P5 current).
+        with self.assertLogs("kura.security", level="INFO") as logs:
+            for idx in range(5):
+                resp = self._change_password(self.passwords[idx], self.passwords[idx + 1])
+                self.assertRedirects(resp, reverse("kura:home"))
+        self.assertEqual(PasswordHistory.objects.filter(user=self.user).count(), 5)
+
+        # Current password (P5) fails.
+        resp = self._change_password(self.passwords[5], self.passwords[5])
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("Choose a password you have not used recently.", resp.context["form"].errors["new_password"])
+
+        # 6th change: P5 -> P6. Now history holds P5 (1st prev), P4 (2nd), P3 (3rd), P2 (4th), P1 (5th);
+        # P0 (6th previous) is pruned, and only 5 rows remain.
+        resp = self._change_password(self.passwords[5], self.passwords[6])
+        self.assertRedirects(resp, reverse("kura:home"))
+        self.assertEqual(PasswordHistory.objects.filter(user=self.user).count(), 5)
+
+        # 2nd previous (P4) and 5th previous (P1) fail on both change and reset confirm forms.
+        for old_candidate in (self.passwords[4], self.passwords[1]):
+            resp = self._change_password(self.passwords[6], old_candidate)
+            self.assertEqual(resp.status_code, 200)
+            self.assertIn("Choose a password you have not used recently.", resp.context["form"].errors["new_password"])
+
+            raw_token = secrets.token_urlsafe(32)
+            PasswordResetToken.objects.create(
+                user=self.user,
+                token_hash=hashlib.sha256(raw_token.encode("utf-8")).hexdigest(),
+                expires_at=timezone.now() + timezone.timedelta(minutes=30),
+            )
+            reset_resp = self.client.post(
+                reverse("kura:password_reset_confirm", kwargs={"token": raw_token}),
+                {"new_password": old_candidate, "confirm_password": old_candidate},
+            )
+            self.assertEqual(reset_resp.status_code, 200)
+            self.assertIn("Choose a password you have not used recently.", reset_resp.context["form"].errors["new_password"])
+
+        # 6th previous (P0) was pruned and now succeeds.
+        resp = self._change_password(self.passwords[6], self.passwords[0])
+        self.assertRedirects(resp, reverse("kura:home"))
+        self.assertEqual(PasswordHistory.objects.filter(user=self.user).count(), 5)
+
+        # No password text ever appeared in the security log.
+        log_blob = "\n".join(logs.output)
+        for pw in self.passwords:
+            self.assertNotIn(pw, log_blob)

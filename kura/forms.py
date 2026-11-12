@@ -1,5 +1,7 @@
 from django import forms
+from django.conf import settings
 from django.contrib.auth import authenticate
+from django.contrib.auth.hashers import check_password
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from .models import (
@@ -15,6 +17,7 @@ from .models import (
     Room,
     GradeComponentType,
     EnrollmentStatus,
+    PasswordHistory,
     Role,
     SectionType,
     SemesterType,
@@ -22,6 +25,18 @@ from .models import (
     User,
     validate_cidr,
 )
+
+
+def password_was_used_recently(user, raw_password):
+    """Return True if raw_password matches the current password or recent history (AUTH-06)."""
+    if user.check_password(raw_password):
+        return True
+    history_limit = getattr(settings, "PASSWORD_HISTORY_COUNT", 5)
+    recent_hashes = PasswordHistory.objects.filter(user=user).order_by("-created_at", "-id")[:history_limit]
+    for entry in recent_hashes:
+        if check_password(raw_password, entry.password_hash):
+            return True
+    return False
 
 
 class AdminCourseFilterForm(forms.Form):
@@ -213,9 +228,9 @@ class PasswordChangeForm(forms.Form):
         if new_password and confirm_password and new_password != confirm_password:
             self.add_error("confirm_password", "The two password fields did not match.")
 
-        # Refuse a new password that is the same as the current one (AUTH-06).
-        if new_password and self.user.check_password(new_password):
-            self.add_error("new_password", "Choose a password you have not used for this account.")
+        # Refuse reusing the current password or any recent password in history (AUTH-06).
+        if new_password and password_was_used_recently(self.user, new_password):
+            self.add_error("new_password", "Choose a password you have not used recently.")
 
         # Run configured Django password validators on the new password.
         if new_password:
@@ -307,9 +322,9 @@ class PasswordResetConfirmForm(forms.Form):
         if new_password and confirm_password and new_password != confirm_password:
             self.add_error("confirm_password", "The two password fields did not match.")
 
-        # Refuse a new password that is the same as the current one (AUTH-06).
-        if new_password and self.user.check_password(new_password):
-            self.add_error("new_password", "Choose a password you have not used for this account.")
+        # Refuse reusing the current password or any recent password in history (AUTH-06).
+        if new_password and password_was_used_recently(self.user, new_password):
+            self.add_error("new_password", "Choose a password you have not used recently.")
 
         # Run validators against password rules.
         if new_password:

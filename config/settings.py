@@ -302,6 +302,8 @@ PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
     "django.contrib.auth.hashers.ScryptPasswordHasher",
 ]
+# Number of previous password hashes kept to prevent password reuse (AUTH-06).
+PASSWORD_HISTORY_COUNT = 5
 
 
 # Authentication and login routing
