@@ -1,3 +1,5 @@
+from django.utils import timezone
+
 from .models import CourseStaff, Enrollment, EnrollmentStatus, RolePermission, StudentProfile, UserRole
 
 
@@ -222,3 +224,29 @@ def student_can_see_module(user, course, module):
             return False
 
     return True
+
+
+# How long a fresh second-factor check counts for (seconds).
+FRESH_SECOND_FACTOR_SECONDS = 300
+
+
+def has_fresh_second_factor(request):
+    """
+    Checks whether the signed-in user entered a second-factor code in the last
+    five minutes (AUTH-02, ACL-05). Sensitive actions such as changing passkeys,
+    changing roles, deactivating accounts and releasing results call this so a
+    stolen session cookie alone cannot perform them.
+    Users without MFA have no second factor to ask for, so they pass.
+    """
+    if not request.user.mfa_enabled:
+        return True
+
+    # The time of the last successful check is kept in the session.
+    confirmed_at = request.session.get("mfa_reauth_at")
+    if not confirmed_at:
+        return False
+    try:
+        age = timezone.now().timestamp() - float(confirmed_at)
+    except (ValueError, TypeError):
+        return False
+    return age < FRESH_SECOND_FACTOR_SECONDS

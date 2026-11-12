@@ -17,6 +17,7 @@ urlpatterns = [
     path("password/reset/<str:token>/", views.password_reset_confirm_view, name="password_reset_confirm"),
     # Multi-factor authentication routes
     path("mfa/setup/", views.mfa_setup_view, name="mfa_setup"),
+    path("mfa/confirm/", views.mfa_reauth_view, name="mfa_reauth"),
     path("mfa/complete/", views.mfa_setup_complete_view, name="mfa_setup_complete"),
     # Passkey (WebAuthn / FIDO2) management routes
     path("passkeys/", views.passkey_manage_view, name="passkey_manage"),
