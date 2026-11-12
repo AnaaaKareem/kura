@@ -24,7 +24,10 @@ from django.core.management.base import CommandError
 from django.db import DatabaseError, IntegrityError, connection, connections, transaction
 from django.db.models import QuerySet
 from django.template.loader import render_to_string
-from django.test import Client, TestCase, TransactionTestCase, override_settings
+from django.contrib.auth.models import AnonymousUser
+from django.contrib.messages.middleware import MessageMiddleware
+from django.contrib.sessions.middleware import SessionMiddleware
+from django.test import Client, RequestFactory, TestCase, TransactionTestCase, override_settings
 from django.urls import reverse
 from django.utils import timezone
 from django_otp.plugins.otp_static.models import StaticDevice, StaticToken
@@ -48,6 +51,7 @@ from .views import (
     evaluate_attempt,
     hash_recovery_code,
     log_security_event,
+    mfa_login_callback,
     queue_assessment_notification,
     queue_email,
     verify_totp_code,
@@ -8541,3 +8545,56 @@ class InvalidInputLoggingTests(TestCase):
         self.assertIn("DepartmentForm", output)
         self.assertIn("code", output)
         self.assertNotIn(marker, output)
+
+
+class PasskeyLoginCallbackTests(TestCase):
+    """
+    AUTH-Q: django-mfa2 finds the user from the passkey itself, and its sign-in
+    endpoints are public. The login callback must only sign in the user who
+    already passed the password step, and only if they are active and unlocked.
+    """
+
+    def setUp(self):
+        self.user = make_user("Student")
+        self.other = make_user("Student")
+
+    def call_callback(self, session_values):
+        # Build a request with a real session and message storage, the same
+        # way django-mfa2 would hand one to the callback.
+        request = RequestFactory().post("/mfa/fido2/complete_auth")
+        SessionMiddleware(lambda r: None).process_request(request)
+        MessageMiddleware(lambda r: None).process_request(request)
+        for key, value in session_values.items():
+            request.session[key] = value
+        request.user = AnonymousUser()
+        response = mfa_login_callback(request, self.user.email)
+        return request, response
+
+    def test_passkey_without_password_step_is_refused(self):
+        request, response = self.call_callback({})
+        self.assertEqual(response.url, reverse("kura:login"))
+        self.assertNotIn("_auth_user_id", request.session)
+
+    def test_passkey_for_different_user_is_refused(self):
+        request, response = self.call_callback({"pre_mfa_user_id": str(self.other.id)})
+        self.assertEqual(response.url, reverse("kura:login"))
+        self.assertNotIn("_auth_user_id", request.session)
+
+    def test_locked_user_is_refused(self):
+        self.user.locked_until = timezone.now() + timezone.timedelta(hours=1)
+        self.user.save(update_fields=["locked_until"])
+        request, response = self.call_callback({"pre_mfa_user_id": str(self.user.id)})
+        self.assertEqual(response.url, reverse("kura:login"))
+        self.assertNotIn("_auth_user_id", request.session)
+
+    def test_inactive_user_is_refused(self):
+        self.user.is_active = False
+        self.user.save(update_fields=["is_active"])
+        request, response = self.call_callback({"pre_mfa_user_id": str(self.user.id)})
+        self.assertEqual(response.url, reverse("kura:login"))
+        self.assertNotIn("_auth_user_id", request.session)
+
+    def test_same_user_after_password_step_signs_in(self):
+        request, response = self.call_callback({"pre_mfa_user_id": str(self.user.id)})
+        self.assertEqual(response.url, reverse("kura:home"))
+        self.assertEqual(request.session["_auth_user_id"], str(self.user.pk))
