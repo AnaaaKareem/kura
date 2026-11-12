@@ -5,7 +5,7 @@ import urllib.request
 from django.conf import settings
 from django.core.exceptions import ValidationError
 
-logger = logging.getLogger(__name__)
+from .logging_utils import log_security_event
 
 
 class BreachedPasswordValidator:
@@ -70,7 +70,7 @@ class BreachedPasswordValidator:
             # updates. The Loki alert BreachCheckUnavailable fires on this
             # event, so a check that keeps failing is noticed.
             # Only the kind of error is logged, never the password or its hash.
-            logger.warning('event=auth.breach_check.unavailable error_type="%s"', type(error).__name__)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
+            log_security_event(None, "auth.breach_check.unavailable", {"error_type": type(error).__name__}, level=logging.WARNING)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
 
     def get_help_text(self):
         """

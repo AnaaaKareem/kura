@@ -23,9 +23,8 @@ from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
 
+from kura.logging_utils import log_security_event
 from kura.models import OutgoingEmail, OutgoingEmailStatus
-
-logger = logging.getLogger("kura.security")
 
 # How many times to try one email before giving up.
 MAX_ATTEMPTS = 5
@@ -66,7 +65,7 @@ class Command(BaseCommand):
         # Report expired messages by ID only; never log their addresses or reset links.
         expired_ids = expired_reset_ids + expired_other_ids
         for expired_email_id in expired_ids:
-            logger.warning('event=email.expired email_id="%s" error_type="Expired"', expired_email_id)
+            log_security_event(None, "email.expired", {"email_id": expired_email_id, "error_type": "Expired"}, level=logging.WARNING)
 
         # 2. Send the pending emails, oldest first (at most 200 per run).
         pending_ids = list(
@@ -107,16 +106,18 @@ class Command(BaseCommand):
                     if email.attempts >= MAX_ATTEMPTS:
                         email.status = OutgoingEmailStatus.FAILED
                         email.body = ""
-                        logger.warning(
-                            'event=email.failed email_id="%s" error_type="%s"',
-                            email.id,
-                            type(error).__name__,
+                        log_security_event(
+                            None,
+                            "email.failed",
+                            {"email_id": email.id, "error_type": type(error).__name__},
+                            level=logging.WARNING,
                         )
                     else:
-                        logger.warning(
-                            'event=email.failed email_id="%s" error_type="%s"',
-                            email.id,
-                            type(error).__name__,
+                        log_security_event(
+                            None,
+                            "email.failed",
+                            {"email_id": email.id, "error_type": type(error).__name__},
+                            level=logging.WARNING,
                         )
                 else:
                     # Sent: wipe the body and remember when.
@@ -125,7 +126,7 @@ class Command(BaseCommand):
                     email.body = ""
                     email.last_error = ""
                     sent_count += 1
-                    logger.info('event=email.sent email_id="%s"', email.id)
+                    log_security_event(None, "email.sent", {"email_id": email.id})
                 email.save()
         connection.close()
 
