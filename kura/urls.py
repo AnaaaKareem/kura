@@ -24,6 +24,7 @@ urlpatterns = [
     path("passkeys/<int:key_id>/delete/", views.passkey_delete_view, name="passkey_delete"),
     # User sessions management
     path("account/sessions/", views.user_sessions_view, name="user_sessions"),
+    path("account/sessions/<uuid:session_id>/revoke/", views.user_session_revoke_view, name="user_session_revoke"),
     path("admin/sessions/", views.admin_sessions_view, name="admin_sessions"),
     path("admin/quarantine/", views.quarantine_list_view, name="quarantine_list"),
     path(

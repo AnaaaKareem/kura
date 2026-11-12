@@ -382,6 +382,7 @@ def hash_recovery_code(code):
     return full_hash[:16]
 
 
+# ACL-06: concurrent sessions are allowed by owner decision; users can see and revoke them at account/sessions/
 def create_user_session(request, user):
     """
     Creates a new tracked UserSession record for an authenticated user.
@@ -1480,16 +1481,70 @@ def mfa_setup_complete_view(request):
 @login_required
 def user_sessions_view(request):
     """
-    Redirects the old sessions page to the administrator's session list.
-    Who can use it: Administrators only.
-    Security: Non-admin users cannot view or revoke sessions through the old URL.
-"""
-    # Do not leave the former personal-session endpoint available to other roles.
-    if not has_role(request.user, "Admin"):
-        raise PermissionDenied
+    Shows the logged-in user their active sessions so they can review and end them.
+    Who can use it: Any authenticated user.
+    Security: Queries are strictly scoped to request.user (ACL-02). Never exposes
+    session_token_hash; shows only device, IP address, start time and expiry.
+    """
+    # Only GET is allowed on the list view; revocations use the dedicated POST view.
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
-    return redirect("kura:admin_sessions")
+
+    # Scope active sessions to the logged-in user only (ACL-02).
+    now = timezone.now()
+    sessions = UserSession.objects.filter(
+        user=request.user,
+        revoked_at__isnull=True,
+        expires_at__gt=now,
+    ).order_by("-created_at")
+
+    return render(
+        request,
+        "kura/accounts/user_sessions.html",
+        {
+            "sessions": sessions,
+            "current_session_id": request.session.get("user_session_id", ""),
+        },
+    )
+
+
+@login_required
+def user_session_revoke_view(request, session_id):
+    """
+    Revokes one of the logged-in user's own sessions.
+    Who can use it: Any authenticated user, for their own sessions only.
+    Security: POST only with CSRF protection. Uses get_object_or_404 filtered by
+    user=request.user so another user's session ID returns 404 (IDOR guard, ACL-02).
+    """
+    # Changing session state must use POST with CSRF protection.
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    # IDOR guard: only an unrevoked session belonging to request.user can be loaded.
+    user_session = get_object_or_404(
+        UserSession,
+        id=session_id,
+        user=request.user,
+        revoked_at__isnull=True,
+    )
+
+    # Mark the session revoked and record the self-revocation in the security log.
+    user_session.revoked_at = timezone.now()
+    user_session.save(update_fields=["revoked_at"])
+    log_security_event(
+        request,
+        "auth.session.revoked",
+        {"session_id": str(user_session.id), "by": "self"},
+    )
+
+    # If the user ended their current browser session, log out immediately.
+    if str(user_session.id) == request.session.get("user_session_id", ""):
+        logout(request)
+        messages.success(request, "Your current session has been ended.")
+        return redirect("kura:login")
+
+    messages.success(request, "Session ended.")
+    return redirect("kura:user_sessions")
 
 
 @login_required
