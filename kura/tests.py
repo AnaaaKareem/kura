@@ -929,44 +929,36 @@ class MySessionsTests(TestCase):
             expires_at=timezone.now() + timezone.timedelta(days=7),
         )
 
-    def test_student_cannot_view_old_personal_sessions_page(self):
-        # Students cannot open the old personal-sessions page.
+    def test_student_can_view_own_sessions_only(self):
+        # Students can view their own active sessions on My sessions, never another user's.
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("kura:user_sessions"))
-        self.assertEqual(response.status_code, 403)
-        self.assertNotContains(response, "192.168.1.10", status_code=403)
-        self.assertNotContains(response, "10.0.0.2", status_code=403)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "192.168.1.10")
+        self.assertNotContains(response, "10.0.0.2")
 
-    def test_student_cannot_revoke_another_users_session_on_old_page(self):
-        # A non-admin cannot revoke another user's session through the old URL.
+    def test_student_cannot_revoke_another_users_session_on_personal_page(self):
+        # A non-admin cannot revoke another user's session via the personal revoke URL (IDOR -> 404).
         self.client.force_login(self.user_a)
         response = self.client.post(
-            reverse("kura:user_sessions"),
-            {
-                "action": "revoke",
-                "session_id": str(self.session_b.id),
-            },
+            reverse("kura:user_session_revoke", args=[self.session_b.id]),
         )
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 404)
 
         # Confirm User B's session was not revoked.
         self.session_b.refresh_from_db()
         self.assertIsNone(self.session_b.revoked_at)
 
-    def test_student_cannot_revoke_own_session_on_old_page(self):
-        # A non-admin cannot revoke sessions through the removed personal page.
+    def test_student_can_revoke_own_session_on_personal_page(self):
+        # A user can revoke their own active session from the personal sessions endpoint.
         self.client.force_login(self.user_a)
         response = self.client.post(
-            reverse("kura:user_sessions"),
-            {
-                "action": "revoke",
-                "session_id": str(self.session_a.id),
-            },
+            reverse("kura:user_session_revoke", args=[self.session_a.id]),
         )
-        self.assertEqual(response.status_code, 403)
+        self.assertRedirects(response, reverse("kura:user_sessions"))
 
         self.session_a.refresh_from_db()
-        self.assertIsNone(self.session_a.revoked_at)
+        self.assertIsNotNone(self.session_a.revoked_at)
 
     def test_admin_can_search_and_filter_all_users_sessions(self):
         # An admin can find a student's active session by name, role, and IP prefix.
@@ -1008,12 +1000,12 @@ class MySessionsTests(TestCase):
         self.assertNotContains(response, self.user_a.email)
         self.assertFormError(response.context["form"], "state", "Select a valid choice. unknown is not one of the available choices.")
 
-    def test_non_admin_has_no_sessions_navigation(self):
-        # Removing the links does not replace the server-side access checks.
+    def test_non_admin_has_my_sessions_link_and_no_admin_sessions_navigation(self):
+        # Non-admins see their personal sessions link, never the Admin sessions page.
         self.client.force_login(self.user_a)
         response = self.client.get(reverse("kura:home"))
         self.assertNotContains(response, reverse("kura:admin_sessions"))
-        self.assertNotContains(response, reverse("kura:user_sessions"))
+        self.assertContains(response, reverse("kura:user_sessions"))
 
     def test_admin_can_end_other_users_session_and_it_stops_working(self):
         # Revocation affects the actual signed-in user on their next request.
@@ -8728,3 +8720,94 @@ class FreshSecondFactorTests(TestCase):
         self.assertTrue(has_fresh_second_factor(request))
         request.user = self.admin
         self.assertFalse(has_fresh_second_factor(request))
+
+
+class OwnSessionsTests(TestCase):
+    """
+    Tests the restored personal "My sessions" view and IDOR/CSRF protections (ACL-02, ACL-06).
+    """
+
+    def setUp(self):
+        self.student = make_user("Student", mfa_enabled=True)
+        self.other = make_user("Instructor", mfa_enabled=True)
+        self.own_current = UserSession.objects.create(
+            user=self.student,
+            session_token_hash=secrets.token_hex(32),
+            ip_address="198.51.100.10",
+            user_agent="Browser One",
+            expires_at=timezone.now() + timezone.timedelta(hours=12),
+        )
+        self.own_other = UserSession.objects.create(
+            user=self.student,
+            session_token_hash=secrets.token_hex(32),
+            ip_address="198.51.100.20",
+            user_agent="Browser Two",
+            expires_at=timezone.now() + timezone.timedelta(hours=12),
+        )
+        self.other_session = UserSession.objects.create(
+            user=self.other,
+            session_token_hash=secrets.token_hex(32),
+            ip_address="203.0.113.99",
+            user_agent="Other Browser",
+            expires_at=timezone.now() + timezone.timedelta(hours=12),
+        )
+
+    def _login_student_with_current(self):
+        self.client.force_login(self.student)
+        s = self.client.session
+        s["user_session_id"] = str(self.own_current.id)
+        s.save()
+
+    def test_student_sees_own_sessions_only_and_no_token_hash(self):
+        self._login_student_with_current()
+        response = self.client.get(reverse("kura:user_sessions"))
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "198.51.100.10")
+        self.assertContains(response, "198.51.100.20")
+        self.assertContains(response, "Current session")
+        self.assertNotContains(response, "203.0.113.99")
+        self.assertNotContains(response, self.own_current.session_token_hash)
+
+    def test_revoking_another_users_session_returns_404(self):
+        self._login_student_with_current()
+        response = self.client.post(
+            reverse("kura:user_session_revoke", args=[self.other_session.id])
+        )
+        self.assertEqual(response.status_code, 404)
+        self.other_session.refresh_from_db()
+        self.assertIsNone(self.other_session.revoked_at)
+
+    def test_get_on_revoke_returns_405(self):
+        self._login_student_with_current()
+        response = self.client.get(
+            reverse("kura:user_session_revoke", args=[self.own_other.id])
+        )
+        self.assertEqual(response.status_code, 405)
+        self.own_other.refresh_from_db()
+        self.assertIsNone(self.own_other.revoked_at)
+
+    def test_revoking_other_own_session_sets_revoked_at(self):
+        self._login_student_with_current()
+        with self.assertLogs("kura.security", level="INFO") as logs:
+            response = self.client.post(
+                reverse("kura:user_session_revoke", args=[self.own_other.id])
+            )
+        self.assertRedirects(response, reverse("kura:user_sessions"))
+        self.own_other.refresh_from_db()
+        self.assertIsNotNone(self.own_other.revoked_at)
+        self.assertIn('event="auth.session.revoked"', "\n".join(logs.output))
+        self.assertIn('by="self"', "\n".join(logs.output))
+
+    def test_revoking_current_session_logs_out(self):
+        self._login_student_with_current()
+        response = self.client.post(
+            reverse("kura:user_session_revoke", args=[self.own_current.id])
+        )
+        self.assertRedirects(response, reverse("kura:login"))
+        self.own_current.refresh_from_db()
+        self.assertIsNotNone(self.own_current.revoked_at)
+        # Follow-up request is treated as anonymous.
+        self.assertRedirects(
+            self.client.get(reverse("kura:user_sessions")),
+            f"{reverse('kura:login')}?next={reverse('kura:user_sessions')}",
+        )
