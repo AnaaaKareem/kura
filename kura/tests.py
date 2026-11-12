@@ -8811,3 +8811,55 @@ class OwnSessionsTests(TestCase):
             self.client.get(reverse("kura:user_sessions")),
             f"{reverse('kura:login')}?next={reverse('kura:user_sessions')}",
         )
+
+
+class AbsoluteSessionLimitTests(TestCase):
+    """
+    Tests the 12-hour absolute session limit (ACL-07).
+    """
+
+    def setUp(self):
+        self.password = "ValidPassword123!"
+        self.user = make_user("Student", password=self.password, mfa_enabled=False)
+
+    def test_login_sets_expires_at_to_twelve_hours(self):
+        before = timezone.now()
+        response = self.client.post(
+            reverse("kura:login"),
+            {"email": self.user.email, "password": self.password},
+        )
+        self.assertRedirects(response, reverse("kura:mfa_setup"))
+        after = timezone.now()
+
+        user_session = UserSession.objects.get(user=self.user)
+        expected_min = before + timezone.timedelta(hours=12)
+        expected_max = after + timezone.timedelta(hours=12)
+        self.assertGreaterEqual(user_session.expires_at, expected_min)
+        self.assertLessEqual(user_session.expires_at, expected_max)
+
+    def test_past_expires_at_logs_user_out_and_redirects_to_login(self):
+        self.user.mfa_enabled = True
+        self.user.save(update_fields=["mfa_enabled"])
+        self.client.force_login(self.user)
+        user_session = UserSession.objects.create(
+            user=self.user,
+            session_token_hash=secrets.token_hex(32),
+            ip_address="127.0.0.1",
+            user_agent="TestAgent",
+            expires_at=timezone.now() - timezone.timedelta(minutes=1),
+        )
+        session = self.client.session
+        session["user_session_id"] = str(user_session.id)
+        session.save()
+
+        with self.assertLogs("kura.security", level="WARNING") as logs:
+            response = self.client.get(reverse("kura:home"))
+        self.assertRedirects(response, reverse("kura:login"))
+        self.assertTrue(
+            any('event="session.invalid"' in line and 'reason="expired"' in line for line in logs.output)
+        )
+        # Subsequent request remains logged out.
+        self.assertRedirects(
+            self.client.get(reverse("kura:home")),
+            f"{reverse('kura:login')}?next={reverse('kura:home')}",
+        )
