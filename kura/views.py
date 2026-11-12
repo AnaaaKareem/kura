@@ -386,7 +386,7 @@ def hash_recovery_code(code):
 def create_user_session(request, user):
     """
     Creates a new tracked UserSession record for an authenticated user.
-    Records client IP address, browser user-agent, and a 14-day expiry.
+    Records client IP address, browser user-agent, and the absolute expiry (ACL-07).
     """
     # Generate random bytes for the session bearer token hash.
     raw_token = secrets.token_hex(32)
@@ -398,8 +398,8 @@ def create_user_session(request, user):
     # Read the client browser user agent string.
     user_agent = request.META.get("HTTP_USER_AGENT", "")[:255]
 
-    # Set expiry to 14 days from now.
-    expires_at = timezone.now() + timezone.timedelta(days=14)
+    # Set absolute session expiry from SESSION_ABSOLUTE_HOURS (ACL-07).
+    expires_at = timezone.now() + timezone.timedelta(hours=settings.SESSION_ABSOLUTE_HOURS)
 
     # Save session record to the database.
     user_session = UserSession.objects.create(
