@@ -113,6 +113,10 @@ vault_root secrets enable transit > /dev/null
 vault_root write -f transit/keys/kura-mfa type=aes256-gcm96 > /dev/null
 #    A second key, used only for exam answer keys (ExamAnswerKey.answer_key_json).
 vault_root write -f transit/keys/kura-answer-keys type=aes256-gcm96 > /dev/null
+#    Rotate both Transit keys every 30 days (720h). Vault Transit keeps old
+#    key versions, so previously encrypted MFA seeds and answer keys still decrypt (LOG-05).
+vault_root write transit/keys/kura-mfa/config auto_rotate_period=720h > /dev/null
+vault_root write transit/keys/kura-answer-keys/config auto_rotate_period=720h > /dev/null
 
 # 5. Temporary database users.
 echo "[5/9] Setting up temporary database users..."
