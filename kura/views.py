@@ -21,11 +21,12 @@ from django.core.cache import caches
 from django.db import transaction
 from django.db.models import Avg, Prefetch, Q, Value
 from django.db.models.functions import Concat
-from django.http import HttpResponse, HttpResponseForbidden, HttpResponseNotAllowed
+from django.http import HttpResponse, HttpResponseForbidden, HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.crypto import salted_hmac
+from django.utils.http import url_has_allowed_host_and_scheme
 from django_otp.plugins.otp_static.models import StaticDevice, StaticToken
 from django_otp.oath import TOTP
 from django_otp.plugins.otp_totp.models import TOTPDevice
@@ -132,6 +133,7 @@ from .permissions import (
     can_access_learning_records,
     can_manage_quarantine,
     can_release_grades,
+    has_fresh_second_factor,
     has_role,
     is_course_instructor,
     is_course_staff,
@@ -610,13 +612,54 @@ def mfa_login_callback(request, username):
     return redirect("kura:home")
 
 
+def redirect_to_reauth(request, next_url):
+    """
+    Sends the user to the "confirm your identity" page, then back to next_url.
+    Used by every view that needs a fresh second factor (AUTH-02, ACL-05).
+    """
+    messages.info(request, "Confirm your identity to continue.")
+    return redirect(reverse("kura:mfa_reauth") + "?" + urllib.parse.urlencode({"next": next_url}))
+
+
+@login_required
+def mfa_reauth_view(request):
+    """
+    Asks a signed-in user for a fresh authenticator or recovery code before a
+    sensitive action, then sends them back to the page they came from.
+    Who can use it: Any authenticated user.
+    Security: POST with CSRF; the code is checked by verify_second_factor; the
+    "next" address must be on this site, so it cannot be used as an open redirect.
+    """
+    # Only accept a return address on this site.
+    next_url = request.POST.get("next") or request.GET.get("next") or ""
+    if not url_has_allowed_host_and_scheme(next_url, allowed_hosts={request.get_host()}, require_https=request.is_secure()):
+        next_url = reverse("kura:home")
+
+    form = MFAVerifyForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        method = verify_second_factor(request.user, form.cleaned_data["code"].strip())
+        if method:
+            # Remember when the check passed; has_fresh_second_factor reads this.
+            request.session["mfa_reauth_at"] = timezone.now().timestamp()
+            log_security_event(request, "auth.mfa.reauth_ok", {"method": method})
+            return redirect(next_url)
+        log_security_event(request, "auth.mfa.reauth_failed", {}, level=logging.WARNING)
+        messages.error(request, "Invalid security code. Please try again.")
+
+    return render(request, "kura/accounts/mfa_reauth.html", {"form": form, "next_url": next_url})
+
+
 @login_required
 def passkey_manage_view(request):
     """
     Displays the user's enrolled WebAuthn / FIDO2 passkeys and allows enrolling new ones.
     Who can use it: Any authenticated user.
-    Security: Strictly filters User_Keys by request.user.email.
+    Security: Strictly filters User_Keys by request.user.email. Requires a fresh
+    second factor (AUTH-02), because adding a passkey gives a new way to sign in.
 """
+    if not has_fresh_second_factor(request):
+        return redirect_to_reauth(request, reverse("kura:passkey_manage"))
+
     from mfa.models import User_Keys
 
     keys = User_Keys.objects.filter(username=request.user.email, key_type="FIDO2").order_by("-added_on")
@@ -636,6 +679,11 @@ def passkey_register_complete_view(request):
     """
     from mfa import FIDO2
     from mfa.models import User_Keys
+
+    # AUTH-02: the passkeys page already asked for a fresh second factor;
+    # check again here because this address can be called directly.
+    if not has_fresh_second_factor(request):
+        return JsonResponse({"status": "ERR", "message": "Confirm your identity first."}, status=403)
 
     # Let django-mfa2 verify and save the new key exactly as before.
     response = FIDO2.complete_reg(request)
@@ -664,6 +712,10 @@ def passkey_delete_view(request, key_id):
         return HttpResponseNotAllowed(["POST"])
 
     from mfa.models import User_Keys
+
+    # AUTH-02: removing a sign-in method needs a fresh second factor.
+    if not has_fresh_second_factor(request):
+        return redirect_to_reauth(request, reverse("kura:passkey_manage"))
 
     key = get_object_or_404(User_Keys, id=key_id, username=request.user.email)
     key.delete()
@@ -1294,15 +1346,7 @@ def mfa_setup_view(request):
       TOTPDevice.key is only a random placeholder. If Vault is unavailable, setup stops.
     """
     # Check for recent step-up reauthentication (within 300 seconds) if MFA is already active.
-    reauth_at = request.session.get("mfa_reauth_at")
-    is_fresh = False
-    if reauth_at:
-        try:
-            is_fresh = (timezone.now().timestamp() - float(reauth_at)) < 300
-        except (ValueError, TypeError):
-            is_fresh = False
-
-    if request.user.mfa_enabled and not is_fresh:
+    if not has_fresh_second_factor(request):
         step_up_form = MFAVerifyForm(request.POST or None)
         if request.method == "POST" and step_up_form.is_valid():
             code = step_up_form.cleaned_data["code"].strip()
@@ -1762,7 +1806,8 @@ def user_deactivate_view(request, user_id):
     """
     Deactivates a user account and immediately revokes all active sessions.
     Who can use it: System administrators.
-    Security: Admin only; POST only; administrators cannot deactivate themselves.
+    Security: Admin only; POST only; fresh second factor (ACL-05); administrators
+    cannot deactivate themselves.
 """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
@@ -1770,6 +1815,10 @@ def user_deactivate_view(request, user_id):
     # Check administrator permission.
     if not has_role(request.user, "Admin"):
         raise PermissionDenied
+
+    # ACL-05: deactivating an account needs a fresh second factor.
+    if not has_fresh_second_factor(request):
+        return redirect_to_reauth(request, reverse("kura:staff_list"))
 
     # Prevent administrators from deactivating their own account.
     if str(request.user.id) == str(user_id):
@@ -1848,8 +1897,9 @@ def user_roles_view(request, user_id):
     """
     Manages assigned system roles for a user.
     Who can use it: System administrators.
-    Security: Admin only; validates the action and role through a Django form, and
-    enforces strict separation of duty between Admin and grading roles.
+    Security: Admin only; fresh second factor before any change (ACL-05); validates
+    the action and role through a Django form, and enforces strict separation of
+    duty between Admin and grading roles.
 """
     # Check administrator permission.
     if not has_role(request.user, "Admin"):
@@ -1858,6 +1908,10 @@ def user_roles_view(request, user_id):
     target_user = get_object_or_404(User, id=user_id)
 
     if request.method == "POST":
+        # ACL-05: changing someone's roles needs a fresh second factor.
+        if not has_fresh_second_factor(request):
+            return redirect_to_reauth(request, reverse("kura:user_roles", kwargs={"user_id": target_user.id}))
+
         # Validate the action and role ID before touching any role records.
         form = UserRoleChangeForm(request.POST)
         if not form.is_valid():
@@ -5545,7 +5599,8 @@ def course_result_release_view(request, course_id):
     """
     Releases cumulative course results to students.
     Who can use it: Instructors with can_release_grades=True.
-    Security: Requires grade release authorization; marks results as released.
+    Security: Requires grade release authorization and a fresh second factor
+    (ACL-05); marks results as released.
 """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
@@ -5558,6 +5613,11 @@ def course_result_release_view(request, course_id):
 
     if not can_release_grades(request.user, course):
         raise PermissionDenied
+
+    # ACL-05: releasing a whole course's results needs a fresh second factor,
+    # the same as releasing a single grade.
+    if not has_fresh_second_factor(request):
+        return redirect_to_reauth(request, reverse("kura:course_grades", kwargs={"course_id": course.id}))
 
     # Use the same course lock as calculation so the two actions cannot race.
     with transaction.atomic():
