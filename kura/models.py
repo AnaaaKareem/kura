@@ -1600,3 +1600,16 @@ class CourseResult(models.Model):
         Formats this model's identifying fields for readable display.
         """
         return f"{self.student} in {self.course}: {self.final_score} ({self.status})"
+
+
+class PasswordHistory(models.Model):
+    """Previous password hashes, used to block reuse of the last 5 passwords (AUTH-06)."""
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="password_history")
+    password_hash = models.CharField(max_length=255)
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        db_table = "password_history"
+        ordering = ["-created_at"]
