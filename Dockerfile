@@ -15,9 +15,9 @@ RUN apt-get update && \
     apt-get install -y --no-install-recommends gcc libpq-dev python3-dev && \
     rm -rf /var/lib/apt/lists/*
 
-# Install python dependencies to an isolated prefix folder
-COPY requirements.txt /build/
-RUN pip install --no-cache-dir --prefix=/install -r requirements.txt
+# Install pinned Python dependencies with SHA-256 hash verification (CFG-04)
+COPY requirements.lock.txt /build/
+RUN pip install --no-cache-dir --require-hashes --prefix=/install -r requirements.lock.txt
 
 
 # Stage 2: Final runtime container

@@ -4,7 +4,6 @@ psycopg2==2.9.13
 argon2-cffi==25.1.0
 django-axes>=9.0.0
 django-otp>=1.7.5
-django-two-factor-auth>=1.18.1
 qrcode>=7.4.2
 nh3>=0.2.14
 markdown-it-py==4.2.0
