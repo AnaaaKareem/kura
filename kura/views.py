@@ -117,6 +117,7 @@ from .models import (
     ModuleAttendanceSession,
     ModuleSection,
     ModuleTargetLevel,
+    PasswordHistory,
     PasswordResetToken,
     Role,
     Schedule,
@@ -1125,11 +1126,22 @@ def password_change_view(request):
     if request.method == "POST" and form.is_valid():
         new_password = form.cleaned_data["new_password"]
 
-        # Save new password and update audit timestamps.
-        request.user.set_password(new_password)
-        request.user.must_change_password = False
-        request.user.password_changed_at = timezone.now()
-        request.user.save()
+        # Record the previous password hash and keep only the newest PASSWORD_HISTORY_COUNT rows (AUTH-06).
+        with transaction.atomic():
+            if request.user.password:
+                PasswordHistory.objects.create(user=request.user, password_hash=request.user.password)
+                keep_ids = list(
+                    PasswordHistory.objects.filter(user=request.user)
+                    .order_by("-created_at", "-id")
+                    .values_list("id", flat=True)[: settings.PASSWORD_HISTORY_COUNT]
+                )
+                PasswordHistory.objects.filter(user=request.user).exclude(id__in=keep_ids).delete()
+
+            # Save new password and update audit timestamps.
+            request.user.set_password(new_password)
+            request.user.must_change_password = False
+            request.user.password_changed_at = timezone.now()
+            request.user.save()
 
         # Keep current session logged in after password hash changes.
         update_session_auth_hash(request, request.user)
@@ -1295,15 +1307,26 @@ def password_reset_confirm_view(request, token):
                 return redirect("kura:password_reset_request")
             log_security_event(request, "auth.password.reset_2fa_ok", {"method": method_used})
 
-        # Update password on user account.
-        user.set_password(new_password)
-        user.must_change_password = False
-        user.password_changed_at = timezone.now()
-        user.save()
+        # Record the previous password hash and keep only the newest PASSWORD_HISTORY_COUNT rows (AUTH-06).
+        with transaction.atomic():
+            if user.password:
+                PasswordHistory.objects.create(user=user, password_hash=user.password)
+                keep_ids = list(
+                    PasswordHistory.objects.filter(user=user)
+                    .order_by("-created_at", "-id")
+                    .values_list("id", flat=True)[: settings.PASSWORD_HISTORY_COUNT]
+                )
+                PasswordHistory.objects.filter(user=user).exclude(id__in=keep_ids).delete()
 
-        # Mark token as consumed.
-        reset_record.used_at = timezone.now()
-        reset_record.save()
+            # Update password on user account.
+            user.set_password(new_password)
+            user.must_change_password = False
+            user.password_changed_at = timezone.now()
+            user.save()
+
+            # Mark token as consumed.
+            reset_record.used_at = timezone.now()
+            reset_record.save()
 
         # Revoke all existing sessions for this user.
         sessions_revoked = UserSession.objects.filter(user=user, revoked_at__isnull=True).update(
