@@ -469,7 +469,8 @@ class LoginAndLogoutTests(TestCase):
         self.assertContains(response, "Invalid email or password.")
 
     def test_deactivated_account_cannot_login(self):
-        # A correct password explains that a known account was deactivated.
+        # AUTH-01: even a correct password gets the generic message, so the
+        # response never confirms that the password was right.
         self.user.is_active = False
         self.user.save()
 
@@ -478,8 +479,8 @@ class LoginAndLogoutTests(TestCase):
             {"email": self.user.email, "password": self.password},
         )
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "This account has been deactivated. Contact the administrator.")
-        self.assertNotContains(response, "Invalid email or password.")
+        self.assertContains(response, "Invalid email or password.")
+        self.assertNotContains(response, "deactivated")
 
     def test_wrong_password_for_deactivated_account_stays_generic(self):
         # A wrong password never reveals whether the matching account is deactivated.
@@ -494,19 +495,21 @@ class LoginAndLogoutTests(TestCase):
         self.assertContains(response, "Invalid email or password.")
         self.assertNotContains(response, "This account has been deactivated.")
 
-    def test_locked_account_with_correct_password_shows_lock_message(self):
-        # A correct password explains the lock and its expiry time.
+    def test_locked_account_with_correct_password_shows_generic_message(self):
+        # AUTH-01: a correct password on a locked account gets the same
+        # message as a wrong one; the lock reason is only logged.
         self.user.locked_until = timezone.now() + timezone.timedelta(hours=2)
         self.user.save()
 
-        response = self.client.post(
-            reverse("kura:login"),
-            {"email": self.user.email, "password": self.password},
-        )
+        with self.assertLogs("kura.security", level="WARNING") as captured:
+            response = self.client.post(
+                reverse("kura:login"),
+                {"email": self.user.email, "password": self.password},
+            )
         self.assertEqual(response.status_code, 200)
-        lock_time = timezone.localtime(self.user.locked_until).strftime("%d %b, %H:%M")
-        self.assertContains(response, f"This account is currently locked until {lock_time}.")
-        self.assertNotContains(response, "Invalid email or password.")
+        self.assertContains(response, "Invalid email or password.")
+        self.assertNotContains(response, "locked")
+        self.assertIn('reason="locked"', "\n".join(captured.output))
 
     def test_locked_account_with_wrong_password_shows_generic_message(self):
         # A wrong password must not disclose that this account is locked.
@@ -524,15 +527,26 @@ class LoginAndLogoutTests(TestCase):
 
     @patch("kura.views.authenticate", return_value=None)
     @patch("kura.views.AxesProxyHandler.is_locked", return_value=True)
-    def test_axes_locked_account_with_correct_password_shows_lock_message(self, mock_is_locked, mock_authenticate):
-        # A correct password still gets clear feedback when django-axes blocks the account.
+    def test_axes_locked_account_with_correct_password_shows_generic_message(self, mock_is_locked, mock_authenticate):
+        # AUTH-01: an Axes lockout also gets the generic message.
         response = self.client.post(
             reverse("kura:login"),
             {"email": self.user.email, "password": self.password},
         )
 
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "This account is currently locked. Contact the administrator.")
+        self.assertContains(response, "Invalid email or password.")
+
+    def test_failed_login_checks_the_password_only_once(self):
+        # AUTH-04: a known email with a wrong password must cost one password
+        # hash, the same as an unknown email, so timing does not reveal which
+        # emails have accounts.
+        with patch.object(User, "check_password", autospec=True, return_value=False) as mock_check:
+            self.client.post(
+                reverse("kura:login"),
+                {"email": self.user.email, "password": "WrongPassword999!"},
+            )
+        self.assertEqual(mock_check.call_count, 1)
 
     def test_logout_by_post(self):
         # Logout must be a POST request and revoke active session.

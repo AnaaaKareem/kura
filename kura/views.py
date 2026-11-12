@@ -433,77 +433,40 @@ def login_view(request):
             # Authenticate credentials against configured backends and axes.
             user = authenticate(request, email=email, password=password)
 
-            # Reveal account status only after the submitted password is correct.
+            # AUTH-01 / AUTH-04: every failed sign-in gets the same message and
+            # costs the same work. Kura does not check the password a second
+            # time to explain a lock or deactivation, because that told an
+            # attacker the password was right and made known emails slower to
+            # answer than unknown ones. The real reason goes to the log only.
             if user is None:
-                password_matched_user = User.objects.filter(email__iexact=email).first()
-                if password_matched_user and password_matched_user.check_password(password):
-                    # Explain deactivation only to someone who proved they know the password.
-                    if not password_matched_user.is_active:
-                        log_security_event(
-                            request,
-                            "auth.login.failed",
-                            {"login_identifier": email[:254], "reason": "deactivated"},
-                            logging.WARNING,
-                        )
-                        messages.error(request, "This account has been deactivated. Contact the administrator.")
-                        return render(request, "kura/accounts/login.html", {"form": form})
-
-                    # Include the lock expiry so a locked user knows when to try again.
-                    if password_matched_user.locked_until and password_matched_user.locked_until > timezone.now():
-                        log_security_event(
-                            request,
-                            "auth.login.failed",
-                            {"login_identifier": email[:254], "reason": "locked"},
-                            logging.WARNING,
-                        )
-                        lock_time = timezone.localtime(password_matched_user.locked_until).strftime("%d %b, %H:%M")
-                        messages.error(request, f"This account is currently locked until {lock_time}.")
-                        return render(request, "kura/accounts/login.html", {"form": form})
-
-                    # Keep automatic Axes lockouts understandable without exposing account details to wrong passwords.
-                    is_locked_by_axes = AxesProxyHandler.is_locked(request, {"username": email})
-                    if is_locked_by_axes:
-                        request.axes_locked_out = False
-                        log_security_event(
-                            request,
-                            "auth.login.failed",
-                            {"login_identifier": email[:254], "reason": "axes_lockout"},
-                            logging.WARNING,
-                        )
-                        messages.error(request, "This account is currently locked. Contact the administrator.")
-                        return render(request, "kura/accounts/login.html", {"form": form})
-
-                # Keep the same response for unknown emails and incorrect passwords.
+                reason = "bad_credentials"
+                known_user = User.objects.filter(email__iexact=email).first()
+                if known_user and not known_user.is_active:
+                    reason = "inactive"
+                elif known_user and known_user.locked_until and known_user.locked_until > timezone.now():
+                    reason = "locked"
+                elif AxesProxyHandler.is_locked(request, {"username": email}):
+                    reason = "axes_lockout"
                 log_security_event(
                     request,
                     "auth.login.failed",
-                    {"login_identifier": email[:254], "reason": "bad_credentials"},
+                    {"login_identifier": email[:254], "reason": reason},
                     logging.WARNING,
                 )
                 messages.error(request, "Invalid email or password.")
                 return render(request, "kura/accounts/login.html", {"form": form})
 
-            # Catch an account status change that happened just after authentication.
-            if not user.is_active:
+            # Catch an account status change that happened just after
+            # authentication. Same generic message as above.
+            locked_now = user.locked_until and user.locked_until > timezone.now()
+            if not user.is_active or locked_now:
                 log_security_event(
                     request,
                     "auth.login.failed",
-                    {"login_identifier": email[:254], "reason": "inactive"},
+                    {"login_identifier": email[:254], "reason": "status_changed"},
                     logging.WARNING,
                 )
-                messages.error(request, "This account has been deactivated. Contact the administrator.")
-                return render(request, "kura/accounts/login.html", {"form": form})
-
-            # Show the lock expiry if an administrator locked the account during authentication.
-            if user.locked_until and user.locked_until > timezone.now():
-                log_security_event(
-                    request,
-                    "auth.login.failed",
-                    {"login_identifier": email[:254], "reason": "locked"},
-                    logging.WARNING,
-                )
-                lock_time = timezone.localtime(user.locked_until).strftime("%d %b, %H:%M")
-                messages.error(request, f"This account is currently locked until {lock_time}.")
+                messages.error(request, "Invalid email or password.")
                 return render(request, "kura/accounts/login.html", {"form": form})
 
             log_security_event(request, "auth.login.password_ok", {"user_id": user.id})
