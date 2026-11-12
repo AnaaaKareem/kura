@@ -174,16 +174,18 @@ class RateLimitMiddleware:
             cache_key = f"rate_limit_autosave_{user_key}"
 
         if limit:
-            from django.core.cache import cache
+            from django.core.cache import caches
             from django.http import HttpResponse
 
-            count = cache.get(cache_key, 0)
+            # Use the shared DatabaseCache so all Gunicorn workers enforce one counter (AUTH-08).
+            ratelimit_cache = caches["ratelimit"]
+            count = ratelimit_cache.get(cache_key, 0)
             if count >= limit:
                 # Record only the rate-limit bucket, never a submitted filename or file data.
                 bucket = "upload" if "upload" in path else "autosave"
                 log_security_event(request, "ratelimit.hit", {"bucket": bucket}, logging.WARNING)
                 return HttpResponse("Rate limit exceeded. Please wait before retrying.", status=429)
-            cache.set(cache_key, count + 1, timeout=window)
+            ratelimit_cache.set(cache_key, count + 1, timeout=window)
 
         return self.get_response(request)
 
