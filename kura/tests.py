@@ -8967,3 +8967,81 @@ class PasswordHistoryTests(TestCase):
         log_blob = "\n".join(logs.output)
         for pw in self.passwords:
             self.assertNotIn(pw, log_blob)
+
+
+class DisableInactiveAccountsTests(TestCase):
+    """
+    Tests disabling dormant accounts and revoking their active sessions (ACL-08).
+    """
+
+    def setUp(self):
+        self.User = get_user_model()
+        now = timezone.now()
+
+        # Dormant user with old last_login and an active session.
+        self.old_user = make_user("Student", mfa_enabled=True)
+        self.old_user.last_login = now - timezone.timedelta(days=95)
+        self.old_user.save(update_fields=["last_login"])
+        self.old_session = UserSession.objects.create(
+            user=self.old_user,
+            session_token_hash=secrets.token_hex(32),
+            ip_address="192.0.2.10",
+            user_agent="OldAgent",
+            expires_at=now + timezone.timedelta(hours=12),
+        )
+
+        # Dormant Admin to verify Admin accounts are not exempted and are counted.
+        self.old_admin = make_user("Admin", mfa_enabled=True)
+        self.old_admin.last_login = now - timezone.timedelta(days=100)
+        self.old_admin.save(update_fields=["last_login"])
+
+        # Recently active user stays active.
+        self.recent_user = make_user("Instructor", mfa_enabled=True)
+        self.recent_user.last_login = now - timezone.timedelta(days=10)
+        self.recent_user.save(update_fields=["last_login"])
+
+        # Never logged in, created recently -> stays active.
+        self.new_never_logged_in = make_user("Student", mfa_enabled=False)
+
+        # Never logged in, created > 90 days ago -> disabled.
+        self.old_never_logged_in = make_user("Student", mfa_enabled=False)
+        self.User.objects.filter(id=self.old_never_logged_in.id).update(
+            created_at=now - timezone.timedelta(days=120)
+        )
+
+    def test_dry_run_changes_nothing(self):
+        out = StringIO()
+        call_command("disable_inactive_accounts", "--days=90", "--dry-run", stdout=out)
+        self.assertIn("would disable 3 inactive account(s) (1 Admin)", out.getvalue())
+
+        for user in (self.old_user, self.old_admin, self.old_never_logged_in):
+            user.refresh_from_db()
+            self.assertTrue(user.is_active)
+            self.assertIsNone(user.deactivated_at)
+        self.old_session.refresh_from_db()
+        self.assertIsNone(self.old_session.revoked_at)
+
+    def test_disables_inactive_accounts_and_revokes_sessions(self):
+        out = StringIO()
+        with self.assertLogs("kura.security", level="WARNING") as logs:
+            call_command("disable_inactive_accounts", "--days=90", stdout=out)
+
+        self.assertIn("Disabled 3 inactive account(s) (1 Admin)", out.getvalue())
+
+        for user in (self.old_user, self.old_admin, self.old_never_logged_in):
+            user.refresh_from_db()
+            self.assertFalse(user.is_active)
+            self.assertIsNotNone(user.deactivated_at)
+
+        self.old_session.refresh_from_db()
+        self.assertIsNotNone(self.old_session.revoked_at)
+
+        self.recent_user.refresh_from_db()
+        self.assertTrue(self.recent_user.is_active)
+        self.new_never_logged_in.refresh_from_db()
+        self.assertTrue(self.new_never_logged_in.is_active)
+
+        log_blob = "\n".join(logs.output)
+        self.assertIn('event="account.deactivated.inactive"', log_blob)
+        self.assertIn(str(self.old_user.id), log_blob)
+        self.assertIn('days="90"', log_blob)
