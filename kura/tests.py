@@ -111,6 +111,7 @@ from .models import (
     MAX_UPLOAD_BYTES,
 )
 from .permissions import (
+    has_fresh_second_factor,
     can_release_grades,
     has_permission,
     has_role,
@@ -169,6 +170,16 @@ def make_user(role_name, email=None, password="ValidPassword123!", **extra_field
         TOTPDevice.objects.get_or_create(user=user, name="default", defaults={"confirmed": True})
 
     return user
+
+
+def confirm_second_factor(client):
+    """
+    Test helper: marks the logged-in test client as having just entered a
+    second-factor code, as the "confirm your identity" page would (AUTH-02, ACL-05).
+    """
+    session = client.session
+    session["mfa_reauth_at"] = timezone.now().timestamp()
+    session.save()
 
 
 class RolesAndPermissionsTests(TestCase):
@@ -1223,6 +1234,7 @@ class AdminStaffAccountsTests(TestCase):
         )
 
         self.client.force_login(self.admin)
+        confirm_second_factor(self.client)
         response = self.client.post(
             reverse("kura:user_deactivate", kwargs={"user_id": staff_user.id}),
             follow=True,
@@ -1290,6 +1302,7 @@ class AdminRolesTests(TestCase):
         # Admin assigns role, recording assigned_by, then removes it.
         target_user = User.objects.create_user(email="staff_test@example.com", password="Password12345!")
         self.client.force_login(self.admin)
+        confirm_second_factor(self.client)
 
         # Assign Instructor role
         response = self.client.post(
@@ -3435,6 +3448,7 @@ class AssessmentEditLockTests(TransactionTestCase):
                 # The release view uses this same locked transaction before calculation resumes.
                 release_client = Client()
                 release_client.force_login(instructor)
+                confirm_second_factor(release_client)
                 response = release_client.post(reverse("kura:course_result_release", kwargs={"course_id": course.id}))
                 self.assertEqual(response.status_code, 302)
             worker.join(10)
@@ -4985,6 +4999,7 @@ class CourseResultsAndTranscriptsTests(TestCase):
     def test_weighted_course_result_calculation(self):
         # Weighted calculation: (90% * 0.60) + (80% * 0.40) = 54 + 32 = 86.00%
         self.client.force_login(self.instructor)
+        confirm_second_factor(self.client)
         response = self.client.post(reverse("kura:course_result_calculate", kwargs={"course_id": self.course.id}))
         self.assertRedirects(response, reverse("kura:course_grades", kwargs={"course_id": self.course.id}))
 
@@ -5636,8 +5651,10 @@ class PasskeyWebAuthnIntegrationTests(TestCase):
         self.user_b = make_user("Student", mfa_enabled=True)
         self.client_a = Client()
         self.client_a.force_login(self.user_a)
+        confirm_second_factor(self.client_a)
         self.client_b = Client()
         self.client_b.force_login(self.user_b)
+        confirm_second_factor(self.client_b)
 
     def test_fido2_enrollment_page_renders(self):
         # An authenticated user should be able to open the passkey enrollment page.
@@ -7544,6 +7561,7 @@ class PasskeyAddedAuditTests(TestCase):
     def setUp(self):
         self.user = make_user("Student")
         self.client.force_login(self.user)
+        confirm_second_factor(self.client)
 
     def test_successful_registration_is_logged(self):
         from django.http import JsonResponse
@@ -8179,6 +8197,7 @@ class UserRolesInputValidationTests(TestCase):
     def test_non_numeric_role_id_is_rejected(self):
         # A malformed role_id used to raise ValueError and return HTTP 500.
         self.client.force_login(self.admin)
+        confirm_second_factor(self.client)
         before = UserRole.objects.filter(user=self.target_user).count()
 
         response = self.client.post(self.roles_url, {"action": "assign", "role_id": "abc"})
@@ -8190,6 +8209,7 @@ class UserRolesInputValidationTests(TestCase):
     def test_unknown_action_is_rejected(self):
         # An action outside assign/remove must not change roles.
         self.client.force_login(self.admin)
+        confirm_second_factor(self.client)
         before = UserRole.objects.filter(user=self.target_user).count()
 
         response = self.client.post(self.roles_url, {"action": "bogus", "role_id": self.instructor_role.id})
@@ -8624,3 +8644,87 @@ class PasskeyLoginCallbackTests(TestCase):
         request, response = self.call_callback({"pre_mfa_user_id": str(self.user.id)})
         self.assertEqual(response.url, reverse("kura:home"))
         self.assertEqual(request.session["_auth_user_id"], str(self.user.pk))
+
+
+class FreshSecondFactorTests(TestCase):
+    """
+    AUTH-02 / ACL-05: changing passkeys, changing roles, deactivating accounts and
+    releasing course results need a second-factor code from the last five minutes.
+    """
+
+    def setUp(self):
+        self.admin = make_user("Admin")
+        self.target_user = make_user("Instructor")
+        self.client.force_login(self.admin)
+
+    def test_role_change_without_fresh_factor_asks_for_code(self):
+        # A logged-in admin without a recent code is sent to the confirm page.
+        roles_url = reverse("kura:user_roles", kwargs={"user_id": self.target_user.id})
+        response = self.client.post(roles_url, {"action": "remove", "role_id": "1"})
+        self.assertEqual(response.status_code, 302)
+        self.assertTrue(response["Location"].startswith(reverse("kura:mfa_reauth")))
+        self.assertTrue(UserRole.objects.filter(user=self.target_user, role__name="Instructor").exists())
+
+    def test_deactivate_without_fresh_factor_changes_nothing(self):
+        url = reverse("kura:user_deactivate", kwargs={"user_id": self.target_user.id})
+        response = self.client.post(url)
+        self.assertTrue(response["Location"].startswith(reverse("kura:mfa_reauth")))
+        self.target_user.refresh_from_db()
+        self.assertTrue(self.target_user.is_active)
+
+    def test_old_confirmation_has_expired(self):
+        # A code entered six minutes ago no longer counts.
+        session = self.client.session
+        session["mfa_reauth_at"] = (timezone.now() - timezone.timedelta(minutes=6)).timestamp()
+        session.save()
+        url = reverse("kura:user_deactivate", kwargs={"user_id": self.target_user.id})
+        response = self.client.post(url)
+        self.assertTrue(response["Location"].startswith(reverse("kura:mfa_reauth")))
+
+    def test_passkey_page_and_delete_need_fresh_factor(self):
+        from mfa.models import User_Keys
+
+        key = User_Keys.objects.create(username=self.admin.email, key_type="FIDO2", properties={})
+        response = self.client.get(reverse("kura:passkey_manage"))
+        self.assertTrue(response["Location"].startswith(reverse("kura:mfa_reauth")))
+        response = self.client.post(reverse("kura:passkey_delete", kwargs={"key_id": key.id}))
+        self.assertTrue(response["Location"].startswith(reverse("kura:mfa_reauth")))
+        self.assertTrue(User_Keys.objects.filter(id=key.id).exists())
+
+    def test_passkey_registration_needs_fresh_factor(self):
+        response = self.client.post(reverse("fido2_complete_reg"), data="{}", content_type="application/json")
+        self.assertEqual(response.status_code, 403)
+
+    def test_recovery_code_confirms_and_returns_to_next(self):
+        # A valid recovery code is accepted and the user goes back to the page they wanted.
+        device = StaticDevice.objects.create(user=self.admin, name="recovery", confirmed=True)
+        StaticToken.objects.create(device=device, token=hash_recovery_code("abcd1234"))
+        next_url = reverse("kura:passkey_manage")
+        response = self.client.post(reverse("kura:mfa_reauth"), {"code": "abcd1234", "next": next_url})
+        self.assertRedirects(response, next_url)
+        self.assertIn("mfa_reauth_at", self.client.session)
+
+    def test_wrong_code_is_rejected(self):
+        response = self.client.post(reverse("kura:mfa_reauth"), {"code": "000000", "next": "/"})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "Invalid security code")
+        self.assertNotIn("mfa_reauth_at", self.client.session)
+
+    def test_next_to_another_site_is_ignored(self):
+        # The confirm page must not become an open redirect.
+        device = StaticDevice.objects.create(user=self.admin, name="recovery", confirmed=True)
+        StaticToken.objects.create(device=device, token=hash_recovery_code("abcd1234"))
+        response = self.client.post(
+            reverse("kura:mfa_reauth"), {"code": "abcd1234", "next": "https://evil.example/"}
+        )
+        self.assertRedirects(response, reverse("kura:home"), fetch_redirect_response=False)
+
+    def test_users_without_mfa_are_not_blocked(self):
+        # Nobody without a second factor can be asked for one. (Middleware sends
+        # such users to MFA setup anyway, so the helper is checked directly.)
+        request = RequestFactory().get("/")
+        request.user = make_user("Admin", mfa_enabled=False)
+        request.session = {}
+        self.assertTrue(has_fresh_second_factor(request))
+        request.user = self.admin
+        self.assertFalse(has_fresh_second_factor(request))
