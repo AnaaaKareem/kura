@@ -114,13 +114,15 @@ services:
       - ./certs/internal/web.crt:/certs/internal/web.crt:ro
       - ./certs/internal/web.key:/certs/internal/web.key:ro
     # app: only the WAF can reach Django, so the WAF cannot be bypassed.
-    # backend: so Django can reach PostgreSQL, Vault and ClamAV.
+    # backend: so Django can reach PostgreSQL and Vault.
+    # clamav: internal network shared only with ClamAV (INSTREAM is plain TCP; CFG-06).
     # mail: so Django can hand email to the Postfix relay (nothing else is there).
     # breach_check: so Django can reach the breach-check proxy (nothing else is there).
     # Not on frontend (Nginx/cloudflared) or observability.
     networks:
       - app
       - backend
+      - clamav
       - mail
       - breach_check
     # No db_password here: that is the kura-admin (superuser) password. Django
@@ -630,12 +632,12 @@ services:
       # Kura's scanner settings: reject encrypted files, Office macros and
       # files too large/deep to scan (see docker/clamav/clamd.conf).
       - ./docker/clamav/clamd.conf:/etc/clamav/clamd.conf:ro
-    # backend: Django sends files here to be scanned.
+    # clamav: internal network shared only with web because INSTREAM is plain TCP (CFG-06).
     # clamav_updates: lets freshclam download new virus signatures from the
-    # internet (backend is internal and has no internet route). No other
-    # container is on clamav_updates, so Nginx and the WAF cannot reach ClamAV.
+    # internet (clamav is internal and has no internet route). No other
+    # container is on either network, so Nginx, WAF, DB and Vault cannot reach ClamAV.
     networks:
-      - backend
+      - clamav
       - clamav_updates
     # Drop all kernel capabilities
     cap_drop:
@@ -1284,6 +1286,10 @@ networks:
       config:
         - subnet: 172.28.40.0/24
           ip_range: 172.28.40.128/25
+  # Django <-> ClamAV only (INSTREAM is plain TCP; internal: no internet route; CFG-06).
+  clamav:
+    driver: bridge
+    internal: true
   # Outbound-only route for ClamAV signature updates (nothing else joins it).
   clamav_updates:
     driver: bridge
