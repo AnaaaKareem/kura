@@ -608,8 +608,29 @@ def mfa_login_callback(request, username):
     Callback executed by django-mfa2 upon successful FIDO2 / Passkey authentication.
     Who can use it: System internal auth callback.
     Security: Establishes session for the authenticated user and cleans up pre-mfa markers.
+    Refuses the login unless the passkey belongs to the same user who passed the
+    password step (pre_mfa_user_id), and that user is still active and not locked.
     """
     user = get_object_or_404(User, email=username)
+
+    # django-mfa2 works out the user from the passkey itself, and its sign-in
+    # endpoints are public. Without this check a passkey alone could sign in
+    # (skipping the password step), or sign in as a different user than the one
+    # who typed their password. The spec requires password plus second factor.
+    pre_mfa_user_id = request.session.get("pre_mfa_user_id")
+    locked = user.locked_until and user.locked_until > timezone.now()
+    if pre_mfa_user_id != str(user.id) or not user.is_active or locked:
+        log_security_event(
+            request,
+            "auth.mfa.failed",
+            {"method": "passkey", "reason": "not_allowed"},
+            level=logging.WARNING,
+        )
+        request.session.pop("pre_mfa_user_id", None)
+        request.session.pop("base_username", None)
+        messages.error(request, "Sign-in failed. Please start again.")
+        return redirect("kura:login")
+
     login(request, user, backend="kura.backends.KuraAuthBackend")
     user.last_login = timezone.now()
     user.save(update_fields=["last_login"])
