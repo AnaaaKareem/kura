@@ -229,7 +229,8 @@ class PasswordChangeForm(forms.Form):
 
 class PasswordResetRequestForm(forms.Form):
     """
-    Form to start a password reset, by authenticator code (default) or email link.
+    Form to start a password reset. Kura always emails a reset link (AUTH-03);
+    users with MFA must also enter a second-factor code after opening it.
     """
 
     # Email address associated with the account.
@@ -244,18 +245,14 @@ class PasswordResetRequestForm(forms.Form):
         ),
     )
 
-    # How the user proves who they are. Two-factor is the default.
-    method = forms.ChoiceField(
-        label="Verify with",
-        choices=[
-            ("authenticator", "Authenticator app or recovery code (recommended)"),
-            ("email", "Email me a reset link"),
-        ],
-        initial="authenticator",
-        widget=forms.RadioSelect,
-    )
 
-    # Only needed for the authenticator method.
+class PasswordResetConfirmForm(forms.Form):
+    """
+    Form to set a new password after opening a valid reset link.
+    """
+
+    # Second-factor code. The view requires it when the account has MFA, so a
+    # stolen inbox alone is not enough to take over the account (AUTH-03).
     code = forms.CharField(
         label="Authenticator or recovery code",
         required=False,
@@ -268,19 +265,6 @@ class PasswordResetRequestForm(forms.Form):
             }
         ),
     )
-
-    def clean(self):
-        """Require the code when the authenticator method is chosen."""
-        cleaned = super().clean()
-        if cleaned.get("method") == "authenticator" and not cleaned.get("code", "").strip():
-            self.add_error("code", "Enter your authenticator or recovery code.")
-        return cleaned
-
-
-class PasswordResetConfirmForm(forms.Form):
-    """
-    Form to set a new password after opening a valid reset link.
-    """
 
     # New password meeting security requirements.
     new_password = forms.CharField(

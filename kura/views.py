@@ -1146,30 +1146,17 @@ def create_reset_token(user):
 
 def password_reset_request_view(request):
     """
-    Starts a password reset, either by authenticator/recovery code (default) or by an emailed link.
+    Starts a password reset by emailing a single-use, 30-minute link.
     Who can use it: Public unauthenticated users.
-    Security: Unknown emails, wrong codes and accounts without MFA all get the same
-    generic answer, so the page cannot be used to find out which accounts exist.
-    Both methods end in a single-use, 30-minute token.
+    Security: Unknown and known emails get the same generic answer, so the page
+    cannot be used to find out which accounts exist. Accounts with MFA must also
+    give a second-factor code on the confirm page (AUTH-03).
 """
     form = PasswordResetRequestForm(request.POST or None)
 
     if request.method == "POST" and form.is_valid():
         email = form.cleaned_data["email"].strip().lower()
         user = User.objects.filter(email=email, is_active=True).first()
-
-        # Two-factor method: a correct code goes straight to the new-password page.
-        if form.cleaned_data["method"] == "authenticator":
-            method_used = None
-            if user:
-                method_used = verify_second_factor(user, form.cleaned_data["code"].strip())
-            if not method_used:
-                log_security_event(request, "auth.password.reset_2fa_failed", {}, logging.WARNING)
-                messages.error(request, "Invalid email address or security code.")
-                return render(request, "kura/accounts/password_reset_request.html", {"form": form})
-            raw_token, _ = create_reset_token(user)
-            log_security_event(request, "auth.password.reset_2fa_ok", {"method": method_used})
-            return redirect("kura:password_reset_confirm", token=raw_token)
 
         # At most 2 reset emails per account every 5 minutes, so nobody can flood
         # someone's inbox. Extra requests are ignored without telling the visitor.
@@ -1217,6 +1204,9 @@ def password_reset_confirm_view(request, token):
     Completes password reset using a token from the email.
     Who can use it: Public users with a valid token.
     Security: Validates SHA-256 hash, 30-min window, single-use, and revokes all user sessions.
+    Accounts with MFA must also give a valid authenticator or recovery code, so
+    the emailed link alone cannot take over the account (AUTH-03). A wrong code
+    uses up the link, which stops guessing codes against one link.
 """
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
 
@@ -1238,9 +1228,21 @@ def password_reset_confirm_view(request, token):
 
     if request.method == "POST" and form.is_valid():
         new_password = form.cleaned_data["new_password"]
+        user = reset_record.user
+
+        # Second factor: required for accounts with MFA. A wrong code spends
+        # the link so nobody can keep guessing codes with it.
+        if user.mfa_enabled:
+            method_used = verify_second_factor(user, form.cleaned_data["code"].strip())
+            if not method_used:
+                reset_record.used_at = timezone.now()
+                reset_record.save(update_fields=["used_at"])
+                log_security_event(request, "auth.password.reset_2fa_failed", {}, logging.WARNING)
+                messages.error(request, "Invalid security code. Please request a new reset link.")
+                return redirect("kura:password_reset_request")
+            log_security_event(request, "auth.password.reset_2fa_ok", {"method": method_used})
 
         # Update password on user account.
-        user = reset_record.user
         user.set_password(new_password)
         user.must_change_password = False
         user.password_changed_at = timezone.now()
@@ -1274,7 +1276,8 @@ def password_reset_confirm_view(request, token):
         messages.success(request, "Your password has been reset. Please log in with your new password.")
         return redirect("kura:login")
 
-    return render(request, "kura/accounts/password_reset_confirm.html", {"form": form})
+    context = {"form": form, "needs_code": reset_record.user.mfa_enabled}
+    return render(request, "kura/accounts/password_reset_confirm.html", context)
 
 
 @login_required

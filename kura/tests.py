@@ -729,46 +729,48 @@ class PasswordResetTests(TestCase):
         self.client = Client()
         self.user = make_user("Student", password="OriginalPassword123!")
 
-    def test_authenticator_method_with_recovery_code_goes_to_new_password_page(self):
-        # Default method: a correct recovery code skips email and opens the reset page.
-        device = StaticDevice.objects.create(user=self.user, name="recovery", confirmed=True)
-        StaticToken.objects.create(device=device, token=hash_recovery_code("abcd1234"))
-        response = self.client.post(
-            reverse("kura:password_reset_request"),
-            {"email": self.user.email, "method": "authenticator", "code": "abcd1234"},
+    def make_reset_token(self):
+        # Create a valid, unused reset token and return the raw value from the email link.
+        raw_token = secrets.token_urlsafe(32)
+        token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+        reset_record = PasswordResetToken.objects.create(
+            user=self.user,
+            token_hash=token_hash,
+            expires_at=timezone.now() + timezone.timedelta(minutes=30),
         )
-        token_record = PasswordResetToken.objects.get(user=self.user)
-        self.assertEqual(response.status_code, 302)
-        self.assertTrue(response["Location"].startswith("/password/reset/"))
-        self.assertIsNone(token_record.used_at)
+        return raw_token, reset_record
 
-    def test_authenticator_method_wrong_code_and_unknown_email_look_the_same(self):
-        # Wrong code and unknown email give the same generic error and no token.
-        wrong_code = self.client.post(
-            reverse("kura:password_reset_request"),
-            {"email": self.user.email, "method": "authenticator", "code": "000000"},
-        )
-        unknown = self.client.post(
-            reverse("kura:password_reset_request"),
-            {"email": "nobody@example.com", "method": "authenticator", "code": "000000"},
-        )
-        self.assertContains(wrong_code, "Invalid email address or security code.")
-        self.assertContains(unknown, "Invalid email address or security code.")
-        self.assertFalse(PasswordResetToken.objects.exists())
+    def test_request_always_emails_a_link(self):
+        # AUTH-03: the request page no longer skips the email step; it only
+        # creates a token and sends the generic message.
+        response = self.client.post(reverse("kura:password_reset_request"), {"email": self.user.email})
+        self.assertRedirects(response, reverse("kura:login"))
+        self.assertEqual(PasswordResetToken.objects.filter(user=self.user).count(), 1)
 
-    def test_authenticator_method_requires_a_code(self):
-        # Choosing the authenticator method with an empty code is rejected by the form.
+    def test_mfa_account_needs_code_on_confirm_page(self):
+        # AUTH-03: the emailed link alone cannot reset an MFA account. A wrong
+        # code spends the link and leaves the password unchanged.
+        raw_token, reset_record = self.make_reset_token()
         response = self.client.post(
-            reverse("kura:password_reset_request"),
-            {"email": self.user.email, "method": "authenticator", "code": ""},
+            reverse("kura:password_reset_confirm", kwargs={"token": raw_token}),
+            {"code": "000000", "new_password": "BrandNewPassword789!", "confirm_password": "BrandNewPassword789!"},
         )
-        self.assertContains(response, "Enter your authenticator or recovery code.")
+        self.assertRedirects(response, reverse("kura:password_reset_request"))
+        reset_record.refresh_from_db()
+        self.assertIsNotNone(reset_record.used_at)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("OriginalPassword123!"))
+
+    def test_confirm_page_shows_code_field_for_mfa_account(self):
+        raw_token, _ = self.make_reset_token()
+        response = self.client.get(reverse("kura:password_reset_confirm", kwargs={"token": raw_token}))
+        self.assertContains(response, 'name="code"')
 
     def test_unknown_email_returns_same_generic_message(self):
         # Submitting an unknown email address returns the exact same message.
         response = self.client.post(
             reverse("kura:password_reset_request"),
-            {"email": "nonexistent_person@example.com", "method": "email"},
+            {"email": "nonexistent_person@example.com"},
         )
         self.assertRedirects(response, reverse("kura:login"))
 
@@ -788,10 +790,15 @@ class PasswordResetTests(TestCase):
             expires_at=timezone.now() + timezone.timedelta(days=1),
         )
 
+        # The test user has MFA, so the confirm page also needs a recovery code.
+        device = StaticDevice.objects.create(user=self.user, name="recovery", confirmed=True)
+        StaticToken.objects.create(device=device, token=hash_recovery_code("abcd1234"))
+
         new_password = "BrandNewPassword789!"
         response = self.client.post(
             reverse("kura:password_reset_confirm", kwargs={"token": raw_token}),
             {
+                "code": "abcd1234",
                 "new_password": new_password,
                 "confirm_password": new_password,
             },
@@ -7383,7 +7390,7 @@ class EmailNotificationTests(TestCase):
     # --- password reset ---------------------------------------------------
 
     def request_reset(self, email):
-        return self.client.post(reverse("kura:password_reset_request"), {"email": email, "method": "email"})
+        return self.client.post(reverse("kura:password_reset_request"), {"email": email})
 
     def test_reset_is_queued_not_sent_and_uses_the_fixed_site_url(self):
         response = self.request_reset(self.student.email)
@@ -8021,9 +8028,14 @@ class PasswordChangeNotificationTests(TestCase):
             expires_at=timezone.now() + timezone.timedelta(minutes=30),
         )
 
+        # The test user has MFA, so the confirm page also needs a recovery code.
+        device = StaticDevice.objects.create(user=self.user, name="recovery", confirmed=True)
+        StaticToken.objects.create(device=device, token=hash_recovery_code("abcd1234"))
+
         response = self.client.post(
             reverse("kura:password_reset_confirm", kwargs={"token": raw_token}),
             {
+                "code": "abcd1234",
                 "new_password": "NewResetPassword789!",
                 "confirm_password": "NewResetPassword789!",
             },
