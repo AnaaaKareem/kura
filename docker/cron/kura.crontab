@@ -26,6 +26,9 @@ KURA_METRICS_DIR=/var/lib/kura-metrics
 # Every day at 04:00: delete quarantined uploads older than 7 days (owner's choice).
 0 4 * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh purge-quarantine docker compose exec -T web python manage.py purge_quarantine --days=7 >> /var/log/kura/purge-quarantine.log 2>&1
 
+# Every day at 04:15: disable accounts with no login for 90 days (ACL-08).
+15 4 * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh disable-inactive docker compose exec -T web python manage.py disable_inactive_accounts --days=90 >> /var/log/kura/disable-inactive.log 2>&1
+
 # Every Monday at 03:30: renew the internal certificates from Vault (they last
 # 30 days). Vault must be unsealed. Also writes certificate expiry metrics.
 30 3 * * 1 /bin/sh $KURA_DIR/docker/cron/run-job.sh cert-renewal sh certs/renew-certs-from-vault.sh >> /var/log/kura/cert-renewal.log 2>&1
