@@ -56,7 +56,7 @@
                 <tr>
                     {% if is_staff_view %}
                     <td class="k-sticky-col">
-                        <div class="font-semibold">{{ record.student.get_full_name|default:record.student.email }}</div>
+                        <div class="font-semibold">{% if record.student.first_name or record.student.last_name %}{{ record.student.first_name }} {{ record.student.last_name }}{% else %}{{ record.student.email }}{% endif %}</div>
                         <div class="text-xs k-muted font-mono">{{ record.student.email }}</div>
                     </td>
                     {% endif %}

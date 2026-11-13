@@ -21,7 +21,7 @@
             <p class="k-eyebrow">{{ appeal.grade.assessment.section.module.course.code }}</p>
             <h1 class="text-2xl font-bold">Review grade appeal</h1>
             <p class="text-sm k-muted">
-                Student: <strong>{{ appeal.grade.student.get_full_name|default:appeal.grade.student.email }}</strong> &bull; Assessment: <strong>{{ appeal.grade.assessment.title }}</strong> &bull; Disputed score: <span class="k-num font-semibold">{{ appeal.grade.score }}</span>
+                Student: <strong>{% if appeal.grade.student.first_name or appeal.grade.student.last_name %}{{ appeal.grade.student.first_name }} {{ appeal.grade.student.last_name }}{% else %}{{ appeal.grade.student.email }}{% endif %}</strong> &bull; Assessment: <strong>{{ appeal.grade.assessment.title }}</strong> &bull; Disputed score: <span class="k-num font-semibold">{{ appeal.grade.score }}</span>
             </p>
         </header>
 

@@ -64,7 +64,7 @@
                 {% for session in sessions %}
                 <tr>
                     <td>
-                        <span class="font-medium text-sm">{{ session.user.get_full_name|default:session.user.email }}</span>
+                        <span class="font-medium text-sm">{% if session.user.first_name or session.user.last_name %}{{ session.user.first_name }} {{ session.user.last_name }}{% else %}{{ session.user.email }}{% endif %}</span>
                         <span class="block text-xs k-muted">{{ session.user.email }}</span>
                     </td>
                     <td class="text-xs">{{ session.user_agent|default:"Unknown device" }}</td>

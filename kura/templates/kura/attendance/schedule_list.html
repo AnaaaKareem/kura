@@ -48,7 +48,7 @@
                         <div class="text-xs k-muted k-num">{{ schedule.start_time|time:"H:i" }} &ndash; {{ schedule.end_time|time:"H:i" }}</div>
                     </td>
                     <td class="font-medium text-xs">{{ schedule.location }}</td>
-                    <td class="text-xs">{{ schedule.instructor.get_full_name|default:schedule.instructor.email }}</td>
+                    <td class="text-xs">{% if schedule.instructor.first_name or schedule.instructor.last_name %}{{ schedule.instructor.first_name }} {{ schedule.instructor.last_name }}{% else %}{{ schedule.instructor.email }}{% endif %}</td>
                     <td class="text-right">
                         {% if schedule.can_manage %}
                         <div class="inline-flex items-center justify-end gap-1.5">
