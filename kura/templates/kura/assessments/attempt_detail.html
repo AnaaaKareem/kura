@@ -70,6 +70,55 @@
                 {% endif %}
             </div>
 
+            {% if question_reviews %}
+            <div class="k-card p-6 space-y-4">
+                <h2 class="text-base font-semibold border-b border-base-300 pb-2">Student responses</h2>
+                <div class="space-y-4">
+                    {% for item in question_reviews %}
+                    <article class="p-4 bg-base-200 rounded-box border border-base-300 space-y-2">
+                        <div class="flex items-start justify-between gap-3">
+                            <h3 class="text-sm font-semibold">Question {{ item.number }}</h3>
+                            <div class="flex items-center gap-2 flex-shrink-0">
+                                {% if item.auto_evaluation %}
+                                <span class="badge badge-ghost badge-sm k-num">Auto: {{ item.auto_evaluation.points_awarded }} / {{ item.points }}</span>
+                                {% else %}
+                                <span class="badge badge-ghost badge-sm k-num">{{ item.points }} pts</span>
+                                {% endif %}
+                            </div>
+                        </div>
+                        <p class="text-base leading-relaxed">{{ item.prompt }}</p>
+                        {% if item.type == 'multiple_choice' %}
+                        <div class="text-sm pt-1">
+                            <span class="k-eyebrow block">Selected</span>
+                            {% if item.selected_options %}
+                            <ul class="list-disc pl-5 mt-1 space-y-0.5">
+                                {% for opt_text in item.selected_options %}
+                                <li>{{ opt_text }}</li>
+                                {% endfor %}
+                            </ul>
+                            {% else %}
+                            <p class="k-muted mt-1">No option selected.</p>
+                            {% endif %}
+                        </div>
+                        {% elif item.type == 'matching' %}
+                        <div class="text-sm pt-1 space-y-1">
+                            <span class="k-eyebrow block">Matches</span>
+                            {% for row in item.matching_rows %}
+                            <p><span class="font-medium">{{ row.left }}</span> &rarr; {{ row.selected|default:"(blank)" }}</p>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <div class="text-sm pt-1">
+                            <span class="k-eyebrow block">Written response</span>
+                            <p class="whitespace-pre-line bg-base-100 border border-base-300 rounded-btn p-3 mt-1">{{ item.response_text|default:"No written answer submitted." }}</p>
+                        </div>
+                        {% endif %}
+                    </article>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+
             {% if attempt_files %}
             <div class="k-card p-6 space-y-3">
                 <h2 class="text-base font-semibold">Submitted files</h2>
