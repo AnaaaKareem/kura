@@ -12,20 +12,22 @@
 </ol>
 {% endblock %}
 
+{% block form_errors %}{% endblock %}
+
 {% block content %}
 <div class="max-w-2xl mx-auto space-y-6">
-    <!-- Page Header (Section 8.2) -->
     <header class="space-y-1">
         <p class="k-eyebrow">{{ department.name }}</p>
         <h1 class="text-2xl font-bold">New course</h1>
         <p class="text-sm k-muted">
-            Create a course under {{ department.name }}. New courses start in draft mode and become visible to students when published.
+            New courses start as drafts. Students cannot see them until you publish.
         </p>
     </header>
 
     <div class="k-card">
         <form method="post" class="space-y-4">
             {% csrf_token %}
+            {% include "kura/_form_errors.html" %}
 
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div class="md:col-span-1">
@@ -48,8 +50,8 @@
             </div>
 
             <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
-                <a href="{% url 'kura:course_list' %}" class="btn btn-ghost btn-sm">Cancel</a>
-                <button type="submit" class="btn btn-primary btn-sm">Create course draft</button>
+                <a href="{% url 'kura:course_list' %}" class="btn btn-ghost">Cancel</a>
+                <button type="submit" class="btn btn-primary">Create draft</button>
             </div>
         </form>
     </div>

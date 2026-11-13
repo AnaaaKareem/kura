@@ -14,34 +14,29 @@
 </ol>
 {% endblock %}
 
+{% block form_errors %}{% endblock %}
+
 {% block content %}
 <div class="max-w-2xl mx-auto space-y-6">
-    <!-- Page Header (Section 8.2) -->
     <header class="space-y-1">
         <p class="k-eyebrow">{{ course.code }}</p>
         <h1 class="text-2xl font-bold">{% if editing %}Edit module{% else %}Add module{% endif %}</h1>
         <p class="text-sm k-muted">
-            Configure learning materials unit for {{ course.code }}. Access can be restricted to specific student academic levels.
+            Group sections and materials for {{ course.code }}. Access can be limited to selected academic levels.
         </p>
     </header>
 
     <div class="k-card">
         <form method="post" class="space-y-4">
             {% csrf_token %}
+            {% include "kura/_form_errors.html" %}
 
             {% include "kura/_field.html" with field=form.title %}
             {% include "kura/_field.html" with field=form.description %}
-            <div class="form-control">
-                <label class="label cursor-pointer justify-start gap-3">
-                    {{ form.is_visible }}
-                    <span class="label-text font-medium text-sm text-base-content">Publish module to students immediately</span>
-                </label>
-            </div>
+            {% include "kura/_field.html" with field=form.is_visible %}
 
-            <div class="space-y-2 pt-1">
-                <label class="label py-0">
-                    <span class="label-text font-medium text-sm text-base-content">Target academic levels</span>
-                </label>
+            <fieldset class="space-y-2 pt-1">
+                <legend class="label-text font-medium text-sm text-base-content">Academic levels (leave empty for everyone)</legend>
                 <div class="grid grid-cols-1 sm:grid-cols-2 gap-2 p-3 bg-base-200 rounded-btn border border-base-300">
                     {% for level in form.target_levels %}
                     <label class="label cursor-pointer justify-start gap-3">
@@ -50,19 +45,18 @@
                     </label>
                     {% endfor %}
                 </div>
-                <p class="text-xs k-muted">Leave unselected to make visible to all enrolled students.</p>
                 {% if form.target_levels.errors %}
-                <div class="text-error text-xs font-medium space-y-0.5 pt-0.5">
+                <div class="text-error text-xs font-medium space-y-0.5 pt-0.5" role="alert">
                     {% for error in form.target_levels.errors %}
                     <p>{{ error }}</p>
                     {% endfor %}
                 </div>
                 {% endif %}
-            </div>
+            </fieldset>
 
             <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
-                <a href="{% url 'kura:course_detail' course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
-                <button type="submit" class="btn btn-primary btn-sm">{% if editing %}Save module{% else %}Add module{% endif %}</button>
+                <a href="{% url 'kura:course_detail' course.id %}" class="btn btn-ghost">Cancel</a>
+                <button type="submit" class="btn btn-primary">{% if editing %}Save module{% else %}Add module{% endif %}</button>
             </div>
         </form>
     </div>

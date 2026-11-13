@@ -14,50 +14,40 @@
 </ol>
 {% endblock %}
 
+{% block form_errors %}{% endblock %}
+
 {% block content %}
 <div class="max-w-2xl mx-auto space-y-6">
-    <!-- Page Header (Section 8.2) -->
     <header class="space-y-1">
         <p class="k-eyebrow">{{ section.title }}</p>
-        <h1 class="text-2xl font-bold">{% if editing %}Edit item in {{ section.title }}{% else %}Add item to {{ section.title }}{% endif %}</h1>
-        <p class="text-sm k-muted">Write lecture notes in Markdown or attach documents and slides.</p>
+        <h1 class="text-2xl font-bold">{% if editing %}Edit item{% else %}Add item{% endif %}</h1>
+        <p class="text-sm k-muted">Write lecture notes in Markdown or attach a file.</p>
     </header>
 
     <div class="k-card">
         <form method="post" enctype="multipart/form-data" class="space-y-4">
             {% csrf_token %}
+            {% include "kura/_form_errors.html" %}
 
             {% include "kura/_field.html" with field=form.title %}
 
-            <div class="form-control w-full space-y-1">
-                <label class="label py-1" for="id_content_body">
-                    <span class="label-text font-medium text-sm text-base-content">
-                        Content body (optional if a file is attached)
-                    </span>
-                </label>
-                {{ form.content_body }}
-                <div class="pt-2 flex items-center gap-2">
+            <div class="space-y-2">
+                {% include "kura/_field.html" with field=form.content_body %}
+                <div class="flex items-center gap-2">
                     <button type="button" class="btn btn-outline btn-xs" hx-post="{% url 'kura:item_preview' section.id %}" hx-include="closest form" hx-target="#item-preview">
                         Preview
                     </button>
                     <span class="htmx-indicator loading loading-spinner loading-xs text-primary"></span>
                 </div>
-                <div id="item-preview" class="mt-2 text-sm leading-relaxed" aria-live="polite"></div>
-                {% if form.content_body.errors %}
-                <div id="id_content_body-error" class="text-error text-xs font-medium space-y-0.5 pt-0.5">
-                    {% for error in form.content_body.errors %}
-                    <p>{{ error }}</p>
-                    {% endfor %}
-                </div>
-                {% endif %}
+                <div id="item-preview" class="prose max-w-none text-sm leading-relaxed" aria-live="polite"></div>
             </div>
 
             {% include "kura/_field.html" with field=form.released_at %}
             {% include "kura/_field.html" with field=form.file %}
 
             <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
-                <a href="{% url 'kura:course_detail' section.module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
-                <button type="submit" class="btn btn-primary btn-sm">{% if editing %}Save item{% else %}Create item{% endif %}</button>
+                <a href="{% url 'kura:course_detail' section.module.course.id %}" class="btn btn-ghost">Cancel</a>
+                <button type="submit" class="btn btn-primary">{% if editing %}Save item{% else %}Add item{% endif %}</button>
             </div>
         </form>
     </div>
