@@ -85,6 +85,74 @@
         </div>
     </div>
 
+    <!-- Appeals waiting for a verdict -->
+    {% if pending_appeals %}
+    <div class="card bg-base-100 border border-base-300 overflow-hidden">
+        <div class="p-4 border-b border-base-200">
+            <h3 class="font-bold text-base">Pending Grade Appeals ({{ pending_appeals|length }})</h3>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="table table-sm w-full text-xs">
+                <thead class="bg-base-200">
+                    <tr>
+                        <th>Student</th>
+                        <th>Assessment</th>
+                        <th>Score</th>
+                        <th>Filed</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for appeal in pending_appeals %}
+                    <tr>
+                        <td class="font-semibold">{{ appeal.grade.student.email }}</td>
+                        <td>{{ appeal.grade.assessment.title }}</td>
+                        <td class="font-bold">{{ appeal.grade.score }} / {{ appeal.grade.assessment.max_score }}</td>
+                        <td>{{ appeal.created_at|date:"Y-m-d H:i" }}</td>
+                        <td><a href="{% url 'kura:grade_appeal_review' appeal.id %}" class="btn btn-outline btn-xs">Review</a></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Post-release change requests waiting for the department head -->
+    {% if pending_change_requests %}
+    <div class="card bg-base-100 border border-base-300 overflow-hidden">
+        <div class="p-4 border-b border-base-200">
+            <h3 class="font-bold text-base">Pending Grade Change Requests ({{ pending_change_requests|length }})</h3>
+        </div>
+        <div class="overflow-x-auto">
+            <table class="table table-sm w-full text-xs">
+                <thead class="bg-base-200">
+                    <tr>
+                        <th>Student</th>
+                        <th>Assessment</th>
+                        <th>Current</th>
+                        <th>Proposed</th>
+                        <th>Requested by</th>
+                        <th>Actions</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for change_request in pending_change_requests %}
+                    <tr>
+                        <td class="font-semibold">{{ change_request.grade.student.email }}</td>
+                        <td>{{ change_request.grade.assessment.title }}</td>
+                        <td>{{ change_request.current_score }}</td>
+                        <td class="font-bold">{{ change_request.proposed_score }}</td>
+                        <td>{{ change_request.requested_by.email }}</td>
+                        <td><a href="{% url 'kura:grade_change_request_review' change_request.id %}" class="btn btn-outline btn-xs">Review</a></td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </div>
+    {% endif %}
+
     <!-- Final Course Results Summary -->
     {% if course_results %}
     <div class="card bg-base-100 border border-base-300 overflow-hidden">

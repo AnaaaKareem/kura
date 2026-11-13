@@ -9103,3 +9103,108 @@ class CoursePageLinksTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, reverse("kura:course_grades", args=[self.course.id]))
         self.assertNotContains(response, reverse("kura:attendance_session_start", args=[self.module.id]))
+
+
+def make_released_grade_course():
+    """
+    Test helper: a course with a department head, a lead instructor, a teaching
+    assistant and one student holding a released exam grade. Used by the
+    gradebook, grade scheme and feedback tests.
+    """
+    head = make_user("Department head")
+    instructor = make_user("Instructor")
+    assistant = make_user("Teaching assistant")
+    student = make_user("Student")
+    department = Department.objects.create(name="Psychology", code="PSYC", head_user=head)
+    StudentProfile.objects.create(
+        user=student, department=department, current_level="level_4", matriculation_year=2026
+    )
+    course = Course.objects.create(
+        department=department,
+        code="PSYC201",
+        title="Social Psychology",
+        semester="1",
+        academic_year=2026,
+        is_published=True,
+        published_by=head,
+        published_at=timezone.now(),
+    )
+    CourseStaff.objects.create(course=course, user=instructor, staff_role="lead_instructor", can_release_grades=True)
+    CourseStaff.objects.create(course=course, user=assistant, staff_role="teaching_assistant")
+    Enrollment.objects.create(course=course, student=student, status=EnrollmentStatus.ACTIVE)
+    module = Module.objects.create(course=course, title="Groups", is_visible=True)
+    section = ModuleSection.objects.create(module=module, title="Exam", section_type="exam")
+    assessment = Assessment.objects.create(
+        section=section,
+        title="Groups Exam",
+        component_type=GradeComponentType.EXAM,
+        max_score=Decimal("100.00"),
+        opens_at=timezone.now(),
+        due_date=timezone.now() + timezone.timedelta(hours=1),
+        duration_minutes=60,
+        created_by=instructor,
+    )
+    attempt = AssessmentAttempt.objects.create(
+        assessment=assessment,
+        student=student,
+        status=AttemptStatus.FULLY_GRADED,
+        expires_at=timezone.now(),
+        ip_address="127.0.0.1",
+    )
+    grade = Grade.objects.create(
+        assessment=assessment, student=student, attempt=attempt, score=Decimal("70.00"), status=GradeStatus.RELEASED
+    )
+    return {
+        "head": head,
+        "instructor": instructor,
+        "assistant": assistant,
+        "student": student,
+        "course": course,
+        "assessment": assessment,
+        "attempt": attempt,
+        "grade": grade,
+    }
+
+
+class GradebookPendingReviewsTests(TestCase):
+    """
+    The gradebook lists appeals and change requests that are waiting for a
+    decision, so reviewers can reach the review pages without typing a URL.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.data = make_released_grade_course()
+        self.grades_url = reverse("kura:course_grades", args=[self.data["course"].id])
+        self.appeal = GradeAppeal.objects.create(grade=self.data["grade"], reason="Question 3 was marked wrong.")
+        self.change_request = GradeChangeRequest.objects.create(
+            grade=self.data["grade"],
+            requested_by=self.data["instructor"],
+            current_score=Decimal("70.00"),
+            proposed_score=Decimal("78.00"),
+            reason="Appeal upheld.",
+        )
+
+    def test_instructor_sees_pending_appeal_but_not_change_requests(self):
+        self.client.force_login(self.data["instructor"])
+        response = self.client.get(self.grades_url)
+        self.assertContains(response, reverse("kura:grade_appeal_review", args=[self.appeal.id]))
+        self.assertNotContains(response, reverse("kura:grade_change_request_review", args=[self.change_request.id]))
+
+    def test_department_head_sees_pending_change_request(self):
+        self.client.force_login(self.data["head"])
+        response = self.client.get(self.grades_url)
+        self.assertContains(response, reverse("kura:grade_change_request_review", args=[self.change_request.id]))
+        self.assertContains(response, reverse("kura:grade_appeal_review", args=[self.appeal.id]))
+
+    def test_decided_items_drop_off_the_lists(self):
+        self.appeal.status = AppealStatus.REJECTED
+        self.appeal.save()
+        self.change_request.status = ChangeRequestStatus.REJECTED
+        self.change_request.reviewed_by = self.data["head"]
+        self.change_request.reviewed_at = timezone.now()
+        self.change_request.save()
+        self.client.force_login(self.data["head"])
+        response = self.client.get(self.grades_url)
+        self.assertNotContains(response, reverse("kura:grade_appeal_review", args=[self.appeal.id]))
+        self.assertNotContains(response, reverse("kura:grade_change_request_review", args=[self.change_request.id]))
