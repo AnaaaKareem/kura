@@ -72,6 +72,28 @@ class AdminStaffFilterForm(forms.Form):
     )
 
 
+class AdminUserFilterForm(forms.Form):
+    """Validate administrator all-account directory filters (no grade data)."""
+
+    q = forms.CharField(required=False, max_length=150, label="Name or email")
+    role = forms.ChoiceField(
+        required=False,
+        choices=[
+            ("", "All roles"),
+            ("Admin", "Admin"),
+            ("Registrar", "Registrar"),
+            ("Department head", "Department head"),
+            ("Instructor", "Instructor"),
+            ("Teaching assistant", "Teaching assistant"),
+            ("Student", "Student"),
+        ],
+    )
+    status = forms.ChoiceField(
+        required=False,
+        choices=[("", "All statuses"), ("active", "Active"), ("locked", "Locked"), ("deactivated", "Deactivated")],
+    )
+
+
 class AdminSessionFilterForm(forms.Form):
     """Validate the search and filters for the administrator's session list."""
 
@@ -1569,3 +1591,152 @@ class CourseGradesFilterForm(forms.Form):
         # Limit assessment choices to assessments belonging to this course.
         if assessments is not None:
             self.fields["assessment"].queryset = assessments
+
+
+# ==========================================
+# Pure-Python JSONB Schema Validators
+# ==========================================
+
+
+def _is_number(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+def validate_assessment_settings_json(doc):
+    """Validates Assessments.settings_json against the specification schema."""
+    if not isinstance(doc, dict):
+        raise ValidationError("Assessment settings must be a JSON object.")
+    allowed_keys = {"shuffle_questions", "shuffle_options", "allow_backtracking", "autosave_interval_seconds"}
+    unknown = set(doc.keys()) - allowed_keys
+    if unknown:
+        raise ValidationError(f"Unsupported assessment setting keys: {', '.join(sorted(unknown))}.")
+    for bool_key in ("shuffle_questions", "shuffle_options", "allow_backtracking"):
+        if bool_key in doc and not isinstance(doc[bool_key], bool):
+            raise ValidationError(f"Setting '{bool_key}' must be a boolean.")
+    if "autosave_interval_seconds" in doc:
+        interval = doc["autosave_interval_seconds"]
+        if isinstance(interval, bool) or not isinstance(interval, int) or interval < 5 or interval > 300:
+            raise ValidationError("Setting 'autosave_interval_seconds' must be an integer between 5 and 300.")
+    return doc
+
+
+def validate_assessment_questions_json(questions):
+    """Validates Assessments.questions_json against the specification schema (no answer keys)."""
+    if not isinstance(questions, list):
+        raise ValidationError("Assessment questions must be a JSON array.")
+    seen_ids = set()
+    for item in questions:
+        if not isinstance(item, dict):
+            raise ValidationError("Each question must be a JSON object.")
+        q_id = item.get("question_id")
+        q_type = item.get("type")
+        prompt = item.get("prompt")
+        points = item.get("points")
+        if not isinstance(q_id, str) or not q_id or q_id in seen_ids:
+            raise ValidationError("Each question must have a unique non-empty question_id.")
+        seen_ids.add(q_id)
+        if not isinstance(prompt, str) or not prompt.strip():
+            raise ValidationError("Each question must include a text prompt.")
+        if not _is_number(points) or points <= 0:
+            raise ValidationError("Each question must have positive numeric points.")
+        if q_type == "multiple_choice":
+            options = item.get("options")
+            if not isinstance(options, list) or len(options) < 2:
+                raise ValidationError("Multiple-choice questions require at least two options.")
+            for opt in options:
+                if not isinstance(opt, dict) or not isinstance(opt.get("option_id"), str) or not isinstance(opt.get("text"), str):
+                    raise ValidationError("Each option must contain string option_id and text.")
+            if "correct_option_ids" in item:
+                raise ValidationError("Question definitions must not contain answer keys.")
+        elif q_type == "matching":
+            pairs = item.get("left_prompts")
+            matches = item.get("available_matches")
+            if not isinstance(pairs, list) or not pairs or not isinstance(matches, list) or not matches:
+                raise ValidationError("Matching questions require left_prompts and available_matches.")
+            for pair in pairs:
+                if not isinstance(pair, dict) or not isinstance(pair.get("pair_id"), str) or not isinstance(pair.get("text"), str):
+                    raise ValidationError("Each matching prompt must contain string pair_id and text.")
+            if "correct_pairs" in item:
+                raise ValidationError("Question definitions must not contain answer keys.")
+        elif q_type in ("long_text", "essay"):
+            max_words = item.get("max_words")
+            if max_words is not None and (isinstance(max_words, bool) or not isinstance(max_words, int) or max_words < 1):
+                raise ValidationError("Long-text question max_words must be a positive integer.")
+            if "tutor_rubric" in item:
+                raise ValidationError("Question definitions must not contain grading rubrics.")
+        else:
+            raise ValidationError(f"Unsupported question type: {q_type}.")
+    return questions
+
+
+def validate_answer_key_json(answer_key_dict):
+    """Validates ExamAnswerKey.answer_key_json before encryption/storage."""
+    if not isinstance(answer_key_dict, dict):
+        raise ValidationError("Answer key must be a JSON object.")
+    for q_id, entry in answer_key_dict.items():
+        if not isinstance(q_id, str) or not q_id or not isinstance(entry, dict):
+            raise ValidationError("Each answer key entry must be keyed by question_id and map to an object.")
+        if "correct_option_ids" in entry:
+            if not isinstance(entry["correct_option_ids"], list) or not all(isinstance(x, str) for x in entry["correct_option_ids"]):
+                raise ValidationError("correct_option_ids must be a list of option ID strings.")
+            if "explanation" in entry and not isinstance(entry["explanation"], str):
+                raise ValidationError("Answer key explanation must be a string.")
+        elif "correct_pairs" in entry:
+            pairs = entry["correct_pairs"]
+            if not isinstance(pairs, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in pairs.items()):
+                raise ValidationError("correct_pairs must map pair_id strings to answer strings.")
+        elif "tutor_rubric" in entry:
+            rubric = entry["tutor_rubric"]
+            if not isinstance(rubric, dict):
+                raise ValidationError("tutor_rubric must be an object.")
+            criteria = rubric.get("criteria", [])
+            if not isinstance(criteria, list) or not all(isinstance(c, dict) for c in criteria):
+                raise ValidationError("tutor_rubric.criteria must be a list of objects.")
+        else:
+            raise ValidationError("Answer key entry must specify correct_option_ids, correct_pairs, or tutor_rubric.")
+    return answer_key_dict
+
+
+def validate_attempt_answers_json(answers):
+    """Validates AssessmentAttempt.answers_json against the specification schema."""
+    if not isinstance(answers, list):
+        raise ValidationError("Attempt answers must be a JSON array.")
+    for item in answers:
+        if not isinstance(item, dict):
+            raise ValidationError("Each answer entry must be a JSON object.")
+        q_id = item.get("question_id")
+        q_type = item.get("type")
+        if not isinstance(q_id, str) or not q_id:
+            raise ValidationError("Each answer entry must include question_id.")
+        if q_type == "multiple_choice":
+            selected = item.get("selected_option_ids", [])
+            if not isinstance(selected, list) or not all(isinstance(x, str) for x in selected):
+                raise ValidationError("selected_option_ids must be a list of strings.")
+        elif q_type == "matching":
+            matches = item.get("submitted_matches", [])
+            if not isinstance(matches, list) or not all(
+                isinstance(m, dict) and isinstance(m.get("pair_id"), str) and isinstance(m.get("selected_match"), str)
+                for m in matches
+            ):
+                raise ValidationError("submitted_matches must contain pair_id and selected_match strings.")
+        elif q_type in ("long_text", "essay"):
+            if "response_text" in item and not isinstance(item["response_text"], str):
+                raise ValidationError("response_text must be a string.")
+        else:
+            raise ValidationError(f"Unsupported answer type: {q_type}.")
+    return answers
+
+
+def validate_summary_score_json(summary):
+    """Validates AssessmentAttempt.summary_score_json before saving."""
+    if summary is None:
+        return None
+    if not isinstance(summary, dict):
+        raise ValidationError("Summary score must be a JSON object.")
+    required_nums = ("auto_graded_points", "manual_graded_points", "total_score", "max_possible_points")
+    for key in required_nums:
+        if key not in summary or not _is_number(summary[key]) or summary[key] < 0:
+            raise ValidationError(f"Summary score '{key}' must be a non-negative number.")
+    if not isinstance(summary.get("is_fully_graded"), bool):
+        raise ValidationError("Summary score 'is_fully_graded' must be a boolean.")
+    return summary

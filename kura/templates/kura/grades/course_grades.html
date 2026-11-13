@@ -117,7 +117,7 @@
                                     {% endif %}
                                 {% elif g.status == 'finalized' and can_release %}
                                     <a href="{% url 'kura:grade_release' g.id %}" class="btn btn-outline btn-sm">Release with MFA</a>
-                                {% elif g.status == 'released' %}
+                                {% elif g.status == 'released' and can_request_grade_change %}
                                     <a href="{% url 'kura:grade_change_request_create' g.id %}" class="btn btn-ghost btn-sm">Request change</a>
                                 {% endif %}
                             </div>
