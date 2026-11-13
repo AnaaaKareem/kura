@@ -12,14 +12,12 @@
 
 {% block content %}
 <div class="space-y-6">
-    <!-- Page Header (Section 8.2) -->
-    <header class="space-y-1 border-b border-base-300 pb-5">
+    <header class="space-y-1">
         <p class="k-eyebrow">Teaching &amp; learning</p>
         <h1 class="text-2xl font-bold">Schedule</h1>
-        <p class="text-sm k-muted">Weekly timetable, lecture halls, and laboratory meeting slots.</p>
+        <p class="text-sm k-muted">Weekly timetable, lecture halls, and lab meeting slots.</p>
     </header>
 
-    <!-- Schedules Table (Section 8.5) -->
     <div class="k-card p-0 overflow-x-auto">
         <table class="k-table">
             <caption class="sr-only">Weekly course schedule</caption>
@@ -41,25 +39,22 @@
                         <div class="text-xs k-muted">{{ schedule.course.title }}</div>
                     </td>
                     <td>
-                        <span class="badge badge-info badge-xs uppercase font-mono">{{ schedule.session_type }}</span>
+                        <span class="badge badge-ghost badge-sm font-medium">{{ schedule.session_type|capfirst }}</span>
                     </td>
                     <td>
                         <div class="font-medium">{{ schedule.day|capfirst }}</div>
                         <div class="text-xs k-muted k-num">{{ schedule.start_time|time:"H:i" }} &ndash; {{ schedule.end_time|time:"H:i" }}</div>
                     </td>
-                    <td class="font-medium text-xs">{{ schedule.location }}</td>
-                    <td class="text-xs">{% if schedule.instructor.first_name or schedule.instructor.last_name %}{{ schedule.instructor.first_name }} {{ schedule.instructor.last_name }}{% else %}{{ schedule.instructor.email }}{% endif %}</td>
+                    <td class="text-sm">{{ schedule.location }}</td>
+                    <td class="text-sm">{% if schedule.instructor.first_name or schedule.instructor.last_name %}{{ schedule.instructor.first_name }} {{ schedule.instructor.last_name }}{% else %}{{ schedule.instructor.email }}{% endif %}</td>
                     <td class="text-right">
                         {% if schedule.can_manage %}
                         <div class="inline-flex items-center justify-end gap-1.5">
-                            <a class="btn btn-ghost btn-xs" href="{% url 'kura:schedule_edit' schedule.id %}">Edit</a>
-                            <form method="post" action="{% url 'kura:schedule_delete' schedule.id %}" class="inline-flex items-center gap-1">
+                            <a class="btn btn-ghost btn-sm" href="{% url 'kura:schedule_edit' schedule.id %}">Edit</a>
+                            <form method="post" action="{% url 'kura:schedule_delete' schedule.id %}" class="inline" data-confirm-action="Delete this scheduled meeting for {{ schedule.course.code }}?">
                                 {% csrf_token %}
-                                <label class="text-xs k-muted cursor-pointer flex items-center gap-1">
-                                    <input type="checkbox" name="confirm" class="checkbox checkbox-xs" required>
-                                    <span>Confirm</span>
-                                </label>
-                                <button type="submit" class="btn btn-outline btn-error btn-xs">Delete</button>
+                                <input type="hidden" name="confirm" value="on">
+                                <button type="submit" class="btn btn-outline btn-error btn-sm">Delete</button>
                             </form>
                         </div>
                         {% endif %}
@@ -68,7 +63,7 @@
                 {% empty %}
                 <tr>
                     <td colspan="6" class="p-8 text-center">
-                        {% include "kura/_empty.html" with icon="schedule" title="No meeting slots scheduled" text="There are no class meeting times registered on your timetable." %}
+                        {% include "kura/_empty.html" with icon="schedule" title="No classes scheduled" text="There are no class meeting times registered on your timetable." %}
                     </td>
                 </tr>
                 {% endfor %}
