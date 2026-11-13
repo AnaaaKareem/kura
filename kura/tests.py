@@ -1146,6 +1146,22 @@ class AdminStaffAccountsTests(TestCase):
         self.assertTrue(created_user.must_change_password)
         self.assertTrue(StaffProfile.objects.filter(user=created_user).exists())
 
+    def test_new_staff_account_gets_the_role_named_by_its_title(self):
+        # The chosen title becomes the first role, recorded with the Admin who assigned it.
+        self.client.force_login(self.admin)
+        self.client.post(
+            reverse("kura:staff_create"),
+            {
+                "email": "ta.new@example.com",
+                "department": self.department.id,
+                "staff_title": "Teaching assistant",
+            },
+        )
+        created_user = User.objects.get(email="ta.new@example.com")
+        assignment = UserRole.objects.get(user=created_user)
+        self.assertEqual(assignment.role.name, "Teaching assistant")
+        self.assertEqual(assignment.assigned_by, self.admin)
+
     def test_staff_creation_fields_have_autocomplete_values(self):
         # Browser autofill should recognize common staff details without guessing field meanings.
         self.client.force_login(self.admin)
