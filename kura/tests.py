@@ -404,7 +404,7 @@ class BaseTemplateAndHomeTests(TestCase):
 
         self.assertEqual(response.status_code, 200)
         card_titles = {card["title"] for card in response.context["dashboard_cards"]}
-        self.assertEqual(card_titles, {"Staff", "Courses", "Active sessions", "Security log"})
+        self.assertEqual(card_titles, {"Staff", "Courses", "Active sessions", "Security policy", "Security log"})
 
         cards_by_title = {card["title"]: card for card in response.context["dashboard_cards"]}
         self.assertEqual(cards_by_title["Staff"]["url"], reverse("kura:staff_list"))
@@ -9303,3 +9303,35 @@ class GradeFeedbackTests(TestCase):
         self.assertContains(self.client.get(reverse("kura:student_grades")), "worked example")
         attempt_page = self.client.get(reverse("kura:attempt_detail", args=[self.data["attempt"].id]))
         self.assertContains(attempt_page, "worked example")
+
+
+class SecurityPolicyPageTests(TestCase):
+    """
+    Admins can review the security rules in force; nobody else can, and the
+    page cannot change anything.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.url = reverse("kura:security_policy")
+
+    def test_admin_sees_current_rules(self):
+        self.client.force_login(make_user("Admin"))
+        response = self.client.get(self.url)
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "12 characters")
+        self.assertContains(response, f"{settings.SESSION_ABSOLUTE_HOURS} hours")
+        self.assertContains(response, "25 MiB")
+
+    def test_admin_dashboard_links_to_the_page(self):
+        self.client.force_login(make_user("Admin"))
+        self.assertContains(self.client.get(reverse("kura:home")), self.url)
+
+    def test_other_roles_are_refused(self):
+        for role_name in ("Registrar", "Department head", "Instructor", "Teaching assistant", "Student"):
+            self.client.force_login(make_user(role_name))
+            self.assertEqual(self.client.get(self.url).status_code, 403)
+
+    def test_page_is_read_only(self):
+        self.client.force_login(make_user("Admin"))
+        self.assertEqual(self.client.post(self.url).status_code, 405)

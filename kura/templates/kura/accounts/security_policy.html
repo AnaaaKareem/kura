@@ -1,0 +1,34 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Security policy - Kura{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <header>
+        <h1 class="text-2xl font-bold">Security policy</h1>
+        <p>The rules Kura enforces right now. They are set in the server configuration, so a change goes through code review and a redeploy.</p>
+    </header>
+
+    <div class="overflow-x-auto bg-base-100 border border-base-300 rounded-box">
+        <table class="table table-sm w-full">
+            <caption class="sr-only">Security rules in force</caption>
+            <thead class="bg-base-200">
+                <tr>
+                    <th>Area</th>
+                    <th>Rule</th>
+                    <th>Value</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for area, rule, value in policies %}
+                <tr>
+                    <td class="font-semibold">{% ifchanged area %}{{ area }}{% endifchanged %}</td>
+                    <td>{{ rule }}</td>
+                    <td>{{ value }}</td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+</div>
+{% endblock %}
