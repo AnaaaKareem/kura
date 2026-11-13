@@ -93,7 +93,7 @@
                         {% for record in records %}
                         <tr>
                             <td class="k-sticky-col font-medium">
-                                {{ record.student.get_full_name|default:record.student.email }}
+                                {% if record.student.first_name or record.student.last_name %}{{ record.student.first_name }} {{ record.student.last_name }}{% else %}{{ record.student.email }}{% endif %}
                             </td>
                             <td>
                                 {% include "kura/_status_badge.html" with kind="attendance" value=record.status %}

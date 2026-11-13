@@ -31,7 +31,7 @@
             </div>
             <h1 class="text-2xl font-bold mt-1">Attempt #{{ attempt.attempt_no }} review</h1>
             <p class="text-sm k-muted">
-                {{ assessment.title }} &bull; Student: <strong>{{ attempt.student.get_full_name|default:attempt.student.email }}</strong>
+                {{ assessment.title }} &bull; Student: <strong>{% if attempt.student.first_name or attempt.student.last_name %}{{ attempt.student.first_name }} {{ attempt.student.last_name }}{% else %}{{ attempt.student.email }}{% endif %}</strong>
             </p>
         </div>
         <div class="flex items-center gap-2">

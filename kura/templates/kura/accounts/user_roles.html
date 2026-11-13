@@ -1,6 +1,6 @@
 {% extends "kura/base.html" %}
 
-{% block title %}Roles for {{ target_user.get_full_name|default:target_user.email }} - Kura{% endblock %}
+{% block title %}Roles for {% if target_user.first_name or target_user.last_name %}{{ target_user.first_name }} {{ target_user.last_name }}{% else %}{{ target_user.email }}{% endif %} - Kura{% endblock %}
 
 {% block breadcrumbs %}
 <ol class="flex items-center gap-1.5 text-sm">
@@ -18,7 +18,7 @@
     <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 border-b border-base-300 pb-5">
         <div class="space-y-1">
             <p class="k-eyebrow">Administration</p>
-            <h1 class="text-2xl font-bold">Roles for {{ target_user.get_full_name|default:target_user.email }}</h1>
+            <h1 class="text-2xl font-bold">Roles for {% if target_user.first_name or target_user.last_name %}{{ target_user.first_name }} {{ target_user.last_name }}{% else %}{{ target_user.email }}{% endif %}</h1>
             <p class="text-sm k-muted font-mono">{{ target_user.email }}</p>
         </div>
         <a href="{% url 'kura:staff_list' %}" class="btn btn-ghost btn-sm">
