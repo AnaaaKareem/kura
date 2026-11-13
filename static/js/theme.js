@@ -46,6 +46,11 @@ document.addEventListener("DOMContentLoaded", function () {
         printRecoveryCodes.addEventListener("click", function () { window.print(); });
     }
 
+    // Print the current document for buttons marked with data-print.
+    document.querySelectorAll("[data-print]").forEach(function (button) {
+        button.addEventListener("click", function () { window.print(); });
+    });
+
     // -------------------------------------------------------------------------
     // 3. Theme Management (Light "kura", Dark "kura-dark", System "kura-system")
     // -------------------------------------------------------------------------
