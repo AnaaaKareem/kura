@@ -14,27 +14,29 @@
 </ol>
 {% endblock %}
 
+{% block form_errors %}{% endblock %}
+
 {% block content %}
-<div class="max-w-xl mx-auto space-y-6">
-    <!-- Page Header (Section 8.2) -->
+<div class="max-w-2xl mx-auto space-y-6">
     <header class="space-y-1">
         <p class="k-eyebrow">{{ module.title }}</p>
         <h1 class="text-2xl font-bold">{% if editing %}Edit section{% else %}Add section{% endif %}</h1>
         <p class="text-sm k-muted">
-            Group learning materials and assessments under module <strong>{{ module.title }}</strong>.
+            Group items and assessments inside {{ module.title }}.
         </p>
     </header>
 
     <div class="k-card">
         <form method="post" class="space-y-4">
             {% csrf_token %}
+            {% include "kura/_form_errors.html" %}
 
             {% include "kura/_field.html" with field=form.title %}
             {% include "kura/_field.html" with field=form.section_type %}
 
             <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
-                <a href="{% url 'kura:course_detail' module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
-                <button type="submit" class="btn btn-primary btn-sm">{% if editing %}Save section{% else %}Add section{% endif %}</button>
+                <a href="{% url 'kura:course_detail' module.course.id %}" class="btn btn-ghost">Cancel</a>
+                <button type="submit" class="btn btn-primary">{% if editing %}Save section{% else %}Add section{% endif %}</button>
             </div>
         </form>
     </div>

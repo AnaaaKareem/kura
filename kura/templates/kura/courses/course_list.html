@@ -12,8 +12,7 @@
 
 {% block content %}
 <div class="space-y-6">
-    <!-- Page Header (Section 8.2) -->
-    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 border-b border-base-300 pb-5">
+    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div class="space-y-1">
             <p class="k-eyebrow">Teaching &amp; learning</p>
             <h1 class="text-2xl font-bold">Courses</h1>
@@ -23,12 +22,12 @@
         </div>
         <div class="flex items-center gap-2">
             {% if is_admin %}
-            <a href="{% url 'kura:admin_course_create' %}" class="btn btn-primary btn-sm">
+            <a href="{% url 'kura:admin_course_create' %}" class="btn btn-primary btn-sm w-full sm:w-auto">
                 {% include "kura/_icon.html" with name="plus" class="h-4 w-4" %}
                 <span>New course</span>
             </a>
             {% elif is_head %}
-            <a href="{% url 'kura:course_create' %}" class="btn btn-primary btn-sm">
+            <a href="{% url 'kura:course_create' %}" class="btn btn-primary btn-sm w-full sm:w-auto">
                 {% include "kura/_icon.html" with name="plus" class="h-4 w-4" %}
                 <span>New course</span>
             </a>
@@ -51,40 +50,41 @@
     </form>
     {% endif %}
 
-    <!-- Course cards grid -->
+    <div class="flex items-center justify-between">
+        <p class="text-sm k-muted k-num">{{ courses|length }} course{{ courses|length|pluralize }}</p>
+    </div>
+
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {% for course in courses %}
-        <article class="k-card flex flex-col justify-between hover:border-primary transition-colors">
-            <div class="space-y-3">
-                <div class="flex items-start justify-between gap-2">
-                    <span class="badge badge-primary font-mono text-xs">{{ course.code }}</span>
+        <a href="{% url 'kura:course_detail' course.id %}" class="k-card k-card-link flex flex-col justify-between gap-4">
+            <div class="space-y-2">
+                <div class="flex items-center justify-between gap-2">
+                    <span class="k-eyebrow">{{ course.code }}</span>
+                    {% if is_admin or is_head or not course.is_published %}
                     {% include "kura/_status_badge.html" with kind="course" value=course.is_published %}
+                    {% endif %}
                 </div>
-                <div>
-                    <h2 class="text-base font-semibold leading-snug">
-                        <a href="{% url 'kura:course_detail' course.id %}" class="hover:text-primary">
-                            {{ course.title }}
-                        </a>
-                    </h2>
-                    <p class="text-xs k-muted mt-1 line-clamp-2 leading-relaxed">
-                        {{ course.description|default:"No curriculum description provided." }}
-                    </p>
-                </div>
+                <h2 class="text-lg font-semibold leading-snug text-base-content">{{ course.title }}</h2>
+                <p class="text-sm k-muted leading-relaxed">
+                    {{ course.description|truncatechars:140|default:"No curriculum description provided." }}
+                </p>
             </div>
 
-            <div class="mt-4 pt-3 border-t border-base-300 flex items-center justify-between text-xs">
+            <div class="pt-3 border-t border-base-300 flex items-center justify-between text-xs gap-2">
                 <span class="k-muted truncate">{{ course.department.name }}</span>
                 <span class="k-num font-medium text-base-content flex-shrink-0">{{ course.semester|capfirst }} {{ course.academic_year }}</span>
             </div>
-        </article>
+        </a>
         {% empty %}
         <div class="col-span-full">
             {% if is_admin %}
-            {% include "kura/_empty.html" with icon="courses" title="No courses match the criteria" text="No academic courses are available." action_url="/admin/courses/new/" action_label="Create a course" %}
+            {% url 'kura:admin_course_create' as create_course_url %}
+            {% include "kura/_empty.html" with icon="courses" title="No courses match the criteria" text="No academic courses are available." action_url=create_course_url action_label="Create a course" %}
             {% elif is_head %}
-            {% include "kura/_empty.html" with icon="courses" title="No courses available" text="No courses have been created in your department yet." action_url="/courses/new/" action_label="Create a course" %}
+            {% url 'kura:course_create' as create_course_url %}
+            {% include "kura/_empty.html" with icon="courses" title="No courses yet" text="No courses have been created in your department yet." action_url=create_course_url action_label="Create a course" %}
             {% else %}
-            {% include "kura/_empty.html" with icon="courses" title="No courses enrolled" text="Ask your course administrator if you expected to see a course here." %}
+            {% include "kura/_empty.html" with icon="courses" title="No courses enrolled" text="You are not enrolled in any courses yet. The Registrar enrolls students." %}
             {% endif %}
         </div>
         {% endfor %}
