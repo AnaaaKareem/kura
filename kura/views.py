@@ -1,5 +1,7 @@
+import csv
 import hashlib
 import html
+import io
 import ipaddress
 import json
 import logging
@@ -21,7 +23,7 @@ from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.cache import caches
 from django.core.paginator import Paginator
 from django.db import transaction
-from django.db.models import Avg, Prefetch, Q, Value
+from django.db.models import Avg, Count, Prefetch, Q, Value
 from django.db.models.functions import Concat
 from django.http import HttpResponse, HttpResponseForbidden, HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -40,6 +42,7 @@ from .forms import (
     AdminCourseForm,
     AdminCourseFilterForm,
     AdminStaffFilterForm,
+    AdminUserFilterForm,
     AdminSessionFilterForm,
     AdminSessionRevokeForm,
     AssessmentAttemptStartForm,
@@ -87,6 +90,11 @@ from .forms import (
     StudentFilterForm,
     TAAssignForm,
     UserRoleChangeForm,
+    validate_answer_key_json,
+    validate_assessment_questions_json,
+    validate_assessment_settings_json,
+    validate_attempt_answers_json,
+    validate_summary_score_json,
 )
 from .logging_utils import get_client_ip, log_invalid_form, log_security_event
 from .models import (
@@ -162,6 +170,7 @@ from .vault import decrypt_answer_key, decrypt_mfa_secret, encrypt_answer_key, e
 DASHBOARD_CARDS_BY_ROLE = {
     "Admin": [
         {"title": "Staff", "description": "Create and manage staff accounts.", "url": "/admin/staff/"},
+        {"title": "Users", "description": "Lock, unlock, deactivate, or update roles for any account.", "url": "/admin/users/"},
         {"title": "Courses", "description": "Browse and manage university courses.", "url": "/courses/"},
         {
             "title": "Active sessions",
@@ -203,6 +212,7 @@ DASHBOARD_CARDS_BY_ROLE = {
     ],
     "Teaching assistant": [
         {"title": "Courses", "description": "Open your assigned courses.", "url": "/courses/"},
+        {"title": "Schedule", "description": "Review class schedules.", "url": "/schedules/"},
         {
             "title": "Attendance",
             "description": "Review attendance records for your courses.",
@@ -842,6 +852,27 @@ def build_dashboard_attention(user, role_names, head_departments):
         enrolled_course_ids = Enrollment.objects.filter(student=user, status=EnrollmentStatus.ACTIVE).values_list(
             "course_id", flat=True
         )
+        open_sessions = (
+            ModuleAttendanceSession.objects.filter(
+                module__course_id__in=enrolled_course_ids,
+                module__course__is_published=True,
+                module__is_visible=True,
+                is_active=True,
+                expires_at__gt=now,
+            )
+            .exclude(records__student=user)
+            .select_related("module__course")
+            .order_by("expires_at")[: 3 - len(items)]
+        )
+        for att_session in open_sessions:
+            if student_can_see_module(user, att_session.module.course, att_session.module):
+                items.append(
+                    {
+                        "text": f"Attendance open in {att_session.module.course.code}: {att_session.title}",
+                        "url": reverse("kura:student_checkin", args=[att_session.id]),
+                        "action_label": "Check in",
+                    }
+                )
         closing_soon = (
             Assessment.objects.filter(
                 section__module__course_id__in=enrolled_course_ids,
@@ -1951,6 +1982,50 @@ def staff_list_view(request):
 
 
 @login_required
+def admin_users_view(request):
+    """
+    Displays all user accounts (staff and students) for administrative lock/deactivation/role management.
+    Who can use it: System administrators only.
+    Security: Restricted to Admin role; exposes account status and roles only, never grades or academic content.
+    """
+    if not has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    users = User.objects.prefetch_related("user_roles__role").order_by("-created_at")
+    filter_form = AdminUserFilterForm(request.GET or None)
+    now = timezone.now()
+    if filter_form.is_valid():
+        search = filter_form.cleaned_data["q"]
+        if search:
+            users = users.filter(
+                Q(first_name__icontains=search) | Q(last_name__icontains=search) | Q(email__icontains=search)
+            )
+        if filter_form.cleaned_data["role"]:
+            users = users.filter(user_roles__role__name=filter_form.cleaned_data["role"])
+        status = filter_form.cleaned_data["status"]
+        if status == "deactivated":
+            users = users.filter(is_active=False)
+        elif status == "locked":
+            users = users.filter(is_active=True, locked_until__gt=now)
+        elif status == "active":
+            users = users.filter(is_active=True).filter(Q(locked_until__isnull=True) | Q(locked_until__lte=now))
+        users = users.distinct()
+
+    page_obj, pagination_query = paginate_queryset(request, users, per_page=25)
+    return render(
+        request,
+        "kura/accounts/admin_users.html",
+        {
+            "accounts": page_obj.object_list,
+            "page_obj": page_obj,
+            "pagination_query": pagination_query,
+            "filter_form": filter_form,
+            "now": now,
+        },
+    )
+
+
+@login_required
 def staff_create_view(request):
     """
     Creates a new staff account and profile with an auto-generated temporary password.
@@ -2090,6 +2165,16 @@ def staff_settings_view(request):
     })
 
 
+def safe_admin_return_url(request):
+    """Returns a validated in-site redirect target for admin account actions."""
+    next_url = request.POST.get("next") or request.GET.get("next") or ""
+    if next_url and url_has_allowed_host_and_scheme(
+        next_url, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+    ):
+        return next_url
+    return reverse("kura:staff_list")
+
+
 @login_required
 def user_deactivate_view(request, user_id):
     """
@@ -2105,14 +2190,16 @@ def user_deactivate_view(request, user_id):
     if not has_role(request.user, "Admin"):
         raise PermissionDenied
 
+    return_url = safe_admin_return_url(request)
+
     # ACL-05: deactivating an account needs a fresh second factor.
     if not has_fresh_second_factor(request):
-        return redirect_to_reauth(request, reverse("kura:staff_list"))
+        return redirect_to_reauth(request, return_url)
 
     # Prevent administrators from deactivating their own account.
     if str(request.user.id) == str(user_id):
         messages.error(request, "You cannot deactivate your own account.")
-        return redirect("kura:staff_list")
+        return redirect(return_url)
 
     target_user = get_object_or_404(User, id=user_id)
 
@@ -2140,7 +2227,7 @@ def user_deactivate_view(request, user_id):
     else:
         session_label = "sessions"
     messages.success(request, f"Account deactivated, {ended_session_count} {session_label} ended.")
-    return redirect("kura:staff_list")
+    return redirect(return_url)
 
 
 @login_required
@@ -2157,10 +2244,12 @@ def user_lock_toggle_view(request, user_id):
     if not has_role(request.user, "Admin"):
         raise PermissionDenied
 
+    return_url = safe_admin_return_url(request)
+
     # Prevent administrators from locking their own account.
     if str(request.user.id) == str(user_id):
         messages.error(request, "You cannot lock your own account.")
-        return redirect("kura:staff_list")
+        return redirect(return_url)
 
     target_user = get_object_or_404(User, id=user_id)
 
@@ -2178,7 +2267,7 @@ def user_lock_toggle_view(request, user_id):
     target_user.save()
     # Record the account ID but never the lock timestamp or account email.
     log_security_event(request, event_name, {"target_user_id": target_user.id}, logging.WARNING)
-    return redirect("kura:staff_list")
+    return redirect(return_url)
 
 
 @login_required
@@ -2642,9 +2731,12 @@ def course_list_view(request):
         ).values_list("course_id", flat=True)
         courses = Course.objects.filter(id__in=enrolled_ids, is_published=True).select_related("department")
 
-    # Registrars and Admins see published courses catalog.
+    # Registrars have no instructional course catalog access.
+    elif has_role(request.user, "Registrar"):
+        raise PermissionDenied
+
     else:
-        courses = Course.objects.filter(is_published=True).select_related("department")
+        courses = Course.objects.none()
 
     # Admin filters narrow the already authorized catalog; invalid values are not used.
     filter_form = AdminCourseFilterForm(request.GET or None)
@@ -2850,11 +2942,15 @@ def course_detail_view(request, course_id):
     # Load course staff assignments.
     staff_assignments = CourseStaff.objects.filter(course=course).select_related("user")
 
-    # Check lead instructor authority to assign TAs.
+    # Check instructor authority to assign TAs (lead and co-instructors).
     is_lead = is_lead_instructor(request.user, course)
+    can_assign_ta = is_course_instructor(request.user, course)
     course_schedules = Schedule.objects.filter(course=course).select_related("instructor").order_by("day", "start_time")
     enrolled_count = Enrollment.objects.filter(course=course, status=EnrollmentStatus.ACTIVE).count()
     grade_summary = None
+    attendance_sessions = []
+    open_attendance_sessions = []
+    now = timezone.now()
     if is_head or is_staff:
         course_grades_qs = Grade.objects.filter(assessment__section__module__course=course).exclude(student=request.user)
         grade_summary = {
@@ -2868,6 +2964,26 @@ def course_detail_view(request, course_id):
             .exclude(student=request.user)
             .count(),
         }
+        attendance_sessions = list(
+            ModuleAttendanceSession.objects.filter(module__course=course)
+            .select_related("module")
+            .order_by("-created_at")[:10]
+        )
+    elif enrolled:
+        candidate_sessions = (
+            ModuleAttendanceSession.objects.filter(
+                module__course=course,
+                module__is_visible=True,
+                is_active=True,
+                expires_at__gt=now,
+            )
+            .exclude(records__student=request.user)
+            .select_related("module")
+            .order_by("expires_at")
+        )
+        for att_session in candidate_sessions:
+            if student_can_see_module(request.user, course, att_session.module):
+                open_attendance_sessions.append(att_session)
 
     context = {
         "course": course,
@@ -2876,10 +2992,14 @@ def course_detail_view(request, course_id):
         "course_schedules": course_schedules,
         "enrolled_count": enrolled_count,
         "grade_summary": grade_summary,
+        "attendance_sessions": attendance_sessions,
+        "open_attendance_sessions": open_attendance_sessions,
+        "now": now,
         "active_tab": active_tab,
         "is_head": is_head,
         "is_staff": is_staff,
         "is_lead": is_lead,
+        "can_assign_ta": can_assign_ta,
     }
     return render(request, "kura/courses/course_detail.html", context)
 
@@ -2950,16 +3070,6 @@ def course_staff_assign_view(request, course_id):
                 "staff_role": staff_role,
                 "can_release_grades": can_release,
                 "assigned_by": request.user,
-            },
-        )
-        log_security_event(
-            request,
-            "admin.staff.assigned",
-            {
-                "course_id": course.id,
-                "target_user_id": user.id,
-                "staff_role": "teaching_assistant",
-                "can_release_grades": False,
             },
         )
         # Record the course assignment without recording the staff member's email.
@@ -3586,9 +3696,11 @@ def schedule_list_view(request):
         )
         schedules = Schedule.objects.filter(course_id__in=enrolled_courses, course__is_published=True)
         allowed_courses = Course.objects.filter(id__in=enrolled_courses, is_published=True).order_by("code")
+    elif has_role(request.user, "Admin") or has_role(request.user, "Registrar"):
+        raise PermissionDenied
     else:
-        schedules = Schedule.objects.filter(course__is_published=True)
-        allowed_courses = Course.objects.filter(is_published=True).order_by("code")
+        schedules = Schedule.objects.none()
+        allowed_courses = Course.objects.none()
 
     filter_form = ScheduleFilterForm(request.GET or None, courses=allowed_courses)
     if filter_form.is_valid():
@@ -3990,6 +4102,9 @@ def attendance_history_view(request):
 """
     attendance_stats = None
     filter_form = None
+    open_sessions = []
+    course_attendance_sessions = []
+    now = timezone.now()
     if has_role(request.user, "Student"):
         # Students strictly see only their own attendance records.
         records = (
@@ -3999,6 +4114,24 @@ def attendance_history_view(request):
             .select_related("session__module__course")
             .order_by("-verified_at")
         )
+        enrolled_course_ids = Enrollment.objects.filter(
+            student=request.user, status=EnrollmentStatus.ACTIVE
+        ).values_list("course_id", flat=True)
+        candidate_sessions = (
+            ModuleAttendanceSession.objects.filter(
+                module__course_id__in=enrolled_course_ids,
+                module__course__is_published=True,
+                module__is_visible=True,
+                is_active=True,
+                expires_at__gt=now,
+            )
+            .exclude(records__student=request.user)
+            .select_related("module__course")
+            .order_by("expires_at")
+        )
+        for att_session in candidate_sessions:
+            if student_can_see_module(request.user, att_session.module.course, att_session.module):
+                open_sessions.append(att_session)
         total_count = records.count()
         present_count = records.filter(status=AttendanceStatus.PRESENT).count()
         late_count = records.filter(status=AttendanceStatus.LATE).count()
@@ -4052,6 +4185,11 @@ def attendance_history_view(request):
                 records = records.filter(verified_at__date__gte=filter_form.cleaned_data["date_from"])
             if filter_form.cleaned_data["date_to"]:
                 records = records.filter(verified_at__date__lte=filter_form.cleaned_data["date_to"])
+        course_attendance_sessions = list(
+            ModuleAttendanceSession.objects.filter(module__course_id__in=staff_courses)
+            .select_related("module__course")
+            .order_by("-created_at")[:15]
+        )
         is_staff_view = True
 
     page_obj, pagination_query = paginate_queryset(request, records, per_page=25)
@@ -4065,6 +4203,9 @@ def attendance_history_view(request):
             "attendance_stats": attendance_stats,
             "filter_form": filter_form,
             "is_staff_view": is_staff_view,
+            "open_sessions": open_sessions,
+            "course_attendance_sessions": course_attendance_sessions,
+            "now": now,
         },
     )
 
@@ -4072,6 +4213,21 @@ def attendance_history_view(request):
 # ==========================================
 # Assessments, attempts & grading
 # ==========================================
+
+
+def compute_submission_hash(attempt):
+    """
+    Computes the SHA-256 integrity digest for a submitted attempt, including
+    canonical answers, submission timestamp, and sorted attached file hashes.
+    """
+    file_hashes = list(
+        AttemptFile.objects.filter(attempt=attempt).order_by("file_id").values_list("file__sha256_hash", flat=True)
+    )
+    payload = (
+        f"{attempt.id}:{json.dumps(attempt.answers_json, sort_keys=True)}:"
+        f"{attempt.submitted_at.isoformat()}:{json.dumps(file_hashes)}"
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
 def evaluate_attempt(attempt):
@@ -4120,6 +4276,7 @@ def evaluate_attempt(attempt):
         total_max_points += q_points
 
         student_ans = answers_by_id.get(q_id, {"question_id": q_id, "type": q_type})
+        student_ans.setdefault("type", q_type)
         key_data = answer_key_dict.get(q_id, {})
 
         if q_type == "multiple_choice":
@@ -4187,11 +4344,16 @@ def evaluate_attempt(attempt):
         "max_possible_points": float(total_max_points),
         "is_fully_graded": is_fully_graded,
     }
+    validate_attempt_answers_json(attempt.answers_json)
+    validate_summary_score_json(attempt.summary_score_json)
     attempt.save()
 
-    # If fully auto-graded, create or update a draft grade record.
+    # If fully auto-graded, create or update a draft grade record and append GradeHistory.
     if is_fully_graded:
-        Grade.objects.update_or_create(
+        existing_grade = Grade.objects.filter(assessment=attempt.assessment, student=attempt.student).first()
+        old_score = existing_grade.score if existing_grade else None
+        old_status = existing_grade.status if existing_grade else None
+        grade, created = Grade.objects.update_or_create(
             assessment=attempt.assessment,
             student=attempt.student,
             defaults={
@@ -4200,6 +4362,16 @@ def evaluate_attempt(attempt):
                 "status": GradeStatus.DRAFT,
             },
         )
+        if created or old_score != auto_graded_points or old_status != GradeStatus.DRAFT:
+            GradeHistory.objects.create(
+                grade=grade,
+                old_score=old_score,
+                new_score=auto_graded_points,
+                old_status=old_status,
+                new_status=GradeStatus.DRAFT,
+                changed_by=attempt.student,
+                reason="Automatic evaluation upon submission.",
+            )
 
 
 @login_required
@@ -4444,6 +4616,9 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
             stored_answer_keys = {}
             if not question_editing_disabled:
                 try:
+                    validate_assessment_settings_json(settings_doc)
+                    validate_assessment_questions_json(questions)
+                    validate_answer_key_json(answer_keys)
                     stored_answer_keys = encrypt_answer_key(answer_keys)
                 except ValidationError:
                     form.add_error(None, "The answer key could not be saved securely right now. Please try again later.")
@@ -4768,10 +4943,7 @@ def scanned_paper_staff_upload_view(request, assessment_id):
                 raise ValidationError("Upload a PDF or image of the scanned paper.")
             AttemptFile.objects.create(attempt=attempt, file=stored_file)
             attempt.submitted_at = timezone.now()
-            payload = (
-                f"{attempt.id}:{json.dumps(attempt.answers_json, sort_keys=True)}:{attempt.submitted_at.isoformat()}"
-            )
-            attempt.submission_hash = hashlib.sha256(payload.encode("utf-8")).hexdigest()
+            attempt.submission_hash = compute_submission_hash(attempt)
             evaluate_attempt(attempt)
     except ValidationError as error:
         if hasattr(error, "message"):
@@ -5213,7 +5385,9 @@ def assessment_autosave_view(request, attempt_id):
             return HttpResponse("Unable to save this response.", status=400)
         existing_answers = {item.get("question_id"): item for item in (attempt.answers_json or [])}
         existing_answers[question_id] = answer
-        attempt.answers_json = list(existing_answers.values())
+        new_answers = list(existing_answers.values())
+        validate_attempt_answers_json(new_answers)
+        attempt.answers_json = new_answers
         attempt.last_autosave_at = timezone.now()
         attempt.save(update_fields=["answers_json", "last_autosave_at"])
 
@@ -5271,6 +5445,41 @@ def assessment_attempt_file_upload_view(request, attempt_id):
 
 
 @login_required
+def assessment_attempt_file_delete_view(request, attempt_id, file_id):
+    """
+    Removes a student submission file from an in-progress assessment attempt.
+    Who can use it: The attempting student.
+    Security: POST only; locks attempt and permits deletion only while In_Progress and unexpired.
+    """
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+    if has_role(request.user, "Admin"):
+        raise PermissionDenied
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    with transaction.atomic():
+        attempt = get_object_or_404(AssessmentAttempt.objects.select_for_update(), id=attempt_id, student=request.user)
+        if not attempt.assessment.section.is_visible:
+            raise PermissionDenied
+        if attempt.status != AttemptStatus.IN_PROGRESS or timezone.now() >= attempt.expires_at:
+            messages.error(request, "Files cannot be removed: attempt is closed or deadline has passed.")
+            return redirect("kura:attempt_detail", attempt_id=attempt.id)
+        attachment = get_object_or_404(AttemptFile.objects.select_related("file"), attempt=attempt, file_id=file_id)
+        stored_file = attachment.file
+        file_sha = stored_file.sha256_hash
+        attachment.delete()
+        stored_file.delete()
+        log_security_event(
+            request,
+            "file.deleted",
+            {"file_id": file_id, "sha256": file_sha, "attempt_id": attempt.id},
+        )
+    messages.success(request, "Attached file removed.")
+    return redirect("kura:assessment_take", attempt_id=attempt.id)
+
+
+@login_required
 def assessment_submit_view(request, attempt_id):
     """
     Submits an assessment attempt, computes submission hash, and triggers auto-grading.
@@ -5307,10 +5516,7 @@ def assessment_submit_view(request, attempt_id):
 
         # Seal the attempt and its grade together, capping the time at the deadline.
         attempt.submitted_at = min(timezone.now(), attempt.expires_at)
-        raw_payload = (
-            f"{attempt.id}:{json.dumps(attempt.answers_json, sort_keys=True)}:{attempt.submitted_at.isoformat()}"
-        )
-        attempt.submission_hash = hashlib.sha256(raw_payload.encode("utf-8")).hexdigest()
+        attempt.submission_hash = compute_submission_hash(attempt)
         evaluate_attempt(attempt)
 
         # Email a receipt: when it was submitted, its integrity hash and the
@@ -5538,6 +5744,7 @@ def course_grades_view(request, course_id):
         and (has_role(request.user, "Instructor") or has_role(request.user, "Teaching assistant")),
         # Finalizing needs a lead or co-instructor assignment; a TA assignment is not enough.
         "can_finalize_grade": is_course_instructor(request.user, course),
+        "can_request_grade_change": is_course_instructor(request.user, course),
         "grade_schemes": grade_schemes,
         "course_results": course_results,
         "pending_appeals": pending_appeals,
@@ -6038,7 +6245,7 @@ def grade_change_request_create_view(request, grade_id):
     if grade.student_id == request.user.id:
         raise PermissionDenied
 
-    if not is_course_staff(request.user, course):
+    if not is_course_instructor(request.user, course):
         raise PermissionDenied
 
     if grade.status != GradeStatus.RELEASED:
@@ -6301,13 +6508,21 @@ def student_transcript_view(request):
     )
 
 
+def safe_csv_cell(value):
+    """Neutralizes spreadsheet formula prefixes before writing a CSV cell."""
+    text = str(value)
+    if text and text[0] in ("=", "+", "-", "@", "\t", "\r"):
+        return "'" + text
+    return text
+
+
 @login_required
 def department_reports_view(request, department_id):
     """
-    Institutional reporting dashboard for Department Heads.
+    Institutional reporting dashboard for Department Heads, with CSV export.
     Who can use it: Department Heads for their own department.
-    Security: Cross-department access strictly forbidden.
-"""
+    Security: Cross-department access strictly forbidden; CSV cells neutralize formula prefixes.
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -6321,19 +6536,73 @@ def department_reports_view(request, department_id):
     if not is_department_head(request.user, department):
         raise PermissionDenied
 
-    courses = Course.objects.filter(department=department).order_by("code")
-    enrollment_count = Enrollment.objects.filter(course__department=department, status=EnrollmentStatus.ACTIVE).count()
+    courses = list(Course.objects.filter(department=department).order_by("code"))
+    enrollment_counts = dict(
+        Enrollment.objects.filter(course__department=department, status=EnrollmentStatus.ACTIVE)
+        .values_list("course_id")
+        .annotate(total=Count("id"))
+    )
+    released_avgs = dict(
+        CourseResult.objects.filter(course__department=department, status=GradeStatus.RELEASED)
+        .values_list("course_id")
+        .annotate(avg=Avg("final_score"))
+    )
+    course_rows = []
+    for c in courses:
+        c_avg = released_avgs.get(c.id)
+        course_rows.append(
+            {
+                "course": c,
+                "active_enrollments": enrollment_counts.get(c.id, 0),
+                "avg_score": round(c_avg, 2) if c_avg is not None else None,
+            }
+        )
+
+    enrollment_count = sum(row["active_enrollments"] for row in course_rows)
     results = CourseResult.objects.filter(course__department=department, status=GradeStatus.RELEASED)
     avg_score = None
     if results.exists():
         avg_score = sum(r.final_score for r in results) / results.count()
 
-    rounded_average = None
-    if avg_score:
-        rounded_average = round(avg_score, 2)
+    rounded_average = round(avg_score, 2) if avg_score is not None else None
+
+    if request.GET.get("format") == "csv":
+        buffer = io.StringIO()
+        writer = csv.writer(buffer)
+        writer.writerow(
+            [
+                "Course Code",
+                "Course Title",
+                "Semester",
+                "Academic Year",
+                "Published",
+                "Active Enrollments",
+                "Average Released Result (%)",
+            ]
+        )
+        for row in course_rows:
+            c = row["course"]
+            writer.writerow(
+                [
+                    safe_csv_cell(c.code),
+                    safe_csv_cell(c.title),
+                    safe_csv_cell(c.semester),
+                    c.academic_year,
+                    "Published" if c.is_published else "Draft",
+                    row["active_enrollments"],
+                    row["avg_score"] if row["avg_score"] is not None else "",
+                ]
+            )
+        response = HttpResponse(buffer.getvalue(), content_type="text/csv; charset=utf-8")
+        response["Content-Disposition"] = f'attachment; filename="{department.code.lower()}_report.csv"'
+        response["X-Content-Type-Options"] = "nosniff"
+        response["Cache-Control"] = "no-store"
+        return response
+
     context = {
         "department": department,
         "courses": courses,
+        "course_rows": course_rows,
         "enrollment_count": enrollment_count,
         "avg_score": rounded_average,
     }

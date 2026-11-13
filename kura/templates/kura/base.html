@@ -139,7 +139,7 @@
                         </a>
                         {% endwith %}
                     </li>
-                    {% if 'Instructor' in nav_roles or 'Student' in nav_roles or 'Department head' in nav_roles %}
+                    {% if 'Instructor' in nav_roles or 'Teaching assistant' in nav_roles or 'Student' in nav_roles or 'Department head' in nav_roles %}
                     <li>
                         <a href="{% url 'kura:schedule_list' %}" class="{% if 'schedule' in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'schedule' in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
                             {% include "kura/_icon.html" with name="schedule" %}
@@ -200,9 +200,15 @@
                     {% if 'Admin' in nav_roles %}
                     <li class="k-eyebrow px-3 pt-4 pb-1">Administration</li>
                     <li>
-                        <a href="{% url 'kura:staff_list' %}" class="{% if 'staff' in request.resolver_match.url_name or 'user_roles' in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'staff' in request.resolver_match.url_name or 'user_roles' in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
+                        <a href="{% url 'kura:staff_list' %}" class="{% if 'staff_list' in request.resolver_match.url_name or 'staff_create' in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'staff_list' in request.resolver_match.url_name or 'staff_create' in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
                             {% include "kura/_icon.html" with name="staff" %}
                             <span>Staff</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="{% url 'kura:admin_users' %}" class="{% if 'admin_users' in request.resolver_match.url_name or 'user_roles' in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'admin_users' in request.resolver_match.url_name or 'user_roles' in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
+                            {% include "kura/_icon.html" with name="students" %}
+                            <span>Users</span>
                         </a>
                     </li>
                     <li>
@@ -215,6 +221,12 @@
                         <a href="{% url 'kura:security_policy' %}" class="{% if 'security_policy' in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'security_policy' in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
                             {% include "kura/_icon.html" with name="shield-check" %}
                             <span>Security policy</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="{% url 'kura:staff_settings' %}" class="{% if 'staff_settings' in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'staff_settings' in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
+                            {% include "kura/_icon.html" with name="dashboard" %}
+                            <span>Settings</span>
                         </a>
                     </li>
                     <li>

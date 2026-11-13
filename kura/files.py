@@ -1,4 +1,5 @@
 import hashlib
+import hmac
 import logging
 import os
 import socket
@@ -299,10 +300,19 @@ def validate_and_save_upload(uploaded_file, user):
 def create_download_response(stored_file):
     """
     Builds an HTTP download response with forced attachment disposition,
-    MIME type, nosniff, and no-store caching headers.
+    MIME type, nosniff, and no-store caching headers after re-verifying SHA-256.
     """
-    # Load binary data from FileContent.
-    binary_content = stored_file.content.content
+    # Load binary data from FileContent and re-verify its SHA-256 digest before serving.
+    binary_content = bytes(stored_file.content.content)
+    actual_sha256 = hashlib.sha256(binary_content).hexdigest()
+    if not hmac.compare_digest(actual_sha256, stored_file.sha256_hash):
+        log_security_event(
+            None,
+            "file.integrity_failed",
+            {"file_id": stored_file.id, "expected_sha256": stored_file.sha256_hash},
+            level=logging.ERROR,
+        )
+        return HttpResponse("File integrity verification failed.", status=500)
 
     response = HttpResponse(binary_content, content_type=stored_file.mime_type)
     safe_filename = sanitize_filename(stored_file.original_filename)

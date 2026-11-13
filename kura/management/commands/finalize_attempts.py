@@ -1,11 +1,9 @@
-import hashlib
-import json
 from django.core.management.base import BaseCommand
 from django.db import transaction
 from django.utils import timezone
 
 from kura.models import AssessmentAttempt, AttemptStatus
-from kura.views import evaluate_attempt
+from kura.views import compute_submission_hash, evaluate_attempt
 
 
 class Command(BaseCommand):
@@ -30,8 +28,7 @@ class Command(BaseCommand):
                 if attempt.status != AttemptStatus.IN_PROGRESS or attempt.expires_at >= timezone.now():
                     continue
                 attempt.submitted_at = attempt.expires_at
-                raw_payload = f"{attempt.id}:{json.dumps(attempt.answers_json, sort_keys=True)}:{attempt.submitted_at.isoformat()}"
-                attempt.submission_hash = hashlib.sha256(raw_payload.encode("utf-8")).hexdigest()
+                attempt.submission_hash = compute_submission_hash(attempt)
                 evaluate_attempt(attempt)
                 finalized_count += 1
 

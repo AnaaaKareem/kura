@@ -60,7 +60,7 @@
                     {% endif %}
 
                     {% if is_staff or is_head %}
-                    {% if is_lead %}
+                    {% if can_assign_ta %}
                     <li><a href="{% url 'kura:course_ta_assign' course.id %}">Assign teaching assistant</a></li>
                     {% endif %}
                     <li><a href="{% url 'kura:schedule_create' course.id %}">Add schedule</a></li>
@@ -149,7 +149,7 @@
                         {% if is_head %}
                         <a href="{% url 'kura:course_staff_assign' course.id %}" class="btn btn-outline btn-sm">Assign instructor</a>
                         {% endif %}
-                        {% if is_lead %}
+                        {% if can_assign_ta %}
                         <a href="{% url 'kura:course_ta_assign' course.id %}" class="btn btn-outline btn-sm">Assign TA</a>
                         {% endif %}
                     </div>
@@ -196,6 +196,47 @@
                 </div>
             </section>
             {% elif not is_admin %}
+            {% if open_attendance_sessions %}
+            <section class="space-y-2" aria-label="Open attendance check-ins">
+                {% for att_session in open_attendance_sessions %}
+                <div class="alert border-l-4 border-primary bg-base-100 border border-base-300 flex items-center justify-between gap-4">
+                    <div>
+                        <p class="text-sm font-semibold">Attendance open: {{ att_session.title }}</p>
+                        <p class="text-xs k-muted">{{ att_session.module.title }} &bull; Closes {{ att_session.expires_at|date:"j M Y, H:i" }}</p>
+                    </div>
+                    <a href="{% url 'kura:student_checkin' att_session.id %}" class="btn btn-primary btn-sm flex-shrink-0">Check in</a>
+                </div>
+                {% endfor %}
+            </section>
+            {% endif %}
+
+            {% if attendance_sessions %}
+            <section class="k-card space-y-3" aria-label="Course attendance sessions">
+                <div class="flex items-center justify-between gap-2 border-b border-base-300 pb-2">
+                    <h2 class="text-base font-semibold">Attendance rolls</h2>
+                    <a href="{% url 'kura:attendance_history' %}" class="link link-primary text-xs">All attendance</a>
+                </div>
+                <ul class="divide-y divide-base-200 text-sm">
+                    {% for att_session in attendance_sessions %}
+                    <li class="py-2.5 flex items-center justify-between gap-3">
+                        <div>
+                            <p class="font-medium">{{ att_session.title }}</p>
+                            <p class="text-xs k-muted">{{ att_session.module.title }} &bull; Ends {{ att_session.expires_at|date:"j M Y, H:i" }}</p>
+                        </div>
+                        <div class="flex items-center gap-2">
+                            {% if att_session.is_active and att_session.expires_at > now %}
+                            {% include "kura/_status_badge.html" with kind="attendance_session" value=True %}
+                            {% else %}
+                            {% include "kura/_status_badge.html" with kind="attendance_session" value=False %}
+                            {% endif %}
+                            <a href="{% url 'kura:attendance_session_detail' att_session.id %}" class="btn btn-outline btn-xs">Open roll</a>
+                        </div>
+                    </li>
+                    {% endfor %}
+                </ul>
+            </section>
+            {% endif %}
+
             <section class="space-y-4">
                 <div class="flex items-center justify-between">
                     <h2 class="text-xl font-bold">Curriculum modules</h2>

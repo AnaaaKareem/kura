@@ -37,6 +37,7 @@ urlpatterns = [
     # Admin management routes
     path("admin/staff/", views.staff_list_view, name="staff_list"),
     path("admin/staff/new/", views.staff_create_view, name="staff_create"),
+    path("admin/users/", views.admin_users_view, name="admin_users"),
     path("admin/users/<uuid:user_id>/deactivate/", views.user_deactivate_view, name="user_deactivate"),
     path("admin/users/<uuid:user_id>/lock/", views.user_lock_toggle_view, name="user_lock_toggle"),
     path("admin/users/<uuid:user_id>/roles/", views.user_roles_view, name="user_roles"),
@@ -127,6 +128,11 @@ urlpatterns = [
         "attempts/<uuid:attempt_id>/files/upload/",
         views.assessment_attempt_file_upload_view,
         name="assessment_attempt_file_upload",
+    ),
+    path(
+        "attempts/<uuid:attempt_id>/files/<uuid:file_id>/delete/",
+        views.assessment_attempt_file_delete_view,
+        name="assessment_attempt_file_delete",
     ),
     path("attempts/<uuid:attempt_id>/submit/", views.assessment_submit_view, name="assessment_submit"),
     # Grades, appeals, results and transcripts routes

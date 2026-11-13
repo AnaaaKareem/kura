@@ -31,6 +31,65 @@
         </a>
     </header>
 
+    {% if open_sessions %}
+    <section class="space-y-2" aria-label="Open attendance sessions">
+        <h2 class="text-lg font-semibold">Open check-ins</h2>
+        <div class="space-y-2">
+            {% for att_session in open_sessions %}
+            <div class="alert border-l-4 border-primary bg-base-100 border border-base-300 flex items-center justify-between gap-4">
+                <div>
+                    <p class="text-sm font-semibold">{{ att_session.module.course.code }} &bull; {{ att_session.title }}</p>
+                    <p class="text-xs k-muted">{{ att_session.module.title }} &bull; Closes {{ att_session.expires_at|date:"j M Y, H:i" }}</p>
+                </div>
+                <a href="{% url 'kura:student_checkin' att_session.id %}" class="btn btn-primary btn-sm flex-shrink-0">Check in</a>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    {% if is_staff_view and course_attendance_sessions %}
+    <section class="space-y-3" aria-label="Course attendance sessions">
+        <h2 class="text-lg font-semibold">Attendance sessions</h2>
+        <div class="k-card p-0 overflow-x-auto">
+            <table class="k-table">
+                <caption class="sr-only">Course attendance sessions</caption>
+                <thead>
+                    <tr>
+                        <th class="k-sticky-col">Course</th>
+                        <th>Session</th>
+                        <th>Status</th>
+                        <th class="k-num">Closes</th>
+                        <th class="text-right">Action</th>
+                    </tr>
+                </thead>
+                <tbody>
+                    {% for att_session in course_attendance_sessions %}
+                    <tr>
+                        <td class="k-sticky-col font-semibold">{{ att_session.module.course.code }}</td>
+                        <td>
+                            <div class="font-medium">{{ att_session.title }}</div>
+                            <div class="text-xs k-muted">{{ att_session.module.title }}</div>
+                        </td>
+                        <td>
+                            {% if att_session.is_active and att_session.expires_at > now %}
+                            {% include "kura/_status_badge.html" with kind="attendance_session" value=True %}
+                            {% else %}
+                            {% include "kura/_status_badge.html" with kind="attendance_session" value=False %}
+                            {% endif %}
+                        </td>
+                        <td class="k-num text-xs k-muted">{{ att_session.expires_at|date:"j M Y, H:i" }}</td>
+                        <td class="text-right">
+                            <a href="{% url 'kura:attendance_session_detail' att_session.id %}" class="btn btn-outline btn-xs">Open roll</a>
+                        </td>
+                    </tr>
+                    {% endfor %}
+                </tbody>
+            </table>
+        </div>
+    </section>
+    {% endif %}
+
     {% if attendance_stats %}
     <section class="grid grid-cols-2 sm:grid-cols-6 gap-4" aria-label="Attendance summary">
         <div class="k-card p-4">
