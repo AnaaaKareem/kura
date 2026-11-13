@@ -1477,20 +1477,38 @@ class GradeChangeRequestReviewForm(forms.Form):
 
 class CourseGradeSchemeForm(forms.Form):
     """
-    Form to configure component weight percentage in a course grading scheme.
+    Sets the weight of every grade component (coursework, quiz, exam,
+    assignment, lab) for one course. The weights must add up to 100, because
+    the final course result is the weighted average of the components.
     """
 
-    component_type = forms.ChoiceField(
-        label="Component Type",
-        choices=GradeComponentType.choices,
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
-    )
+    def __init__(self, *args, **kwargs):
+        """
+        Adds one percentage field per grade component, named weight_<component>.
+        """
+        super().__init__(*args, **kwargs)
+        for component, label in GradeComponentType.choices:
+            self.fields[f"weight_{component}"] = forms.DecimalField(
+                label=f"{label} (%)",
+                required=False,
+                max_digits=5,
+                decimal_places=2,
+                min_value=0,
+                max_value=100,
+                widget=forms.NumberInput(attrs={"class": "input input-bordered w-full", "step": "0.5"}),
+            )
 
-    weight_percentage = forms.DecimalField(
-        label="Weight Percentage (%)",
-        max_digits=5,
-        decimal_places=2,
-        min_value=0,
-        max_value=100,
-        widget=forms.NumberInput(attrs={"class": "input input-bordered w-full", "step": "0.5"}),
-    )
+    def clean(self):
+        """
+        Treats an empty field as 0 and checks that the weights total exactly 100.
+        """
+        cleaned_data = super().clean()
+        total = 0
+        for component, _ in GradeComponentType.choices:
+            field_name = f"weight_{component}"
+            if cleaned_data.get(field_name) is None:
+                cleaned_data[field_name] = 0
+            total += cleaned_data[field_name]
+        if total != 100:
+            raise forms.ValidationError(f"The weights must add up to 100%. They currently add up to {total}%.")
+        return cleaned_data

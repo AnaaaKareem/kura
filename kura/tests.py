@@ -9208,3 +9208,55 @@ class GradebookPendingReviewsTests(TestCase):
         response = self.client.get(self.grades_url)
         self.assertNotContains(response, reverse("kura:grade_appeal_review", args=[self.appeal.id]))
         self.assertNotContains(response, reverse("kura:grade_change_request_review", args=[self.change_request.id]))
+
+
+class CourseGradeSchemeTests(TestCase):
+    """
+    Instructors and the department head set component weights that add up to
+    100. Teaching assistants and Admins may not change them.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.data = make_released_grade_course()
+        self.url = reverse("kura:course_grade_scheme", args=[self.data["course"].id])
+        self.valid_weights = {"weight_coursework": "40", "weight_exam": "60"}
+
+    def test_instructor_saves_scheme_that_adds_up_to_100(self):
+        self.client.force_login(self.data["instructor"])
+        response = self.client.post(self.url, self.valid_weights)
+        self.assertRedirects(response, reverse("kura:course_grades", args=[self.data["course"].id]))
+        saved = dict(
+            CourseGradeScheme.objects.filter(course=self.data["course"]).values_list(
+                "component_type", "weight_percentage"
+            )
+        )
+        self.assertEqual(saved, {"coursework": Decimal("40.00"), "exam": Decimal("60.00")})
+
+    def test_weights_that_do_not_add_up_to_100_are_refused(self):
+        self.client.force_login(self.data["instructor"])
+        response = self.client.post(self.url, {"weight_exam": "70"})
+        self.assertEqual(response.status_code, 200)
+        self.assertContains(response, "must add up to 100%")
+        self.assertFalse(CourseGradeScheme.objects.filter(course=self.data["course"]).exists())
+
+    def test_cleared_component_is_removed(self):
+        CourseGradeScheme.objects.create(course=self.data["course"], component_type="quiz", weight_percentage=50)
+        self.client.force_login(self.data["head"])
+        self.client.post(self.url, self.valid_weights)
+        self.assertFalse(CourseGradeScheme.objects.filter(course=self.data["course"], component_type="quiz").exists())
+
+    def test_teaching_assistant_and_admin_cannot_change_scheme(self):
+        admin = make_user("Admin")
+        for user in (self.data["assistant"], admin):
+            self.client.force_login(user)
+            self.assertEqual(self.client.get(self.url).status_code, 403)
+            self.assertEqual(self.client.post(self.url, self.valid_weights).status_code, 403)
+        self.assertFalse(CourseGradeScheme.objects.filter(course=self.data["course"]).exists())
+
+    def test_gradebook_shows_edit_link_only_to_allowed_users(self):
+        grades_url = reverse("kura:course_grades", args=[self.data["course"].id])
+        self.client.force_login(self.data["instructor"])
+        self.assertContains(self.client.get(grades_url), self.url)
+        self.client.force_login(self.data["assistant"])
+        self.assertNotContains(self.client.get(grades_url), self.url)
