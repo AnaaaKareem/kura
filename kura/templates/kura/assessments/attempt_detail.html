@@ -107,6 +107,9 @@
         <div class="card-body gap-4 p-4 sm:p-6">
             <h2 class="card-title text-base font-bold">Released Grade</h2>
             <p>{{ released_grade.score }} / {{ assessment.max_score }}</p>
+            {% if released_grade.feedback %}
+            <p class="text-sm whitespace-pre-line">{{ released_grade.feedback }}</p>
+            {% endif %}
         </div>
     </div>
     {% endif %}
