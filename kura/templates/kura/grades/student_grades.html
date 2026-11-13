@@ -12,21 +12,19 @@
 
 {% block content %}
 <div class="space-y-8">
-    <!-- Page Header (Section 8.2) -->
     <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div class="space-y-1">
             <p class="k-eyebrow">Academic records</p>
             <h1 class="text-2xl font-bold">My grades</h1>
-            <p class="text-sm k-muted">Official released assessment marks and tutor evaluations.</p>
+            <p class="text-sm k-muted">Released assessment marks and marker feedback.</p>
         </div>
         <div>
-            <a href="{% url 'kura:student_transcript' %}" class="btn btn-outline btn-sm">
+            <a href="{% url 'kura:student_transcript' %}" class="btn btn-outline btn-sm w-full sm:w-auto">
                 View transcript
             </a>
         </div>
     </header>
 
-    <!-- Released Grades Table (Section 8.5) -->
     <section class="space-y-3">
         <div class="k-card p-0 overflow-x-auto">
             <table class="k-table">
@@ -50,13 +48,13 @@
                             <div class="font-semibold text-sm">{{ g.assessment.title }}</div>
                             <div class="text-xs k-muted">{{ g.assessment.section.module.title }}</div>
                         </td>
-                        <td><span class="badge badge-ghost badge-xs uppercase font-mono">{{ g.assessment.component_type }}</span></td>
+                        <td><span class="k-eyebrow">{{ g.assessment.component_type }}</span></td>
                         <td class="k-num font-bold text-sm text-primary">{{ g.score }} / {{ g.assessment.max_score }}</td>
-                        <td class="text-xs k-muted">{{ g.released_at|date:"j M Y, H:i" }}</td>
-                        <td class="text-xs whitespace-pre-line max-w-xs">{{ g.feedback|default:"No feedback given." }}</td>
+                        <td class="text-xs k-muted k-num">{{ g.released_at|date:"j M Y, H:i" }}</td>
+                        <td class="text-sm whitespace-pre-line max-w-xs">{{ g.feedback|default:"No feedback given." }}</td>
                         <td class="text-right">
-                            <a href="{% url 'kura:grade_appeal_create' g.id %}" class="btn btn-ghost btn-xs text-primary">
-                                Appeal grade
+                            <a href="{% url 'kura:grade_appeal_create' g.id %}" class="btn btn-ghost btn-sm">
+                                Appeal
                             </a>
                         </td>
                     </tr>
@@ -72,36 +70,35 @@
         </div>
     </section>
 
-    <!-- Submitted Grade Appeals -->
     {% if appeals %}
     <section class="space-y-3">
-        <h2 class="text-lg font-semibold">Submitted grade appeals</h2>
+        <h2 class="text-lg font-semibold">My appeals</h2>
         <div class="k-card p-0 overflow-x-auto">
             <table class="k-table">
                 <caption class="sr-only">Submitted grade appeals</caption>
                 <thead>
                     <tr>
-                        <th>Assessment</th>
-                        <th class="k-num">Disputed score</th>
+                        <th class="k-sticky-col">Assessment</th>
+                        <th class="k-num">Score</th>
                         <th>Status</th>
                         <th>Submitted</th>
-                        <th>Verdict &amp; response</th>
+                        <th>Response</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for app in appeals %}
                     <tr>
-                        <td class="font-medium">{{ app.grade.assessment.title }}</td>
+                        <td class="k-sticky-col font-medium">{{ app.grade.assessment.title }}</td>
                         <td class="k-num font-bold">{{ app.grade.score }}</td>
                         <td>
                             {% include "kura/_status_badge.html" with kind="appeal" value=app.status %}
                         </td>
-                        <td class="text-xs k-muted">{{ app.created_at|date:"j M Y, H:i" }}</td>
-                        <td class="text-xs k-muted">
+                        <td class="text-xs k-muted k-num">{{ app.created_at|date:"j M Y, H:i" }}</td>
+                        <td class="text-sm k-muted">
                             {% if app.response %}
                             {{ app.response }}
                             {% else %}
-                            <span class="italic">Pending review</span>
+                            Pending review
                             {% endif %}
                         </td>
                     </tr>

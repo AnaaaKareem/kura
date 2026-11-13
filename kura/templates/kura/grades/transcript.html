@@ -18,28 +18,25 @@
 {% endblock %}
 
 {% block content %}
-<div class="transcript-sheet space-y-6 max-w-4xl mx-auto">
-    <!-- Header with actions -->
+<div class="transcript-sheet space-y-6 max-w-3xl mx-auto">
     <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div class="space-y-1">
             <p class="k-eyebrow">Official record</p>
             <h1 class="text-2xl font-bold">Academic transcript</h1>
             <p class="text-sm k-muted">
-                Student: <strong>{% if request.user.first_name or request.user.last_name %}{{ request.user.first_name }} {{ request.user.last_name }}{% else %}{{ request.user.email }}{% endif %}</strong>
+                Student: <strong class="text-base-content">{% if request.user.first_name or request.user.last_name %}{{ request.user.first_name }} {{ request.user.last_name }}{% else %}{{ request.user.email }}{% endif %}</strong>
                 {% if student_profile %}
                 &bull; {{ student_profile.department.name }} &bull; Level: <span class="uppercase k-num">{{ student_profile.current_level }}</span>
                 {% endif %}
             </p>
         </div>
         <div class="flex items-center gap-2 no-print">
-            <button type="button" data-print class="btn btn-outline btn-sm">
+            <button type="button" data-print class="btn btn-outline btn-sm w-full sm:w-auto">
                 Print transcript
             </button>
-            <span class="badge badge-success badge-sm font-medium">Verified transcript</span>
         </div>
     </header>
 
-    <!-- Results Table -->
     <div class="k-card p-0 overflow-x-auto">
         <table class="k-table">
             <caption class="sr-only">Course results and final cumulative marks</caption>
@@ -48,7 +45,7 @@
                     <th class="k-sticky-col">Course code</th>
                     <th>Course title</th>
                     <th>Term</th>
-                    <th>Year</th>
+                    <th class="k-num">Year</th>
                     <th class="k-num">Final mark</th>
                 </tr>
             </thead>
@@ -64,7 +61,7 @@
                 {% empty %}
                 <tr>
                     <td colspan="5" class="p-8 text-center">
-                        {% include "kura/_empty.html" with icon="transcript" title="No results released" text="No course results have been released to your official transcript yet." %}
+                        {% include "kura/_empty.html" with icon="transcript" title="No results released yet" text="No course results have been released to your transcript yet." %}
                     </td>
                 </tr>
                 {% endfor %}

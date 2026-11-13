@@ -12,25 +12,27 @@
 </ol>
 {% endblock %}
 
-{% block content %}
-<div class="max-w-xl mx-auto my-6">
-    <div class="k-card p-6 sm:p-8 space-y-6">
-        <header class="space-y-1">
-            <p class="k-eyebrow">{{ grade.assessment.section.module.course.code }}</p>
-            <h1 class="text-2xl font-bold">Appeal a grade</h1>
-            <p class="text-sm k-muted">
-                Assessment: <strong>{{ grade.assessment.title }}</strong> &bull; Released mark: <span class="k-num font-semibold">{{ grade.score }} / {{ grade.assessment.max_score }}</span>
-            </p>
-        </header>
+{% block form_errors %}{% endblock %}
 
+{% block content %}
+<div class="max-w-2xl mx-auto space-y-6">
+    <header class="space-y-1">
+        <p class="k-eyebrow">{{ grade.assessment.section.module.course.code }}</p>
+        <h1 class="text-2xl font-bold">Appeal a grade</h1>
+        <p class="text-sm k-muted">
+            {{ grade.assessment.title }} &bull; Released mark: <span class="k-num font-semibold">{{ grade.score }} / {{ grade.assessment.max_score }}</span>
+        </p>
+    </header>
+
+    <div class="k-card">
         <form method="post" class="space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
             {% csrf_token %}
-
+            {% include "kura/_form_errors.html" %}
             {% include "kura/_field.html" with field=form.reason %}
 
-            <div class="flex items-center justify-end gap-2 pt-4 border-t border-base-300">
-                <a href="{% url 'kura:student_grades' %}" class="btn btn-ghost btn-sm">Cancel</a>
-                <button type="submit" class="btn btn-primary btn-sm">Submit appeal</button>
+            <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                <a href="{% url 'kura:student_grades' %}" class="btn btn-ghost">Cancel</a>
+                <button type="submit" class="btn btn-primary">Submit appeal</button>
             </div>
         </form>
     </div>

@@ -14,29 +14,31 @@
 </ol>
 {% endblock %}
 
-{% block content %}
-<div class="max-w-xl mx-auto my-6">
-    <div class="k-card p-6 sm:p-8 space-y-6">
-        <header class="space-y-1">
-            <p class="k-eyebrow">{{ grade.assessment.section.module.course.code }}</p>
-            <h1 class="text-2xl font-bold">Request a grade change</h1>
-            <p class="text-sm k-muted">
-                Student: <strong>{% if grade.student.first_name or grade.student.last_name %}{{ grade.student.first_name }} {{ grade.student.last_name }}{% else %}{{ grade.student.email }}{% endif %}</strong> &bull; Assessment: <strong>{{ grade.assessment.title }}</strong> &bull; Current score: <span class="k-num font-semibold">{{ grade.score }}</span>
-            </p>
-            <p class="text-xs k-muted">
-                Released grades cannot be edited directly. Submit a formal request with rationale for department head approval.
-            </p>
-        </header>
+{% block form_errors %}{% endblock %}
 
+{% block content %}
+<div class="max-w-2xl mx-auto space-y-6">
+    <header class="space-y-1">
+        <p class="k-eyebrow">{{ grade.assessment.section.module.course.code }}</p>
+        <h1 class="text-2xl font-bold">Request a grade change</h1>
+        <p class="text-sm k-muted">
+            Student: <strong class="text-base-content">{% if grade.student.first_name or grade.student.last_name %}{{ grade.student.first_name }} {{ grade.student.last_name }}{% else %}{{ grade.student.email }}{% endif %}</strong> &bull; {{ grade.assessment.title }} &bull; Current score: <span class="k-num font-semibold">{{ grade.score }} / {{ grade.assessment.max_score }}</span>
+        </p>
+        <p class="text-xs k-muted">
+            The department head must approve changes to released marks.
+        </p>
+    </header>
+
+    <div class="k-card">
         <form method="post" class="space-y-4">
             {% csrf_token %}
-
+            {% include "kura/_form_errors.html" %}
             {% include "kura/_field.html" with field=form.proposed_score %}
             {% include "kura/_field.html" with field=form.reason %}
 
-            <div class="flex items-center justify-end gap-2 pt-4 border-t border-base-300">
-                <a href="{% url 'kura:course_grades' grade.assessment.section.module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
-                <button type="submit" class="btn btn-primary btn-sm">Submit request</button>
+            <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                <a href="{% url 'kura:course_grades' grade.assessment.section.module.course.id %}" class="btn btn-ghost">Cancel</a>
+                <button type="submit" class="btn btn-primary">Send request</button>
             </div>
         </form>
     </div>

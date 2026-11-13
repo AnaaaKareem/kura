@@ -16,25 +16,26 @@
 
 {% block content %}
 <div class="space-y-8">
-    <!-- Page Header (Section 8.2) -->
     <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div class="space-y-1">
             <p class="k-eyebrow">{{ course.code }}</p>
-            <h1 class="text-2xl font-bold">Course gradebook</h1>
+            <h1 class="text-2xl font-bold">Gradebook</h1>
             <p class="text-sm k-muted">
                 {{ course.title }} &bull; {{ course.semester|capfirst }} {{ course.academic_year }}
             </p>
         </div>
-        <div class="flex items-center gap-2">
-            <a href="{% url 'kura:course_detail' course.id %}" class="btn btn-outline btn-sm">Course details</a>
+        <div class="flex flex-wrap items-center gap-2">
+            <a href="{% url 'kura:course_detail' course.id %}" class="btn btn-ghost btn-sm">Course details</a>
+            {% if can_edit_scheme %}
+            <a href="{% url 'kura:course_grade_scheme' course.id %}" class="btn btn-outline btn-sm">Grade scheme</a>
+            {% endif %}
             <form method="post" action="{% url 'kura:course_result_calculate' course.id %}">
                 {% csrf_token %}
-                <button type="submit" class="btn btn-primary btn-sm">Calculate final results</button>
+                <button type="submit" class="btn {% if course_results and can_release %}btn-outline{% else %}btn-primary{% endif %} btn-sm">Calculate final results</button>
             </form>
         </div>
     </header>
 
-    <!-- Assessment Scores Table Card (Section 8.5) -->
     <section class="space-y-3">
         <h2 class="text-lg font-semibold">Assessment scores ({{ grades|length }})</h2>
         <div class="k-card p-0 overflow-x-auto">
@@ -58,7 +59,7 @@
                         </td>
                         <td>
                             <div class="font-medium text-sm">{{ g.assessment.title }}</div>
-                            <span class="badge badge-ghost badge-xs uppercase font-mono">{{ g.assessment.component_type }}</span>
+                            <span class="k-eyebrow">{{ g.assessment.component_type }}</span>
                         </td>
                         <td class="k-num font-bold text-sm">
                             {{ g.score }} / {{ g.assessment.max_score }}
@@ -66,23 +67,23 @@
                         <td>
                             {% include "kura/_status_badge.html" with kind="grade" value=g.status %}
                         </td>
-                        <td class="text-xs k-muted">{{ g.graded_at|date:"j M Y, H:i" }}</td>
+                        <td class="text-xs k-muted k-num">{{ g.graded_at|date:"j M Y, H:i" }}</td>
                         <td class="text-right">
                             <div class="inline-flex items-center justify-end gap-1.5">
                                 {% if g.status == 'draft' %}
                                     {% if can_enter_grade %}
-                                    <a href="{% url 'kura:grade_entry' g.attempt.id %}" class="btn btn-ghost btn-xs text-primary">Edit score</a>
+                                    <a href="{% url 'kura:grade_entry' g.attempt.id %}" class="btn btn-ghost btn-sm">Edit score</a>
                                     {% endif %}
                                     {% if can_finalize_grade %}
                                     <form method="post" action="{% url 'kura:grade_finalize' g.id %}" data-confirm-action="Finalize this grade? TAs will no longer be able to edit it.">
                                         {% csrf_token %}
-                                        <button type="submit" class="btn btn-outline btn-xs">Finalize</button>
+                                        <button type="submit" class="btn btn-outline btn-sm">Finalize</button>
                                     </form>
                                     {% endif %}
                                 {% elif g.status == 'finalized' and can_release %}
-                                    <a href="{% url 'kura:grade_release' g.id %}" class="btn btn-outline btn-success btn-xs">Release with MFA</a>
+                                    <a href="{% url 'kura:grade_release' g.id %}" class="btn btn-outline btn-sm">Release with MFA</a>
                                 {% elif g.status == 'released' %}
-                                    <a href="{% url 'kura:grade_change_request_create' g.id %}" class="btn btn-ghost btn-xs text-primary">Request change</a>
+                                    <a href="{% url 'kura:grade_change_request_create' g.id %}" class="btn btn-ghost btn-sm">Request change</a>
                                 {% endif %}
                             </div>
                         </td>
@@ -99,102 +100,105 @@
         </div>
     </section>
 
-    <!-- Grade scheme: how much each component counts towards the final result -->
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-3 p-4 sm:p-6">
-            <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-                <h3 class="font-bold text-base">Grade Scheme</h3>
-                {% if can_edit_scheme %}
-                <a href="{% url 'kura:course_grade_scheme' course.id %}" class="btn btn-outline btn-xs">Edit grade scheme</a>
-                {% endif %}
-            </div>
-            <div class="flex flex-wrap gap-2 text-xs">
-                {% for scheme in grade_schemes %}
-                <span class="badge badge-ghost">{{ scheme.get_component_type_display }}: {{ scheme.weight_percentage }}%</span>
-                {% empty %}
-                <span class="text-base-content/60">No grade scheme set yet, so calculated final results would all be 0%.</span>
-                {% endfor %}
-            </div>
+    <!-- Course grading scheme weights -->
+    <section class="k-card space-y-3">
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <h2 class="text-lg font-semibold">Grade scheme</h2>
+            {% if can_edit_scheme %}
+            <a href="{% url 'kura:course_grade_scheme' course.id %}" class="btn btn-outline btn-sm">Edit grade scheme</a>
+            {% endif %}
         </div>
-    </div>
+        <div class="flex flex-wrap gap-2 text-sm">
+            {% for scheme in grade_schemes %}
+            <span class="badge badge-ghost badge-sm k-num font-medium">{{ scheme.get_component_type_display }}: {{ scheme.weight_percentage }}%</span>
+            {% empty %}
+            <p class="text-sm k-muted">No grade scheme set yet, so calculated final results would all be 0%.</p>
+            {% endfor %}
+        </div>
+    </section>
 
-    <!-- Appeals waiting for a verdict -->
     {% if pending_appeals %}
-    <div class="card bg-base-100 border border-base-300 overflow-hidden">
-        <div class="p-4 border-b border-base-200">
-            <h3 class="font-bold text-base">Pending Grade Appeals ({{ pending_appeals|length }})</h3>
-        </div>
-        <div class="overflow-x-auto">
-            <table class="table table-sm w-full text-xs">
-                <thead class="bg-base-200">
+    <section class="space-y-3">
+        <h2 class="text-lg font-semibold">Pending grade appeals ({{ pending_appeals|length }})</h2>
+        <div class="k-card p-0 overflow-x-auto">
+            <table class="k-table">
+                <caption class="sr-only">Pending grade appeals</caption>
+                <thead>
                     <tr>
-                        <th>Student</th>
+                        <th class="k-sticky-col">Student</th>
                         <th>Assessment</th>
-                        <th>Score</th>
+                        <th class="k-num">Score</th>
                         <th>Filed</th>
-                        <th>Actions</th>
+                        <th class="text-right">Action</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for appeal in pending_appeals %}
                     <tr>
-                        <td class="font-semibold">{{ appeal.grade.student.email }}</td>
+                        <td class="k-sticky-col font-semibold">
+                            {% if appeal.grade.student.first_name or appeal.grade.student.last_name %}{{ appeal.grade.student.first_name }} {{ appeal.grade.student.last_name }}{% else %}{{ appeal.grade.student.email }}{% endif %}
+                            <span class="block text-xs k-muted">{{ appeal.grade.student.email }}</span>
+                        </td>
                         <td>{{ appeal.grade.assessment.title }}</td>
-                        <td class="font-bold">{{ appeal.grade.score }} / {{ appeal.grade.assessment.max_score }}</td>
-                        <td>{{ appeal.created_at|date:"Y-m-d H:i" }}</td>
-                        <td><a href="{% url 'kura:grade_appeal_review' appeal.id %}" class="btn btn-outline btn-xs">Review</a></td>
+                        <td class="k-num font-bold">{{ appeal.grade.score }} / {{ appeal.grade.assessment.max_score }}</td>
+                        <td class="text-xs k-muted k-num">{{ appeal.created_at|date:"j M Y, H:i" }}</td>
+                        <td class="text-right">
+                            <a href="{% url 'kura:grade_appeal_review' appeal.id %}" class="btn btn-outline btn-sm">Review</a>
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
-    </div>
+    </section>
     {% endif %}
 
-    <!-- Post-release change requests waiting for the department head -->
     {% if pending_change_requests %}
-    <div class="card bg-base-100 border border-base-300 overflow-hidden">
-        <div class="p-4 border-b border-base-200">
-            <h3 class="font-bold text-base">Pending Grade Change Requests ({{ pending_change_requests|length }})</h3>
-        </div>
-        <div class="overflow-x-auto">
-            <table class="table table-sm w-full text-xs">
-                <thead class="bg-base-200">
+    <section class="space-y-3">
+        <h2 class="text-lg font-semibold">Pending grade change requests ({{ pending_change_requests|length }})</h2>
+        <div class="k-card p-0 overflow-x-auto">
+            <table class="k-table">
+                <caption class="sr-only">Pending grade change requests</caption>
+                <thead>
                     <tr>
-                        <th>Student</th>
+                        <th class="k-sticky-col">Student</th>
                         <th>Assessment</th>
-                        <th>Current</th>
-                        <th>Proposed</th>
+                        <th class="k-num">Current</th>
+                        <th class="k-num">Proposed</th>
                         <th>Requested by</th>
-                        <th>Actions</th>
+                        <th class="text-right">Action</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for change_request in pending_change_requests %}
                     <tr>
-                        <td class="font-semibold">{{ change_request.grade.student.email }}</td>
+                        <td class="k-sticky-col font-semibold">
+                            {% if change_request.grade.student.first_name or change_request.grade.student.last_name %}{{ change_request.grade.student.first_name }} {{ change_request.grade.student.last_name }}{% else %}{{ change_request.grade.student.email }}{% endif %}
+                            <span class="block text-xs k-muted">{{ change_request.grade.student.email }}</span>
+                        </td>
                         <td>{{ change_request.grade.assessment.title }}</td>
-                        <td>{{ change_request.current_score }}</td>
-                        <td class="font-bold">{{ change_request.proposed_score }}</td>
-                        <td>{{ change_request.requested_by.email }}</td>
-                        <td><a href="{% url 'kura:grade_change_request_review' change_request.id %}" class="btn btn-outline btn-xs">Review</a></td>
+                        <td class="k-num">{{ change_request.current_score }}</td>
+                        <td class="k-num font-bold">{{ change_request.proposed_score }}</td>
+                        <td class="text-xs k-muted">{{ change_request.requested_by.email }}</td>
+                        <td class="text-right">
+                            <a href="{% url 'kura:grade_change_request_review' change_request.id %}" class="btn btn-outline btn-sm">Review</a>
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
-    </div>
+    </section>
     {% endif %}
 
-    <!-- Final Course Results Summary -->
     {% if course_results %}
     <section class="space-y-3">
-        <div class="flex items-center justify-between">
+        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
             <h2 class="text-lg font-semibold">Calculated final results</h2>
             {% if can_release %}
-            <form method="post" action="{% url 'kura:course_result_release' course.id %}" data-confirm-action="Release all calculated final course results to student transcripts? This action publishes results officially.">
+            <form method="post" action="{% url 'kura:course_result_release' course.id %}" data-confirm-action="Release all calculated final course results to student transcripts? This publishes results officially." data-confirm-tone="primary">
                 {% csrf_token %}
-                <button type="submit" class="btn btn-outline btn-success btn-xs">
+                <button type="submit" class="btn btn-primary btn-sm">
                     Release to transcripts
                 </button>
             </form>
@@ -216,11 +220,7 @@
                         <td class="font-semibold k-sticky-col">{% if res.student.first_name or res.student.last_name %}{{ res.student.first_name }} {{ res.student.last_name }}{% else %}{{ res.student.email }}{% endif %}</td>
                         <td class="k-num font-bold text-sm text-primary">{{ res.final_score }}%</td>
                         <td>
-                            {% if res.status == 'released' %}
-                            <span class="badge badge-success badge-sm font-medium">Released on transcript</span>
-                            {% else %}
-                            <span class="badge badge-ghost badge-sm font-medium">Draft</span>
-                            {% endif %}
+                            {% include "kura/_status_badge.html" with kind="course_result" value=res.status %}
                         </td>
                     </tr>
                     {% endfor %}
