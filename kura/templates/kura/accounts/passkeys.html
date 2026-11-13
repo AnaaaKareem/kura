@@ -1,91 +1,95 @@
 {% extends "kura/base.html" %}
 
-{% block title %}Manage Passkeys - Kura{% endblock %}
+{% block title %}Passkeys - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">Passkeys</li>
+</ol>
+{% endblock %}
 
 {% block content %}
-<div class="max-w-3xl mx-auto mt-6">
-    <div class="flex items-center justify-between mb-6">
+<div class="space-y-6 max-w-4xl">
+    <!-- Page Header (Section 8.2) -->
+    <header class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+        <div class="space-y-1">
+            <p class="k-eyebrow">Account security</p>
+            <h1 class="text-2xl font-bold">Passkeys</h1>
+            <p class="text-sm k-muted">Sign in with the biometric or security key unlock you already use.</p>
+        </div>
         <div>
-            <h1 class="text-3xl font-bold">Passkeys</h1>
-            <p class="text-sm text-base-content/70 mt-1">
-                Sign in with the unlock method you already use, no extra device needed.
-            </p>
+            <a href="{% url 'start_fido2' %}" class="btn btn-primary btn-sm flex items-center gap-1.5">
+                {% include "kura/_icon.html" with name="plus" class="h-4 w-4" %}
+                <span>Add a passkey</span>
+            </a>
         </div>
-        <a href="{% url 'start_fido2' %}" class="btn btn-primary">
-            + Add a Passkey
-        </a>
+    </header>
+
+    <!-- Information Card -->
+    <div class="k-card p-5 space-y-2">
+        <h2 class="text-base font-semibold">Ways to add a passkey</h2>
+        <p class="text-sm k-muted">When you click <strong>Add a passkey</strong>, your browser lets you choose one of these options:</p>
+        <ul class="list-disc pl-5 text-sm k-muted space-y-1">
+            <li><strong>Windows Hello</strong> (face recognition, fingerprint, or PIN)</li>
+            <li><strong>Apple Passwords / iCloud Keychain</strong> (Touch ID or Face ID)</li>
+            <li><strong>Google Password Manager</strong> or another compatible password manager</li>
+            <li><strong>Your phone</strong>, by scanning the QR code shown by your browser</li>
+            <li><strong>Physical security key</strong> (such as a YubiKey, via USB or NFC)</li>
+        </ul>
     </div>
 
-    <!-- Passkey types, with the everyday ones first and the physical key as an option. -->
-    <div class="card bg-base-100 border border-base-300 mb-6">
-        <div class="card-body gap-2 p-4 sm:p-6">
-            <h2 class="card-title text-lg">Ways to add a passkey</h2>
-            <p class="text-sm text-base-content/70">When you click <strong>Add a Passkey</strong>, your browser lets you choose one of these:</p>
-            <ul class="list-disc pl-6 text-sm space-y-1">
-                <li><strong>Windows Hello</strong> (face, fingerprint or PIN)</li>
-                <li><strong>Apple Passwords / iCloud Keychain</strong>, Touch ID or Face ID</li>
-                <li><strong>Google Password Manager</strong> or another password manager that supports passkeys</li>
-                <li><strong>Your phone</strong>, by scanning the QR code the browser shows</li>
-                <li><strong>Physical security key</strong> (such as a YubiKey): optional, choose it only if you own one</li>
-            </ul>
-        </div>
-    </div>
-
-    <!-- List of registered passkeys -->
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <h2 class="card-title text-xl mb-4">Your Passkeys</h2>
-
-            {% if keys %}
-            <div class="overflow-x-auto">
-                <table class="table table-sm w-full">
-                    <thead class="bg-base-200">
-                        <tr>
-                            <th>Key ID</th>
-                            <th>Enrolled On</th>
-                            <th>Last Used</th>
-                            <th>Status</th>
-                            <th>Action</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for key in keys %}
-                        <tr>
-                            <td class="font-mono text-sm">Passkey #{{ key.id }}</td>
-                            <td class="text-xs">{{ key.added_on|date:"Y-m-d H:i" }}</td>
-                            <td class="text-xs">
-                                {% if key.last_used %}
-                                    {{ key.last_used|date:"Y-m-d H:i" }}
-                                {% else %}
-                                    <span class="text-base-content/40">Never</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                {% if key.enabled %}
-                                    <span class="badge badge-success badge-sm">Active</span>
-                                {% else %}
-                                    <span class="badge badge-ghost badge-sm">Disabled</span>
-                                {% endif %}
-                            </td>
-                            <td>
-                                <form method="post" action="{% url 'kura:passkey_delete' key.id %}" data-confirm-action="Remove this passkey? You will no longer be able to use it to log in.">
-                                    {% csrf_token %}
-                                    <button type="submit" class="btn btn-error btn-xs btn-outline">
-                                        Delete
-                                    </button>
-                                </form>
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
-            {% else %}
-            <div class="alert alert-info shadow-sm">
-                <span>You have no passkeys yet. Click <strong>+ Add a Passkey</strong> to add one.</span>
-            </div>
-            {% endif %}
-        </div>
+    <!-- Passkeys List Card -->
+    <div class="k-card p-0 overflow-x-auto">
+        <table class="k-table">
+            <caption class="sr-only">Your registered passkeys</caption>
+            <thead>
+                <tr>
+                    <th>Key identifier</th>
+                    <th>Enrolled on</th>
+                    <th>Last used</th>
+                    <th>Status</th>
+                    <th class="text-right">Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for key in keys %}
+                <tr>
+                    <td class="k-num font-medium text-sm">Passkey #{{ key.id }}</td>
+                    <td class="text-xs k-muted">{{ key.added_on|date:"j M Y, H:i" }}</td>
+                    <td class="text-xs k-muted">
+                        {% if key.last_used %}
+                            {{ key.last_used|date:"j M Y, H:i" }}
+                        {% else %}
+                            Never
+                        {% endif %}
+                    </td>
+                    <td>
+                        {% if key.enabled %}
+                        <span class="badge badge-success badge-sm font-medium">Active</span>
+                        {% else %}
+                        <span class="badge badge-ghost badge-sm font-medium">Disabled</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-right">
+                        <form method="post" action="{% url 'kura:passkey_delete' key.id %}" data-confirm-action="Remove this passkey? You will no longer be able to use it to log in.">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-ghost btn-sm text-error">
+                                Remove
+                            </button>
+                        </form>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="p-8 text-center">
+                        {% include "kura/_empty.html" with icon="passkey" title="No passkeys enrolled" text="You have no passkeys yet. Add one to enable fast, passwordless two-step verification." action_url="/passkeys/" action_label="Add a passkey" %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 {% endblock %}

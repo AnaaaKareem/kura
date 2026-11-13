@@ -1,0 +1,28 @@
+{% if messages %}
+<div class="space-y-2 mb-6" data-messages-container>
+    {% for message in messages %}
+    <div class="alert {% if 'error' in message.tags %}alert-error{% elif 'warning' in message.tags %}alert-warning{% elif 'success' in message.tags %}alert-success{% else %}alert-info{% endif %} shadow-sm flex items-start justify-between py-3 px-4 rounded-btn"
+         {% if 'error' in message.tags %}role="alert"{% else %}role="status"{% endif %}
+         {% if 'password_changed' in message.tags %}data-password-change-confirmation{% endif %}
+         data-message-item>
+        <div class="flex items-start gap-3">
+            <span class="mt-0.5">
+            {% if 'error' in message.tags %}
+                {% include "kura/_icon.html" with name="exclamation" class="h-5 w-5" %}
+            {% elif 'warning' in message.tags %}
+                {% include "kura/_icon.html" with name="exclamation" class="h-5 w-5" %}
+            {% elif 'success' in message.tags %}
+                {% include "kura/_icon.html" with name="check" class="h-5 w-5" %}
+            {% else %}
+                {% include "kura/_icon.html" with name="info" class="h-5 w-5" %}
+            {% endif %}
+            </span>
+            <div class="text-sm font-medium leading-relaxed">{{ message }}</div>
+        </div>
+        <button type="button" class="btn btn-ghost btn-xs btn-square -mr-1 -mt-1 text-current opacity-70 hover:opacity-100" data-dismiss-message aria-label="Dismiss message">
+            {% include "kura/_icon.html" with name="x-mark" class="h-4 w-4" %}
+        </button>
+    </div>
+    {% endfor %}
+</div>
+{% endif %}

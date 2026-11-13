@@ -1,63 +1,75 @@
 {% extends "kura/base.html" %}
+{% load static %}
 
-{% block title %}Academic Transcript - Kura{% endblock %}
+{% block title %}Academic transcript - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:student_grades' %}" class="k-muted hover:text-primary">Grades</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">Transcript</li>
+</ol>
+{% endblock %}
+
+{% block head %}
+<link rel="stylesheet" href="{% static 'css/print.css' %}" media="print">
+{% endblock %}
 
 {% block content %}
-<div class="max-w-4xl mx-auto space-y-6">
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between border-b border-base-200 pb-4">
-                <div>
-                    <h1 class="text-2xl font-bold">Official Academic Transcript</h1>
-                    <p class="text-sm text-base-content/70">
-                        Student: <strong>{{ request.user.get_full_name|default:request.user.email }}</strong>
-                    </p>
-                    {% if student_profile %}
-                    <p class="text-xs text-base-content/60 mt-1">
-                        Department: <strong>{{ student_profile.department.name }}</strong> &bull;
-                        Standing: <strong class="uppercase font-mono">{{ student_profile.current_level }}</strong> &bull;
-                        Matriculation Year: <strong>{{ student_profile.matriculation_year }}</strong>
-                    </p>
-                    {% endif %}
-                </div>
-                <div class="text-right">
-                    <span class="badge badge-success badge-sm font-semibold">Verified Transcript</span>
-                </div>
-            </div>
-
-            <!-- Course Results Table -->
-            <div class="overflow-x-auto mt-4">
-                <table class="table table-sm w-full text-sm">
-                    <thead class="bg-base-200">
-                        <tr>
-                            <th>Course Code</th>
-                            <th>Course Title</th>
-                            <th>Term</th>
-                            <th>Academic Year</th>
-                            <th class="text-right">Final Cumulative Mark</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for res in results %}
-                        <tr>
-                            <td class="font-mono font-bold">{{ res.course.code }}</td>
-                            <td>{{ res.course.title }}</td>
-                            <td>{{ res.course.semester|capfirst }}</td>
-                            <td>{{ res.course.academic_year }}</td>
-                            <td class="text-right font-bold text-base text-primary">{{ res.final_score }}%</td>
-                        </tr>
-                        {% empty %}
-                        <tr>
-                            <td colspan="5" class="text-center py-8 text-base-content/50">
-                                No course results have been released to your official transcript yet.
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+<div class="space-y-6 max-w-4xl mx-auto">
+    <!-- Header with actions -->
+    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+        <div class="space-y-1">
+            <p class="k-eyebrow">Official record</p>
+            <h1 class="text-2xl font-bold">Academic transcript</h1>
+            <p class="text-sm k-muted">
+                Student: <strong>{{ request.user.get_full_name|default:request.user.email }}</strong>
+                {% if student_profile %}
+                &bull; {{ student_profile.department.name }} &bull; Level: <span class="uppercase k-num">{{ student_profile.current_level }}</span>
+                {% endif %}
+            </p>
         </div>
+        <div class="flex items-center gap-2">
+            <button type="button" onclick="window.print()" class="btn btn-outline btn-sm">
+                Print transcript
+            </button>
+            <span class="badge badge-success badge-sm font-medium">Verified transcript</span>
+        </div>
+    </header>
+
+    <!-- Results Table -->
+    <div class="k-card p-0 overflow-x-auto">
+        <table class="k-table">
+            <caption class="sr-only">Course results and final cumulative marks</caption>
+            <thead>
+                <tr>
+                    <th class="k-sticky-col">Course code</th>
+                    <th>Course title</th>
+                    <th>Term</th>
+                    <th>Year</th>
+                    <th class="k-num">Final mark</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for res in results %}
+                <tr>
+                    <td class="font-mono font-bold k-sticky-col">{{ res.course.code }}</td>
+                    <td class="font-medium">{{ res.course.title }}</td>
+                    <td>{{ res.course.semester|capfirst }}</td>
+                    <td class="k-num">{{ res.course.academic_year }}</td>
+                    <td class="k-num font-bold text-base text-primary">{{ res.final_score }}%</td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="p-8 text-center">
+                        {% include "kura/_empty.html" with icon="transcript" title="No results released" text="No course results have been released to your official transcript yet." %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 {% endblock %}
-

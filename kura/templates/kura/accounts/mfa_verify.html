@@ -1,53 +1,57 @@
 {% extends "kura/base.html" %}
 
-{% block title %}Two-Factor Authentication - Kura{% endblock %}
+{% block title %}Enter your verification code - Kura{% endblock %}
 
 {% block content %}
-<div class="max-w-md mx-auto mt-10">
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <h1 class="card-title text-2xl font-bold justify-center">Two-Factor Authentication</h1>
-            <p class="text-sm text-base-content/70 text-center">
-                Enter the 6-digit code from your authenticator app or an 8-character backup recovery code.
+<div class="max-w-md mx-auto my-8">
+    <div class="k-card p-6 sm:p-8 space-y-6">
+        <header class="text-center space-y-2">
+            <h1 class="text-2xl font-bold">Enter your verification code</h1>
+            <p class="text-sm k-muted">
+                Enter the 6-digit code from your authenticator app or an 8-character recovery code.
             </p>
+        </header>
 
-            <!-- MFA verification code form with DaisyUI -->
-            <form method="post" action="{% url 'kura:mfa_verify' %}" class="mt-4 space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
-                {% csrf_token %}
+        <form method="post" action="{% url 'kura:mfa_verify' %}" class="space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+            {% csrf_token %}
 
-                <div class="form-control">
-                    <label for="id_code" class="label justify-center">
-                        <span class="label-text font-medium">Security Code</span>
-                    </label>
+            <div class="form-control w-full space-y-1">
+                <label for="id_code" class="label justify-center py-1">
+                    <span class="label-text font-medium text-sm">Security code</span>
+                </label>
+                <div class="flex justify-center">
                     {{ form.code }}
-                    {% if form.code.errors %}
-                    <label class="label justify-center">
-                        <span class="label-text-alt text-error">{{ form.code.errors.0 }}</span>
-                    </label>
-                    {% endif %}
                 </div>
-
-                <div class="form-control mt-6">
-                    <button type="submit" class="btn btn-primary w-full">
-                        Verify Code
-                    </button>
-                </div>
-            </form>
-
-            {% if has_passkeys %}
-            <div class="divider my-4 text-xs text-base-content/50">OR</div>
-            <div>
-                <a href="{% url 'fido2_auth' %}" class="btn btn-outline btn-secondary w-full">
-                    🔑 Verify with Passkey / Security Key
-                </a>
+                {% if form.code.errors %}
+                <p class="text-error text-xs font-medium text-center pt-0.5">{{ form.code.errors.0 }}</p>
+                {% endif %}
             </div>
-            {% endif %}
 
-            <div class="text-center mt-4">
-                <a href="{% url 'kura:login' %}" class="link link-hover text-xs text-base-content/60">
-                    &larr; Back to login
-                </a>
+            <div class="pt-2">
+                <button type="submit" class="btn btn-primary w-full">
+                    Verify code
+                </button>
             </div>
+        </form>
+
+        {% if has_passkeys %}
+        <div class="relative flex py-2 items-center">
+            <div class="flex-grow border-t border-base-300"></div>
+            <span class="flex-shrink mx-4 text-xs k-muted font-medium uppercase tracking-wider">or</span>
+            <div class="flex-grow border-t border-base-300"></div>
+        </div>
+        <div>
+            <a href="{% url 'fido2_auth' %}" class="btn btn-outline w-full flex items-center justify-center gap-2">
+                {% include "kura/_icon.html" with name="passkey" class="h-4 w-4" %}
+                <span>Verify with passkey</span>
+            </a>
+        </div>
+        {% endif %}
+
+        <div class="text-center pt-2">
+            <a href="{% url 'kura:login' %}" class="text-xs text-primary hover:underline">
+                &larr; Back to log in
+            </a>
         </div>
     </div>
 </div>

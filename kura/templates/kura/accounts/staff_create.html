@@ -1,88 +1,69 @@
 {% extends "kura/base.html" %}
 
-{% block title %}Create Staff Account - Kura{% endblock %}
+{% block title %}Add staff member - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:staff_list' %}" class="k-muted hover:text-primary">Staff</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">Add staff member</li>
+</ol>
+{% endblock %}
 
 {% block content %}
-<div class="max-w-xl mx-auto mt-6">
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <h1 class="card-title text-2xl font-bold">Create Staff Account</h1>
-            <p class="text-sm text-base-content/70">
-                Provision a new staff account. A secure temporary password will be generated automatically and displayed upon submission.
-            </p>
+<div class="max-w-2xl mx-auto space-y-6">
+    <!-- Page Header (Section 8.2) -->
+    <header class="space-y-1">
+        <p class="k-eyebrow">Administration</p>
+        <h1 class="text-2xl font-bold">Add staff member</h1>
+        <p class="text-sm k-muted">
+            Provision a new staff account. A secure temporary password will be generated automatically and displayed upon submission.
+        </p>
+    </header>
 
-            <form method="post" class="mt-4 space-y-4">
-                {% csrf_token %}
+    <div class="k-card">
+        <form method="post" class="space-y-6">
+            {% csrf_token %}
 
-                <div class="form-control">
-                    <label for="id_email" class="label">
-                        <span class="label-text font-medium">Email address</span>
-                    </label>
-                    {{ form.email }}
-                    {% if form.email.errors %}
-                    <label class="label"><span class="label-text-alt text-error">{{ form.email.errors.0 }}</span></label>
-                    {% endif %}
+            <!-- Fieldset 1: Person -->
+            <fieldset class="space-y-4">
+                <legend class="text-base font-semibold text-base-content border-b border-base-300 pb-2 w-full">Person</legend>
+                {% include "kura/_field.html" with field=form.email %}
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {% include "kura/_field.html" with field=form.first_name %}
+                    {% include "kura/_field.html" with field=form.last_name %}
                 </div>
+            </fieldset>
 
-                <div class="grid grid-cols-2 gap-4">
-                    <div class="form-control">
-                        <label for="id_first_name" class="label">
-                            <span class="label-text font-medium">First name</span>
-                        </label>
-                        {{ form.first_name }}
-                    </div>
-                    <div class="form-control">
-                        <label for="id_last_name" class="label">
-                            <span class="label-text font-medium">Last name</span>
-                        </label>
-                        {{ form.last_name }}
-                    </div>
-                </div>
+            <!-- Fieldset 2: Role and department -->
+            <fieldset class="space-y-4">
+                <legend class="text-base font-semibold text-base-content border-b border-base-300 pb-2 w-full">Role &amp; department</legend>
+                {% include "kura/_field.html" with field=form.department %}
+                <p class="text-xs">
+                    <a class="link link-primary" href="{% url 'kura:staff_settings' %}">Manage departments and offices</a>
+                </p>
+                {% include "kura/_field.html" with field=form.staff_title %}
+            </fieldset>
 
-                <div class="form-control">
-                    <label for="id_department" class="label">
-                        <span class="label-text font-medium">Department</span>
-                    </label>
-                    {{ form.department }}
-                    <a class="link link-primary text-sm" href="{% url 'kura:staff_settings' %}">Manage departments and offices</a>
-                    {% if form.department.errors %}
-                    <label class="label"><span class="label-text-alt text-error">{{ form.department.errors.0 }}</span></label>
-                    {% endif %}
+            <!-- Fieldset 3: Office -->
+            <fieldset class="space-y-4">
+                <legend class="text-base font-semibold text-base-content border-b border-base-300 pb-2 w-full">Office</legend>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {% include "kura/_field.html" with field=form.building %}
+                    {% include "kura/_field.html" with field=form.room %}
                 </div>
+                <p class="text-xs k-muted">The room list updates automatically after choosing a building.</p>
+            </fieldset>
 
-                <div class="grid grid-cols-2 gap-4">
-                    <div class="form-control">
-                        <label for="id_staff_title" class="label">
-                            <span class="label-text font-medium">Staff Title</span>
-                        </label>
-                        {{ form.staff_title }}
-                        {% if form.staff_title.errors %}
-                        <label class="label"><span class="label-text-alt text-error">{{ form.staff_title.errors.0 }}</span></label>
-                        {% endif %}
-                    </div>
-                    <div class="form-control">
-                        <label for="id_building" class="label">
-                            <span class="label-text font-medium">Building</span>
-                        </label>
-                        {{ form.building }}
-                        <label for="id_room" class="label"><span class="label-text font-medium">Room</span></label>
-                        {{ form.room }}
-                        {% if form.room.errors %}<p class="text-error">{{ form.room.errors.0 }}</p>{% endif %}
-                    </div>
-                </div>
-
-                <div class="card-actions justify-end mt-6">
-                    <a href="{% url 'kura:staff_list' %}" class="btn btn-ghost btn-sm">
-                        Cancel
-                    </a>
-                    <button type="submit" class="btn btn-primary btn-sm">
-                        Provision Staff Account
-                    </button>
-                </div>
-            </form>
-        </div>
+            <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                <a href="{% url 'kura:staff_list' %}" class="btn btn-ghost btn-sm">Cancel</a>
+                <button type="submit" class="btn btn-primary btn-sm">Provision staff account</button>
+            </div>
+        </form>
     </div>
 </div>
 {{ office_rooms|json_script:"office-rooms" }}
 {% endblock %}
-

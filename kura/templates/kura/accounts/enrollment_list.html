@@ -1,94 +1,104 @@
 {% extends "kura/base.html" %}
 
-{% block title %}Course Enrollments - Kura{% endblock %}
+{% block title %}Enrollments - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">Enrollments</li>
+</ol>
+{% endblock %}
 
 {% block content %}
 <div class="space-y-6">
-    <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-            <h1 class="text-2xl font-bold">Course Enrollments</h1>
-            <p class="text-sm text-base-content/70 mt-1">
-                View institutional course enrollments and register students.
-            </p>
+    <!-- Page Header (Section 8.2) -->
+    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 border-b border-base-300 pb-5">
+        <div class="space-y-1">
+            <p class="k-eyebrow">Records</p>
+            <h1 class="text-2xl font-bold">Enrollments</h1>
+            <p class="text-sm k-muted">View institutional course enrollments and register students.</p>
         </div>
-        <div class="space-x-2">
+        <div class="flex flex-wrap items-center gap-2">
             <a href="{% url 'kura:student_list' %}" class="btn btn-outline btn-sm">Students</a>
-            <a href="{% url 'kura:student_create' %}" class="btn btn-outline btn-sm">
-                + New Student
-            </a>
+            <a href="{% url 'kura:student_create' %}" class="btn btn-outline btn-sm">+ New student</a>
             <a href="{% url 'kura:enrollment_create' %}" class="btn btn-primary btn-sm">
-                + Enroll Student
+                {% include "kura/_icon.html" with name="plus" class="h-4 w-4" %}
+                <span>Enroll student</span>
             </a>
         </div>
-    </div>
+    </header>
 
-    <form method="get" class="card bg-base-100 p-4 space-y-2">
-        {{ filter_form.as_p }}
-        <button type="submit" class="btn btn-primary btn-sm">Filter enrollments</button>
-        <a href="{% url 'kura:enrollment_list' %}" class="btn btn-ghost btn-sm">Clear</a>
-    </form>
-    <!-- Enrollments table using DaisyUI -->
-    <div class="card bg-base-100 border border-base-300 overflow-hidden">
-        <div class="overflow-x-auto">
-            <table class="table table-sm w-full text-sm">
-                <thead class="bg-base-200">
-                    <tr>
-                        <th>Course</th>
-                        <th>Student</th>
-                        <th>Enrolled By</th>
-                        <th>Status</th>
-                        <th class="text-right">Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for enrollment in enrollments %}
-                    <tr>
-                        <td>
-                            <div class="font-semibold">{{ enrollment.course.code }}</div>
-                            <div class="text-xs text-base-content/60">{{ enrollment.course.title }}</div>
-                        </td>
-                        <td>
-                            <div class="font-semibold">{{ enrollment.student.get_full_name|default:enrollment.student.email }}</div>
-                            <div class="text-xs text-base-content/60 font-mono">{{ enrollment.student.email }}</div>
-                        </td>
-                        <td class="text-xs text-base-content/70">
-                            <div>{{ enrollment.enrolled_by.email|default:"System" }}</div>
-                            <div class="text-xs text-base-content/50">{{ enrollment.enrolled_at|date:"Y-m-d" }}</div>
-                        </td>
-                        <td>
-                            {% if enrollment.status == 'active' %}
-                            <span class="badge badge-success badge-sm">Active</span>
-                            {% elif enrollment.status == 'dropped' %}
-                            <span class="badge badge-error badge-sm">Dropped</span>
-                            {% else %}
-                            <span class="badge badge-ghost badge-sm">{{ enrollment.status }}</span>
-                            {% endif %}
-                        </td>
-                        <td class="text-right">
-                            {% if enrollment.status == 'active' %}
-                            <form method="post" action="{% url 'kura:enrollment_drop' enrollment.id %}" class="inline">
-                                {% csrf_token %}
-                                <button type="submit" class="btn btn-ghost btn-xs text-error" data-confirm-action="Drop this student from {{ enrollment.course.code }}?">
-                                    Drop
-                                </button>
-                            </form>
-                            {% elif enrollment.status == 'dropped' %}
-                            <span class="text-xs text-base-content/50 italic">
-                                Dropped on {{ enrollment.dropped_at|date:"Y-m-d" }}
-                            </span>
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="5" class="text-center py-4 text-base-content/50">
-                            No course enrollments found.
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+    {% if filter_form %}
+    <!-- Filter bar -->
+    <form method="get" class="k-card p-4 flex flex-wrap items-center gap-4 bg-base-100">
+        <div class="flex-1 min-w-[200px]">
+            {{ filter_form.department }}
         </div>
+        <div class="flex items-center gap-2">
+            <button type="submit" class="btn btn-outline btn-sm">Filter</button>
+            <a href="{% url 'kura:enrollment_list' %}" class="btn btn-ghost btn-sm">Clear</a>
+        </div>
+    </form>
+    {% endif %}
+
+    <!-- Enrollments Table (Section 8.5) -->
+    <div class="k-card p-0 overflow-x-auto">
+        <table class="k-table">
+            <caption class="sr-only">Course enrollments</caption>
+            <thead>
+                <tr>
+                    <th class="k-sticky-col">Course</th>
+                    <th>Student</th>
+                    <th>Enrolled by</th>
+                    <th>Status</th>
+                    <th class="text-right">Action</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for enrollment in enrollments %}
+                <tr>
+                    <td class="k-sticky-col">
+                        <div class="font-semibold">{{ enrollment.course.code }}</div>
+                        <div class="text-xs k-muted">{{ enrollment.course.title }}</div>
+                    </td>
+                    <td>
+                        <div class="font-semibold">{{ enrollment.student.get_full_name|default:enrollment.student.email }}</div>
+                        <div class="text-xs k-muted font-mono">{{ enrollment.student.email }}</div>
+                    </td>
+                    <td class="text-xs">
+                        <div>{{ enrollment.enrolled_by.email|default:"System" }}</div>
+                        <div class="text-xs k-muted">{{ enrollment.enrolled_at|date:"Y-m-d" }}</div>
+                    </td>
+                    <td>
+                        {% if enrollment.status == 'active' %}
+                        <span class="badge badge-success badge-sm font-medium">Active</span>
+                        {% elif enrollment.status == 'dropped' %}
+                        <span class="badge badge-error badge-sm font-medium">Dropped</span>
+                        {% else %}
+                        <span class="badge badge-ghost badge-sm font-medium">{{ enrollment.status }}</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-right">
+                        {% if enrollment.status == 'active' %}
+                        <form method="post" action="{% url 'kura:enrollment_drop' enrollment.id %}" class="inline">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-ghost btn-xs text-error" data-confirm-action="Drop this student from the course?">
+                                Drop
+                            </button>
+                        </form>
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="p-8 text-center">
+                        {% include "kura/_empty.html" with icon="enrollments" title="No enrollments found" text="No student course enrollments match the selected filters." %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 {% endblock %}

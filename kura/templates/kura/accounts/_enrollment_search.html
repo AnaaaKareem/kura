@@ -3,5 +3,7 @@
     <option value="">Select a result</option>
     {% for result in results %}
     <option value="{{ result.pk }}">{% if kind == 'course' %}{{ result.code }} — {{ result.title }}{% else %}{{ result.get_full_name|default:result.email }} — {{ result.email }}{% endif %}</option>
+    {% empty %}
+    <option value="" disabled>No {{ kind }}s match your search</option>
     {% endfor %}
 </select>

@@ -2,49 +2,64 @@
 
 {% block title %}My sessions - Kura{% endblock %}
 
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">My sessions</li>
+</ol>
+{% endblock %}
+
 {% block content %}
 <div class="space-y-6">
-    <header>
+    <!-- Page Header (Section 8.2) -->
+    <header class="space-y-1">
+        <p class="k-eyebrow">Account security</p>
         <h1 class="text-2xl font-bold">My sessions</h1>
-        <p>Review your active sessions and end any device you do not recognise.</p>
+        <p class="text-sm k-muted">Review your active browser sessions and end any you do not recognise.</p>
     </header>
 
-    <div class="overflow-x-auto bg-base-100 border border-base-300 rounded-box">
-        <table class="table table-sm w-full">
+    <!-- Sessions Table Card (Section 8.5) -->
+    <div class="k-card p-0 overflow-x-auto">
+        <table class="k-table">
             <caption class="sr-only">Active personal sessions</caption>
-            <thead class="bg-base-200">
+            <thead>
                 <tr>
                     <th>Device</th>
                     <th>IP address</th>
                     <th>Started</th>
                     <th>Expires</th>
                     <th>Status</th>
-                    <th>Action</th>
+                    <th class="text-right">Action</th>
                 </tr>
             </thead>
             <tbody>
                 {% for session in sessions %}
                 <tr>
-                    <td>{{ session.user_agent|default:"Unknown device" }}</td>
-                    <td>{{ session.ip_address|default:"Unknown" }}</td>
-                    <td>{{ session.created_at|date:"j M Y, H:i" }}</td>
-                    <td>{{ session.expires_at|date:"j M Y, H:i" }}</td>
+                    <td class="font-medium">{{ session.user_agent|default:"Unknown device" }}</td>
+                    <td class="k-num text-xs">{{ session.ip_address|default:"Unknown" }}</td>
+                    <td class="text-xs k-muted">{{ session.created_at|date:"j M Y, H:i" }}</td>
+                    <td class="text-xs k-muted">{{ session.expires_at|date:"j M Y, H:i" }}</td>
                     <td>
                         {% if session.id|stringformat:"s" == current_session_id %}
-                        <span class="badge badge-primary badge-sm">Current session</span>
+                        <span class="badge badge-primary badge-sm font-medium">Current session</span>
                         {% else %}
-                        Active
+                        <span class="badge badge-success badge-sm font-medium">Active</span>
                         {% endif %}
                     </td>
-                    <td>
-                        <form method="post" action="{% url 'kura:user_session_revoke' session.id %}">
+                    <td class="text-right">
+                        <form method="post" action="{% url 'kura:user_session_revoke' session.id %}" data-confirm-action="End this session? {% if session.id|stringformat:'s' == current_session_id %}You will be signed out immediately.{% endif %}">
                             {% csrf_token %}
-                            <button type="submit" class="btn btn-error btn-outline btn-sm">End session</button>
+                            <button type="submit" class="btn btn-ghost btn-sm text-error">End session</button>
                         </form>
                     </td>
                 </tr>
                 {% empty %}
-                <tr><td colspan="6">You have no active sessions.</td></tr>
+                <tr>
+                    <td colspan="6" class="p-8 text-center">
+                        {% include "kura/_empty.html" with icon="sessions" title="No active sessions" text="You have no other active sessions." %}
+                    </td>
+                </tr>
                 {% endfor %}
             </tbody>
         </table>

@@ -1,6 +1,8 @@
-// Keep the assessment builder usable without inline scripts or unsafe HTML insertion.
+// Kura UI v2 ("Ledger") Shared Interactions
 document.addEventListener("DOMContentLoaded", function () {
-    // Filter office rooms by building without trusting the browser for validation.
+    // -------------------------------------------------------------------------
+    // 1. Office Room Filter by Building
+    // -------------------------------------------------------------------------
     const building = document.querySelector("[data-office-building]");
     const room = document.querySelector("[data-office-room]");
     const officeRooms = document.getElementById("office-rooms");
@@ -20,7 +22,10 @@ document.addEventListener("DOMContentLoaded", function () {
         building.addEventListener("change", updateRooms);
         updateRooms();
     }
-    // Copy the codes shown on this page without sending them to the server.
+
+    // -------------------------------------------------------------------------
+    // 2. Recovery Codes Copy & Print
+    // -------------------------------------------------------------------------
     const copyRecoveryCodes = document.querySelector("[data-copy-recovery-codes]");
     const recoveryStatus = document.querySelector("[data-recovery-status]");
     if (copyRecoveryCodes && recoveryStatus) {
@@ -36,35 +41,50 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     }
 
-    // Open the browser's print dialog while the one-time codes are visible.
     const printRecoveryCodes = document.querySelector("[data-print-recovery-codes]");
     if (printRecoveryCodes) {
         printRecoveryCodes.addEventListener("click", function () { window.print(); });
     }
-    // Apply the saved theme, or follow the device setting for a new browser.
-    const themeSelector = document.querySelector("[data-theme-selector]");
-    const savedTheme = localStorage.getItem("kura-theme") || "system";
-    const allowedThemes = ["light", "dark", "system"];
-    const selectedTheme = allowedThemes.includes(savedTheme) ? savedTheme : "system";
-    const themeNames = { light: "kura", dark: "kura-dark", system: "kura-system" };
 
-    document.documentElement.dataset.theme = themeNames[selectedTheme];
-    if (themeSelector) {
-        themeSelector.value = selectedTheme;
-        themeSelector.addEventListener("change", function () {
-            if (!allowedThemes.includes(themeSelector.value)) return;
-            localStorage.setItem("kura-theme", themeSelector.value);
-            document.documentElement.dataset.theme = themeNames[themeSelector.value];
+    // -------------------------------------------------------------------------
+    // 3. Theme Management (Light "kura", Dark "kura-dark", System "kura-system")
+    // -------------------------------------------------------------------------
+    const allowedThemes = ["light", "dark", "system"];
+    const themeNames = { light: "kura", dark: "kura-dark", system: "kura-system" };
+    let savedTheme = localStorage.getItem("kura-theme") || "system";
+    if (!allowedThemes.includes(savedTheme)) savedTheme = "system";
+
+    function applyTheme(themeKey) {
+        if (!allowedThemes.includes(themeKey)) return;
+        localStorage.setItem("kura-theme", themeKey);
+        document.documentElement.setAttribute("data-theme", themeNames[themeKey]);
+
+        // Sync dropdown selectors if present
+        document.querySelectorAll("[data-theme-selector]").forEach(function (el) {
+            el.value = themeKey;
+        });
+        // Sync radio buttons if present
+        document.querySelectorAll('input[name="kura-theme-choice"]').forEach(function (el) {
+            el.checked = (el.value === themeKey);
         });
     }
 
-    // Turn the current route name into a short, readable breadcrumb without exposing record details.
-    const breadcrumbCurrent = document.querySelector("[data-breadcrumb-current]");
-    if (breadcrumbCurrent) {
-        breadcrumbCurrent.textContent = breadcrumbCurrent.textContent.replaceAll("_", " ");
-    }
+    // Apply on load
+    applyTheme(savedTheme);
 
-    // Keep the mobile sidebar state available to keyboard users through its checkbox.
+    // Listen to changes on selectors or radios
+    document.querySelectorAll("[data-theme-selector]").forEach(function (el) {
+        el.addEventListener("change", function () { applyTheme(el.value); });
+    });
+    document.querySelectorAll('input[name="kura-theme-choice"]').forEach(function (el) {
+        el.addEventListener("change", function () {
+            if (el.checked) applyTheme(el.value);
+        });
+    });
+
+    // -------------------------------------------------------------------------
+    // 4. Mobile Sidebar Close on Link Click
+    // -------------------------------------------------------------------------
     const sidebarToggle = document.getElementById("kura-sidebar-toggle");
     document.querySelectorAll("[data-close-sidebar]").forEach(function (link) {
         link.addEventListener("click", function () {
@@ -72,15 +92,123 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     });
 
-    // Keep destructive actions confirmed without using an inline event attribute.
-    document.querySelectorAll("[data-confirm-action]").forEach(function (control) {
-        const eventName = control.tagName === "FORM" ? "submit" : "click";
-        control.addEventListener(eventName, function (event) {
-            if (!window.confirm(control.dataset.confirmAction)) event.preventDefault();
-        });
+    // -------------------------------------------------------------------------
+    // 5. Dismissible Messages
+    // -------------------------------------------------------------------------
+    document.addEventListener("click", function (event) {
+        const dismissBtn = event.target.closest("[data-dismiss-message]");
+        if (dismissBtn) {
+            const messageItem = dismissBtn.closest("[data-message-item]");
+            if (messageItem) {
+                messageItem.style.transition = "opacity 150ms ease-out, transform 150ms ease-out";
+                messageItem.style.opacity = "0";
+                messageItem.style.transform = "translateY(-4px)";
+                setTimeout(function () {
+                    messageItem.remove();
+                }, 150);
+            }
+        }
     });
 
-    // Pages without the assessment builder still need the theme and sidebar controls above.
+    // -------------------------------------------------------------------------
+    // 6. Accessible Confirmation Dialog (<dialog id="k-confirm">)
+    // -------------------------------------------------------------------------
+    const confirmModal = document.getElementById("k-confirm");
+    let pendingSubmitForm = null;
+
+    if (confirmModal) {
+        const confirmMsg = confirmModal.querySelector("[data-confirm-message]");
+        const confirmSubmitBtn = confirmModal.querySelector("[data-confirm-submit]");
+        const confirmCancelBtn = confirmModal.querySelector("[data-confirm-cancel]");
+
+        if (confirmCancelBtn) {
+            confirmCancelBtn.addEventListener("click", function () {
+                pendingSubmitForm = null;
+                confirmModal.close();
+            });
+        }
+
+        if (confirmSubmitBtn) {
+            confirmSubmitBtn.addEventListener("click", function () {
+                if (pendingSubmitForm) {
+                    const formToSubmit = pendingSubmitForm;
+                    pendingSubmitForm = null;
+                    confirmModal.close();
+                    if (typeof formToSubmit.requestSubmit === "function") {
+                        formToSubmit.requestSubmit();
+                    } else {
+                        formToSubmit.submit();
+                    }
+                }
+            });
+        }
+    }
+
+    document.addEventListener("submit", function (event) {
+        const form = event.target;
+        if (!form) return;
+        const submitter = event.submitter || form.querySelector('button[type="submit"][data-confirm-action]');
+        const message = form.getAttribute("data-confirm-action") || (submitter && submitter.getAttribute("data-confirm-action"));
+        if (!message) return;
+        if (form.dataset.confirmed === "true") {
+            form.removeAttribute("data-confirmed");
+            return;
+        }
+
+        if (confirmModal && typeof confirmModal.showModal === "function") {
+            event.preventDefault();
+            pendingSubmitForm = form;
+            const msgEl = confirmModal.querySelector("[data-confirm-message]");
+            if (msgEl) msgEl.textContent = message;
+
+            const tone = form.getAttribute("data-confirm-tone") || (submitter && submitter.getAttribute("data-confirm-tone")) || "error";
+            const submitBtn = confirmModal.querySelector("[data-confirm-submit]");
+            if (submitBtn) {
+                if (tone === "primary") {
+                    submitBtn.className = "btn btn-primary btn-sm";
+                } else {
+                    submitBtn.className = "btn btn-error btn-sm";
+                }
+            }
+
+            confirmModal.showModal();
+            const cancelBtn = confirmModal.querySelector("[data-confirm-cancel]");
+            if (cancelBtn) cancelBtn.focus();
+        } else {
+            // Fallback for browsers without <dialog>
+            if (!window.confirm(message)) {
+                event.preventDefault();
+            }
+        }
+    });
+
+    // -------------------------------------------------------------------------
+    // 7. Prevent Double Submit / Loading State
+    // -------------------------------------------------------------------------
+    document.addEventListener("submit", function (event) {
+        const form = event.target;
+        if (!form || form.method.toUpperCase() !== "POST") return;
+        const submitBtn = form.querySelector('button[type="submit"]:not([data-no-loading])');
+        if (submitBtn && !submitBtn.disabled) {
+            // Restore button if user navigates back using browser cache
+            window.addEventListener("pageshow", function () {
+                submitBtn.disabled = false;
+                submitBtn.classList.remove("loading", "loading-spinner");
+            }, { once: true });
+        }
+    });
+
+    // -------------------------------------------------------------------------
+    // 8. Focus Form Error Summary on Page Load
+    // -------------------------------------------------------------------------
+    const errorSummary = document.querySelector("[data-form-error-summary]");
+    if (errorSummary) {
+        errorSummary.focus();
+    }
+
+    // -------------------------------------------------------------------------
+    // 9. Assessment Authoring Dynamic Groups
+    // -------------------------------------------------------------------------
     const delivery = document.getElementById("id_delivery_mode");
     if (!delivery) return;
 
@@ -132,7 +260,8 @@ document.addEventListener("DOMContentLoaded", function () {
                 list.insertBefore(card.nextElementSibling, card);
             }
             list.querySelectorAll("[data-question-card]").forEach(function (question, index) {
-                question.querySelector("input[name$='-ORDER']").value = index + 1;
+                const orderInput = question.querySelector("input[name$='-ORDER']");
+                if (orderInput) orderInput.value = index + 1;
             });
             move.focus();
             return;
@@ -145,13 +274,18 @@ document.addEventListener("DOMContentLoaded", function () {
                 else input.value = "";
             });
             row.hidden = true;
-            remove.closest("[data-question-group]").querySelector("[data-add-row]").focus();
+            const addBtn = remove.closest("[data-question-group]").querySelector("[data-add-row]");
+            if (addBtn) addBtn.focus();
             return;
         }
         const button = event.target.closest("[data-add-row]");
         if (!button) return;
         const row = button.parentElement.querySelector("[data-question-row][hidden]");
-        if (row) { row.hidden = false; row.querySelector("input").focus(); }
+        if (row) {
+            row.hidden = false;
+            const firstInput = row.querySelector("input");
+            if (firstInput) firstInput.focus();
+        }
     });
     document.body.addEventListener("htmx:afterSwap", prepareCards);
     updateDelivery();

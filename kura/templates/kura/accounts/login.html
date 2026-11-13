@@ -3,55 +3,47 @@
 {% block title %}Log in - Kura{% endblock %}
 
 {% block content %}
-<div class="max-w-md mx-auto mt-10">
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <h1 class="card-title text-2xl font-bold justify-center">Log in to Kura</h1>
-            <p class="text-sm text-base-content/70 text-center">
-                Enter your institutional email address and password.
-            </p>
+<div class="max-w-md mx-auto my-8">
+    <div class="k-card p-6 sm:p-8 space-y-6">
+        <header class="text-center space-y-2">
+            <h1 class="text-2xl font-bold">Log in</h1>
+            <p class="text-sm k-muted">Enter your institutional email address and password.</p>
+        </header>
 
-            <!-- Login submission form with DaisyUI form controls -->
-            <form method="post" action="{% url 'kura:login' %}" class="mt-4 space-y-4">
-                {% csrf_token %}
+        <form method="post" action="{% url 'kura:login' %}" class="space-y-4">
+            {% csrf_token %}
 
-                <div class="form-control">
-                    <label for="id_email" class="label">
-                        <span class="label-text font-medium">Email address</span>
-                    </label>
-                    {{ form.email }}
-                    {% if form.email.errors %}
-                    <label class="label">
-                        <span class="label-text-alt text-error">{{ form.email.errors.0 }}</span>
-                    </label>
-                    {% endif %}
-                </div>
+            <div class="form-control w-full space-y-1">
+                <label for="id_email" class="label py-1">
+                    <span class="label-text font-medium text-sm">Email address</span>
+                </label>
+                {{ form.email }}
+                {% if form.email.errors %}
+                <p class="text-error text-xs font-medium pt-0.5">{{ form.email.errors.0 }}</p>
+                {% endif %}
+            </div>
 
-                <div class="form-control">
-                    <label for="id_password" class="label">
-                        <span class="label-text font-medium">Password</span>
+            <div class="form-control w-full space-y-1">
+                <div class="flex justify-between items-center py-1">
+                    <label for="id_password" class="label p-0">
+                        <span class="label-text font-medium text-sm">Password</span>
                     </label>
-                    {{ form.password }}
-                    {% if form.password.errors %}
-                    <label class="label">
-                        <span class="label-text-alt text-error">{{ form.password.errors.0 }}</span>
-                    </label>
-                    {% endif %}
-                </div>
-
-                <div class="flex items-center justify-between text-sm">
-                    <a href="{% url 'kura:password_reset_request' %}" class="link link-primary">
+                    <a href="{% url 'kura:password_reset_request' %}" class="text-xs text-primary hover:underline font-medium">
                         Forgot your password?
                     </a>
                 </div>
+                {{ form.password }}
+                {% if form.password.errors %}
+                <p class="text-error text-xs font-medium pt-0.5">{{ form.password.errors.0 }}</p>
+                {% endif %}
+            </div>
 
-                <div class="form-control mt-6">
-                    <button type="submit" class="btn btn-primary w-full">
-                        Sign in
-                    </button>
-                </div>
-            </form>
-        </div>
+            <div class="pt-2">
+                <button type="submit" class="btn btn-primary w-full">
+                    Log in
+                </button>
+            </div>
+        </form>
     </div>
 </div>
 {% endblock %}
