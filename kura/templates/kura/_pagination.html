@@ -1,15 +1,15 @@
-{# Render previous and next page controls using DaisyUI join buttons. #}
+{# Render previous and next page controls while keeping active filter query parameters. #}
 {% if page_obj and page_obj.has_other_pages %}
-<nav class="flex items-center justify-between border-t border-base-300 px-4 py-3 sm:px-6 mt-4" aria-label="Pagination">
+<nav class="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between border-t border-base-300 px-4 py-3 sm:px-6 mt-4" aria-label="Pagination">
     <p class="text-sm k-muted">
         Page <span class="font-medium text-base-content k-num">{{ page_obj.number }}</span> of <span class="font-medium text-base-content k-num">{{ page_obj.paginator.num_pages }}</span>
     </p>
     <div class="join">
         {% if page_obj.has_previous %}
-        <a href="?page={{ page_obj.previous_page_number }}" class="join-item btn btn-outline btn-sm">Previous</a>
+        <a href="?{% if pagination_query %}{{ pagination_query }}&amp;{% endif %}page={{ page_obj.previous_page_number }}" class="join-item btn btn-outline btn-sm">Previous</a>
         {% endif %}
         {% if page_obj.has_next %}
-        <a href="?page={{ page_obj.next_page_number }}" class="join-item btn btn-outline btn-sm">Next</a>
+        <a href="?{% if pagination_query %}{{ pagination_query }}&amp;{% endif %}page={{ page_obj.next_page_number }}" class="join-item btn btn-outline btn-sm">Next</a>
         {% endif %}
     </div>
 </nav>

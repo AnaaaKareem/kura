@@ -6,6 +6,7 @@ from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
 from .models import (
     AcademicLevel,
+    Assessment,
     AssessmentDeliveryMode,
     AppealStatus,
     AttendanceStatus,
@@ -16,6 +17,7 @@ from .models import (
     Building,
     Room,
     GradeComponentType,
+    GradeStatus,
     EnrollmentStatus,
     PasswordHistory,
     Role,
@@ -277,6 +279,7 @@ class PasswordResetConfirmForm(forms.Form):
                 "class": "input input-bordered w-full font-mono",
                 "placeholder": "123456",
                 "autocomplete": "one-time-code",
+                "inputmode": "numeric",
             }
         ),
     )
@@ -347,6 +350,7 @@ class MFAVerifyForm(forms.Form):
                 "class": "input input-bordered w-full text-center tracking-widest text-lg font-mono",
                 "placeholder": "123456",
                 "autocomplete": "one-time-code",
+                "inputmode": "numeric",
                 "autofocus": "autofocus",
             }
         ),
@@ -1370,6 +1374,7 @@ class GradeReleaseForm(forms.Form):
                 "class": "input input-bordered w-full font-mono text-center tracking-widest text-lg",
                 "placeholder": "123456",
                 "autocomplete": "one-time-code",
+                "inputmode": "numeric",
                 "autofocus": "autofocus",
             }
         ),
@@ -1512,3 +1517,55 @@ class CourseGradeSchemeForm(forms.Form):
         if total != 100:
             raise forms.ValidationError(f"The weights must add up to 100%. They currently add up to {total}%.")
         return cleaned_data
+
+
+class ScheduleFilterForm(forms.Form):
+    """Validate course, day, and format filters on the timetable page."""
+
+    course = forms.ModelChoiceField(queryset=Course.objects.none(), required=False, empty_label="All courses")
+    day = forms.ChoiceField(choices=[("", "All days")] + list(DayOfWeek.choices), required=False)
+    session_type = forms.ChoiceField(choices=[("", "All formats")] + list(SessionType.choices), required=False, label="Format")
+
+    def __init__(self, *args, courses=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Restrict the course dropdown to the courses this user can already see.
+        if courses is not None:
+            self.fields["course"].queryset = courses
+
+
+class AttendanceHistoryFilterForm(forms.Form):
+    """Validate staff filters on the attendance history list."""
+
+    q = forms.CharField(required=False, max_length=150, label="Student")
+    course = forms.ModelChoiceField(queryset=Course.objects.none(), required=False, empty_label="All courses")
+    status = forms.ChoiceField(choices=[("", "All statuses")] + list(AttendanceStatus.choices), required=False)
+    date_from = forms.DateField(
+        required=False,
+        label="From date",
+        widget=forms.DateInput(attrs={"class": "input input-bordered w-full", "type": "date"}),
+    )
+    date_to = forms.DateField(
+        required=False,
+        label="To date",
+        widget=forms.DateInput(attrs={"class": "input input-bordered w-full", "type": "date"}),
+    )
+
+    def __init__(self, *args, courses=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Limit course options to courses assigned to the staff member.
+        if courses is not None:
+            self.fields["course"].queryset = courses
+
+
+class CourseGradesFilterForm(forms.Form):
+    """Validate assessment, status, and student filters on the course gradebook."""
+
+    q = forms.CharField(required=False, max_length=150, label="Student")
+    assessment = forms.ModelChoiceField(queryset=Assessment.objects.none(), required=False, empty_label="All assessments")
+    status = forms.ChoiceField(choices=[("", "All statuses")] + list(GradeStatus.choices), required=False)
+
+    def __init__(self, *args, assessments=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Limit assessment choices to assessments belonging to this course.
+        if assessments is not None:
+            self.fields["assessment"].queryset = assessments
