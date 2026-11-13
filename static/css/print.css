@@ -1,4 +1,4 @@
-/* Printing the recovery codes: show only the clean paper sheet (A4, Kura logo). */
+/* Printing rules for the recovery code sheet and academic transcript on A4 paper. */
 @page { size: A4; margin: 18mm; }
 @media print {
     body { background: #fff !important; color: #000 !important; }
@@ -13,4 +13,14 @@
     .recovery-sheet .sheet-codes { display: grid; grid-template-columns: 1fr 1fr; gap: 10px 24px; margin: 18px 0; }
     .recovery-sheet .sheet-code { font-family: monospace; font-size: 18px; letter-spacing: 0.12em; border: 1px solid #000; border-radius: 6px; padding: 10px; text-align: center; }
     .recovery-sheet .sheet-note { font-size: 12px; border-top: 1px solid #000; padding-top: 10px; }
+
+    /* Transcript print layout: reveal only the transcript block and format its table for paper. */
+    .transcript-sheet, .transcript-sheet * { visibility: visible; }
+    .transcript-sheet { display: block !important; position: absolute; top: 0; left: 0; width: 100%; color: #000 !important; }
+    .transcript-sheet .no-print, .transcript-sheet .no-print * { visibility: hidden !important; display: none !important; }
+    .transcript-sheet .k-card { border: 1px solid #000 !important; background: #fff !important; }
+    .transcript-sheet .k-eyebrow, .transcript-sheet .k-muted { color: #333 !important; }
+    .transcript-sheet .k-table { width: 100%; border-collapse: collapse; font-size: 12px; }
+    .transcript-sheet .k-table th, .transcript-sheet .k-table td { border-bottom: 1px solid #ccc; padding: 8px; color: #000 !important; }
+    .transcript-sheet .k-table thead tr { background: #f3f3f3 !important; position: static; }
 }
