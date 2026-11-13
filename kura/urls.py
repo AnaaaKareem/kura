@@ -26,6 +26,7 @@ urlpatterns = [
     path("account/sessions/", views.user_sessions_view, name="user_sessions"),
     path("account/sessions/<uuid:session_id>/revoke/", views.user_session_revoke_view, name="user_session_revoke"),
     path("admin/sessions/", views.admin_sessions_view, name="admin_sessions"),
+    path("admin/security-policy/", views.security_policy_view, name="security_policy"),
     path("admin/quarantine/", views.quarantine_list_view, name="quarantine_list"),
     path(
         "admin/quarantine/<uuid:quarantined_file_id>/delete/",
