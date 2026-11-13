@@ -14,38 +14,30 @@
 </ol>
 {% endblock %}
 
+{% block form_errors %}{% endblock %}
+
 {% block content %}
 <div class="max-w-md mx-auto my-6">
     <div class="k-card p-6 sm:p-8 space-y-6">
         <header class="space-y-2 text-center">
-            <span class="badge badge-warning badge-sm font-medium">Step-up authentication</span>
+            <span class="badge badge-primary badge-outline badge-sm font-medium">Extra check</span>
             <h1 class="text-2xl font-bold">Release grade</h1>
             <p class="text-sm k-muted">
-                Authorizing release for <strong>{% if grade.student.first_name or grade.student.last_name %}{{ grade.student.first_name }} {{ grade.student.last_name }}{% else %}{{ grade.student.email }}{% endif %}</strong> (Score: <span class="k-num font-semibold">{{ grade.score }}</span>).
+                Releasing score for <strong class="text-base-content">{% if grade.student.first_name or grade.student.last_name %}{{ grade.student.first_name }} {{ grade.student.last_name }}{% else %}{{ grade.student.email }}{% endif %}</strong> (<span class="k-num font-semibold">{{ grade.score }} / {{ grade.assessment.max_score }}</span>).
             </p>
             <p class="text-xs k-muted">
-                Security policy mandates re-authenticating with your authenticator app code before publishing grades.
+                Enter a code from your authenticator app or a recovery code to publish this grade.
             </p>
         </header>
 
         <form method="post" class="space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
             {% csrf_token %}
+            {% include "kura/_form_errors.html" %}
+            {% include "kura/_field.html" with field=form.otp_token %}
 
-            <div class="form-control w-full space-y-1">
-                <label for="id_otp_token" class="label justify-center py-1">
-                    <span class="label-text font-medium text-sm">Authenticator code (6 digits)</span>
-                </label>
-                <div class="flex justify-center">
-                    {{ form.otp_token }}
-                </div>
-                {% if form.otp_token.errors %}
-                <p class="text-error text-xs font-medium text-center pt-0.5">{{ form.otp_token.errors.0 }}</p>
-                {% endif %}
-            </div>
-
-            <div class="flex items-center justify-end gap-2 pt-4 border-t border-base-300">
-                <a href="{% url 'kura:course_grades' grade.assessment.section.module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
-                <button type="submit" class="btn btn-success btn-sm">Release grade</button>
+            <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                <a href="{% url 'kura:course_grades' grade.assessment.section.module.course.id %}" class="btn btn-ghost">Cancel</a>
+                <button type="submit" class="btn btn-primary">Release grade</button>
             </div>
         </form>
     </div>

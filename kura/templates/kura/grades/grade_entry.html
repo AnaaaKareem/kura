@@ -14,26 +14,29 @@
 </ol>
 {% endblock %}
 
-{% block content %}
-<div class="max-w-xl mx-auto my-6">
-    <div class="k-card p-6 sm:p-8 space-y-6">
-        <header class="space-y-1">
-            <p class="k-eyebrow">{{ attempt.assessment.section.module.course.code }}</p>
-            <h1 class="text-2xl font-bold">Enter grade</h1>
-            <p class="text-sm k-muted">
-                {{ attempt.assessment.title }} &bull; {% if attempt.student.first_name or attempt.student.last_name %}{{ attempt.student.first_name }} {{ attempt.student.last_name }}{% else %}{{ attempt.student.email }}{% endif %} &bull; Max score: {{ attempt.assessment.max_score }}
-            </p>
-        </header>
+{% block form_errors %}{% endblock %}
 
+{% block content %}
+<div class="max-w-2xl mx-auto space-y-6">
+    <header class="space-y-1">
+        <p class="k-eyebrow">{{ attempt.assessment.section.module.course.code }}</p>
+        <h1 class="text-2xl font-bold">Enter grade</h1>
+        <p class="text-sm k-muted">
+            {{ attempt.assessment.title }} &bull; {% if attempt.student.first_name or attempt.student.last_name %}{{ attempt.student.first_name }} {{ attempt.student.last_name }}{% else %}{{ attempt.student.email }}{% endif %} &bull; Max score: <span class="k-num font-medium">{{ attempt.assessment.max_score }}</span>
+        </p>
+    </header>
+
+    <div class="k-card">
         <form method="post" class="space-y-4">
             {% csrf_token %}
+            {% include "kura/_form_errors.html" %}
 
             {% include "kura/_field.html" with field=form.score %}
             {% include "kura/_field.html" with field=form.feedback %}
 
-            <div class="flex items-center justify-end gap-2 pt-4 border-t border-base-300">
-                <a href="{% url 'kura:course_grades' attempt.assessment.section.module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
-                <button type="submit" class="btn btn-primary btn-sm">Save draft score</button>
+            <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                <a href="{% url 'kura:course_grades' attempt.assessment.section.module.course.id %}" class="btn btn-ghost">Cancel</a>
+                <button type="submit" class="btn btn-primary">Save draft</button>
             </div>
         </form>
     </div>

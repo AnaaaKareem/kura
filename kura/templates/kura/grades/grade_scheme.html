@@ -1,41 +1,47 @@
 {% extends "kura/base.html" %}
 
-{% block title %}Grade Scheme - {{ course.code }} - Kura{% endblock %}
+{% block title %}Grade scheme - {{ course.code }} - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:course_list' %}" class="k-muted hover:text-primary">Courses</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:course_detail' course.id %}" class="k-muted hover:text-primary">{{ course.code }}</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:course_grades' course.id %}" class="k-muted hover:text-primary">Gradebook</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">Grade scheme</li>
+</ol>
+{% endblock %}
+
+{% block form_errors %}{% endblock %}
 
 {% block content %}
-<div class="max-w-xl mx-auto space-y-6">
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <span class="badge badge-primary font-mono text-xs">{{ course.code }}</span>
-            <h1 class="card-title text-2xl font-bold mt-2">Grade Scheme</h1>
-            <p class="text-sm text-base-content/70">
-                Set how much each kind of assessment counts towards the final course result.
-                The weights must add up to 100%. Leave a component empty if the course does not use it.
-            </p>
+<div class="max-w-2xl mx-auto space-y-6">
+    <header class="space-y-1">
+        <p class="k-eyebrow">{{ course.code }}</p>
+        <h1 class="text-2xl font-bold">Grade scheme</h1>
+        <p class="text-sm k-muted">
+            Set how much each assessment type counts towards the final result. Weights must add up to 100%.
+        </p>
+    </header>
 
-            <form method="post" class="mt-4 space-y-4">
-                {% csrf_token %}
+    <div class="k-card">
+        <form method="post" class="space-y-4">
+            {% csrf_token %}
+            {% include "kura/_form_errors.html" %}
 
-                {% if form.non_field_errors %}
-                <div role="alert" class="alert alert-error text-sm">{{ form.non_field_errors.0 }}</div>
-                {% endif %}
+            {% for field in form %}
+            {% include "kura/_field.html" with field=field %}
+            {% endfor %}
 
-                {% for field in form %}
-                <div class="form-control">
-                    <label for="{{ field.id_for_label }}" class="label"><span class="label-text font-medium">{{ field.label }}</span></label>
-                    {{ field }}
-                    {% if field.errors %}
-                    <label class="label"><span class="label-text-alt text-error">{{ field.errors.0 }}</span></label>
-                    {% endif %}
-                </div>
-                {% endfor %}
-
-                <div class="card-actions justify-end mt-6">
-                    <a href="{% url 'kura:course_grades' course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
-                    <button type="submit" class="btn btn-primary btn-sm">Save Grade Scheme</button>
-                </div>
-            </form>
-        </div>
+            <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                <a href="{% url 'kura:course_grades' course.id %}" class="btn btn-ghost">Cancel</a>
+                <button type="submit" class="btn btn-primary">Save grade scheme</button>
+            </div>
+        </form>
     </div>
 </div>
 {% endblock %}
