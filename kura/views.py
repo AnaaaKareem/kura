@@ -1833,6 +1833,12 @@ def staff_create_view(request):
                 office_location=office_location,
             )
 
+            # The title list holds the five staff role names, so the chosen title
+            # is also the account's first system role. Without it the new account
+            # could not open any staff page until an Admin assigned a role by hand.
+            staff_role = Role.objects.get(name=staff_title)
+            UserRole.objects.create(user=new_user, role=staff_role, assigned_by=request.user)
+
         # Record only the new account ID and role names, never its temporary password.
         role_names = list(UserRole.objects.filter(user=new_user).values_list("role__name", flat=True))
         log_security_event(request, "admin.user.created", {"target_user_id": new_user.id, "roles": role_names})
