@@ -12,20 +12,18 @@
 
 {% block content %}
 <div class="space-y-6">
-    <!-- Page Header (Section 8.2) -->
     <header class="space-y-1">
         <p class="k-eyebrow">Account security</p>
         <h1 class="text-2xl font-bold">My sessions</h1>
         <p class="text-sm k-muted">Review your active browser sessions and end any you do not recognise.</p>
     </header>
 
-    <!-- Sessions Table Card (Section 8.5) -->
     <div class="k-card p-0 overflow-x-auto">
         <table class="k-table">
             <caption class="sr-only">Active personal sessions</caption>
             <thead>
                 <tr>
-                    <th>Device</th>
+                    <th class="k-sticky-col">Device</th>
                     <th>IP address</th>
                     <th>Started</th>
                     <th>Expires</th>
@@ -36,21 +34,21 @@
             <tbody>
                 {% for session in sessions %}
                 <tr>
-                    <td class="font-medium">{{ session.user_agent|default:"Unknown device" }}</td>
+                    <td class="k-sticky-col font-medium">{{ session.user_agent|default:"Unknown device" }}</td>
                     <td class="k-num text-xs">{{ session.ip_address|default:"Unknown" }}</td>
-                    <td class="text-xs k-muted">{{ session.created_at|date:"j M Y, H:i" }}</td>
-                    <td class="text-xs k-muted">{{ session.expires_at|date:"j M Y, H:i" }}</td>
+                    <td class="text-xs k-muted k-num">{{ session.created_at|date:"j M Y, H:i" }}</td>
+                    <td class="text-xs k-muted k-num">{{ session.expires_at|date:"j M Y, H:i" }}</td>
                     <td>
                         {% if session.id|stringformat:"s" == current_session_id %}
-                        <span class="badge badge-primary badge-sm font-medium">Current session</span>
+                        {% include "kura/_status_badge.html" with kind="session" value="current" %}
                         {% else %}
-                        <span class="badge badge-success badge-sm font-medium">Active</span>
+                        {% include "kura/_status_badge.html" with kind="session" value="active" %}
                         {% endif %}
                     </td>
                     <td class="text-right">
                         <form method="post" action="{% url 'kura:user_session_revoke' session.id %}" data-confirm-action="End this session? {% if session.id|stringformat:'s' == current_session_id %}You will be signed out immediately.{% endif %}">
                             {% csrf_token %}
-                            <button type="submit" class="btn btn-ghost btn-sm text-error">End session</button>
+                            <button type="submit" class="btn btn-outline btn-error btn-sm">End session</button>
                         </form>
                     </td>
                 </tr>

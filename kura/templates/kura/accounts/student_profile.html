@@ -14,29 +14,32 @@
 
 {% block content %}
 <div class="space-y-6">
-    <!-- Page Header (Section 8.2) -->
-    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 border-b border-base-300 pb-5">
+    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div class="space-y-1">
             <p class="k-eyebrow">{{ student.department.name }}</p>
             <div class="flex flex-wrap items-center gap-2.5">
                 <h1 class="text-2xl font-bold">{% if student.user.first_name or student.user.last_name %}{{ student.user.first_name }} {{ student.user.last_name }}{% else %}{{ student.user.email }}{% endif %}</h1>
                 {% if not student.user.is_active %}
-                <span class="badge badge-error badge-sm font-medium">Deactivated</span>
+                {% include "kura/_status_badge.html" with kind="account" value="deactivated" %}
                 {% elif student.user.locked_until and student.user.locked_until > now %}
                 <span class="badge badge-warning badge-sm font-medium">Locked until {{ student.user.locked_until|date:"d M, H:i" }}</span>
                 {% else %}
-                <span class="badge badge-success badge-sm font-medium">Active</span>
+                {% include "kura/_status_badge.html" with kind="account" value="active" %}
                 {% endif %}
             </div>
             <p class="text-sm k-muted font-mono">{{ student.user.email }}</p>
         </div>
-        <a href="{% url 'kura:student_list' %}" class="btn btn-outline btn-sm">
-            &larr; Back to students
-        </a>
+        <div class="flex flex-wrap items-center gap-2">
+            <a href="{% url 'kura:student_list' %}" class="btn btn-outline btn-sm">
+                &larr; Back to students
+            </a>
+            <a href="{% url 'kura:enrollment_create' %}" class="btn btn-primary btn-sm">
+                Enroll in a course
+            </a>
+        </div>
     </header>
 
     <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <!-- Main: Enrollments -->
         <div class="xl:col-span-2 space-y-4">
             <div class="flex items-center justify-between">
                 <h2 class="text-lg font-bold">Course enrollments</h2>
@@ -60,11 +63,9 @@
                                 <span class="font-semibold block">{{ enrollment.course.code }}</span>
                                 <span class="text-xs k-muted">{{ enrollment.course.title }}</span>
                             </td>
-                            <td class="text-xs">{{ enrollment.course.semester|capfirst }} {{ enrollment.course.academic_year }}</td>
+                            <td class="text-xs k-num">{{ enrollment.course.semester|capfirst }} {{ enrollment.course.academic_year }}</td>
                             <td class="text-right">
-                                <span class="badge {% if enrollment.status == 'active' %}badge-success{% else %}badge-ghost{% endif %} badge-sm font-medium">
-                                    {{ enrollment.get_status_display }}
-                                </span>
+                                {% include "kura/_status_badge.html" with kind="enrollment" value=enrollment.status %}
                             </td>
                         </tr>
                         {% empty %}
@@ -79,7 +80,6 @@
             </div>
         </div>
 
-        <!-- Side: Student Facts -->
         <aside class="space-y-6">
             <div class="k-card space-y-4">
                 <h2 class="text-base font-semibold border-b border-base-300 pb-2">Student record</h2>
@@ -99,6 +99,10 @@
                     <div>
                         <dt class="k-eyebrow">Academic level</dt>
                         <dd class="font-medium mt-0.5">{{ student.get_current_level_display }}</dd>
+                    </div>
+                    <div>
+                        <dt class="k-eyebrow">Year started</dt>
+                        <dd class="k-num font-medium mt-0.5">{{ student.matriculation_year }}</dd>
                     </div>
                     <div>
                         <dt class="k-eyebrow">Account status</dt>

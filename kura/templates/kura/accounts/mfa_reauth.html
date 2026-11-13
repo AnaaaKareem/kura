@@ -2,38 +2,30 @@
 
 {% block title %}Confirm it's you - Kura{% endblock %}
 
+{% block form_errors %}{% endblock %}
+
 {% block content %}
-<div class="max-w-md mx-auto my-8">
+<div class="max-w-md mx-auto my-6">
     <div class="k-card p-6 sm:p-8 space-y-6">
         <header class="text-center space-y-2">
             <h1 class="text-2xl font-bold">Confirm it's you</h1>
             <p class="text-sm k-muted">
-                This action needs a fresh check. Enter a current code from your authenticator app or an unused recovery code.
+                This action needs your code again. Enter a code from your authenticator app or an unused recovery code.
             </p>
             <p class="text-xs k-muted">
-                Note: Entering a recovery code will consume it.
+                Entering a recovery code uses it up.
             </p>
         </header>
 
         <form method="post" action="{% url 'kura:mfa_reauth' %}" class="space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
             {% csrf_token %}
             <input type="hidden" name="next" value="{{ next_url }}">
-
-            <div class="form-control w-full space-y-1">
-                <label for="id_code" class="label justify-center py-1">
-                    <span class="label-text font-medium text-sm">Security code</span>
-                </label>
-                <div class="flex justify-center">
-                    {{ form.code }}
-                </div>
-                {% if form.code.errors %}
-                <p class="text-error text-xs font-medium text-center pt-0.5">{{ form.code.errors.0 }}</p>
-                {% endif %}
-            </div>
+            {% include "kura/_form_errors.html" %}
+            {% include "kura/_field.html" with field=form.code %}
 
             <div class="pt-2">
                 <button type="submit" class="btn btn-primary w-full">
-                    Verify &amp; continue
+                    Verify and continue
                 </button>
             </div>
         </form>
