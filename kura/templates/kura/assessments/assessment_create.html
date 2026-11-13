@@ -13,42 +13,32 @@
 </ol>
 {% endblock %}
 
+{% block form_errors %}{% endblock %}
+
 {% block content %}
 <div class="max-w-4xl mx-auto space-y-6">
-    <div class="k-card p-6 sm:p-8 space-y-6">
-        <header class="space-y-1">
-            <p class="k-eyebrow">{{ section.module.course.code }} &bull; {{ section.title }}</p>
-            <h1 class="text-2xl font-bold">{% if assessment %}Edit assessment{% else %}New assessment{% endif %}</h1>
-            <p class="text-sm k-muted">
-                Author quizzes, coursework assignments, and exams. Question prompts are saved in <code>questions_json</code> while answer keys and rubrics are strictly isolated in <code>ExamAnswerKey</code>.
-            </p>
-            {% if questions_locked %}
-            <div role="alert" class="alert alert-warning text-xs mt-2">
-                <span>Questions are locked because students have started. Only the title, instructions and dates can be changed.</span>
-            </div>
-            {% endif %}
-            {% if builder_unavailable %}
-            <div role="alert" class="alert alert-warning text-xs mt-2">
-                <span>These existing questions exceed the builder's supported format. Only the title, instructions and dates can be changed without losing data.</span>
-            </div>
-            {% endif %}
-        </header>
+    <header class="space-y-1">
+        <p class="k-eyebrow">{{ section.module.course.code }} &bull; {{ section.title }}</p>
+        <h1 class="text-2xl font-bold">{% if assessment %}Edit assessment{% else %}New assessment{% endif %}</h1>
+        <p class="text-sm k-muted">
+            Create quizzes, coursework, and exams. Answer keys and marking guides stay hidden from students.
+        </p>
+        {% if questions_locked %}
+        <div role="alert" class="alert alert-warning text-xs mt-2">
+            <span>Questions are locked because students have started. Only the title, instructions and dates can be changed.</span>
+        </div>
+        {% endif %}
+        {% if builder_unavailable %}
+        <div role="alert" class="alert alert-warning text-xs mt-2">
+            <span>These existing questions exceed the builder's supported format. Only the title, instructions and dates can be changed without losing data.</span>
+        </div>
+        {% endif %}
+    </header>
 
+    <div class="k-card p-6 sm:p-8">
         <form method="post" class="space-y-6">
             {% csrf_token %}
-
-            {% if form.errors %}
-            <div role="alert" class="alert alert-error text-sm" data-form-error-summary tabindex="-1">
-                <div>
-                    <p class="font-semibold">Check the assessment details below:</p>
-                    <ul class="list-disc pl-5 mt-1 space-y-0.5 text-xs">
-                        {% for field in form %}{% for error in field.errors %}
-                        <li><a href="#{{ field.id_for_label }}" class="underline">{{ field.label }}: {{ error }}</a></li>
-                        {% endfor %}{% endfor %}
-                    </ul>
-                </div>
-            </div>
-            {% endif %}
+            {% include "kura/_form_errors.html" %}
 
             <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                 {% include "kura/_field.html" with field=form.title %}
@@ -56,8 +46,6 @@
             </div>
 
             {% include "kura/_field.html" with field=form.description %}
-
-            <!-- Delivery Mode Selector -->
             {% include "kura/_field.html" with field=form.delivery_mode %}
 
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -71,46 +59,33 @@
                 {% include "kura/_field.html" with field=form.due_date %}
             </div>
 
-            <!-- Proctored Hall & Network Constraints -->
-            <div class="k-card bg-base-200 p-5 space-y-3 border border-base-300">
-                <h3 class="font-semibold text-xs k-eyebrow">Proctoring &amp; network restrictions (optional)</h3>
+            <fieldset class="bg-base-200 rounded-box p-5 space-y-4 border border-base-300">
+                <legend class="k-eyebrow">Exam room restrictions (optional)</legend>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
                     {% include "kura/_field.html" with field=form.lab_cidr_allowed %}
-                    <div class="form-control w-full space-y-1">
-                        <label for="id_proctor_code" class="label py-1"><span class="label-text font-medium text-sm">Whiteboard proctor code</span></label>
-                        {{ form.proctor_code }}
-                        {% if assessment %}<p class="text-xs k-muted">Leave blank to keep the existing code.</p>{% endif %}
+                    <div>
+                        {% include "kura/_field.html" with field=form.proctor_code %}
+                        {% if assessment %}<p class="text-xs k-muted mt-1">Leave blank to keep the existing code.</p>{% endif %}
                     </div>
                 </div>
-            </div>
+            </fieldset>
 
-            <!-- Delivery Parameters -->
-            <div class="k-card bg-base-200 p-5 space-y-3 border border-base-300" data-online-only>
-                <h3 class="font-semibold text-xs k-eyebrow">Delivery parameters</h3>
+            <fieldset class="bg-base-200 rounded-box p-5 space-y-4 border border-base-300" data-online-only>
+                <legend class="k-eyebrow">Delivery options</legend>
                 <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
-                    <label class="cursor-pointer label justify-start gap-3 py-1">
-                        {{ form.shuffle_questions }}
-                        <span class="label-text text-sm">Shuffle questions</span>
-                    </label>
-                    <label class="cursor-pointer label justify-start gap-3 py-1">
-                        {{ form.shuffle_options }}
-                        <span class="label-text text-sm">Shuffle options</span>
-                    </label>
-                    <label class="cursor-pointer label justify-start gap-3 py-1">
-                        {{ form.allow_backtracking }}
-                        <span class="label-text text-sm">Allow backtracking</span>
-                    </label>
+                    {% include "kura/_field.html" with field=form.shuffle_questions %}
+                    {% include "kura/_field.html" with field=form.shuffle_options %}
+                    {% include "kura/_field.html" with field=form.allow_backtracking %}
                 </div>
-                <div class="max-w-xs pt-2">
+                <div class="max-w-xs">
                     {% include "kura/_field.html" with field=form.autosave_interval_seconds %}
                 </div>
-            </div>
+            </fieldset>
 
-            <!-- Formset management fields -->
             <section data-online-only class="space-y-4 pt-2">
                 <div class="border-b border-base-300 pb-2">
                     <h2 class="text-lg font-semibold">Questions</h2>
-                    <p class="text-xs k-muted">Correct answers and marking rubrics are isolated in the staff-only answer key.</p>
+                    <p class="text-xs k-muted">Correct answers and marking rubrics stay visible to staff only.</p>
                 </div>
                 <fieldset {% if questions_locked or builder_unavailable %}disabled{% endif %} class="space-y-4">
                     {{ question_forms.management_form }}
@@ -136,11 +111,12 @@
                     <p class="text-xs k-muted">Up to 20 questions; each can have up to 8 options or pairs.</p>
                 </fieldset>
             </section>
-            <p data-scanned-only class="text-sm k-muted p-4 k-card bg-base-200">Students or staff upload a PDF or image of the script. Marking is manual.</p>
 
-            <div class="flex items-center justify-end gap-2 pt-4 border-t border-base-300">
-                <a href="{% url 'kura:course_detail' section.module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
-                <button type="submit" class="btn btn-primary btn-sm">Save assessment</button>
+            <p data-scanned-only class="text-sm k-muted p-4 rounded-box border border-base-300 bg-base-200">Students or staff upload a PDF or image of the script. Marking is manual.</p>
+
+            <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                <a href="{% url 'kura:course_detail' section.module.course.id %}" class="btn btn-ghost">Cancel</a>
+                <button type="submit" class="btn btn-primary">Save assessment</button>
             </div>
         </form>
     </div>
