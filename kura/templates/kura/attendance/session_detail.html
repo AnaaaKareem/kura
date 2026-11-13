@@ -16,50 +16,44 @@
 
 {% block content %}
 <div class="space-y-6">
-    <!-- Page Header (Section 8.2) -->
-    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 border-b border-base-300 pb-5">
+    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div class="space-y-1">
             <p class="k-eyebrow">{{ session.module.course.code }} &bull; {{ session.module.title }}</p>
             <div class="flex flex-wrap items-center gap-2.5">
                 <h1 class="text-2xl font-bold">{{ session.title }}</h1>
-                {% if is_live %}
-                <span class="badge badge-success badge-sm font-medium">Live check-in open</span>
-                {% else %}
-                <span class="badge badge-ghost badge-sm font-medium">Closed</span>
-                {% endif %}
+                {% include "kura/_status_badge.html" with kind="attendance_session" value=is_live %}
             </div>
             <p class="text-sm k-muted">
-                Ends at: <strong class="text-base-content">{{ session.expires_at|date:"H:i (Y-m-d)" }}</strong>
+                Ends at: <strong class="text-base-content k-num">{{ session.expires_at|date:"j M Y, H:i" }}</strong>
             </p>
         </div>
 
         {% if is_live %}
         <form method="post" action="{% url 'kura:attendance_session_close' session.id %}">
             {% csrf_token %}
-            <button type="submit" class="btn btn-outline btn-warning btn-sm" data-confirm-action="Close attendance session now?">
-                End session now
+            <button type="submit" class="btn btn-outline btn-error btn-sm w-full sm:w-auto" data-confirm-action="Close this check-in window now? Students will no longer be able to check in.">
+                End check-in
             </button>
         </form>
         {% endif %}
     </header>
 
-    <!-- Active Check-in Screen (Classroom Presentation) -->
     {% if is_live and passcode %}
-    <section class="k-card shadow-md space-y-4">
+    <section class="k-card space-y-4">
         <h2 class="text-base font-semibold border-b border-base-300 pb-2">Classroom check-in</h2>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
             <div class="text-center p-6 bg-base-200 rounded-box border border-base-300 space-y-2">
-                <p class="k-eyebrow">Dynamic passcode</p>
-                <div class="text-5xl font-mono font-extrabold tracking-widest text-primary k-num">
+                <p class="k-eyebrow">Passcode</p>
+                <div class="text-5xl font-mono font-bold tracking-widest text-primary k-num">
                     {{ passcode }}
                 </div>
-                <p class="text-xs k-muted pt-2">Students enter this passcode on their check-in screen.</p>
+                <p class="text-xs k-muted pt-2">Students enter this code on their check-in screen.</p>
             </div>
 
             {% if qr_code_url %}
             <div class="flex flex-col items-center p-6 bg-base-200 rounded-box border border-base-300 space-y-3">
                 <p class="k-eyebrow">Scan to check in</p>
-                <div class="p-2 bg-white rounded-box shadow-sm">
+                <div class="p-2 bg-white rounded-box border border-base-300">
                     <img src="{{ qr_code_url }}" alt="Attendance QR Code" class="w-40 h-40">
                 </div>
             </div>
@@ -68,13 +62,11 @@
     </section>
     {% endif %}
 
-    <!-- Detail Grid: Roster & Manual Override -->
     <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <!-- Main: Verified Attendance Roster -->
         <div class="xl:col-span-2 space-y-4">
             <div class="flex items-center justify-between">
-                <h2 class="text-lg font-bold">Verified attendance roll</h2>
-                <span class="badge badge-ghost badge-sm k-num font-medium">{{ records|length }} verified</span>
+                <h2 class="text-lg font-bold">Attendance roll</h2>
+                <span class="badge badge-ghost badge-sm k-num font-medium">{{ records|length }} checked in</span>
             </div>
 
             <div class="k-card p-0 overflow-x-auto">
@@ -85,7 +77,7 @@
                             <th class="k-sticky-col">Student</th>
                             <th>Status</th>
                             <th>Method</th>
-                            <th>Time</th>
+                            <th class="k-num">Time</th>
                             <th>Notes</th>
                         </tr>
                     </thead>
@@ -109,7 +101,7 @@
                         {% empty %}
                         <tr>
                             <td colspan="5" class="p-8 text-center">
-                                {% include "kura/_empty.html" with icon="attendance" title="No check-ins yet" text="No students have verified attendance for this session." %}
+                                {% include "kura/_empty.html" with icon="attendance" title="No check-ins yet" text="No students have checked in for this session yet." %}
                             </td>
                         </tr>
                         {% endfor %}
@@ -118,11 +110,9 @@
             </div>
         </div>
 
-        <!-- Side: Session Details & Manual Roll Form -->
         <aside class="space-y-6">
-            <!-- Session facts -->
             <div class="k-card space-y-3">
-                <h2 class="text-base font-semibold border-b border-base-300 pb-2">Session facts</h2>
+                <h2 class="text-base font-semibold border-b border-base-300 pb-2">Session details</h2>
                 <dl class="space-y-2 text-sm">
                     <div>
                         <dt class="k-eyebrow">Course</dt>
@@ -133,45 +123,27 @@
                         <dd class="font-medium mt-0.5">{{ session.module.title }}</dd>
                     </div>
                     <div>
-                        <dt class="k-eyebrow">Check-in ends</dt>
-                        <dd class="k-num font-medium mt-0.5">{{ session.expires_at|date:"H:i:s (Y-m-d)" }}</dd>
+                        <dt class="k-eyebrow">Closes at</dt>
+                        <dd class="k-num font-medium mt-0.5">{{ session.expires_at|date:"j M Y, H:i" }}</dd>
                     </div>
                 </dl>
             </div>
 
-            <!-- Manual Override Form -->
             <div class="k-card space-y-4">
                 <div class="border-b border-base-300 pb-2">
-                    <h2 class="text-base font-semibold">Manual roll entry</h2>
-                    <p class="text-xs k-muted mt-0.5">Record or correct attendance with written justification.</p>
+                    <h2 class="text-base font-semibold">Manual entry</h2>
+                    <p class="text-xs k-muted mt-0.5">Record or update attendance with a written reason.</p>
                 </div>
 
                 <form method="post" action="{% url 'kura:attendance_manual_record' session.id %}" class="space-y-3">
                     {% csrf_token %}
-
-                    <div class="form-control w-full space-y-1">
-                        <label class="label py-0" for="id_student">
-                            <span class="label-text font-medium text-xs text-base-content">Student</span>
-                        </label>
-                        {{ manual_form.student }}
-                    </div>
-
-                    <div class="form-control w-full space-y-1">
-                        <label class="label py-0" for="id_status">
-                            <span class="label-text font-medium text-xs text-base-content">Status</span>
-                        </label>
-                        {{ manual_form.status }}
-                    </div>
-
-                    <div class="form-control w-full space-y-1">
-                        <label class="label py-0" for="id_override_reason">
-                            <span class="label-text font-medium text-xs text-base-content">Justification reason</span>
-                        </label>
-                        {{ manual_form.override_reason }}
-                    </div>
+                    {% include "kura/_form_errors.html" with form=manual_form %}
+                    {% include "kura/_field.html" with field=manual_form.student %}
+                    {% include "kura/_field.html" with field=manual_form.status %}
+                    {% include "kura/_field.html" with field=manual_form.override_reason %}
 
                     <button type="submit" class="btn btn-primary btn-sm w-full mt-2">
-                        Record manual attendance
+                        Record attendance
                     </button>
                 </form>
             </div>

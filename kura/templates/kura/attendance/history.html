@@ -6,18 +6,17 @@
 <ol class="flex items-center gap-1.5 text-sm">
     <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
     <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">Attendance history</li>
+    <li aria-current="page" class="font-medium text-base-content">Attendance</li>
 </ol>
 {% endblock %}
 
 {% block content %}
 <div class="space-y-6">
-    <!-- Page Header (Section 8.2) -->
-    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 border-b border-base-300 pb-5">
+    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div class="space-y-1">
             <p class="k-eyebrow">Teaching &amp; learning</p>
             <h1 class="text-2xl font-bold">
-                {% if is_staff_view %}Course attendance roll{% else %}Attendance history{% endif %}
+                {% if is_staff_view %}Attendance{% else %}My attendance{% endif %}
             </h1>
             <p class="text-sm k-muted">
                 {% if is_staff_view %}
@@ -27,12 +26,11 @@
                 {% endif %}
             </p>
         </div>
-        <a href="{% url 'kura:schedule_list' %}" class="btn btn-outline btn-sm">
+        <a href="{% url 'kura:schedule_list' %}" class="btn btn-outline btn-sm w-full sm:w-auto">
             View timetable
         </a>
     </header>
 
-    <!-- History Table (Section 8.5) -->
     <div class="k-card p-0 overflow-x-auto">
         <table class="k-table">
             <caption class="sr-only">Attendance history</caption>
@@ -40,12 +38,14 @@
                 <tr>
                     {% if is_staff_view %}
                     <th class="k-sticky-col">Student</th>
-                    {% endif %}
                     <th>Course</th>
+                    {% else %}
+                    <th class="k-sticky-col">Course</th>
+                    {% endif %}
                     <th>Session</th>
                     <th>Status</th>
                     <th>Method</th>
-                    <th>Date &amp; time</th>
+                    <th class="k-num">Date &amp; time</th>
                     {% if is_staff_view %}
                     <th>Notes</th>
                     {% endif %}
@@ -59,10 +59,10 @@
                         <div class="font-semibold">{% if record.student.first_name or record.student.last_name %}{{ record.student.first_name }} {{ record.student.last_name }}{% else %}{{ record.student.email }}{% endif %}</div>
                         <div class="text-xs k-muted font-mono">{{ record.student.email }}</div>
                     </td>
+                    <td class="font-semibold">{{ record.session.module.course.code }}</td>
+                    {% else %}
+                    <td class="k-sticky-col font-semibold">{{ record.session.module.course.code }}</td>
                     {% endif %}
-                    <td>
-                        <span class="badge badge-primary badge-sm font-mono">{{ record.session.module.course.code }}</span>
-                    </td>
                     <td>
                         <div class="font-medium">{{ record.session.title }}</div>
                         <div class="text-xs k-muted">{{ record.session.module.title }}</div>
@@ -73,7 +73,7 @@
                     <td>
                         <span class="badge badge-ghost badge-xs uppercase font-mono">{{ record.method }}</span>
                     </td>
-                    <td class="k-num text-xs k-muted">{{ record.verified_at|date:"Y-m-d H:i" }}</td>
+                    <td class="k-num text-xs k-muted">{{ record.verified_at|date:"j M Y, H:i" }}</td>
                     {% if is_staff_view %}
                     <td class="text-xs k-muted max-w-xs truncate" title="{{ record.override_reason }}">
                         {{ record.override_reason|default:"-" }}
@@ -83,7 +83,7 @@
                 {% empty %}
                 <tr>
                     <td colspan="{% if is_staff_view %}7{% else %}5{% endif %}" class="p-8 text-center">
-                        {% include "kura/_empty.html" with icon="attendance" title="No attendance records" text="There are no attendance records logged for your account." %}
+                        {% include "kura/_empty.html" with icon="attendance" title="No attendance records yet" text="There are no attendance records logged for your account." %}
                     </td>
                 </tr>
                 {% endfor %}

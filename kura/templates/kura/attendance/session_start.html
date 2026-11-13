@@ -14,27 +14,29 @@
 </ol>
 {% endblock %}
 
+{% block form_errors %}{% endblock %}
+
 {% block content %}
-<div class="max-w-md mx-auto space-y-6">
-    <!-- Page Header (Section 8.2) -->
+<div class="max-w-2xl mx-auto space-y-6">
     <header class="space-y-1">
         <p class="k-eyebrow">{{ module.course.code }} &bull; {{ module.title }}</p>
         <h1 class="text-2xl font-bold">Start attendance</h1>
         <p class="text-sm k-muted">
-            Launch an active check-in window. The server generates a random 6-character passcode and QR code.
+            Open a check-in window with a 6-character passcode and QR code.
         </p>
     </header>
 
     <div class="k-card">
         <form method="post" class="space-y-4">
             {% csrf_token %}
+            {% include "kura/_form_errors.html" %}
 
             {% include "kura/_field.html" with field=form.title %}
             {% include "kura/_field.html" with field=form.duration_minutes %}
 
             <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
-                <a href="{% url 'kura:course_detail' module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
-                <button type="submit" class="btn btn-primary btn-sm">Start check-in window</button>
+                <a href="{% url 'kura:course_detail' module.course.id %}" class="btn btn-ghost">Cancel</a>
+                <button type="submit" class="btn btn-primary">Start check-in</button>
             </div>
         </form>
     </div>
