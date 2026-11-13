@@ -39,8 +39,11 @@
     </header>
 
     {% if is_live and passcode %}
-    <section class="k-card space-y-4">
-        <h2 class="text-base font-semibold border-b border-base-300 pb-2">Classroom check-in</h2>
+    <section id="projector-panel" class="k-card space-y-4">
+        <div class="flex items-center justify-between gap-3 border-b border-base-300 pb-2">
+            <h2 class="text-base font-semibold">Classroom check-in</h2>
+            <button type="button" class="btn btn-outline btn-xs" data-fullscreen="#projector-panel">Fullscreen</button>
+        </div>
         <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
             <div class="text-center p-6 bg-base-200 rounded-box border border-base-300 space-y-2">
                 <p class="k-eyebrow">Passcode</p>
@@ -63,51 +66,10 @@
     {% endif %}
 
     <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div class="xl:col-span-2 space-y-4">
-            <div class="flex items-center justify-between">
-                <h2 class="text-lg font-bold">Attendance roll</h2>
-                <span class="badge badge-ghost badge-sm k-num font-medium">{{ records|length }} checked in</span>
-            </div>
-
-            <div class="k-card p-0 overflow-x-auto">
-                <table class="k-table">
-                    <caption class="sr-only">Verified attendance entries</caption>
-                    <thead>
-                        <tr>
-                            <th class="k-sticky-col">Student</th>
-                            <th>Status</th>
-                            <th>Method</th>
-                            <th class="k-num">Time</th>
-                            <th>Notes</th>
-                        </tr>
-                    </thead>
-                    <tbody>
-                        {% for record in records %}
-                        <tr>
-                            <td class="k-sticky-col font-medium">
-                                {% if record.student.first_name or record.student.last_name %}{{ record.student.first_name }} {{ record.student.last_name }}{% else %}{{ record.student.email }}{% endif %}
-                            </td>
-                            <td>
-                                {% include "kura/_status_badge.html" with kind="attendance" value=record.status %}
-                            </td>
-                            <td>
-                                <span class="badge badge-ghost badge-xs uppercase font-mono">{{ record.method }}</span>
-                            </td>
-                            <td class="k-num text-xs k-muted">{{ record.verified_at|date:"H:i:s" }}</td>
-                            <td class="max-w-xs truncate text-xs k-muted" title="{{ record.override_reason }}">
-                                {{ record.override_reason|default:"-" }}
-                            </td>
-                        </tr>
-                        {% empty %}
-                        <tr>
-                            <td colspan="5" class="p-8 text-center">
-                                {% include "kura/_empty.html" with icon="attendance" title="No check-ins yet" text="No students have checked in for this session yet." %}
-                            </td>
-                        </tr>
-                        {% endfor %}
-                    </tbody>
-                </table>
-            </div>
+        <div id="session-roll"
+             class="xl:col-span-2 space-y-4"
+             {% if is_live %}hx-get="{% url 'kura:attendance_session_detail' session.id %}?fragment=1" hx-trigger="every 10s" hx-swap="innerHTML"{% endif %}>
+            {% include "kura/attendance/_session_roll.html" %}
         </div>
 
         <aside class="space-y-6">

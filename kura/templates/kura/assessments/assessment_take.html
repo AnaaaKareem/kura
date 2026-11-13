@@ -49,10 +49,16 @@
         </div>
     </div>
 
-    <div class="space-y-6">
+    <div class="space-y-6" data-exam-questions data-allow-backtracking="{% if allow_backtracking %}true{% else %}false{% endif %}">
         {% if assessment.delivery_mode != 'paper_scanned' %}
+        {% if not allow_backtracking and questions %}
+        <div class="flex items-center justify-between text-xs k-muted">
+            <span data-question-step>Question 1 of {{ questions|length }}</span>
+            <span>Sequential mode (no going back)</span>
+        </div>
+        {% endif %}
         {% for q in questions %}
-        <article class="k-card p-6 space-y-4">
+        <article class="k-card p-6 space-y-4" data-question-card>
             <div class="flex items-start justify-between gap-4 border-b border-base-300 pb-3">
                 <h2 class="text-base font-semibold">Question {{ forloop.counter }}</h2>
                 <span class="badge badge-ghost badge-sm k-num font-medium">{{ q.points }} pts</span>
@@ -101,11 +107,17 @@
                 <input type="hidden" name="question_id" value="{{ q.question_id }}">
                 <input type="hidden" name="response_type" value="long_text">
 
-                <textarea name="response_text" rows="6" class="textarea textarea-bordered w-full text-base" placeholder="Type your answer here (autosaves automatically)...">{{ q.saved_answer.response_text|default_if_none:"" }}</textarea>
+                <textarea name="response_text" rows="6" class="textarea textarea-bordered w-full text-base" placeholder="Type your answer here (autosaves automatically)..." data-word-counter-input data-word-counter-target="word-count-{{ q.question_id }}" data-max-words="{{ q.max_words|default:0 }}">{{ q.saved_answer.response_text|default_if_none:"" }}</textarea>
+                <p id="word-count-{{ q.question_id }}" class="text-xs k-muted k-num mt-1 text-right">0 words</p>
             </form>
             {% endif %}
         </article>
         {% endfor %}
+        {% if not allow_backtracking and questions|length > 1 %}
+        <div class="flex justify-end">
+            <button type="button" class="btn btn-outline btn-sm" data-next-question>Next question &rarr;</button>
+        </div>
+        {% endif %}
         {% endif %}
     </div>
 

@@ -72,9 +72,130 @@
         </div>
     </header>
 
+    <nav class="tabs tabs-bordered border-b border-base-300" aria-label="Course sections">
+        {% if not is_admin %}
+        <a href="?tab=content" class="tab {% if active_tab == 'content' %}tab-active font-semibold{% endif %}">Content</a>
+        {% endif %}
+        <a href="?tab=schedule" class="tab {% if active_tab == 'schedule' %}tab-active font-semibold{% endif %}">Schedule</a>
+        {% if is_admin or is_staff or is_head %}
+        <a href="?tab=people" class="tab {% if active_tab == 'people' %}tab-active font-semibold{% endif %}">People</a>
+        {% endif %}
+        {% if not is_admin and is_staff or not is_admin and is_head %}
+        <a href="?tab=grades" class="tab {% if active_tab == 'grades' %}tab-active font-semibold{% endif %}">Grades</a>
+        {% endif %}
+    </nav>
+
     <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
         <div class="xl:col-span-2 space-y-6">
-            {% if not is_admin %}
+            {% if active_tab == 'schedule' %}
+            <section class="space-y-4">
+                <div class="flex items-center justify-between gap-3">
+                    <h2 class="text-xl font-bold">Class meetings</h2>
+                    {% if not is_admin and is_staff or not is_admin and is_head %}
+                    <a href="{% url 'kura:schedule_create' course.id %}" class="btn btn-outline btn-sm">Add meeting</a>
+                    {% endif %}
+                </div>
+                <div class="k-card p-0 overflow-x-auto">
+                    <table class="k-table">
+                        <caption class="sr-only">Course meeting schedule</caption>
+                        <thead>
+                            <tr>
+                                <th class="k-sticky-col">Day</th>
+                                <th>Time</th>
+                                <th>Format</th>
+                                <th>Location</th>
+                                <th>Instructor</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for sched in course_schedules %}
+                            <tr>
+                                <td class="k-sticky-col font-medium">{{ sched.day|capfirst }}</td>
+                                <td class="k-num text-xs">{{ sched.start_time|time:"H:i" }} &ndash; {{ sched.end_time|time:"H:i" }}</td>
+                                <td><span class="badge badge-ghost badge-sm">{{ sched.session_type|capfirst }}</span></td>
+                                <td class="text-sm">{{ sched.location }}</td>
+                                <td class="text-sm">{% if sched.instructor.first_name or sched.instructor.last_name %}{{ sched.instructor.first_name }} {{ sched.instructor.last_name }}{% else %}{{ sched.instructor.email }}{% endif %}</td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="5" class="p-8 text-center">
+                                    {% include "kura/_empty.html" with icon="schedule" title="No meetings scheduled" text="No recurring class meetings are set for this course yet." %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
+            {% elif active_tab == 'people' %}
+            {% if is_admin %}
+            <div class="k-card space-y-2">
+                <h2 class="text-base font-semibold">Course administration</h2>
+                <p class="text-sm k-muted">
+                    Administrative details are managed here. Curriculum content and gradebooks are restricted to academic staff and enrolled students.
+                </p>
+                <div class="pt-2">
+                    <a href="{% url 'kura:admin_course_edit' course.id %}" class="btn btn-outline btn-sm">Edit course settings</a>
+                </div>
+            </div>
+            {% endif %}
+            <section class="k-card space-y-4">
+                <div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-300 pb-3">
+                    <div>
+                        <h2 class="text-lg font-bold">Course staff &amp; enrollment</h2>
+                        <p class="text-xs k-muted mt-0.5">Active enrollments: <span class="font-semibold k-num text-base-content">{{ enrolled_count }}</span></p>
+                    </div>
+                    <div class="flex flex-wrap gap-2">
+                        {% if is_head %}
+                        <a href="{% url 'kura:course_staff_assign' course.id %}" class="btn btn-outline btn-sm">Assign instructor</a>
+                        {% endif %}
+                        {% if is_lead %}
+                        <a href="{% url 'kura:course_ta_assign' course.id %}" class="btn btn-outline btn-sm">Assign TA</a>
+                        {% endif %}
+                    </div>
+                </div>
+                <ul class="divide-y divide-base-300 text-sm">
+                    {% for staff in staff_assignments %}
+                    <li class="py-3 flex items-center justify-between gap-3">
+                        <div>
+                            <p class="font-semibold">{% if staff.user.first_name or staff.user.last_name %}{{ staff.user.first_name }} {{ staff.user.last_name }}{% else %}{{ staff.user.email }}{% endif %}</p>
+                            <p class="text-xs k-muted">{{ staff.staff_role|title }}</p>
+                        </div>
+                        {% if staff.can_release_grades %}
+                        <span class="badge badge-secondary badge-outline badge-sm">Can release</span>
+                        {% endif %}
+                    </li>
+                    {% empty %}
+                    <li class="py-4 text-sm k-muted">No teaching staff assigned yet.</li>
+                    {% endfor %}
+                </ul>
+            </section>
+            {% elif active_tab == 'grades' and grade_summary %}
+            <section class="k-card space-y-4">
+                <div class="flex flex-wrap items-center justify-between gap-3 border-b border-base-300 pb-3">
+                    <h2 class="text-lg font-bold">Gradebook summary</h2>
+                    <a href="{% url 'kura:course_grades' course.id %}" class="btn btn-outline btn-sm">Open gradebook</a>
+                </div>
+                <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+                    <div class="p-3 bg-base-200 rounded-btn">
+                        <p class="k-eyebrow">Drafts</p>
+                        <p class="text-2xl font-bold k-num mt-1">{{ grade_summary.drafts }}</p>
+                    </div>
+                    <div class="p-3 bg-base-200 rounded-btn">
+                        <p class="k-eyebrow">Finalized</p>
+                        <p class="text-2xl font-bold k-num mt-1">{{ grade_summary.finalized }}</p>
+                    </div>
+                    <div class="p-3 bg-base-200 rounded-btn">
+                        <p class="k-eyebrow">Released</p>
+                        <p class="text-2xl font-bold k-num mt-1">{{ grade_summary.released }}</p>
+                    </div>
+                    <div class="p-3 bg-base-200 rounded-btn">
+                        <p class="k-eyebrow">Needs marking</p>
+                        <p class="text-2xl font-bold k-num mt-1">{{ grade_summary.needs_marking }}</p>
+                    </div>
+                </div>
+            </section>
+            {% elif not is_admin %}
             <section class="space-y-4">
                 <div class="flex items-center justify-between">
                     <h2 class="text-xl font-bold">Curriculum modules</h2>

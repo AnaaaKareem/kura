@@ -36,6 +36,41 @@
         </div>
     </header>
 
+    {% if grade_stats %}
+    <section class="grid grid-cols-2 sm:grid-cols-4 gap-4" aria-label="Gradebook summary">
+        <div class="k-card p-4">
+            <p class="k-eyebrow">Drafts</p>
+            <p class="text-2xl font-bold k-num mt-1">{{ grade_stats.drafts }}</p>
+        </div>
+        <div class="k-card p-4">
+            <p class="k-eyebrow">Finalized</p>
+            <p class="text-2xl font-bold k-num mt-1">{{ grade_stats.finalized }}</p>
+        </div>
+        <div class="k-card p-4">
+            <p class="k-eyebrow">Released</p>
+            <p class="text-2xl font-bold k-num mt-1">{{ grade_stats.released }}</p>
+        </div>
+        <div class="k-card p-4">
+            <p class="k-eyebrow">Needs marking</p>
+            <p class="text-2xl font-bold k-num mt-1">{{ grade_stats.needs_marking }}</p>
+        </div>
+    </section>
+    {% endif %}
+
+    {% if filter_form %}
+    <form method="get" class="k-card p-4 space-y-4 bg-base-100" role="search">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {% for field in filter_form %}
+            {% include "kura/_field.html" with field=field %}
+            {% endfor %}
+        </div>
+        <div class="flex items-center justify-end gap-2">
+            <a href="{% url 'kura:course_grades' course.id %}" class="btn btn-ghost btn-sm">Clear</a>
+            <button type="submit" class="btn btn-outline btn-sm">Apply</button>
+        </div>
+    </form>
+    {% endif %}
+
     <section class="space-y-3">
         <h2 class="text-lg font-semibold">Assessment scores ({{ grades|length }})</h2>
         <div class="k-card p-0 overflow-x-auto">
