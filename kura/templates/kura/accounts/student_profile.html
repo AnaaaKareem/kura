@@ -1,6 +1,6 @@
 {% extends "kura/base.html" %}
 
-{% block title %}{{ student.user.get_full_name|default:student.user.email }} - Kura{% endblock %}
+{% block title %}{% if student.user.first_name or student.user.last_name %}{{ student.user.first_name }} {{ student.user.last_name }}{% else %}{{ student.user.email }}{% endif %} - Kura{% endblock %}
 
 {% block breadcrumbs %}
 <ol class="flex items-center gap-1.5 text-sm">
@@ -8,7 +8,7 @@
     <li aria-hidden="true" class="k-muted">/</li>
     <li><a href="{% url 'kura:student_list' %}" class="k-muted hover:text-primary">Students</a></li>
     <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content truncate max-w-xs">{{ student.user.get_full_name|default:student.user.email }}</li>
+    <li aria-current="page" class="font-medium text-base-content truncate max-w-xs">{% if student.user.first_name or student.user.last_name %}{{ student.user.first_name }} {{ student.user.last_name }}{% else %}{{ student.user.email }}{% endif %}</li>
 </ol>
 {% endblock %}
 
@@ -19,7 +19,7 @@
         <div class="space-y-1">
             <p class="k-eyebrow">{{ student.department.name }}</p>
             <div class="flex flex-wrap items-center gap-2.5">
-                <h1 class="text-2xl font-bold">{{ student.user.get_full_name|default:student.user.email }}</h1>
+                <h1 class="text-2xl font-bold">{% if student.user.first_name or student.user.last_name %}{{ student.user.first_name }} {{ student.user.last_name }}{% else %}{{ student.user.email }}{% endif %}</h1>
                 {% if not student.user.is_active %}
                 <span class="badge badge-error badge-sm font-medium">Deactivated</span>
                 {% elif student.user.locked_until and student.user.locked_until > now %}

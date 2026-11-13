@@ -21,7 +21,7 @@
             <p class="k-eyebrow">{{ grade.assessment.section.module.course.code }}</p>
             <h1 class="text-2xl font-bold">Request a grade change</h1>
             <p class="text-sm k-muted">
-                Student: <strong>{{ grade.student.get_full_name|default:grade.student.email }}</strong> &bull; Assessment: <strong>{{ grade.assessment.title }}</strong> &bull; Current score: <span class="k-num font-semibold">{{ grade.score }}</span>
+                Student: <strong>{% if grade.student.first_name or grade.student.last_name %}{{ grade.student.first_name }} {{ grade.student.last_name }}{% else %}{{ grade.student.email }}{% endif %}</strong> &bull; Assessment: <strong>{{ grade.assessment.title }}</strong> &bull; Current score: <span class="k-num font-semibold">{{ grade.score }}</span>
             </p>
             <p class="text-xs k-muted">
                 Released grades cannot be edited directly. Submit a formal request with rationale for department head approval.

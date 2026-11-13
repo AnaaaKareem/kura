@@ -21,7 +21,7 @@
             <p class="k-eyebrow">{{ change_request.grade.assessment.section.module.course.code }}</p>
             <h1 class="text-2xl font-bold">Review grade change</h1>
             <p class="text-sm k-muted">
-                Student: <strong>{{ change_request.grade.student.get_full_name|default:change_request.grade.student.email }}</strong> &bull; Assessment: <strong>{{ change_request.grade.assessment.title }}</strong>
+                Student: <strong>{% if change_request.grade.student.first_name or change_request.grade.student.last_name %}{{ change_request.grade.student.first_name }} {{ change_request.grade.student.last_name }}{% else %}{{ change_request.grade.student.email }}{% endif %}</strong> &bull; Assessment: <strong>{{ change_request.grade.assessment.title }}</strong>
             </p>
         </header>
 
@@ -40,7 +40,7 @@
         <div class="p-4 bg-base-200 rounded-btn text-xs space-y-1">
             <p class="font-semibold uppercase tracking-wider text-base-content">Instructor justification</p>
             <p class="text-sm k-muted whitespace-pre-wrap">{{ change_request.reason }}</p>
-            <p class="text-xs k-muted pt-1">Requested by: {{ change_request.requested_by.get_full_name|default:change_request.requested_by.email }}</p>
+            <p class="text-xs k-muted pt-1">Requested by: {% if change_request.requested_by.first_name or change_request.requested_by.last_name %}{{ change_request.requested_by.first_name }} {{ change_request.requested_by.last_name }}{% else %}{{ change_request.requested_by.email }}{% endif %}</p>
         </div>
 
         <form method="post" class="space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}

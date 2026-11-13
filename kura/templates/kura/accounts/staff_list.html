@@ -59,7 +59,7 @@
                 {% for profile in staff_members %}
                 <tr>
                     <td class="k-sticky-col">
-                        <div class="font-semibold">{{ profile.user.get_full_name|default:profile.user.email }}</div>
+                        <div class="font-semibold">{% if profile.user.first_name or profile.user.last_name %}{{ profile.user.first_name }} {{ profile.user.last_name }}{% else %}{{ profile.user.email }}{% endif %}</div>
                         <div class="text-xs k-muted font-mono">{{ profile.user.email }}</div>
                     </td>
                     <td>

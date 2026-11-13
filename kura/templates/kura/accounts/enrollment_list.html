@@ -63,7 +63,7 @@
                         <div class="text-xs k-muted">{{ enrollment.course.title }}</div>
                     </td>
                     <td>
-                        <div class="font-semibold">{{ enrollment.student.get_full_name|default:enrollment.student.email }}</div>
+                        <div class="font-semibold">{% if enrollment.student.first_name or enrollment.student.last_name %}{{ enrollment.student.first_name }} {{ enrollment.student.last_name }}{% else %}{{ enrollment.student.email }}{% endif %}</div>
                         <div class="text-xs k-muted font-mono">{{ enrollment.student.email }}</div>
                     </td>
                     <td class="text-xs">

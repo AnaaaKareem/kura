@@ -56,7 +56,7 @@
                 <tr>
                     <td class="k-sticky-col">
                         <a class="link link-primary font-semibold block" href="{% url 'kura:student_profile' student.user_id %}">
-                            {{ student.user.get_full_name|default:student.user.email }}
+                            {% if student.user.first_name or student.user.last_name %}{{ student.user.first_name }} {{ student.user.last_name }}{% else %}{{ student.user.email }}{% endif %}
                         </a>
                         <span class="text-xs k-muted font-mono">{{ student.user.email }}</span>
                     </td>

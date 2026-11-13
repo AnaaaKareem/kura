@@ -21,7 +21,7 @@
             <span class="badge badge-warning badge-sm font-medium">Step-up authentication</span>
             <h1 class="text-2xl font-bold">Release grade</h1>
             <p class="text-sm k-muted">
-                Authorizing release for <strong>{{ grade.student.get_full_name|default:grade.student.email }}</strong> (Score: <span class="k-num font-semibold">{{ grade.score }}</span>).
+                Authorizing release for <strong>{% if grade.student.first_name or grade.student.last_name %}{{ grade.student.first_name }} {{ grade.student.last_name }}{% else %}{{ grade.student.email }}{% endif %}</strong> (Score: <span class="k-num font-semibold">{{ grade.score }}</span>).
             </p>
             <p class="text-xs k-muted">
                 Security policy mandates re-authenticating with your authenticator app code before publishing grades.

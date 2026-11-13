@@ -54,7 +54,7 @@
                     {% for g in grades %}
                     <tr>
                         <td class="font-semibold k-sticky-col">
-                            {{ g.student.get_full_name|default:g.student.email }}
+                            {% if g.student.first_name or g.student.last_name %}{{ g.student.first_name }} {{ g.student.last_name }}{% else %}{{ g.student.email }}{% endif %}
                         </td>
                         <td>
                             <div class="font-medium text-sm">{{ g.assessment.title }}</div>
@@ -213,7 +213,7 @@
                 <tbody>
                     {% for res in course_results %}
                     <tr>
-                        <td class="font-semibold k-sticky-col">{{ res.student.get_full_name|default:res.student.email }}</td>
+                        <td class="font-semibold k-sticky-col">{% if res.student.first_name or res.student.last_name %}{{ res.student.first_name }} {{ res.student.last_name }}{% else %}{{ res.student.email }}{% endif %}</td>
                         <td class="k-num font-bold text-sm text-primary">{{ res.final_score }}%</td>
                         <td>
                             {% if res.status == 'released' %}
