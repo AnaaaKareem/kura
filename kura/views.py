@@ -85,6 +85,8 @@ from .forms import (
 )
 from .logging_utils import get_client_ip, log_invalid_form, log_security_event
 from .models import (
+    ALLOWED_UPLOAD_MIME_TYPES,
+    MAX_UPLOAD_BYTES,
     OutgoingEmail,
     QuarantinedFile,
     AppealStatus,
@@ -133,6 +135,7 @@ from .models import (
     UserSession,
 )
 from .permissions import (
+    FRESH_SECOND_FACTOR_SECONDS,
     can_access_learning_records,
     can_manage_quarantine,
     can_release_grades,
@@ -158,6 +161,11 @@ DASHBOARD_CARDS_BY_ROLE = {
             "title": "Active sessions",
             "description": "Review and manage active user sessions.",
             "url": "/admin/sessions/",
+        },
+        {
+            "title": "Security policy",
+            "description": "Review the password, sign-in, session and upload rules in force.",
+            "url": "/admin/security-policy/",
         },
         {
             "title": "Security log",
@@ -1854,6 +1862,48 @@ def staff_create_view(request):
 
     rooms = list(Room.objects.order_by("building__name", "name").values("id", "building_id", "name"))
     return render(request, "kura/accounts/staff_create.html", {"form": form, "office_rooms": rooms})
+
+
+@login_required
+def security_policy_view(request):
+    """
+    Shows the security rules Kura enforces right now, read from the settings.
+    Who can use it: Admins only.
+    Security: read-only (GET only). It shows rule values such as lengths and
+    time limits, never keys, passwords or other secrets. Changing a rule means
+    changing config/settings.py and redeploying, which keeps every change in
+    version control.
+    """
+    # Only the Admin role sets and reviews system security policy.
+    if not has_role(request.user, "Admin"):
+        raise PermissionDenied
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+
+    # The minimum length lives in the options of Django's length validator.
+    minimum_password_length = None
+    for validator in settings.AUTH_PASSWORD_VALIDATORS:
+        if validator["NAME"].endswith("MinimumLengthValidator"):
+            minimum_password_length = validator.get("OPTIONS", {}).get("min_length")
+
+    # Each entry is (area, rule, value) so the template can group the rows.
+    policies = [
+        ("Passwords", "Minimum length", f"{minimum_password_length} characters"),
+        ("Passwords", "Checked against known data breaches", "Yes (HaveIBeenPwned)"),
+        ("Passwords", "Recent passwords that cannot be reused", settings.PASSWORD_HISTORY_COUNT),
+        ("Passwords", "Hashing algorithm", "Argon2id"),
+        ("Sign-in", "Failed attempts before a temporary lockout", settings.AXES_FAILURE_LIMIT),
+        ("Sign-in", "Temporary lockout length", f"{settings.AXES_COOLOFF_TIME} hour(s)"),
+        ("Sign-in", "Second factor", "Required for every account (authenticator app)"),
+        ("Sign-in", "Fresh second factor for sensitive actions", f"{FRESH_SECOND_FACTOR_SECONDS // 60} minutes"),
+        ("Sessions", "Idle timeout", f"{settings.SESSION_COOKIE_AGE // 60} minutes"),
+        ("Sessions", "Absolute limit", f"{settings.SESSION_ABSOLUTE_HOURS} hours"),
+        ("Sessions", "Ends when the browser closes", "Yes" if settings.SESSION_EXPIRE_AT_BROWSER_CLOSE else "No"),
+        ("Uploads", "Maximum file size", f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MiB"),
+        ("Uploads", "Allowed file types", f"{len(ALLOWED_UPLOAD_MIME_TYPES)} types, checked by content"),
+        ("Uploads", "Virus scan required", "Yes" if settings.CLAMAV_REQUIRED else "No (development only)"),
+    ]
+    return render(request, "kura/accounts/security_policy.html", {"policies": policies})
 
 
 @login_required
