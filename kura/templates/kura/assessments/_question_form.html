@@ -1,5 +1,5 @@
-<!-- One formset question card; answer keys and rubrics are isolated in ExamAnswerKey -->
-<fieldset class="k-card p-5 space-y-4 border border-base-300" data-question-card>
+<!-- One formset question card; answer keys and rubrics stay isolated from students. -->
+<fieldset class="p-5 space-y-4 rounded-box border border-base-300 bg-base-100" data-question-card>
     <div class="flex items-center justify-between border-b border-base-300 pb-3">
         <legend class="font-bold text-base">Question</legend>
         <div class="flex items-center gap-1.5">
@@ -12,93 +12,64 @@
     {{ question_form.non_field_errors }}
 
     <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
-        <div class="form-control w-full space-y-1">
-            <label class="label py-1"><span class="label-text font-medium text-sm">Question type</span></label>
-            {{ question_form.type }}
-            {% if question_form.type.errors %}<p class="text-error text-xs font-medium">{{ question_form.type.errors.0 }}</p>{% endif %}
-        </div>
-        <div class="form-control w-full space-y-1">
-            <label class="label py-1"><span class="label-text font-medium text-sm">Points</span></label>
-            {{ question_form.points }}
-            {% if question_form.points.errors %}<p class="text-error text-xs font-medium">{{ question_form.points.errors.0 }}</p>{% endif %}
-        </div>
+        {% include "kura/_field.html" with field=question_form.type %}
+        {% include "kura/_field.html" with field=question_form.points %}
     </div>
 
-    <div class="form-control w-full space-y-1">
-        <label class="label py-1"><span class="label-text font-medium text-sm">Question prompt</span></label>
-        {{ question_form.prompt }}
-        {% if question_form.prompt.errors %}<p class="text-error text-xs font-medium">{{ question_form.prompt.errors.0 }}</p>{% endif %}
-    </div>
+    {% include "kura/_field.html" with field=question_form.prompt %}
 
-    <!-- Multiple Choice Section -->
     <div data-question-group="multiple_choice" class="space-y-3 pt-2">
         <div class="flex items-center justify-between">
             <p class="font-semibold text-sm">Options &amp; correct answers</p>
             <span class="badge badge-ghost badge-xs">Answer key</span>
         </div>
         {% for option, correct in question_form.option_rows %}
-        <div data-question-row class="flex flex-wrap items-center gap-2 p-2.5 bg-base-200 rounded-btn">
+        <div data-question-row class="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 p-2.5 bg-base-200 rounded-btn">
             <span class="text-xs font-medium k-muted">{{ forloop.counter }}.</span>
-            <div class="flex-1 min-w-[200px]">{{ option }}</div>
+            <div class="flex-1">{{ option }}</div>
             <label class="label cursor-pointer gap-2 py-0">
                 {{ correct }}
                 <span class="label-text text-xs font-medium">Correct</span>
             </label>
             <button type="button" data-remove-row class="btn btn-ghost btn-xs text-error">Remove</button>
-            {% if option.errors %}<p class="text-error text-xs w-full">{{ option.errors.0 }}</p>{% endif %}
-            {% if correct.errors %}<p class="text-error text-xs w-full">{{ correct.errors.0 }}</p>{% endif %}
+            {% if option.errors %}<p class="text-error text-xs w-full" role="alert">{{ option.errors.0 }}</p>{% endif %}
+            {% if correct.errors %}<p class="text-error text-xs w-full" role="alert">{{ correct.errors.0 }}</p>{% endif %}
         </div>
         {% endfor %}
         <div class="flex justify-between items-center pt-1">
             <button type="button" data-add-row class="btn btn-outline btn-xs">Add option</button>
         </div>
-        <div class="form-control w-full space-y-1 pt-2">
-            <label class="label py-1"><span class="label-text text-xs font-medium">Answer explanation (optional)</span></label>
-            {{ question_form.explanation }}
-            {% if question_form.explanation.errors %}<p class="text-error text-xs">{{ question_form.explanation.errors.0 }}</p>{% endif %}
-        </div>
+        {% include "kura/_field.html" with field=question_form.explanation %}
     </div>
 
-    <!-- Matching Section -->
     <div data-question-group="matching" class="space-y-3 pt-2">
         <div class="flex items-center justify-between">
             <p class="font-semibold text-sm">Matching pairs</p>
             <span class="badge badge-ghost badge-xs">Answer key</span>
         </div>
         {% for left, right in question_form.pair_rows %}
-        <div data-question-row class="flex flex-wrap items-center gap-2 p-2.5 bg-base-200 rounded-btn">
-            <div class="flex-1 min-w-[150px]">{{ left }}</div>
+        <div data-question-row class="flex flex-col sm:flex-row sm:flex-wrap sm:items-center gap-2 p-2.5 bg-base-200 rounded-btn">
+            <div class="flex-1">{{ left }}</div>
             <span class="text-xs k-muted font-bold">&rarr;</span>
-            <div class="flex-1 min-w-[150px]">{{ right }}</div>
+            <div class="flex-1">{{ right }}</div>
             <button type="button" data-remove-row class="btn btn-ghost btn-xs text-error">Remove</button>
-            {% if left.errors %}<p class="text-error text-xs w-full">{{ left.errors.0 }}</p>{% endif %}
-            {% if right.errors %}<p class="text-error text-xs w-full">{{ right.errors.0 }}</p>{% endif %}
+            {% if left.errors %}<p class="text-error text-xs w-full" role="alert">{{ left.errors.0 }}</p>{% endif %}
+            {% if right.errors %}<p class="text-error text-xs w-full" role="alert">{{ right.errors.0 }}</p>{% endif %}
         </div>
         {% endfor %}
         <div class="pt-1">
             <button type="button" data-add-row class="btn btn-outline btn-xs">Add pair</button>
         </div>
-        <div class="form-control w-full space-y-1 pt-2">
-            <label class="label py-1"><span class="label-text text-xs font-medium">Extra distractor matches (optional)</span></label>
-            {{ question_form.extra_matches }}
-            {% if question_form.extra_matches.errors %}<p class="text-error text-xs">{{ question_form.extra_matches.errors.0 }}</p>{% endif %}
-        </div>
+        {% include "kura/_field.html" with field=question_form.extra_matches %}
     </div>
 
-    <!-- Long Text Section -->
     <div data-question-group="long_text" class="space-y-3 pt-2">
-        <div class="form-control w-full space-y-1">
-            <label class="label py-1"><span class="label-text text-xs font-medium">Word limit (optional)</span></label>
-            {{ question_form.max_words }}
-            {% if question_form.max_words.errors %}<p class="text-error text-xs">{{ question_form.max_words.errors.0 }}</p>{% endif %}
-        </div>
-        <div class="form-control w-full space-y-1">
-            <div class="flex justify-between items-center py-1">
-                <label class="label p-0"><span class="label-text text-xs font-medium">Grading rubric &amp; criteria</span></label>
-                <span class="badge badge-ghost badge-xs">Answer key</span>
+        {% include "kura/_field.html" with field=question_form.max_words %}
+        <div class="space-y-1">
+            <div class="flex justify-between items-center">
+                <span class="k-eyebrow">Answer key</span>
             </div>
-            {{ question_form.rubric }}
-            {% if question_form.rubric.errors %}<p class="text-error text-xs">{{ question_form.rubric.errors.0 }}</p>{% endif %}
+            {% include "kura/_field.html" with field=question_form.rubric %}
         </div>
     </div>
 
@@ -110,6 +81,6 @@
     </div>
 </fieldset>
 {% if new_total %}
-<!-- HTMX replaces the management field only after the new card arrives. -->
+<!-- Update TOTAL_FORMS after HTMX appends the new question card. -->
 <input type="hidden" name="questions-TOTAL_FORMS" value="{{ new_total }}" id="id_questions-TOTAL_FORMS" hx-swap-oob="outerHTML">
 {% endif %}
