@@ -9260,3 +9260,46 @@ class CourseGradeSchemeTests(TestCase):
         self.assertContains(self.client.get(grades_url), self.url)
         self.client.force_login(self.data["assistant"])
         self.assertNotContains(self.client.get(grades_url), self.url)
+
+
+class GradeFeedbackTests(TestCase):
+    """
+    Feedback typed on the grade entry page is saved with the grade and shown to
+    the student only after release. It never reaches the security log.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.data = make_released_grade_course()
+        grade = self.data["grade"]
+        grade.status = GradeStatus.DRAFT
+        grade.save()
+        self.entry_url = reverse("kura:grade_entry", args=[self.data["attempt"].id])
+        self.feedback = "Good structure, but question 2 needed a worked example."
+
+    def test_assistant_feedback_is_saved_and_not_logged(self):
+        self.client.force_login(self.data["assistant"])
+        with self.assertLogs("kura.security", level="INFO") as logs:
+            self.client.post(self.entry_url, {"score": "72", "feedback": self.feedback})
+        self.data["grade"].refresh_from_db()
+        self.assertEqual(self.data["grade"].feedback, self.feedback)
+        self.assertNotIn("worked example", "\n".join(logs.output))
+
+    def test_entry_page_shows_saved_feedback(self):
+        self.data["grade"].feedback = self.feedback
+        self.data["grade"].save()
+        self.client.force_login(self.data["instructor"])
+        self.assertContains(self.client.get(self.entry_url), "worked example")
+
+    def test_student_sees_feedback_only_after_release(self):
+        self.data["grade"].feedback = self.feedback
+        self.data["grade"].save()
+        self.client.force_login(self.data["student"])
+        self.assertNotContains(self.client.get(reverse("kura:student_grades")), "worked example")
+
+        self.data["grade"].status = GradeStatus.RELEASED
+        self.data["grade"].released_at = timezone.now()
+        self.data["grade"].save()
+        self.assertContains(self.client.get(reverse("kura:student_grades")), "worked example")
+        attempt_page = self.client.get(reverse("kura:attempt_detail", args=[self.data["attempt"].id]))
+        self.assertContains(attempt_page, "worked example")

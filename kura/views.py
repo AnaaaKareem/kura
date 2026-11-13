@@ -5183,10 +5183,12 @@ def grade_entry_view(request, attempt_id):
 
     existing_grade = Grade.objects.filter(attempt=attempt).first()
     initial_score = None
+    initial_feedback = ""
     if existing_grade:
         initial_score = existing_grade.score
+        initial_feedback = existing_grade.feedback
 
-    form = GradeEntryForm(request.POST or None, initial={"score": initial_score})
+    form = GradeEntryForm(request.POST or None, initial={"score": initial_score, "feedback": initial_feedback})
 
     # A manual score must fit within the assessment's configured maximum.
     if request.method == "POST" and form.is_valid() and form.cleaned_data["score"] > attempt.assessment.max_score:
@@ -5213,6 +5215,8 @@ def grade_entry_view(request, attempt_id):
                     "student": attempt.student,
                     "grader": request.user,
                     "score": new_score,
+                    # The feedback text is stored with the draft but never logged.
+                    "feedback": form.cleaned_data["feedback"].strip(),
                     "status": GradeStatus.DRAFT,
                 },
             )

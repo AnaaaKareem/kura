@@ -27,6 +27,7 @@
                         <th>Category</th>
                         <th>Score</th>
                         <th>Released At</th>
+                        <th>Feedback</th>
                         <th>Actions</th>
                     </tr>
                 </thead>
@@ -41,6 +42,7 @@
                         <td><span class="badge badge-ghost badge-xs uppercase font-mono">{{ g.assessment.component_type }}</span></td>
                         <td class="font-bold text-primary">{{ g.score }} / {{ g.assessment.max_score }}</td>
                         <td class="text-xs text-base-content/60">{{ g.released_at|date:"Y-m-d H:i" }}</td>
+                        <td class="text-xs whitespace-pre-line max-w-xs">{{ g.feedback|default:"No feedback given." }}</td>
                         <td>
                             <a href="{% url 'kura:grade_appeal_create' g.id %}" class="btn btn-outline btn-xs">
                                 Appeal Grade
@@ -49,7 +51,7 @@
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="6" class="text-center py-8 text-base-content/50">
+                        <td colspan="7" class="text-center py-8 text-base-content/50">
                             No grades have been released to your account yet.
                         </td>
                     </tr>
