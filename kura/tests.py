@@ -7835,7 +7835,7 @@ class MfaSetupReauthTests(TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, "otpauth")
         self.assertNotContains(response, "data:image/svg+xml;utf8,")
-        self.assertContains(response, "Confirm Your Identity")
+        self.assertContains(response, "Confirm it's you")
 
     def test_wrong_code_keeps_seed_hidden(self):
         self.client.force_login(self.user)
@@ -7879,7 +7879,7 @@ class MfaSetupReauthTests(TestCase):
         response = self.client.get(reverse("kura:mfa_setup"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "data:image/svg+xml;utf8,")
-        self.assertContains(response, "Set up Multi-Factor Authentication")
+        self.assertContains(response, "Set up two-step verification")
 
 
 class RowLevelSecurityFailClosedTests(TestCase):
