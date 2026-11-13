@@ -28,6 +28,24 @@
         </div>
     </header>
 
+    {% if temp_account %}
+    <!-- One-time temporary password card popped from session; never logged or put in flash messages. -->
+    <div id="temp-password-card" class="k-card border-warning p-5 space-y-3" role="status">
+        <div class="flex items-start justify-between gap-4">
+            <div>
+                <h2 class="text-base font-semibold">Temporary password for {{ temp_account.email }}</h2>
+                <p class="text-xs k-muted mt-0.5">This is shown once. Share it securely with the staff member.</p>
+            </div>
+            <button type="button" class="btn btn-ghost btn-xs" data-dismiss-target="#temp-password-card" aria-label="Dismiss temporary password">Dismiss</button>
+        </div>
+        <div class="flex flex-wrap items-center gap-3">
+            <code id="temp-password-value" class="k-mono text-lg bg-base-200 border border-base-300 rounded-btn px-3 py-1.5 select-all">{{ temp_account.password }}</code>
+            <button type="button" class="btn btn-outline btn-sm" data-copy="#temp-password-value">Copy</button>
+            <span class="text-xs text-success font-medium" data-copy-status></span>
+        </div>
+    </div>
+    {% endif %}
+
     {% if filter_form %}
     <!-- Render every staff filter field so search, role, department, and status work. -->
     <form method="get" class="k-card p-4 space-y-4 bg-base-100" role="search">
@@ -44,7 +62,7 @@
     {% endif %}
 
     <div class="flex items-center justify-between">
-        <p class="text-sm k-muted k-num">{{ staff_members|length }} staff</p>
+        <p class="text-sm k-muted k-num">{% if page_obj %}{{ page_obj.paginator.count }}{% else %}{{ staff_members|length }}{% endif %} staff</p>
     </div>
 
     <div class="k-card p-0 overflow-x-auto">
@@ -123,5 +141,6 @@
             </tbody>
         </table>
     </div>
+    {% include "kura/_pagination.html" %}
 </div>
 {% endblock %}
