@@ -9,23 +9,23 @@
     <li aria-hidden="true" class="k-muted">/</li>
     <li><a href="{% url 'kura:course_detail' assessment.section.module.course.id %}" class="k-muted hover:text-primary">{{ assessment.section.module.course.code }}</a></li>
     <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content truncate max-w-[200px]">{{ assessment.title }}</li>
+    <li aria-current="page" class="font-medium text-base-content truncate max-w-xs">{{ assessment.title }}</li>
 </ol>
 {% endblock %}
 
 {% block content %}
-<div class="max-w-4xl mx-auto space-y-6">
-    <!-- Sticky Exam Bar (Section 8.9) -->
-    <div class="k-card shadow-md sticky top-14 z-20 p-4 border border-base-300 bg-base-100 mb-6">
+<div class="max-w-3xl mx-auto space-y-6">
+    <!-- Sticky exam bar positioned below the 56px top navigation bar. -->
+    <div class="bg-base-100 rounded-box shadow-md sticky top-14 z-20 p-4 border border-base-300 mb-6">
         <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
             <div class="flex items-center gap-2.5 min-w-0">
-                <span class="badge badge-primary font-mono text-xs flex-shrink-0">{{ assessment.section.module.course.code }}</span>
+                <span class="k-eyebrow flex-shrink-0">{{ assessment.section.module.course.code }}</span>
                 <h1 class="text-base font-semibold truncate">{{ assessment.title }}</h1>
             </div>
 
             <div class="flex items-center justify-between sm:justify-end gap-4">
                 {% if assessment.delivery_mode == 'paper_scanned' %}
-                <p class="text-xs k-muted">Deadline: {{ attempt.expires_at|date:"d M Y, H:i" }}</p>
+                <p class="text-xs k-muted k-num">Deadline: {{ attempt.expires_at|date:"j M Y, H:i" }}</p>
                 {% else %}
                 <div id="autosave-status" role="status" aria-live="polite" class="text-xs k-muted">
                     <span class="text-xs k-muted">Ready</span>
@@ -41,7 +41,7 @@
 
                 <form method="post" action="{% url 'kura:assessment_submit' attempt.id %}" class="flex-shrink-0">
                     {% csrf_token %}
-                    <button type="submit" class="btn btn-primary btn-sm" data-confirm-action="Submit assessment now? You will not be able to modify your responses.">
+                    <button type="submit" class="btn btn-primary btn-sm" data-confirm-action="Submit assessment now? You cannot change answers after this.">
                         Submit
                     </button>
                 </form>
@@ -49,7 +49,6 @@
         </div>
     </div>
 
-    <!-- Questions Form List -->
     <div class="space-y-6">
         {% if assessment.delivery_mode != 'paper_scanned' %}
         {% for q in questions %}
@@ -60,7 +59,6 @@
             </div>
             <p class="text-base font-medium leading-relaxed">{{ q.prompt }}</p>
 
-            <!-- Multiple Choice -->
             {% if q.type == 'multiple_choice' %}
             <form hx-post="{% url 'kura:assessment_autosave' attempt.id %}" hx-trigger="change" hx-target="#autosave-status" class="space-y-2 pt-2">
                 {% csrf_token %}
@@ -76,7 +74,6 @@
                 {% endfor %}
             </form>
 
-            <!-- Matching -->
             {% elif q.type == 'matching' %}
             <form hx-post="{% url 'kura:assessment_autosave' attempt.id %}" hx-trigger="change" hx-target="#autosave-status" class="space-y-3 pt-2">
                 {% csrf_token %}
@@ -98,7 +95,6 @@
                 </div>
             </form>
 
-            <!-- Long Text / Essay -->
             {% elif q.type == 'long_text' or q.type == 'essay' %}
             <form hx-post="{% url 'kura:assessment_autosave' attempt.id %}" hx-trigger="keyup changed delay:1500ms" hx-target="#autosave-status" class="pt-2">
                 {% csrf_token %}
@@ -113,17 +109,16 @@
         {% endif %}
     </div>
 
-    <!-- Coursework / Scanned Script Files Upload Section -->
     <div class="k-card p-6 space-y-4">
         <h2 class="text-base font-semibold">{% if assessment.delivery_mode == 'paper_scanned' %}Upload scanned paper{% else %}Coursework file attachments{% endif %}</h2>
         <p class="text-xs k-muted">
-            {% if assessment.delivery_mode == 'paper_scanned' %}Upload a PDF or image of your scanned paper. Marking is manual.{% else %}Attach required source code or project reports. File uploads are sealed once submitted or when the deadline expires.{% endif %}
+            {% if assessment.delivery_mode == 'paper_scanned' %}Upload a PDF or image of the scanned paper. Marking is manual.{% else %}Attach required files. Uploads are locked once submitted or when the deadline passes.{% endif %}
         </p>
 
         <div class="space-y-2 pt-1">
             {% for att in attempt_files %}
             <div class="flex items-center justify-between p-3 bg-base-200 rounded-btn text-xs">
-                <span class="font-medium truncate">{{ att.file.original_filename }} ({{ att.file.size_bytes }} bytes)</span>
+                <span class="font-medium truncate">{{ att.file.original_filename }} ({{ att.file.size_bytes|filesizeformat }})</span>
                 <span class="badge badge-success badge-xs flex-shrink-0">Attached</span>
             </div>
             {% empty %}
@@ -133,14 +128,13 @@
 
         <form method="post" action="{% url 'kura:assessment_attempt_file_upload' attempt.id %}" enctype="multipart/form-data" class="pt-2 flex flex-col sm:flex-row gap-3 sm:items-end">
             {% csrf_token %}
-            <div class="form-control flex-1">
-                {{ file_form.file }}
+            <div class="flex-1">
+                {% include "kura/_field.html" with field=file_form.file %}
             </div>
             <button type="submit" class="btn btn-outline btn-sm">Upload file</button>
         </form>
     </div>
 </div>
 
-<!-- Timer and Focus Loss Telemetry Script without inline script -->
 {% if assessment.delivery_mode != 'paper_scanned' %}<script src="{% static 'js/exam_timer.js' %}"></script>{% endif %}
 {% endblock %}

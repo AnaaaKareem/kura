@@ -8,36 +8,29 @@
     <li aria-hidden="true" class="k-muted">/</li>
     <li><a href="{% url 'kura:course_detail' assessment.section.module.course.id %}" class="k-muted hover:text-primary">{{ assessment.section.module.course.code }}</a></li>
     <li aria-hidden="true" class="k-muted">/</li>
-    <li><a href="{% url 'kura:assessment_detail' assessment.id %}" class="k-muted hover:text-primary truncate max-w-[150px]">{{ assessment.title }}</a></li>
+    <li><a href="{% url 'kura:assessment_detail' assessment.id %}" class="k-muted hover:text-primary truncate max-w-xs">{{ assessment.title }}</a></li>
     <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">Attempt #{{ attempt.attempt_no }}</li>
+    <li aria-current="page" class="font-medium text-base-content">Attempt {{ attempt.attempt_no }}</li>
 </ol>
 {% endblock %}
 
 {% block content %}
 <div class="space-y-6">
-    <!-- Page Header (Section 8.2) -->
     <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div class="space-y-1">
-            <div class="flex items-center gap-2">
-                <span class="badge badge-primary font-mono text-xs">{{ assessment.section.module.course.code }}</span>
-                {% if attempt.status == 'Fully_Graded' %}
-                <span class="badge badge-success badge-sm font-medium">Fully graded</span>
-                {% elif attempt.status == 'Requires_Manual_Grading' %}
-                <span class="badge badge-warning badge-sm font-medium">Requires manual grading</span>
-                {% else %}
-                <span class="badge badge-info badge-sm font-medium">In progress</span>
-                {% endif %}
+            <div class="flex flex-wrap items-center gap-2">
+                <span class="k-eyebrow">{{ assessment.section.module.course.code }}</span>
+                {% include "kura/_status_badge.html" with kind="attempt" value=attempt.status %}
             </div>
-            <h1 class="text-2xl font-bold mt-1">Attempt #{{ attempt.attempt_no }} review</h1>
+            <h1 class="text-2xl font-bold">Attempt {{ attempt.attempt_no }}</h1>
             <p class="text-sm k-muted">
-                {{ assessment.title }} &bull; Student: <strong>{% if attempt.student.first_name or attempt.student.last_name %}{{ attempt.student.first_name }} {{ attempt.student.last_name }}{% else %}{{ attempt.student.email }}{% endif %}</strong>
+                {{ assessment.title }} &bull; Student: <strong class="text-base-content">{% if attempt.student.first_name or attempt.student.last_name %}{{ attempt.student.first_name }} {{ attempt.student.last_name }}{% else %}{{ attempt.student.email }}{% endif %}</strong>
             </p>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="flex flex-wrap items-center gap-2">
             {% if is_staff and attempt.student_id != user.id and attempt.status == 'Requires_Manual_Grading' %}
             {% if assessment.delivery_mode != 'paper_scanned' or attempt_files %}
-            <a href="{% url 'kura:grade_entry' attempt.id %}" class="btn btn-primary btn-sm">Enter manual grade</a>
+            <a href="{% url 'kura:grade_entry' attempt.id %}" class="btn btn-primary btn-sm">Mark</a>
             {% endif %}
             {% endif %}
             <a href="{% url 'kura:assessment_detail' assessment.id %}" class="btn btn-outline btn-sm">Assessment details</a>
@@ -45,49 +38,46 @@
     </header>
 
     <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <!-- Main Column -->
         <div class="xl:col-span-2 space-y-6">
-            <!-- Telemetry Card -->
             <div class="k-card p-6 space-y-4">
-                <h2 class="text-base font-semibold">Submission telemetry &amp; verification</h2>
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
+                <h2 class="text-base font-semibold">Submission record</h2>
+                <dl class="grid grid-cols-1 md:grid-cols-2 gap-4 text-sm">
                     <div>
-                        <span class="k-muted">Started at:</span>
-                        <div class="font-semibold text-sm">{{ attempt.started_at|date:"j M Y, H:i:s" }}</div>
+                        <dt class="k-eyebrow">Started</dt>
+                        <dd class="font-semibold k-num mt-0.5">{{ attempt.started_at|date:"j M Y, H:i:s" }}</dd>
                     </div>
                     <div>
-                        <span class="k-muted">Submitted at:</span>
-                        <div class="font-semibold text-sm">{{ attempt.submitted_at|date:"j M Y, H:i:s"|default:"Auto-saved" }}</div>
+                        <dt class="k-eyebrow">Submitted</dt>
+                        <dd class="font-semibold k-num mt-0.5">{{ attempt.submitted_at|date:"j M Y, H:i:s"|default:"Auto-saved" }}</dd>
                     </div>
                     <div>
-                        <span class="k-muted">Client network address:</span>
-                        <div class="k-num font-semibold text-sm">{{ attempt.ip_address }}</div>
+                        <dt class="k-eyebrow">Network address</dt>
+                        <dd class="k-num font-semibold mt-0.5">{{ attempt.ip_address }}</dd>
                     </div>
                     <div>
-                        <span class="k-muted">Tab focus lost events:</span>
-                        <div class="font-semibold text-sm {% if attempt.tab_focus_lost_count > 0 %}text-warning{% endif %}">
-                            {{ attempt.tab_focus_lost_count }} time(s)
-                        </div>
+                        <dt class="k-eyebrow">Focus lost</dt>
+                        <dd class="font-semibold k-num mt-0.5 {% if attempt.tab_focus_lost_count > 0 %}text-warning{% endif %}">
+                            {{ attempt.tab_focus_lost_count }} time{{ attempt.tab_focus_lost_count|pluralize }}
+                        </dd>
                     </div>
-                </div>
+                </dl>
 
                 {% if attempt.submission_hash %}
-                <div class="mt-4 p-3 bg-base-200 rounded-btn">
-                    <span class="k-eyebrow">Cryptographic submission hash (SHA-256)</span>
+                <div class="mt-4 p-3 bg-base-200 rounded-btn border border-base-300">
+                    <span class="k-eyebrow">Integrity code</span>
                     <p class="k-num text-xs break-all text-primary font-semibold mt-1">{{ attempt.submission_hash }}</p>
                 </div>
                 {% endif %}
             </div>
 
-            <!-- Attached Attempt Files -->
             {% if attempt_files %}
             <div class="k-card p-6 space-y-3">
-                <h2 class="text-base font-semibold">Submitted coursework files</h2>
+                <h2 class="text-base font-semibold">Submitted files</h2>
                 <div class="space-y-2 pt-1">
                     {% for att in attempt_files %}
-                    <div class="flex items-center justify-between p-3 bg-base-200 rounded-btn text-xs">
-                        <span class="font-medium truncate">{{ att.file.original_filename }} ({{ att.file.size_bytes }} bytes)</span>
-                        <a href="{% url 'kura:attempt_file_download' attempt.id att.file.id %}" class="btn btn-ghost btn-xs text-primary">
+                    <div class="flex items-center justify-between p-3 bg-base-200 rounded-btn text-sm">
+                        <span class="font-medium truncate">{{ att.file.original_filename }} <span class="text-xs k-muted k-num">({{ att.file.size_bytes|filesizeformat }})</span></span>
+                        <a href="{% url 'kura:attempt_file_download' attempt.id att.file.id %}" class="btn btn-outline btn-xs">
                             Download
                         </a>
                     </div>
@@ -97,8 +87,7 @@
             {% endif %}
         </div>
 
-        <!-- Side Evaluation Column -->
-        <div class="space-y-6">
+        <aside class="space-y-6">
             {% if summary %}
             <div class="k-card p-6 space-y-4">
                 <h2 class="text-base font-semibold border-b border-base-300 pb-2">Evaluation Summary</h2>
@@ -120,15 +109,15 @@
             {% endif %}
 
             {% if released_grade %}
-            <div class="k-card p-6 space-y-2 border border-success">
-                <p class="k-eyebrow text-success">Released official grade</p>
+            <div class="k-card p-6 space-y-2 border-success">
+                <p class="k-eyebrow text-success">Released grade</p>
                 <p class="text-3xl font-bold text-success k-num">{{ released_grade.score }} / {{ assessment.max_score }}</p>
                 {% if released_grade.feedback %}
-                <p class="text-sm whitespace-pre-line pt-2">{{ released_grade.feedback }}</p>
+                <p class="text-sm whitespace-pre-line pt-2 border-t border-base-300">{{ released_grade.feedback }}</p>
                 {% endif %}
             </div>
             {% endif %}
-        </div>
+        </aside>
     </div>
 </div>
 {% endblock %}
