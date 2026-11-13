@@ -1,42 +1,42 @@
 {% extends "kura/base.html" %}
 
-{% block title %}Confirm Your Identity - Kura{% endblock %}
+{% block title %}Confirm it's you - Kura{% endblock %}
 
 {% block content %}
-<div class="max-w-lg mx-auto mt-6">
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <h1 class="card-title text-2xl font-bold justify-center">Confirm Your Identity</h1>
-            <p class="text-sm text-base-content/70 text-center">
+<div class="max-w-md mx-auto my-8">
+    <div class="k-card p-6 sm:p-8 space-y-6">
+        <header class="text-center space-y-2">
+            <h1 class="text-2xl font-bold">Confirm it's you</h1>
+            <p class="text-sm k-muted">
                 This action needs a fresh check. Enter a current code from your authenticator app or an unused recovery code.
             </p>
-            <p class="text-xs text-base-content/60 text-center">
+            <p class="text-xs k-muted">
                 Note: Entering a recovery code will consume it.
             </p>
+        </header>
 
-            <form method="post" action="{% url 'kura:mfa_reauth' %}" class="mt-4 space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
-                {% csrf_token %}
-                <input type="hidden" name="next" value="{{ next_url }}">
+        <form method="post" action="{% url 'kura:mfa_reauth' %}" class="space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+            {% csrf_token %}
+            <input type="hidden" name="next" value="{{ next_url }}">
 
-                <div class="form-control">
-                    <label for="id_code" class="label justify-center">
-                        <span class="label-text font-medium">Security Code</span>
-                    </label>
+            <div class="form-control w-full space-y-1">
+                <label for="id_code" class="label justify-center py-1">
+                    <span class="label-text font-medium text-sm">Security code</span>
+                </label>
+                <div class="flex justify-center">
                     {{ form.code }}
-                    {% if form.code.errors %}
-                    <label class="label justify-center">
-                        <span class="label-text-alt text-error">{{ form.code.errors.0 }}</span>
-                    </label>
-                    {% endif %}
                 </div>
+                {% if form.code.errors %}
+                <p class="text-error text-xs font-medium text-center pt-0.5">{{ form.code.errors.0 }}</p>
+                {% endif %}
+            </div>
 
-                <div class="form-control mt-6">
-                    <button type="submit" class="btn btn-primary w-full">
-                        Verify &amp; Continue
-                    </button>
-                </div>
-            </form>
-        </div>
+            <div class="pt-2">
+                <button type="submit" class="btn btn-primary w-full">
+                    Verify &amp; continue
+                </button>
+            </div>
+        </form>
     </div>
 </div>
 {% endblock %}

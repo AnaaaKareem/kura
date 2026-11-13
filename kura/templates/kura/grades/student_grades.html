@@ -1,106 +1,115 @@
 {% extends "kura/base.html" %}
 
-{% block title %}My Grades - Kura{% endblock %}
+{% block title %}My grades - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">My grades</li>
+</ol>
+{% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-            <h1 class="text-2xl font-bold">My Grades & Academic Feedback</h1>
-            <p class="text-sm text-base-content/70 mt-1">
-                Official released assessment grades and tutor evaluations.
-            </p>
+<div class="space-y-8">
+    <!-- Page Header (Section 8.2) -->
+    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+        <div class="space-y-1">
+            <p class="k-eyebrow">Academic records</p>
+            <h1 class="text-2xl font-bold">My grades</h1>
+            <p class="text-sm k-muted">Official released assessment marks and tutor evaluations.</p>
         </div>
-        <a href="{% url 'kura:student_transcript' %}" class="btn btn-outline btn-sm">
-            View Official Transcript
-        </a>
-    </div>
+        <div>
+            <a href="{% url 'kura:student_transcript' %}" class="btn btn-outline btn-sm">
+                View transcript
+            </a>
+        </div>
+    </header>
 
-    <!-- Released Grades Table -->
-    <div class="card bg-base-100 border border-base-300 overflow-hidden">
-        <div class="overflow-x-auto">
-            <table class="table table-sm w-full text-sm">
-                <thead class="bg-base-200">
+    <!-- Released Grades Table (Section 8.5) -->
+    <section class="space-y-3">
+        <div class="k-card p-0 overflow-x-auto">
+            <table class="k-table">
+                <caption class="sr-only">Released assessment grades</caption>
+                <thead>
                     <tr>
-                        <th>Course</th>
+                        <th class="k-sticky-col">Course</th>
                         <th>Assessment</th>
                         <th>Category</th>
-                        <th>Score</th>
-                        <th>Released At</th>
+                        <th class="k-num">Score</th>
+                        <th>Released</th>
                         <th>Feedback</th>
-                        <th>Actions</th>
+                        <th class="text-right">Action</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for g in grades %}
                     <tr>
-                        <td class="font-bold">{{ g.assessment.section.module.course.code }}</td>
+                        <td class="font-bold k-sticky-col">{{ g.assessment.section.module.course.code }}</td>
                         <td>
-                            <div class="font-semibold">{{ g.assessment.title }}</div>
-                            <div class="text-xs text-base-content/60">{{ g.assessment.section.module.title }}</div>
+                            <div class="font-semibold text-sm">{{ g.assessment.title }}</div>
+                            <div class="text-xs k-muted">{{ g.assessment.section.module.title }}</div>
                         </td>
                         <td><span class="badge badge-ghost badge-xs uppercase font-mono">{{ g.assessment.component_type }}</span></td>
-                        <td class="font-bold text-primary">{{ g.score }} / {{ g.assessment.max_score }}</td>
-                        <td class="text-xs text-base-content/60">{{ g.released_at|date:"Y-m-d H:i" }}</td>
+                        <td class="k-num font-bold text-sm text-primary">{{ g.score }} / {{ g.assessment.max_score }}</td>
+                        <td class="text-xs k-muted">{{ g.released_at|date:"j M Y, H:i" }}</td>
                         <td class="text-xs whitespace-pre-line max-w-xs">{{ g.feedback|default:"No feedback given." }}</td>
-                        <td>
-                            <a href="{% url 'kura:grade_appeal_create' g.id %}" class="btn btn-outline btn-xs">
-                                Appeal Grade
+                        <td class="text-right">
+                            <a href="{% url 'kura:grade_appeal_create' g.id %}" class="btn btn-ghost btn-xs text-primary">
+                                Appeal grade
                             </a>
                         </td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="7" class="text-center py-8 text-base-content/50">
-                            No grades have been released to your account yet.
+                        <td colspan="7" class="p-8 text-center">
+                            {% include "kura/_empty.html" with icon="grades" title="No released grades" text="No assessment grades have been released to your account yet." %}
                         </td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
-    </div>
+    </section>
 
-    <!-- Student's Existing Appeals -->
+    <!-- Submitted Grade Appeals -->
     {% if appeals %}
-    <div class="card bg-base-100 border border-base-300 overflow-hidden">
-        <div class="p-4 border-b border-base-200">
-            <h3 class="font-bold text-base">My Submitted Grade Appeals</h3>
-        </div>
-        <div class="overflow-x-auto">
-            <table class="table table-sm w-full text-xs">
-                <thead class="bg-base-200">
+    <section class="space-y-3">
+        <h2 class="text-lg font-semibold">Submitted grade appeals</h2>
+        <div class="k-card p-0 overflow-x-auto">
+            <table class="k-table">
+                <caption class="sr-only">Submitted grade appeals</caption>
+                <thead>
                     <tr>
                         <th>Assessment</th>
-                        <th>Disputed Score</th>
+                        <th class="k-num">Disputed score</th>
                         <th>Status</th>
                         <th>Submitted</th>
-                        <th>Reviewer Response</th>
+                        <th>Verdict &amp; response</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for app in appeals %}
                     <tr>
-                        <td class="font-semibold">{{ app.grade.assessment.title }}</td>
-                        <td class="font-bold">{{ app.grade.score }}</td>
+                        <td class="font-medium">{{ app.grade.assessment.title }}</td>
+                        <td class="k-num font-bold">{{ app.grade.score }}</td>
                         <td>
-                            {% if app.status == 'approved' %}
-                            <span class="badge badge-success badge-xs">Approved</span>
-                            {% elif app.status == 'rejected' %}
-                            <span class="badge badge-error badge-xs">Rejected</span>
+                            {% include "kura/_status_badge.html" with kind="appeal" value=app.status %}
+                        </td>
+                        <td class="text-xs k-muted">{{ app.created_at|date:"j M Y, H:i" }}</td>
+                        <td class="text-xs k-muted">
+                            {% if app.response %}
+                            {{ app.response }}
                             {% else %}
-                            <span class="badge badge-warning badge-xs">Pending Review</span>
+                            <span class="italic">Pending review</span>
                             {% endif %}
                         </td>
-                        <td>{{ app.created_at|date:"Y-m-d" }}</td>
-                        <td>{{ app.response|default:"Awaiting instructor decision." }}</td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
-    </div>
+    </section>
     {% endif %}
 </div>
 {% endblock %}
-

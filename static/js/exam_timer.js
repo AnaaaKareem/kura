@@ -1,4 +1,4 @@
-// Client-side exam timer countdown and tab focus loss detection without inline scripts
+// Client-side exam timer countdown, stage styling and tab focus loss detection without inline scripts
 document.addEventListener("DOMContentLoaded", function () {
     const timerElem = document.getElementById("exam-timer");
     if (!timerElem) return;
@@ -16,6 +16,17 @@ document.addEventListener("DOMContentLoaded", function () {
     if (!expiresAtStr) return;
 
     const expiresAt = new Date(expiresAtStr).getTime();
+    let announcedStage = null;
+
+    // Create or find live region for time stage announcements
+    let liveAnnouncer = document.getElementById("timer-announcer");
+    if (!liveAnnouncer) {
+        liveAnnouncer = document.createElement("div");
+        liveAnnouncer.id = "timer-announcer";
+        liveAnnouncer.className = "sr-only";
+        liveAnnouncer.setAttribute("aria-live", "polite");
+        document.body.appendChild(liveAnnouncer);
+    }
 
     function updateTimer() {
         const now = new Date().getTime();
@@ -23,8 +34,34 @@ document.addEventListener("DOMContentLoaded", function () {
 
         if (diff <= 0) {
             timerElem.innerText = "00:00:00 (Expired)";
+            timerElem.classList.remove("text-warning");
+            timerElem.classList.add("text-error");
             window.location.reload();
             return;
+        }
+
+        // Timer stages per Design System v2 Section 8.9:
+        // > 5m: neutral
+        // <= 5m: text-warning + announce once in polite live region
+        // <= 1m: text-error + announce once in assertive live region
+        if (diff <= 60 * 1000) {
+            timerElem.classList.remove("text-warning");
+            timerElem.classList.add("text-error");
+            if (announcedStage !== "critical") {
+                announcedStage = "critical";
+                liveAnnouncer.setAttribute("aria-live", "assertive");
+                liveAnnouncer.textContent = "1 minute left in assessment.";
+            }
+        } else if (diff <= 5 * 60 * 1000) {
+            timerElem.classList.remove("text-error");
+            timerElem.classList.add("text-warning");
+            if (announcedStage !== "warning" && announcedStage !== "critical") {
+                announcedStage = "warning";
+                liveAnnouncer.setAttribute("aria-live", "polite");
+                liveAnnouncer.textContent = "5 minutes left in assessment.";
+            }
+        } else {
+            timerElem.classList.remove("text-warning", "text-error");
         }
 
         const hours = Math.floor(diff / (1000 * 60 * 60));

@@ -1,17 +1,27 @@
-{% extends "kura/base.html" %}
-
-{% block title %}Access Denied (403) - Kura{% endblock %}
-
-{% block content %}
-<div class="max-w-md mx-auto mt-12 text-center space-y-4">
-    <div class="text-6xl font-extrabold text-error">403</div>
-    <h1 class="text-2xl font-bold">Access Denied</h1>
-    <p class="text-sm text-base-content/70">
-        You do not have the required permissions or assigned role to view this academic resource.
-    </p>
-    <div class="pt-4">
-        <a href="{% url 'kura:home' %}" class="btn btn-primary btn-sm">Return to Dashboard</a>
+{% load static %}
+<!DOCTYPE html>
+<html lang="en" data-theme="kura-system">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>403 - Access denied - Kura</title>
+    <link rel="icon" type="image/svg+xml" href="{% static 'img/kura-mark.svg' %}">
+    <link rel="stylesheet" href="{% static 'css/tailwind.min.css' %}">
+    <link rel="stylesheet" href="{% static 'css/daisyui.min.css' %}">
+    <link rel="stylesheet" href="{% static 'css/kura.css' %}">
+    <script src="{% static 'js/theme-init.js' %}"></script>
+</head>
+<body class="min-h-screen bg-base-200 text-base-content flex items-center justify-center p-4">
+    <div class="k-card max-w-md w-full text-center space-y-4 py-8">
+        <div class="flex justify-center">
+            <img src="{% static 'img/kura-mark.svg' %}" alt="Kura" class="h-10 w-10">
+        </div>
+        <div class="text-4xl font-extrabold k-num text-error">403</div>
+        <h1 class="text-xl font-semibold">You do not have access to this page.</h1>
+        <p class="text-sm k-muted">If you think this is wrong, contact your administrator.</p>
+        <div class="pt-2">
+            <a href="{% url 'kura:home' %}" class="btn btn-primary btn-sm">Go to dashboard</a>
+        </div>
     </div>
-</div>
-{% endblock %}
-
+</body>
+</html>

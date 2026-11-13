@@ -5,134 +5,256 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Kura{% endblock %}</title>
-    <!-- Disable HTMX's injected indicator styles so the strict style policy stays intact. -->
+    <!-- Disable HTMX injected inline styles to adhere to strict CSP -->
     <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
-    <!-- Draw the small brand mark in the browser tab without requesting a missing file. -->
-    <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%235B5BD6'/%3E%3Cpath d='M10 6v20M22 7 10 16l12 9' fill='none' stroke='white' stroke-width='3' stroke-linecap='round' stroke-linejoin='round'/%3E%3C/svg%3E">
-    <!-- Use only local styling and scripts so the pages work with the site's security policy. -->
+    <link rel="icon" type="image/svg+xml" href="{% static 'img/kura-mark.svg' %}">
+    <!-- Blocking theme initialization to eliminate theme-switch flash -->
+    <script src="{% static 'js/theme-init.js' %}"></script>
     <link rel="stylesheet" href="{% static 'css/tailwind.min.css' %}">
     <link rel="stylesheet" href="{% static 'css/daisyui.min.css' %}">
+    <link rel="stylesheet" href="{% static 'css/kura.css' %}">
     <script src="{% static 'js/htmx.min.js' %}"></script>
     <script src="{% static 'js/theme.js' %}" defer></script>
     {% block head %}{% endblock %}
 </head>
-<body class="min-h-screen bg-base-200 font-sans text-base-content">
+<body class="min-h-screen bg-base-200 font-sans text-base-content antialiased flex flex-col">
+    <!-- Skip to main content link for accessibility -->
+    <a href="#main" class="k-skip">Skip to content</a>
+
     {% if user.is_authenticated %}
-    <!-- The drawer keeps work navigation open on large screens and overlays the page on phones. -->
-    <div class="drawer lg:drawer-open min-h-screen">
+    <div class="drawer lg:drawer-open flex-1">
         <input id="kura-sidebar-toggle" type="checkbox" class="drawer-toggle">
-        <div class="drawer-content flex min-h-screen flex-col">
-            <!-- The top bar contains the mobile menu, theme choice, and private account actions. -->
-            <nav class="navbar sticky top-0 z-20 border-b border-base-300 bg-base-100 px-3 sm:px-6" aria-label="Account navigation">
-                <div class="navbar-start gap-2">
-                    <label for="kura-sidebar-toggle" class="btn btn-square btn-ghost lg:hidden" aria-label="Open navigation menu">
-                        <svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 6h16M4 12h16M4 18h16" stroke-linecap="round"/></svg>
+        <div class="drawer-content flex min-h-screen flex-col bg-base-200">
+            <!-- 56px Sticky Top Bar -->
+            <header class="navbar sticky top-0 z-20 h-14 min-h-14 border-b border-base-300 bg-base-100 px-4 sm:px-6 flex items-center justify-between" aria-label="Top navigation">
+                <div class="flex items-center gap-3">
+                    <label for="kura-sidebar-toggle" class="btn btn-square btn-ghost btn-sm lg:hidden" aria-label="Open navigation menu">
+                        {% include "kura/_icon.html" with name="menu" class="h-5 w-5" %}
                     </label>
                     <a href="{% url 'kura:home' %}" class="flex items-center gap-2 text-lg font-semibold tracking-tight lg:hidden" data-close-sidebar>
-                        <span class="grid h-8 w-8 place-items-center rounded-lg bg-primary text-primary-content" aria-hidden="true"><svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M7 4v16M17 5 7 12l10 7"/></svg></span>
+                        <img src="{% static 'img/kura-mark.svg' %}" alt="Kura" class="h-7 w-7">
                         <span>Kura</span>
                     </a>
+
+                    <!-- Breadcrumbs Block -->
+                    {% if request.resolver_match.url_name != 'home' %}
+                    <div class="text-sm flex items-center" aria-label="Breadcrumb">
+                        {% block breadcrumbs %}
+                        <ol class="flex items-center gap-1.5 text-sm">
+                            <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+                            <li aria-hidden="true" class="k-muted">/</li>
+                            <li aria-current="page" class="font-medium text-base-content"><span data-breadcrumb-current>{{ request.resolver_match.url_name|capfirst }}</span></li>
+                        </ol>
+                        {% endblock %}
+                    </div>
+                    {% endif %}
                 </div>
-                <div class="navbar-end gap-2 sm:gap-3">
-                    <!-- Let each person choose a saved theme or follow the device setting. -->
-                    <label class="flex items-center gap-2 text-xs font-medium sm:text-sm">
-                        <span class="hidden sm:inline">Theme</span>
-                        <select id="theme-selector" name="theme" class="select select-bordered select-sm w-28" data-theme-selector aria-label="Choose color theme">
+
+                <!-- Account & Theme Menu -->
+                <div class="flex items-center gap-2 sm:gap-3">
+                    <label class="hidden sm:flex items-center gap-1.5 text-xs font-medium k-muted">
+                        <span>Theme</span>
+                        <select id="theme-selector" name="theme" class="select select-bordered select-xs w-24" data-theme-selector aria-label="Choose color theme">
                             <option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option>
                         </select>
                     </label>
-                    <!-- Keep personal security links separate from work navigation. The trigger and menu use tabindex (not a plain button) so Safari and Firefox on macOS keep focus and the menu stays open long enough to click Log out. -->
+
                     <div class="dropdown dropdown-end">
-                        <div tabindex="0" role="button" class="btn btn-ghost btn-sm gap-2" aria-label="Open account menu">
-                            <span class="hidden max-w-40 truncate sm:inline">{{ user.first_name }} {{ user.last_name }}</span>
-                            <svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 20c.6-3.4 2.8-5.2 6.5-5.2s5.9 1.8 6.5 5.2" stroke-linecap="round"/></svg>
-                        </div>
-                        <ul tabindex="0" class="menu dropdown-content z-30 mt-3 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg">
-                            <li class="menu-title">Account security</li>
-                            <li><a href="{% url 'kura:passkey_manage' %}">Passkeys</a></li>
-                            <li><a href="{% url 'kura:user_sessions' %}">My sessions</a></li>
-                            <li><a href="{% url 'kura:password_change' %}">Change password</a></li>
-                            <li><form method="post" action="{% url 'kura:logout' %}">{% csrf_token %}<button type="submit" class="w-full text-left">Log out</button></form></li>
+                        <button tabindex="0" class="btn btn-ghost btn-sm gap-2 normal-case font-medium" aria-label="Open account menu">
+                            <span class="avatar placeholder">
+                                <span class="bg-primary text-primary-content rounded-full w-7 h-7 text-xs font-semibold flex items-center justify-center">
+                                    {{ user.first_name|slice:":1" }}{{ user.last_name|slice:":1" }}
+                                </span>
+                            </span>
+                            <span class="hidden sm:inline text-sm font-medium">{{ user.first_name }} {{ user.last_name }}</span>
+                            {% include "kura/_icon.html" with name="chevron-down" class="h-3 w-3 k-muted" %}
+                        </button>
+                        <ul tabindex="0" class="menu dropdown-content z-30 mt-2 w-64 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg">
+                            <li class="px-3 py-2 border-b border-base-300">
+                                <p class="font-semibold text-sm truncate">{{ user.first_name }} {{ user.last_name }}</p>
+                                <p class="text-xs k-muted truncate">{{ user.email }}</p>
+                            </li>
+                            <li class="menu-title pt-2">Account security</li>
+                            <li><a href="{% url 'kura:passkey_manage' %}">{% include "kura/_icon.html" with name="passkey" class="h-4 w-4" %}<span>Passkeys</span></a></li>
+                            <li><a href="{% url 'kura:user_sessions' %}">{% include "kura/_icon.html" with name="sessions" class="h-4 w-4" %}<span>My sessions</span></a></li>
+                            <li><a href="{% url 'kura:password_change' %}">{% include "kura/_icon.html" with name="lock" class="h-4 w-4" %}<span>Change password</span></a></li>
+                            <li class="border-t border-base-300 mt-2 pt-1">
+                                <form method="post" action="{% url 'kura:logout' %}" class="p-0">
+                                    {% csrf_token %}
+                                    <button type="submit" class="w-full text-left flex items-center gap-2 py-2 text-error">
+                                        {% include "kura/_icon.html" with name="x-mark" class="h-4 w-4" %}
+                                        <span>Log out</span>
+                                    </button>
+                                </form>
+                            </li>
                         </ul>
                     </div>
                 </div>
-            </nav>
+            </header>
     {% else %}
-    <!-- Public authentication pages share the theme and brand without private work links. -->
-    <header class="navbar border-b border-base-300 bg-base-100 px-4 sm:px-8">
-        <a href="{% url 'kura:login' %}" class="flex items-center gap-2 text-lg font-semibold"><span class="grid h-8 w-8 place-items-center rounded-lg bg-primary text-primary-content" aria-hidden="true"><svg viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M7 4v16M17 5 7 12l10 7"/></svg></span>Kura</a>
-        <div class="navbar-end"><label class="flex items-center gap-2 text-sm"><span>Theme</span><select id="theme-selector" name="theme" class="select select-bordered select-sm w-28" data-theme-selector aria-label="Choose color theme"><option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option></select></label></div>
+    <!-- Public Header -->
+    <header class="navbar border-b border-base-300 bg-base-100 px-4 sm:px-8 flex justify-between items-center h-14">
+        <a href="{% url 'kura:login' %}" class="flex items-center gap-2.5 text-lg font-bold">
+            <img src="{% static 'img/kura-mark.svg' %}" alt="Kura" class="h-8 w-8">
+            <span>Kura</span>
+        </a>
     </header>
     {% endif %}
 
-    <!-- Show page-wide feedback before the page content and keep field errors near their forms. -->
-    <div class="mx-auto mt-4 w-full max-w-7xl space-y-3 px-4 sm:px-6">
+    <!-- Main Content Area (Section 5.2: max-w-6xl) -->
+    <main id="main" tabindex="-1" class="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 lg:py-8">
+        {% include "kura/_messages.html" %}
         {% include "kura/_form_errors.html" %}
-    </div>
-
-    <!-- Keep every page body in one shared responsive content area. -->
-    <main class="mx-auto w-full max-w-7xl flex-1 px-4 py-6 sm:px-6 lg:py-8">
-        {% if user.is_authenticated and request.resolver_match.url_name != 'home' %}
-        <!-- Show the dashboard as the start of each authenticated page's navigation path. -->
-        <nav class="breadcrumbs mb-4 text-sm text-base-content/60" aria-label="Breadcrumb">
-            <ol><li><a href="{% url 'kura:home' %}">Dashboard</a></li><li aria-current="page"><span data-breadcrumb-current>{{ request.resolver_match.url_name|capfirst }}</span></li></ol>
-        </nav>
-        {% endif %}
         {% block content %}{% endblock %}
     </main>
 
     {% if user.is_authenticated %}
-            </div>
-            <!-- Show work-area links only for roles assigned to the signed-in user. -->
-            <div class="drawer-side z-30">
-                <label for="kura-sidebar-toggle" class="drawer-overlay" aria-label="Close navigation menu"></label>
-                <aside class="flex min-h-full w-72 flex-col border-r border-base-300 bg-base-100 px-4 py-5" aria-label="Work areas">
-                    <a href="{% url 'kura:home' %}" class="mb-8 flex items-center gap-3 px-2" data-close-sidebar>
-                        <span class="grid h-10 w-10 place-items-center rounded-xl bg-primary text-primary-content" aria-hidden="true"><svg viewBox="0 0 24 24" class="h-6 w-6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M7 4v16M17 5 7 12l10 7"/></svg></span>
-                        <span class="text-xl font-semibold tracking-tight">Kura</span>
-                    </a>
-                    <p class="mb-2 px-3 text-xs font-semibold uppercase tracking-wide text-base-content/60">Work areas</p>
-                    <ul class="menu menu-md flex-1 gap-1 p-0">
-                        <li><a href="{% url 'kura:home' %}" data-close-sidebar><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m3 10 9-7 9 7v10a1 1 0 0 1-1 1h-5v-7H9v7H4a1 1 0 0 1-1-1z" stroke-linejoin="round"/></svg>Dashboard</a></li>
+            <!-- Footer -->
+            <footer class="border-t border-base-300 bg-base-100 py-4 px-6 text-center text-xs k-muted">
+                Kura &bull; Academic Secure Learning Environment
+            </footer>
+        </div>
+
+        <!-- Sidebar Drawer (Section 6.1) -->
+        <div class="drawer-side z-30">
+            <label for="kura-sidebar-toggle" class="drawer-overlay" aria-label="Close navigation menu"></label>
+            <aside class="flex min-h-full w-64 flex-col border-r border-base-300 bg-base-100 p-4" aria-label="Work areas">
+                <a href="{% url 'kura:home' %}" class="mb-6 flex items-center gap-3 px-2" data-close-sidebar>
+                    <img src="{% static 'img/kura-mark.svg' %}" alt="Kura" class="h-8 w-8">
+                    <span class="text-xl font-bold tracking-tight">Kura</span>
+                </a>
+
+                <ul class="menu menu-sm flex-1 gap-0.5 p-0">
+                    <li>
+                        <a href="{% url 'kura:home' %}" class="{% if request.resolver_match.url_name == 'home' %}active font-medium{% endif %}" {% if request.resolver_match.url_name == 'home' %}aria-current="page"{% endif %} data-close-sidebar>
+                            {% include "kura/_icon.html" with name="dashboard" %}
+                            <span>Dashboard</span>
+                        </a>
+                    </li>
+
+                    {# Group 1: Teaching and learning #}
+                    {% if 'Instructor' in nav_roles or 'Teaching assistant' in nav_roles or 'Student' in nav_roles or 'Department head' in nav_roles or 'Admin' in nav_roles %}
+                    <li class="k-eyebrow px-3 pt-4 pb-1">Teaching &amp; learning</li>
+                    <li>
+                        <a href="{% url 'kura:course_list' %}" class="{% if 'course' in request.resolver_match.url_name and 'grade' not in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'course' in request.resolver_match.url_name and 'grade' not in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
+                            {% include "kura/_icon.html" with name="courses" %}
+                            <span>Courses</span>
+                        </a>
+                    </li>
+                    {% if 'Instructor' in nav_roles or 'Student' in nav_roles or 'Department head' in nav_roles %}
+                    <li>
+                        <a href="{% url 'kura:schedule_list' %}" class="{% if 'schedule' in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'schedule' in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
+                            {% include "kura/_icon.html" with name="schedule" %}
+                            <span>Schedule</span>
+                        </a>
+                    </li>
+                    {% endif %}
+                    {% if 'Instructor' in nav_roles or 'Teaching assistant' in nav_roles or 'Student' in nav_roles %}
+                    <li>
+                        <a href="{% url 'kura:attendance_history' %}" class="{% if 'attendance' in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'attendance' in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
+                            {% include "kura/_icon.html" with name="attendance" %}
+                            <span>Attendance</span>
+                        </a>
+                    </li>
+                    {% endif %}
+                    {% if 'Student' in nav_roles %}
+                    <li>
+                        <a href="{% url 'kura:student_grades' %}" class="{% if 'student_grades' in request.resolver_match.url_name or 'appeal' in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'student_grades' in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
+                            {% include "kura/_icon.html" with name="grades" %}
+                            <span>Grades</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="{% url 'kura:student_transcript' %}" class="{% if 'transcript' in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'transcript' in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
+                            {% include "kura/_icon.html" with name="transcript" %}
+                            <span>Transcript</span>
+                        </a>
+                    </li>
+                    {% endif %}
+                    {% endif %}
+
+                    {# Group 2: Records #}
+                    {% if 'Registrar' in nav_roles or user.headed_departments.exists %}
+                    <li class="k-eyebrow px-3 pt-4 pb-1">Records</li>
+                    {% if 'Registrar' in nav_roles %}
+                    <li>
+                        <a href="{% url 'kura:student_list' %}" class="{% if 'student' in request.resolver_match.url_name and 'grade' not in request.resolver_match.url_name and 'transcript' not in request.resolver_match.url_name and 'checkin' not in request.resolver_match.url_name %}active font-medium{% endif %}" data-close-sidebar>
+                            {% include "kura/_icon.html" with name="students" %}
+                            <span>Students</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="{% url 'kura:enrollment_list' %}" class="{% if 'enrollment' in request.resolver_match.url_name %}active font-medium{% endif %}" data-close-sidebar>
+                            {% include "kura/_icon.html" with name="enrollments" %}
+                            <span>Enrollments</span>
+                        </a>
+                    </li>
+                    {% endif %}
+                    {% for department in user.headed_departments.all %}
+                    <li>
+                        <a href="{% url 'kura:department_reports' department.id %}" class="{% if 'department_reports' in request.resolver_match.url_name %}active font-medium{% endif %}" data-close-sidebar>
+                            {% include "kura/_icon.html" with name="reports" %}
+                            <span>Department reports</span>
+                        </a>
+                    </li>
+                    {% endfor %}
+                    {% endif %}
+
+                    {# Group 3: Administration #}
+                    {% if 'Admin' in nav_roles %}
+                    <li class="k-eyebrow px-3 pt-4 pb-1">Administration</li>
+                    <li>
+                        <a href="{% url 'kura:staff_list' %}" class="{% if 'staff' in request.resolver_match.url_name or 'user_roles' in request.resolver_match.url_name %}active font-medium{% endif %}" data-close-sidebar>
+                            {% include "kura/_icon.html" with name="staff" %}
+                            <span>Staff</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="{% url 'kura:admin_sessions' %}" class="{% if 'admin_sessions' in request.resolver_match.url_name %}active font-medium{% endif %}" data-close-sidebar>
+                            {% include "kura/_icon.html" with name="sessions" %}
+                            <span>Active sessions</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="{% url 'kura:quarantine_list' %}" class="{% if 'quarantine' in request.resolver_match.url_name %}active font-medium{% endif %}" data-close-sidebar>
+                            {% include "kura/_icon.html" with name="quarantine" %}
+                            <span>Quarantine</span>
+                        </a>
+                    </li>
+                    {% endif %}
+                </ul>
+
+                <!-- User Card in Sidebar Footer -->
+                <div class="mt-6 border-t border-base-300 pt-4 px-2">
+                    <p class="truncate text-sm font-semibold">{{ user.first_name }} {{ user.last_name }}</p>
+                    <p class="truncate text-xs k-muted">{{ user.email }}</p>
+                    <div class="flex flex-wrap gap-1 mt-2">
                         {% for assignment in user.user_roles.all %}
-                        {% if assignment.role.name == 'Admin' %}
-                        <li><a href="{% url 'kura:staff_list' %}" data-close-sidebar><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="9" cy="8" r="3"/><path d="M3.5 19c.5-3.2 2.3-4.8 5.5-4.8 1.7 0 3 .5 4 1.5M16 8h5M18.5 5.5v5" stroke-linecap="round"/></svg>Staff</a></li>
-                        <li><a href="{% url 'kura:course_list' %}" data-close-sidebar><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v17H6.5A2.5 2.5 0 0 0 4 22zM4 5.5V22" stroke-linejoin="round"/></svg>Courses</a></li>
-                        <li><a href="{% url 'kura:admin_sessions' %}" data-close-sidebar><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2" stroke-linecap="round" stroke-linejoin="round"/></svg>Active sessions</a></li>
-                        <li><a href="{% url 'kura:quarantine_list' %}" data-close-sidebar><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M12 3 4 6v6c0 4.5 3.4 8.2 8 9 4.6-.8 8-4.5 8-9V6z" stroke-linejoin="round"/><path d="M12 8v5M12 16h.01" stroke-linecap="round"/></svg>Quarantine</a></li>
-                        {% elif assignment.role.name == 'Registrar' %}
-                        <li><a href="{% url 'kura:student_list' %}" data-close-sidebar><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><circle cx="12" cy="8" r="3.2"/><path d="M5.5 20c.6-3.4 2.8-5.2 6.5-5.2s5.9 1.8 6.5 5.2" stroke-linecap="round"/></svg>Students</a></li>
-                        <li><a href="{% url 'kura:enrollment_list' %}" data-close-sidebar><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M7 4h10a2 2 0 0 1 2 2v15H5V6a2 2 0 0 1 2-2zM9 4V2h6v2M8 10h8M8 14h8M8 18h5" stroke-linecap="round" stroke-linejoin="round"/></svg>Enrollments</a></li>
-                        {% elif assignment.role.name == 'Department head' %}
-                        <li><a href="{% url 'kura:course_list' %}" data-close-sidebar><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v17H6.5A2.5 2.5 0 0 0 4 22zM4 5.5V22" stroke-linejoin="round"/></svg>Courses</a></li>
-                        <li><a href="{% url 'kura:schedule_list' %}" data-close-sidebar><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18" stroke-linecap="round"/></svg>Schedule</a></li>
-                        {% for department in user.headed_departments.all %}<li><a href="{% url 'kura:department_reports' department.id %}" data-close-sidebar><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 20V11M10 20V5M16 20v-7M22 20H2" stroke-linecap="round"/></svg>Department reports</a></li>{% endfor %}
-                        {% elif assignment.role.name == 'Instructor' %}
-                        <li><a href="{% url 'kura:course_list' %}" data-close-sidebar><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v17H6.5A2.5 2.5 0 0 0 4 22zM4 5.5V22" stroke-linejoin="round"/></svg>Courses</a></li>
-                        <li><a href="{% url 'kura:schedule_list' %}" data-close-sidebar><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18" stroke-linecap="round"/></svg>Schedule</a></li>
-                        <li><a href="{% url 'kura:attendance_history' %}" data-close-sidebar><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m5 12 4 4L19 6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="9"/></svg>Attendance</a></li>
-                        {% elif assignment.role.name == 'Teaching assistant' %}
-                        <li><a href="{% url 'kura:course_list' %}" data-close-sidebar><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v17H6.5A2.5 2.5 0 0 0 4 22zM4 5.5V22" stroke-linejoin="round"/></svg>Courses</a></li>
-                        <li><a href="{% url 'kura:attendance_history' %}" data-close-sidebar><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m5 12 4 4L19 6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="9"/></svg>Attendance</a></li>
-                        {% elif assignment.role.name == 'Student' %}
-                        <li><a href="{% url 'kura:course_list' %}" data-close-sidebar><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M4 5.5A2.5 2.5 0 0 1 6.5 3H20v17H6.5A2.5 2.5 0 0 0 4 22zM4 5.5V22" stroke-linejoin="round"/></svg>Courses</a></li>
-                        <li><a href="{% url 'kura:schedule_list' %}" data-close-sidebar><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><rect x="3" y="5" width="18" height="16" rx="2"/><path d="M7 3v4M17 3v4M3 10h18" stroke-linecap="round"/></svg>Class schedule</a></li>
-                        <li><a href="{% url 'kura:attendance_history' %}" data-close-sidebar><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="m5 12 4 4L19 6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="12" cy="12" r="9"/></svg>Attendance</a></li>
-                        <li><a href="{% url 'kura:student_grades' %}" data-close-sidebar><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h9l4 4v14H6zM15 3v5h4M9 13h7M9 17h7" stroke-linecap="round" stroke-linejoin="round"/></svg>Grades</a></li>
-                        <li><a href="{% url 'kura:student_transcript' %}" data-close-sidebar><svg aria-hidden="true" viewBox="0 0 24 24" class="h-5 w-5" fill="none" stroke="currentColor" stroke-width="1.7"><path d="M6 3h9l4 4v14H6zM15 3v5h4M9 13h7M9 17h7" stroke-linecap="round" stroke-linejoin="round"/></svg>Transcript</a></li>
-                        {% endif %}
+                        <span class="badge badge-ghost badge-sm text-xs">{{ assignment.role.name }}</span>
                         {% endfor %}
-                    </ul>
-                    <!-- Identify the signed-in user without repeating account actions in this menu. -->
-                    <div class="mt-6 border-t border-base-300 px-3 pt-4">
-                        <p class="truncate text-sm font-semibold">{{ user.first_name }} {{ user.last_name }}</p>
-                        <p class="truncate text-xs text-base-content/60">{{ user.email }}</p>
-                        {% for assignment in user.user_roles.all %}<span class="badge badge-outline mt-2 mr-1">{{ assignment.role.name }}</span>{% endfor %}
-                        {% for department in user.headed_departments.all %}<p class="mt-2 text-xs text-base-content/70">Head of {{ department.name }}</p>{% endfor %}
                     </div>
-                </aside>
+                    {% for department in user.headed_departments.all %}
+                    <p class="mt-1 text-xs k-muted truncate">Head of {{ department.name }}</p>
+                    {% endfor %}
+                </div>
+            </aside>
+        </div>
+    </div>
+    {% endif %}
+
+    <!-- Accessible Modal Confirmation Dialog (Section 8.10) -->
+    <dialog id="k-confirm" class="modal modal-bottom sm:modal-middle" aria-labelledby="k-confirm-title">
+        <div class="modal-box k-card p-6 max-w-md">
+            <h3 id="k-confirm-title" class="text-lg font-bold">Confirm action</h3>
+            <p data-confirm-message class="py-4 text-sm k-muted leading-normal"></p>
+            <div class="modal-action flex justify-end gap-2 pt-2">
+                <button type="button" class="btn btn-ghost btn-sm" data-confirm-cancel>Cancel</button>
+                <button type="button" class="btn btn-error btn-sm" data-confirm-submit>Confirm</button>
             </div>
         </div>
-    {% endif %}
+        <form method="dialog" class="modal-backdrop">
+            <button type="button" data-confirm-cancel>close</button>
+        </form>
+    </dialog>
 </body>
 </html>

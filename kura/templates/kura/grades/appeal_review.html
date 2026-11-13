@@ -1,44 +1,46 @@
 {% extends "kura/base.html" %}
 
-{% block title %}Review Appeal - {{ appeal.grade.student.email }} - Kura{% endblock %}
+{% block title %}Review grade appeal - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:course_list' %}" class="k-muted hover:text-primary">Courses</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:course_grades' appeal.grade.assessment.section.module.course.id %}" class="k-muted hover:text-primary">Gradebook</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">Review appeal</li>
+</ol>
+{% endblock %}
 
 {% block content %}
-<div class="max-w-xl mx-auto space-y-6">
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <span class="badge badge-primary font-mono text-xs">{{ appeal.grade.assessment.section.module.course.code }}</span>
-            <h1 class="card-title text-xl font-bold mt-2">Review Student Grade Appeal</h1>
-            <p class="text-sm text-base-content/70">
-                Student: <strong>{{ appeal.grade.student.get_full_name|default:appeal.grade.student.email }}</strong> &bull;
-                Assessment: <strong>{{ appeal.grade.assessment.title }}</strong> &bull;
-                Current Score: <strong>{{ appeal.grade.score }}</strong>
+<div class="max-w-xl mx-auto my-6">
+    <div class="k-card p-6 sm:p-8 space-y-6">
+        <header class="space-y-1">
+            <p class="k-eyebrow">{{ appeal.grade.assessment.section.module.course.code }}</p>
+            <h1 class="text-2xl font-bold">Review grade appeal</h1>
+            <p class="text-sm k-muted">
+                Student: <strong>{{ appeal.grade.student.get_full_name|default:appeal.grade.student.email }}</strong> &bull; Assessment: <strong>{{ appeal.grade.assessment.title }}</strong> &bull; Disputed score: <span class="k-num font-semibold">{{ appeal.grade.score }}</span>
             </p>
+        </header>
 
-            <div class="p-3 bg-base-200 rounded-box text-xs mt-3">
-                <span class="font-bold text-base-content/70 uppercase">Student's Statement:</span>
-                <p class="mt-1 whitespace-pre-wrap">{{ appeal.reason }}</p>
-            </div>
-
-            <form method="post" class="mt-4 space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
-                {% csrf_token %}
-
-                <div class="form-control">
-                    <label for="id_status" class="label"><span class="label-text font-medium text-xs">Verdict</span></label>
-                    {{ form.status }}
-                </div>
-
-                <div class="form-control">
-                    <label for="id_response" class="label"><span class="label-text font-medium text-xs">Written Response & Notes</span></label>
-                    {{ form.response }}
-                </div>
-
-                <div class="card-actions justify-end mt-4">
-                    <a href="{% url 'kura:course_grades' appeal.grade.assessment.section.module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
-                    <button type="submit" class="btn btn-primary btn-sm">Record Verdict</button>
-                </div>
-            </form>
+        <div class="p-4 bg-base-200 rounded-btn text-xs space-y-1">
+            <p class="font-semibold uppercase tracking-wider text-base-content">Student rationale</p>
+            <p class="text-sm k-muted whitespace-pre-wrap">{{ appeal.reason }}</p>
         </div>
+
+        <form method="post" class="space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+            {% csrf_token %}
+
+            {% include "kura/_field.html" with field=form.status %}
+            {% include "kura/_field.html" with field=form.response %}
+
+            <div class="flex items-center justify-end gap-2 pt-4 border-t border-base-300">
+                <a href="{% url 'kura:course_grades' appeal.grade.assessment.section.module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
+                <button type="submit" class="btn btn-primary btn-sm">Save verdict</button>
+            </div>
+        </form>
     </div>
 </div>
 {% endblock %}
-

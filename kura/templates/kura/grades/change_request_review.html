@@ -1,55 +1,59 @@
 {% extends "kura/base.html" %}
 
-{% block title %}Review Grade Change - {{ change_request.grade.student.email }} - Kura{% endblock %}
+{% block title %}Review grade change - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:course_list' %}" class="k-muted hover:text-primary">Courses</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:course_grades' change_request.grade.assessment.section.module.course.id %}" class="k-muted hover:text-primary">Gradebook</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">Review change</li>
+</ol>
+{% endblock %}
 
 {% block content %}
-<div class="max-w-xl mx-auto space-y-6">
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <span class="badge badge-primary font-mono text-xs">{{ change_request.grade.assessment.section.module.course.code }}</span>
-            <h1 class="card-title text-xl font-bold mt-2">Department Head Grade Review</h1>
-            <p class="text-sm text-base-content/70">
-                Student: <strong>{{ change_request.grade.student.get_full_name|default:change_request.grade.student.email }}</strong> &bull;
-                Assessment: <strong>{{ change_request.grade.assessment.title }}</strong>
+<div class="max-w-xl mx-auto my-6">
+    <div class="k-card p-6 sm:p-8 space-y-6">
+        <header class="space-y-1">
+            <p class="k-eyebrow">{{ change_request.grade.assessment.section.module.course.code }}</p>
+            <h1 class="text-2xl font-bold">Review grade change</h1>
+            <p class="text-sm k-muted">
+                Student: <strong>{{ change_request.grade.student.get_full_name|default:change_request.grade.student.email }}</strong> &bull; Assessment: <strong>{{ change_request.grade.assessment.title }}</strong>
             </p>
+        </header>
 
-            <div class="grid grid-cols-2 gap-4 mt-2 p-3 bg-base-200 rounded-box text-center">
-                <div>
-                    <span class="text-xs text-base-content/60">Current Score</span>
-                    <div class="text-lg font-bold">{{ change_request.current_score }}</div>
-                </div>
-                <div>
-                    <span class="text-xs text-base-content/60">Proposed Score</span>
-                    <div class="text-lg font-bold text-primary">{{ change_request.proposed_score }}</div>
-                </div>
+        <!-- Score Comparison Grid -->
+        <div class="grid grid-cols-2 gap-4 p-4 bg-base-200 rounded-btn text-center">
+            <div>
+                <p class="k-eyebrow">Current score</p>
+                <p class="text-2xl font-bold k-num">{{ change_request.current_score }}</p>
             </div>
-
-            <div class="p-3 bg-base-200 rounded-box text-xs mt-2">
-                <span class="font-bold text-base-content/70 uppercase">Instructor Justification:</span>
-                <p class="mt-1 whitespace-pre-wrap">{{ change_request.reason }}</p>
-                <div class="text-base-content/50 mt-1">Requested by: {{ change_request.requested_by.get_full_name|default:change_request.requested_by.email }}</div>
+            <div>
+                <p class="k-eyebrow">Proposed score</p>
+                <p class="text-2xl font-bold text-primary k-num">{{ change_request.proposed_score }}</p>
             </div>
-
-            <form method="post" class="mt-4 space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
-                {% csrf_token %}
-
-                <div class="form-control">
-                    <label for="id_decision" class="label"><span class="label-text font-medium text-xs">Decision</span></label>
-                    {{ form.decision }}
-                </div>
-
-                <div class="form-control">
-                    <label for="id_review_note" class="label"><span class="label-text font-medium text-xs">Reviewer Notes (Optional)</span></label>
-                    {{ form.review_note }}
-                </div>
-
-                <div class="card-actions justify-end mt-4">
-                    <a href="{% url 'kura:course_grades' change_request.grade.assessment.section.module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
-                    <button type="submit" class="btn btn-primary btn-sm">Authorize Decision</button>
-                </div>
-            </form>
         </div>
+
+        <div class="p-4 bg-base-200 rounded-btn text-xs space-y-1">
+            <p class="font-semibold uppercase tracking-wider text-base-content">Instructor justification</p>
+            <p class="text-sm k-muted whitespace-pre-wrap">{{ change_request.reason }}</p>
+            <p class="text-xs k-muted pt-1">Requested by: {{ change_request.requested_by.get_full_name|default:change_request.requested_by.email }}</p>
+        </div>
+
+        <form method="post" class="space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+            {% csrf_token %}
+
+            {% include "kura/_field.html" with field=form.decision %}
+            {% include "kura/_field.html" with field=form.review_note %}
+
+            <div class="flex items-center justify-end gap-2 pt-4 border-t border-base-300">
+                <a href="{% url 'kura:course_grades' change_request.grade.assessment.section.module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
+                <button type="submit" class="btn btn-primary btn-sm">Record decision</button>
+            </div>
+        </form>
     </div>
 </div>
 {% endblock %}
-

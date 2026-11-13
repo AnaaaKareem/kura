@@ -1702,7 +1702,7 @@ class DepartmentHeadCoursesAndStaffTests(TestCase):
         course_response = self.client.get(
             reverse("kura:course_detail", kwargs={"course_id": course.id})
         )
-        self.assertContains(course_response, "+ Add Curriculum Module")
+        self.assertContains(course_response, "Add module")
 
         # Confirm target-level choices appear as checkboxes on the module form.
         form_response = self.client.get(
@@ -5048,7 +5048,7 @@ class DepartmentReportsTests(TestCase):
         self.client.force_login(self.head_a)
         response = self.client.get(reverse("kura:department_reports", kwargs={"department_id": self.dept_a.id}))
         self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "History Department Report")
+        self.assertContains(response, f"{self.dept_a.name} report")
 
     def test_head_cannot_view_other_department_report(self):
         # Head of Dept A tries to view Dept B's report; receives 403 Forbidden.

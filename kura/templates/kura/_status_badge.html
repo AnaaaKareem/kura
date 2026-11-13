@@ -1,0 +1,61 @@
+{% with val=value|lower %}
+{% if kind == 'course' %}
+  {% if val == 'published' or val == 'true' or value is True %}
+    <span class="badge badge-success badge-sm font-medium">Published</span>
+  {% else %}
+    <span class="badge badge-ghost badge-sm font-medium">Draft</span>
+  {% endif %}
+{% elif kind == 'item' or kind == 'module' %}
+  {% if val == 'visible' or val == 'true' or value is True %}
+    <span class="badge badge-info badge-sm font-medium">Visible</span>
+  {% else %}
+    <span class="badge badge-ghost badge-sm font-medium">Hidden</span>
+  {% endif %}
+{% elif kind == 'grade' %}
+  {% if val == 'released' %}
+    <span class="badge badge-success badge-sm font-medium">Released</span>
+  {% elif val == 'finalized' or val == 'pending release' or val == 'awaiting release' %}
+    <span class="badge badge-warning badge-sm font-medium">Awaiting release</span>
+  {% else %}
+    <span class="badge badge-ghost badge-sm font-medium">Draft</span>
+  {% endif %}
+{% elif kind == 'change_request' or kind == 'appeal' %}
+  {% if val == 'approved' %}
+    <span class="badge badge-success badge-sm font-medium">Approved</span>
+  {% elif val == 'rejected' %}
+    <span class="badge badge-error badge-sm font-medium">Rejected</span>
+  {% else %}
+    <span class="badge badge-warning badge-sm font-medium">Pending</span>
+  {% endif %}
+{% elif kind == 'attempt' %}
+  {% if val == 'submitted' or val == 'fully_graded' %}
+    <span class="badge badge-success badge-sm font-medium">Submitted</span>
+  {% elif val == 'expired' %}
+    <span class="badge badge-error badge-sm font-medium">Time ran out</span>
+  {% else %}
+    <span class="badge badge-info badge-sm font-medium">In progress</span>
+  {% endif %}
+{% elif kind == 'attendance' %}
+  {% if val == 'present' %}
+    <span class="badge badge-success badge-sm font-medium">Present</span>
+  {% elif val == 'late' %}
+    <span class="badge badge-warning badge-sm font-medium">Late</span>
+  {% else %}
+    <span class="badge badge-error badge-sm font-medium">Absent</span>
+  {% endif %}
+{% elif kind == 'account' %}
+  {% if val == 'active' or val == 'true' or value is True %}
+    <span class="badge badge-success badge-sm font-medium">Active</span>
+  {% else %}
+    <span class="badge badge-ghost badge-sm font-medium">Disabled</span>
+  {% endif %}
+{% elif kind == 'upload' %}
+  {% if val == 'quarantined' %}
+    <span class="badge badge-error badge-sm font-medium">Quarantined</span>
+  {% else %}
+    <span class="badge badge-success badge-sm font-medium">Clean</span>
+  {% endif %}
+{% else %}
+  <span class="badge badge-ghost badge-sm font-medium">{{ value|capfirst }}</span>
+{% endif %}
+{% endwith %}

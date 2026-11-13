@@ -1,56 +1,54 @@
 {% extends "kura/base.html" %}
 {% load static %}
 
-{% block title %}MFA Configured - Recovery Codes - Kura{% endblock %}
+{% block title %}Save your recovery codes - Kura{% endblock %}
 
-{% block head %}<link rel="stylesheet" href="{% static 'css/print.css' %}" media="print">{% endblock %}
+{% block head %}
+<link rel="stylesheet" href="{% static 'css/print.css' %}" media="print">
+{% endblock %}
 
 {% block content %}
-<div class="max-w-lg mx-auto mt-6">
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <div class="text-center">
-                <div class="inline-flex items-center justify-center h-12 w-12 rounded-full bg-success/20 text-success mb-3">
-                    <svg class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 13l4 4L19 7" />
-                    </svg>
+<div class="max-w-lg mx-auto my-8">
+    <div class="k-card p-6 sm:p-8 space-y-6">
+        <header class="text-center space-y-2">
+            <div class="inline-flex items-center justify-center h-12 w-12 rounded-full bg-success/20 text-success mb-1">
+                {% include "kura/_icon.html" with name="check" class="h-6 w-6" %}
+            </div>
+            <h1 class="text-2xl font-bold">Save your recovery codes</h1>
+            <p class="text-sm k-muted">
+                Save these 10 recovery codes in a safe place. Each code can be used once if you lose access to your authenticator app.
+            </p>
+        </header>
+
+        <div class="k-card bg-base-200 p-4 border border-base-300">
+            <div class="grid grid-cols-2 gap-3 text-center">
+                {% for code in recovery_codes %}
+                <div class="badge badge-neutral p-3 font-semibold k-num tracking-wider w-full">
+                    <span data-recovery-code>{{ code }}</span>
                 </div>
-                <h1 class="card-title text-2xl font-bold justify-center">MFA Successfully Enabled</h1>
-                <p class="text-sm text-base-content/70 mt-2">
-                    Save your 10 backup recovery codes in a safe place. Each code can only be used once if you lose access to your authenticator app.
-                </p>
+                {% endfor %}
             </div>
+        </div>
 
-            <!-- 10 single-use static recovery codes display with DaisyUI -->
-            <div class="mt-4 bg-base-200 border border-base-300 rounded-box p-4 font-mono text-sm">
-                <div class="grid grid-cols-2 gap-3 text-center">
-                    {% for code in recovery_codes %}
-                    <div class="badge badge-lg badge-neutral p-3 font-semibold tracking-wider w-full">
-                        <span data-recovery-code>{{ code }}</span>
-                    </div>
-                    {% endfor %}
-                </div>
-            </div>
+        <div role="alert" class="alert alert-warning text-xs">
+            <span><strong>Important:</strong> These recovery codes are only displayed once and cannot be viewed again.</span>
+        </div>
 
-            <div role="alert" class="alert alert-warning mt-4 text-xs">
-                <span><strong>Important:</strong> These recovery codes are only displayed once and cannot be viewed again.</span>
-            </div>
+        <div class="flex gap-2">
+            <button type="button" class="btn btn-outline flex-1" data-copy-recovery-codes>Copy codes</button>
+            <button type="button" class="btn btn-outline flex-1" data-print-recovery-codes>Print codes</button>
+        </div>
+        <p class="text-sm text-center font-medium text-success" role="status" data-recovery-status></p>
 
-            <div class="flex gap-2 mt-4">
-                <button type="button" class="btn btn-outline" data-copy-recovery-codes>Copy codes</button>
-                <button type="button" class="btn btn-outline" data-print-recovery-codes>Print codes</button>
-            </div>
-            <p class="text-sm" role="status" data-recovery-status></p>
-
-            <div class="card-actions mt-6">
-                <a href="{% url 'kura:home' %}" class="btn btn-primary w-full">
-                    Continue to Dashboard
-                </a>
-            </div>
+        <div class="pt-2">
+            <a href="{% url 'kura:home' %}" class="btn btn-primary w-full">
+                Continue to dashboard
+            </a>
         </div>
     </div>
 </div>
-<!-- Paper copy: hidden on screen, the only thing shown when printing (see static/css/print.css). -->
+
+<!-- Paper copy for printing -->
 <div class="recovery-sheet hidden" aria-hidden="true">
     <div class="sheet-logo">
         <span class="sheet-mark"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round"><path d="M7 4v16M17 5 7 12l10 7"/></svg></span>

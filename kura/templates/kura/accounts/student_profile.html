@@ -1,32 +1,121 @@
 {% extends "kura/base.html" %}
-{% block title %}Student profile - Kura{% endblock %}
+
+{% block title %}{{ student.user.get_full_name|default:student.user.email }} - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:student_list' %}" class="k-muted hover:text-primary">Students</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content truncate max-w-xs">{{ student.user.get_full_name|default:student.user.email }}</li>
+</ol>
+{% endblock %}
+
 {% block content %}
-<div class="space-y-4">
-    <a class="link" href="{% url 'kura:student_list' %}">Back to students</a>
-    <h1 class="text-2xl font-bold">{{ student.user.get_full_name|default:student.user.email }}</h1>
-    <dl>
-        <dt>Email</dt><dd>{{ student.user.email }}</dd>
-        <dt>Student ID</dt><dd>{{ student.user_id }}</dd>
-        <dt>Department</dt><dd>{{ student.department.name }}</dd>
-        <dt>Level</dt><dd>{{ student.get_current_level_display }}</dd>
-        <dt>Status</dt>
-        <dd>
-            {% if not student.user.is_active %}
-                Deactivated
-            {% elif student.user.locked_until and student.user.locked_until > now %}
-                Locked until {{ student.user.locked_until|date:"d M, H:i" }}
-            {% else %}
-                Active
-            {% endif %}
-        </dd>
-    </dl>
-    <h2 class="text-xl font-bold">Enrollments</h2>
-    <ul>
-        {% for enrollment in enrollments %}
-        <li>{{ enrollment.course.code }} — {{ enrollment.course.title }} ({{ enrollment.get_status_display }})</li>
-        {% empty %}
-        <li>No enrollments.</li>
-        {% endfor %}
-    </ul>
+<div class="space-y-6">
+    <!-- Page Header (Section 8.2) -->
+    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 border-b border-base-300 pb-5">
+        <div class="space-y-1">
+            <p class="k-eyebrow">{{ student.department.name }}</p>
+            <div class="flex flex-wrap items-center gap-2.5">
+                <h1 class="text-2xl font-bold">{{ student.user.get_full_name|default:student.user.email }}</h1>
+                {% if not student.user.is_active %}
+                <span class="badge badge-error badge-sm font-medium">Deactivated</span>
+                {% elif student.user.locked_until and student.user.locked_until > now %}
+                <span class="badge badge-warning badge-sm font-medium">Locked until {{ student.user.locked_until|date:"d M, H:i" }}</span>
+                {% else %}
+                <span class="badge badge-success badge-sm font-medium">Active</span>
+                {% endif %}
+            </div>
+            <p class="text-sm k-muted font-mono">{{ student.user.email }}</p>
+        </div>
+        <a href="{% url 'kura:student_list' %}" class="btn btn-outline btn-sm">
+            &larr; Back to students
+        </a>
+    </header>
+
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <!-- Main: Enrollments -->
+        <div class="xl:col-span-2 space-y-4">
+            <div class="flex items-center justify-between">
+                <h2 class="text-lg font-bold">Course enrollments</h2>
+                <span class="badge badge-ghost badge-sm k-num font-medium">{{ enrollments|length }}</span>
+            </div>
+
+            <div class="k-card p-0 overflow-x-auto">
+                <table class="k-table">
+                    <caption class="sr-only">Student course enrollments</caption>
+                    <thead>
+                        <tr>
+                            <th class="k-sticky-col">Course</th>
+                            <th>Term</th>
+                            <th class="text-right">Status</th>
+                        </tr>
+                    </thead>
+                    <tbody>
+                        {% for enrollment in enrollments %}
+                        <tr>
+                            <td class="k-sticky-col">
+                                <a href="{% url 'kura:course_detail' enrollment.course.id %}" class="link link-primary font-semibold block">
+                                    {{ enrollment.course.code }} &mdash; {{ enrollment.course.title }}
+                                </a>
+                            </td>
+                            <td class="text-xs">{{ enrollment.course.semester|capfirst }} {{ enrollment.course.academic_year }}</td>
+                            <td class="text-right">
+                                <span class="badge {% if enrollment.status == 'active' %}badge-success{% else %}badge-ghost{% endif %} badge-sm font-medium">
+                                    {{ enrollment.get_status_display }}
+                                </span>
+                            </td>
+                        </tr>
+                        {% empty %}
+                        <tr>
+                            <td colspan="3" class="p-8 text-center">
+                                {% include "kura/_empty.html" with icon="courses" title="No course enrollments" text="This student is not enrolled in any courses." %}
+                            </td>
+                        </tr>
+                        {% endfor %}
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <!-- Side: Student Facts -->
+        <aside class="space-y-6">
+            <div class="k-card space-y-4">
+                <h2 class="text-base font-semibold border-b border-base-300 pb-2">Student record</h2>
+                <dl class="space-y-3 text-sm">
+                    <div>
+                        <dt class="k-eyebrow">Student ID</dt>
+                        <dd class="k-num text-xs font-mono mt-0.5">{{ student.user_id }}</dd>
+                    </div>
+                    <div>
+                        <dt class="k-eyebrow">Email address</dt>
+                        <dd class="k-muted text-xs font-mono mt-0.5">{{ student.user.email }}</dd>
+                    </div>
+                    <div>
+                        <dt class="k-eyebrow">Department</dt>
+                        <dd class="font-medium mt-0.5">{{ student.department.name }}</dd>
+                    </div>
+                    <div>
+                        <dt class="k-eyebrow">Academic level</dt>
+                        <dd class="font-medium mt-0.5">{{ student.get_current_level_display }}</dd>
+                    </div>
+                    <div>
+                        <dt class="k-eyebrow">Account status</dt>
+                        <dd class="mt-0.5">
+                            {% if not student.user.is_active %}
+                            Deactivated
+                            {% elif student.user.locked_until and student.user.locked_until > now %}
+                            Locked until {{ student.user.locked_until|date:"d M, H:i" }}
+                            {% else %}
+                            Active
+                            {% endif %}
+                        </dd>
+                    </div>
+                </dl>
+            </div>
+        </aside>
+    </div>
 </div>
 {% endblock %}

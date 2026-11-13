@@ -1,74 +1,88 @@
 {% extends "kura/base.html" %}
 
-{% block title %}{{ session.title }} - Attendance Roll - Kura{% endblock %}
+{% block title %}{{ session.title }} - Attendance - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:course_list' %}" class="k-muted hover:text-primary">Courses</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:course_detail' session.module.course.id %}" class="k-muted hover:text-primary">{{ session.module.course.code }}</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content truncate max-w-xs">{{ session.title }}</li>
+</ol>
+{% endblock %}
 
 {% block content %}
 <div class="space-y-6">
-    <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-            <div class="flex items-center gap-2">
-                <span class="badge badge-primary font-mono text-xs">{{ session.module.course.code }}</span>
+    <!-- Page Header (Section 8.2) -->
+    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 border-b border-base-300 pb-5">
+        <div class="space-y-1">
+            <p class="k-eyebrow">{{ session.module.course.code }} &bull; {{ session.module.title }}</p>
+            <div class="flex flex-wrap items-center gap-2.5">
+                <h1 class="text-2xl font-bold">{{ session.title }}</h1>
                 {% if is_live %}
-                <span class="badge badge-success badge-sm animate-pulse">Live Check-in Open</span>
+                <span class="badge badge-success badge-sm font-medium">Live check-in open</span>
                 {% else %}
-                <span class="badge badge-ghost badge-sm">Closed</span>
+                <span class="badge badge-ghost badge-sm font-medium">Closed</span>
                 {% endif %}
             </div>
-            <h1 class="text-2xl font-bold mt-2">{{ session.title }}</h1>
-            <p class="text-sm text-base-content/70">
-                Module: <strong>{{ session.module.title }}</strong> &bull; Ends at: <strong>{{ session.expires_at|date:"H:i (Y-m-d)" }}</strong>
+            <p class="text-sm k-muted">
+                Ends at: <strong class="text-base-content">{{ session.expires_at|date:"H:i (Y-m-d)" }}</strong>
             </p>
         </div>
 
         {% if is_live %}
         <form method="post" action="{% url 'kura:attendance_session_close' session.id %}">
             {% csrf_token %}
-            <button type="submit" class="btn btn-warning btn-sm" data-confirm-action="Close attendance session now?">
-                End Session Now
+            <button type="submit" class="btn btn-outline btn-warning btn-sm" data-confirm-action="Close attendance session now?">
+                End session now
             </button>
         </form>
         {% endif %}
-    </div>
+    </header>
 
-    <!-- Active Check-in Screen for Classroom Projector -->
+    <!-- Active Check-in Screen (Classroom Presentation) -->
     {% if is_live and passcode %}
-    <div class="card bg-base-100 shadow-lg border-2 border-primary/30">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <h2 class="card-title text-center justify-center text-lg">Classroom Check-in Passcode & QR Code</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-center mt-4">
-                <div class="text-center p-6 bg-base-200 rounded-box border border-base-300">
-                    <span class="text-xs uppercase font-bold text-base-content/60 tracking-wider">Dynamic Passcode</span>
-                    <div class="text-5xl font-mono font-extrabold tracking-widest text-primary mt-3">
-                        {{ passcode }}
-                    </div>
-                    <p class="text-xs text-base-content/60 mt-4">Students enter this passcode on their check-in screen.</p>
+    <section class="k-card shadow-md space-y-4">
+        <h2 class="text-base font-semibold border-b border-base-300 pb-2">Classroom check-in</h2>
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
+            <div class="text-center p-6 bg-base-200 rounded-box border border-base-300 space-y-2">
+                <p class="k-eyebrow">Dynamic passcode</p>
+                <div class="text-5xl font-mono font-extrabold tracking-widest text-primary k-num">
+                    {{ passcode }}
                 </div>
-
-                {% if qr_code_url %}
-                <div class="flex flex-col items-center p-6 bg-base-200 rounded-box border border-base-300">
-                    <span class="text-xs uppercase font-bold text-base-content/60 tracking-wider mb-3">Scan to Check In</span>
-                    <div class="p-2 bg-white rounded-box shadow">
-                        <img src="{{ qr_code_url }}" alt="Attendance QR Code" class="w-44 h-44">
-                    </div>
-                </div>
-                {% endif %}
+                <p class="text-xs k-muted pt-2">Students enter this passcode on their check-in screen.</p>
             </div>
+
+            {% if qr_code_url %}
+            <div class="flex flex-col items-center p-6 bg-base-200 rounded-box border border-base-300 space-y-3">
+                <p class="k-eyebrow">Scan to check in</p>
+                <div class="p-2 bg-white rounded-box shadow-sm">
+                    <img src="{{ qr_code_url }}" alt="Attendance QR Code" class="w-40 h-40">
+                </div>
+            </div>
+            {% endif %}
         </div>
-    </div>
+    </section>
     {% endif %}
 
-    <!-- Recorded Attendance Roster & Manual Override Form -->
-    <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <!-- Roster Table -->
-        <div class="lg:col-span-2 card bg-base-100 border border-base-300 overflow-hidden">
-            <div class="p-4 border-b border-base-200 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-                <h3 class="font-bold">Verified Attendance Roll ({{ records|length }})</h3>
+    <!-- Detail Grid: Roster & Manual Override -->
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <!-- Main: Verified Attendance Roster -->
+        <div class="xl:col-span-2 space-y-4">
+            <div class="flex items-center justify-between">
+                <h2 class="text-lg font-bold">Verified attendance roll</h2>
+                <span class="badge badge-ghost badge-sm k-num font-medium">{{ records|length }} verified</span>
             </div>
-            <div class="overflow-x-auto">
-                <table class="table table-sm w-full text-xs">
-                    <thead class="bg-base-200">
+
+            <div class="k-card p-0 overflow-x-auto">
+                <table class="k-table">
+                    <caption class="sr-only">Verified attendance entries</caption>
+                    <thead>
                         <tr>
-                            <th>Student</th>
+                            <th class="k-sticky-col">Student</th>
                             <th>Status</th>
                             <th>Method</th>
                             <th>Time</th>
@@ -78,25 +92,25 @@
                     <tbody>
                         {% for record in records %}
                         <tr>
-                            <td class="font-semibold">{{ record.student.get_full_name|default:record.student.email }}</td>
-                            <td>
-                                {% if record.status == 'present' %}
-                                <span class="badge badge-success badge-xs">Present</span>
-                                {% elif record.status == 'late' %}
-                                <span class="badge badge-warning badge-xs">Late</span>
-                                {% elif record.status == 'excused' %}
-                                <span class="badge badge-info badge-xs">Excused</span>
-                                {% else %}
-                                <span class="badge badge-error badge-xs">Absent</span>
-                                {% endif %}
+                            <td class="k-sticky-col font-medium">
+                                {{ record.student.get_full_name|default:record.student.email }}
                             </td>
-                            <td><span class="badge badge-ghost badge-xs uppercase font-mono">{{ record.method }}</span></td>
-                            <td class="text-base-content/60">{{ record.verified_at|date:"H:i:s" }}</td>
-                            <td class="max-w-xs truncate text-base-content/60" title="{{ record.override_reason }}">{{ record.override_reason|default:"-" }}</td>
+                            <td>
+                                {% include "kura/_status_badge.html" with kind="attendance" value=record.status %}
+                            </td>
+                            <td>
+                                <span class="badge badge-ghost badge-xs uppercase font-mono">{{ record.method }}</span>
+                            </td>
+                            <td class="k-num text-xs k-muted">{{ record.verified_at|date:"H:i:s" }}</td>
+                            <td class="max-w-xs truncate text-xs k-muted" title="{{ record.override_reason }}">
+                                {{ record.override_reason|default:"-" }}
+                            </td>
                         </tr>
                         {% empty %}
                         <tr>
-                            <td colspan="5" class="text-center py-6 text-base-content/50">No students checked in yet.</td>
+                            <td colspan="5" class="p-8 text-center">
+                                {% include "kura/_empty.html" with icon="attendance" title="No check-ins yet" text="No students have verified attendance for this session." %}
+                            </td>
                         </tr>
                         {% endfor %}
                     </tbody>
@@ -104,32 +118,64 @@
             </div>
         </div>
 
-        <!-- Manual Roll Form -->
-        <div class="card bg-base-100 border border-base-300">
-            <div class="card-body gap-4 p-4 sm:p-6">
-                <h3 class="card-title text-base font-bold">Manual Roll Entry</h3>
-                <p class="text-xs text-base-content/70">Manually record or correct a student's attendance. A written justification reason is mandatory.</p>
+        <!-- Side: Session Details & Manual Roll Form -->
+        <aside class="space-y-6">
+            <!-- Session facts -->
+            <div class="k-card space-y-3">
+                <h2 class="text-base font-semibold border-b border-base-300 pb-2">Session facts</h2>
+                <dl class="space-y-2 text-sm">
+                    <div>
+                        <dt class="k-eyebrow">Course</dt>
+                        <dd class="font-medium mt-0.5">{{ session.module.course.code }} &bull; {{ session.module.course.title }}</dd>
+                    </div>
+                    <div>
+                        <dt class="k-eyebrow">Module</dt>
+                        <dd class="font-medium mt-0.5">{{ session.module.title }}</dd>
+                    </div>
+                    <div>
+                        <dt class="k-eyebrow">Check-in ends</dt>
+                        <dd class="k-num font-medium mt-0.5">{{ session.expires_at|date:"H:i:s (Y-m-d)" }}</dd>
+                    </div>
+                </dl>
+            </div>
 
-                <form method="post" action="{% url 'kura:attendance_manual_record' session.id %}" class="mt-3 space-y-3">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+            <!-- Manual Override Form -->
+            <div class="k-card space-y-4">
+                <div class="border-b border-base-300 pb-2">
+                    <h2 class="text-base font-semibold">Manual roll entry</h2>
+                    <p class="text-xs k-muted mt-0.5">Record or correct attendance with written justification.</p>
+                </div>
+
+                <form method="post" action="{% url 'kura:attendance_manual_record' session.id %}" class="space-y-3">
                     {% csrf_token %}
-                    <div class="form-control">
-                        <label class="label"><span class="label-text text-xs font-medium">Student</span></label>
+
+                    <div class="form-control w-full space-y-1">
+                        <label class="label py-0" for="id_student">
+                            <span class="label-text font-medium text-xs text-base-content">Student</span>
+                        </label>
                         {{ manual_form.student }}
                     </div>
-                    <div class="form-control">
-                        <label class="label"><span class="label-text text-xs font-medium">Status</span></label>
+
+                    <div class="form-control w-full space-y-1">
+                        <label class="label py-0" for="id_status">
+                            <span class="label-text font-medium text-xs text-base-content">Status</span>
+                        </label>
                         {{ manual_form.status }}
                     </div>
-                    <div class="form-control">
-                        <label class="label"><span class="label-text text-xs font-medium">Justification Reason</span></label>
+
+                    <div class="form-control w-full space-y-1">
+                        <label class="label py-0" for="id_override_reason">
+                            <span class="label-text font-medium text-xs text-base-content">Justification reason</span>
+                        </label>
                         {{ manual_form.override_reason }}
                     </div>
+
                     <button type="submit" class="btn btn-primary btn-sm w-full mt-2">
-                        Record Manual Attendance
+                        Record manual attendance
                     </button>
                 </form>
             </div>
-        </div>
+        </aside>
     </div>
 </div>
 {% endblock %}

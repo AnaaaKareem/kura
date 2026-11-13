@@ -1,89 +1,103 @@
 {% extends "kura/base.html" %}
 
-{% block title %}Course Grades - {{ course.code }} - Kura{% endblock %}
+{% block title %}Gradebook - {{ course.code }} - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:course_list' %}" class="k-muted hover:text-primary">Courses</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:course_detail' course.id %}" class="k-muted hover:text-primary">{{ course.code }}</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">Gradebook</li>
+</ol>
+{% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
-            <span class="badge badge-primary font-mono text-xs">{{ course.code }}</span>
-            <h1 class="text-2xl font-bold mt-2">Course Gradebook</h1>
-            <p class="text-sm text-base-content/70">
-                Course: <strong>{{ course.title }}</strong> &bull; Semester: <strong>{{ course.semester|capfirst }} {{ course.academic_year }}</strong>
+<div class="space-y-8">
+    <!-- Page Header (Section 8.2) -->
+    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+        <div class="space-y-1">
+            <p class="k-eyebrow">{{ course.code }}</p>
+            <h1 class="text-2xl font-bold">Course gradebook</h1>
+            <p class="text-sm k-muted">
+                {{ course.title }} &bull; {{ course.semester|capfirst }} {{ course.academic_year }}
             </p>
         </div>
-        <div class="flex gap-2">
-            <a href="{% url 'kura:course_detail' course.id %}" class="btn btn-outline btn-sm">Course Details</a>
+        <div class="flex items-center gap-2">
+            <a href="{% url 'kura:course_detail' course.id %}" class="btn btn-outline btn-sm">Course details</a>
             <form method="post" action="{% url 'kura:course_result_calculate' course.id %}">
                 {% csrf_token %}
-                <button type="submit" class="btn btn-primary btn-sm">Calculate Final Results</button>
+                <button type="submit" class="btn btn-primary btn-sm">Calculate final results</button>
             </form>
         </div>
-    </div>
+    </header>
 
-    <!-- Grade Roster Table -->
-    <div class="card bg-base-100 border border-base-300 overflow-hidden">
-        <div class="p-4 border-b border-base-200 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-            <h3 class="font-bold text-base">Assessment Scores ({{ grades|length }})</h3>
-        </div>
-        <div class="overflow-x-auto">
-            <table class="table table-sm w-full text-xs">
-                <thead class="bg-base-200">
+    <!-- Assessment Scores Table Card (Section 8.5) -->
+    <section class="space-y-3">
+        <h2 class="text-lg font-semibold">Assessment scores ({{ grades|length }})</h2>
+        <div class="k-card p-0 overflow-x-auto">
+            <table class="k-table">
+                <caption class="sr-only">Course assessment scores</caption>
+                <thead>
                     <tr>
-                        <th>Student</th>
+                        <th class="k-sticky-col">Student</th>
                         <th>Assessment</th>
-                        <th>Score</th>
+                        <th class="k-num">Score</th>
                         <th>Status</th>
                         <th>Graded</th>
-                        <th>Actions</th>
+                        <th class="text-right">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for g in grades %}
                     <tr>
-                        <td class="font-semibold">{{ g.student.get_full_name|default:g.student.email }}</td>
-                        <td>
-                            <div class="font-medium">{{ g.assessment.title }}</div>
-                            <span class="badge badge-ghost badge-xs uppercase">{{ g.assessment.component_type }}</span>
+                        <td class="font-semibold k-sticky-col">
+                            {{ g.student.get_full_name|default:g.student.email }}
                         </td>
-                        <td class="font-bold text-sm">{{ g.score }} / {{ g.assessment.max_score }}</td>
                         <td>
-                            {% if g.status == 'released' %}
-                            <span class="badge badge-success badge-sm font-semibold">Released</span>
-                            {% elif g.status == 'finalized' %}
-                            <span class="badge badge-info badge-sm font-semibold">Finalized</span>
-                            {% else %}
-                            <span class="badge badge-warning badge-sm font-semibold">Draft</span>
-                            {% endif %}
+                            <div class="font-medium text-sm">{{ g.assessment.title }}</div>
+                            <span class="badge badge-ghost badge-xs uppercase font-mono">{{ g.assessment.component_type }}</span>
                         </td>
-                        <td>{{ g.graded_at|date:"Y-m-d H:i" }}</td>
-                        <td class="flex items-center gap-2">
-                            {% if g.status == 'draft' %}
-                            {% if can_enter_grade %}
-                            <a href="{% url 'kura:grade_entry' g.attempt.id %}" class="btn btn-ghost btn-xs">Edit Score</a>
-                            {% endif %}
-                            {% if can_finalize_grade %}
-                            <form method="post" action="{% url 'kura:grade_finalize' g.id %}">
-                                {% csrf_token %}
-                                <button type="submit" class="btn btn-info btn-xs">Finalize</button>
-                            </form>
-                            {% endif %}
-                            {% elif g.status == 'finalized' and can_release %}
-                            <a href="{% url 'kura:grade_release' g.id %}" class="btn btn-success btn-xs">Release with MFA</a>
-                            {% elif g.status == 'released' %}
-                            <a href="{% url 'kura:grade_change_request_create' g.id %}" class="btn btn-outline btn-xs">Request Change</a>
-                            {% endif %}
+                        <td class="k-num font-bold text-sm">
+                            {{ g.score }} / {{ g.assessment.max_score }}
+                        </td>
+                        <td>
+                            {% include "kura/_status_badge.html" with kind="grade" value=g.status %}
+                        </td>
+                        <td class="text-xs k-muted">{{ g.graded_at|date:"j M Y, H:i" }}</td>
+                        <td class="text-right">
+                            <div class="inline-flex items-center justify-end gap-1.5">
+                                {% if g.status == 'draft' %}
+                                    {% if can_enter_grade %}
+                                    <a href="{% url 'kura:grade_entry' g.attempt.id %}" class="btn btn-ghost btn-xs text-primary">Edit score</a>
+                                    {% endif %}
+                                    {% if can_finalize_grade %}
+                                    <form method="post" action="{% url 'kura:grade_finalize' g.id %}" data-confirm-action="Finalize this grade? TAs will no longer be able to edit it.">
+                                        {% csrf_token %}
+                                        <button type="submit" class="btn btn-outline btn-xs">Finalize</button>
+                                    </form>
+                                    {% endif %}
+                                {% elif g.status == 'finalized' and can_release %}
+                                    <a href="{% url 'kura:grade_release' g.id %}" class="btn btn-outline btn-success btn-xs">Release with MFA</a>
+                                {% elif g.status == 'released' %}
+                                    <a href="{% url 'kura:grade_change_request_create' g.id %}" class="btn btn-ghost btn-xs text-primary">Request change</a>
+                                {% endif %}
+                            </div>
                         </td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="6" class="text-center py-6 text-base-content/50">No grades recorded for this course yet.</td>
+                        <td colspan="6" class="p-8 text-center">
+                            {% include "kura/_empty.html" with icon="grades" title="No grades recorded" text="No student grades have been entered for this course yet." %}
+                        </td>
                     </tr>
                     {% endfor %}
                 </tbody>
             </table>
         </div>
-    </div>
+    </section>
 
     <!-- Grade scheme: how much each component counts towards the final result -->
     <div class="card bg-base-100 border border-base-300">
@@ -174,37 +188,38 @@
 
     <!-- Final Course Results Summary -->
     {% if course_results %}
-    <div class="card bg-base-100 border border-base-300 overflow-hidden">
-        <div class="p-4 border-b border-base-200 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-            <h3 class="font-bold text-base">Calculated Final Course Results</h3>
+    <section class="space-y-3">
+        <div class="flex items-center justify-between">
+            <h2 class="text-lg font-semibold">Calculated final results</h2>
             {% if can_release %}
-            <form method="post" action="{% url 'kura:course_result_release' course.id %}">
+            <form method="post" action="{% url 'kura:course_result_release' course.id %}" data-confirm-action="Release all calculated final course results to student transcripts? This action publishes results officially.">
                 {% csrf_token %}
-                <button type="submit" class="btn btn-success btn-xs" data-confirm-action="Release all calculated final course results to student transcripts?">
-                    Release to Transcripts
+                <button type="submit" class="btn btn-outline btn-success btn-xs">
+                    Release to transcripts
                 </button>
             </form>
             {% endif %}
         </div>
-        <div class="overflow-x-auto">
-            <table class="table table-sm w-full text-xs">
-                <thead class="bg-base-200">
+        <div class="k-card p-0 overflow-x-auto">
+            <table class="k-table">
+                <caption class="sr-only">Calculated final course results</caption>
+                <thead>
                     <tr>
-                        <th>Student</th>
-                        <th>Final Percentage Score</th>
+                        <th class="k-sticky-col">Student</th>
+                        <th class="k-num">Final score</th>
                         <th>Status</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for res in course_results %}
                     <tr>
-                        <td class="font-semibold">{{ res.student.get_full_name|default:res.student.email }}</td>
-                        <td class="font-bold text-base text-primary">{{ res.final_score }}%</td>
+                        <td class="font-semibold k-sticky-col">{{ res.student.get_full_name|default:res.student.email }}</td>
+                        <td class="k-num font-bold text-sm text-primary">{{ res.final_score }}%</td>
                         <td>
                             {% if res.status == 'released' %}
-                            <span class="badge badge-success badge-xs">Released on Transcript</span>
+                            <span class="badge badge-success badge-sm font-medium">Released on transcript</span>
                             {% else %}
-                            <span class="badge badge-warning badge-xs">Draft</span>
+                            <span class="badge badge-ghost badge-sm font-medium">Draft</span>
                             {% endif %}
                         </td>
                     </tr>
@@ -212,7 +227,7 @@
                 </tbody>
             </table>
         </div>
-    </div>
+    </section>
     {% endif %}
 </div>
 {% endblock %}

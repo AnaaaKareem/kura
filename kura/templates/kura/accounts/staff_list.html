@@ -1,105 +1,121 @@
 {% extends "kura/base.html" %}
 
-{% block title %}Manage Staff Accounts - Kura{% endblock %}
+{% block title %}Staff - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">Staff</li>
+</ol>
+{% endblock %}
 
 {% block content %}
 <div class="space-y-6">
-    <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-            <h1 class="text-2xl font-bold">Staff Accounts</h1>
-            <p class="text-sm text-base-content/70 mt-1">
+    <!-- Page Header (Section 8.2) -->
+    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 border-b border-base-300 pb-5">
+        <div class="space-y-1">
+            <p class="k-eyebrow">Administration</p>
+            <h1 class="text-2xl font-bold">Staff</h1>
+            <p class="text-sm k-muted">
                 Manage university instructional and administrative staff members.
             </p>
         </div>
-        <a href="{% url 'kura:staff_create' %}" class="btn btn-primary btn-sm">
-            + Add Staff Member
-        </a>
-    </div>
-
-    <form method="get" class="card bg-base-100 p-4 space-y-2">
-        {{ filter_form.as_p }}
-        <button type="submit" class="btn btn-primary btn-sm">Filter staff</button>
-        <a href="{% url 'kura:staff_list' %}" class="btn btn-ghost btn-sm">Clear</a>
-    </form>
-    <!-- Staff accounts table using DaisyUI -->
-    <div class="card bg-base-100 border border-base-300 overflow-hidden">
-        <div class="overflow-x-auto">
-            <table class="table table-sm w-full text-sm">
-                <thead class="bg-base-200">
-                    <tr>
-                        <th>Name & Email</th>
-                        <th>Department</th>
-                        <th>Title & Office</th>
-                        <th>Status</th>
-                        <th class="text-right">Actions</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for profile in staff_members %}
-                    <tr>
-                        <td>
-                            <div class="font-semibold">{{ profile.user.get_full_name|default:profile.user.email }}</div>
-                            <div class="text-xs text-base-content/60 font-mono">{{ profile.user.email }}</div>
-                        </td>
-                        <td>
-                            {{ profile.department.name|default:"Unassigned" }}
-                            <!-- Identify each department this staff member leads. -->
-                            {% for department_name in profile.head_department_names %}
-                            <div class="text-xs text-base-content/60">Head of {{ department_name }}</div>
-                            {% endfor %}
-                        </td>
-                        <td>
-                            <div>{{ profile.staff_title }}</div>
-                            <div class="text-xs text-base-content/60">{{ profile.office_location|default:"No office" }}</div>
-                        </td>
-                        <td>
-                            {% if not profile.user.is_active %}
-                            <span class="badge badge-error badge-sm">Deactivated</span>
-                            {% elif profile.user.locked_until and profile.user.locked_until > now %}
-                            <span class="badge badge-warning badge-sm">
-                                Locked until {{ profile.user.locked_until|date:"d M, H:i" }}
-                            </span>
-                            {% else %}
-                            <span class="badge badge-success badge-sm">Active</span>
-                            {% endif %}
-                        </td>
-                        <td class="text-right space-x-2">
-                            <!-- Roles management button -->
-                            <a href="{% url 'kura:user_roles' profile.user.id %}" class="btn btn-ghost btn-xs">
-                                Roles
-                            </a>
-
-                            <!-- Lock/Unlock toggle button -->
-                            {% if profile.user.id != user.id %}
-                            <form method="post" action="{% url 'kura:user_lock_toggle' profile.user.id %}" class="inline">
-                                {% csrf_token %}
-                                <button type="submit" class="btn btn-ghost btn-xs text-warning">
-                                    {% if profile.user.locked_until and profile.user.locked_until > now %}Unlock{% else %}Lock{% endif %}
-                                </button>
-                            </form>
-
-                            <!-- Deactivation button -->
-                            {% if profile.user.is_active %}
-                            <form method="post" action="{% url 'kura:user_deactivate' profile.user.id %}" class="inline">
-                                {% csrf_token %}
-                                <button type="submit" class="btn btn-ghost btn-xs text-error" data-confirm-action="Deactivate this staff member?">
-                                    Deactivate
-                                </button>
-                            </form>
-                            {% endif %}
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% empty %}
-                    <tr>
-                        <td colspan="5" class="text-center py-4 text-base-content/50">
-                            No staff accounts found.
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
+        <div class="flex items-center gap-2">
+            <a href="{% url 'kura:staff_create' %}" class="btn btn-primary btn-sm">
+                {% include "kura/_icon.html" with name="plus" class="h-4 w-4" %}
+                <span>Add staff member</span>
+            </a>
         </div>
+    </header>
+
+    {% if filter_form %}
+    <!-- Filter Bar -->
+    <form method="get" class="k-card p-4 flex flex-wrap items-center gap-4 bg-base-100">
+        <div class="flex-1 min-w-[200px]">
+            {{ filter_form.department }}
+        </div>
+        <div class="flex items-center gap-2">
+            <button type="submit" class="btn btn-outline btn-sm">Filter</button>
+            <a href="{% url 'kura:staff_list' %}" class="btn btn-ghost btn-sm">Clear</a>
+        </div>
+    </form>
+    {% endif %}
+
+    <!-- Staff Table (Section 8.5) -->
+    <div class="k-card p-0 overflow-x-auto">
+        <table class="k-table">
+            <caption class="sr-only">Staff accounts</caption>
+            <thead>
+                <tr>
+                    <th class="k-sticky-col">Name &amp; email</th>
+                    <th>Department</th>
+                    <th>Title &amp; office</th>
+                    <th>Status</th>
+                    <th class="text-right">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for profile in staff_members %}
+                <tr>
+                    <td class="k-sticky-col">
+                        <div class="font-semibold">{{ profile.user.get_full_name|default:profile.user.email }}</div>
+                        <div class="text-xs k-muted font-mono">{{ profile.user.email }}</div>
+                    </td>
+                    <td>
+                        <div>{{ profile.department.name|default:"Unassigned" }}</div>
+                        {% for department_name in profile.head_department_names %}
+                        <div class="text-xs k-muted font-medium">Head of {{ department_name }}</div>
+                        {% endfor %}
+                    </td>
+                    <td>
+                        <div>{{ profile.staff_title }}</div>
+                        <div class="text-xs k-muted">{{ profile.office_location|default:"No office" }}</div>
+                    </td>
+                    <td>
+                        {% if not profile.user.is_active %}
+                        <span class="badge badge-error badge-sm font-medium">Deactivated</span>
+                        {% elif profile.user.locked_until and profile.user.locked_until > now %}
+                        <span class="badge badge-warning badge-sm font-medium">
+                            Locked until {{ profile.user.locked_until|date:"d M, H:i" }}
+                        </span>
+                        {% else %}
+                        <span class="badge badge-success badge-sm font-medium">Active</span>
+                        {% endif %}
+                    </td>
+                    <td class="text-right space-x-1">
+                        <a href="{% url 'kura:user_roles' profile.user.id %}" class="btn btn-ghost btn-xs">
+                            Roles
+                        </a>
+
+                        {% if profile.user.id != user.id %}
+                        <form method="post" action="{% url 'kura:user_lock_toggle' profile.user.id %}" class="inline">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-ghost btn-xs text-warning">
+                                {% if profile.user.locked_until and profile.user.locked_until > now %}Unlock{% else %}Lock{% endif %}
+                            </button>
+                        </form>
+
+                        {% if profile.user.is_active %}
+                        <form method="post" action="{% url 'kura:user_deactivate' profile.user.id %}" class="inline">
+                            {% csrf_token %}
+                            <button type="submit" class="btn btn-ghost btn-xs text-error" data-confirm-action="Deactivate this staff member?">
+                                Deactivate
+                            </button>
+                        </form>
+                        {% endif %}
+                        {% endif %}
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="5" class="p-8 text-center">
+                        {% include "kura/_empty.html" with icon="staff" title="No staff accounts found" text="No staff accounts match the selected filters." %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
     </div>
 </div>
 {% endblock %}

@@ -1,86 +1,59 @@
 {% extends "kura/base.html" %}
 
-{% block title %}Create Student Account - Kura{% endblock %}
+{% block title %}Add student - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:student_list' %}" class="k-muted hover:text-primary">Students</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">Add student</li>
+</ol>
+{% endblock %}
 
 {% block content %}
-<div class="max-w-xl mx-auto mt-6">
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <h1 class="card-title text-2xl font-bold">Create Student Account</h1>
-            <p class="text-sm text-base-content/70">
-                Provision a new student record. The Student system role is assigned automatically and a temporary password will be generated.
-            </p>
+<div class="max-w-2xl mx-auto space-y-6">
+    <!-- Page Header (Section 8.2) -->
+    <header class="space-y-1">
+        <p class="k-eyebrow">Records</p>
+        <h1 class="text-2xl font-bold">Add student</h1>
+        <p class="text-sm k-muted">
+            Provision a new student record. The Student system role is assigned automatically and a temporary password will be generated.
+        </p>
+    </header>
 
-            <form method="post" class="mt-4 space-y-4">
-                {% csrf_token %}
+    <div class="k-card">
+        <form method="post" class="space-y-6">
+            {% csrf_token %}
 
-                <div class="form-control">
-                    <label for="id_email" class="label">
-                        <span class="label-text font-medium">Email address</span>
-                    </label>
-                    {{ form.email }}
-                    {% if form.email.errors %}
-                    <label class="label"><span class="label-text-alt text-error">{{ form.email.errors.0 }}</span></label>
-                    {% endif %}
+            <!-- Fieldset 1: Person -->
+            <fieldset class="space-y-4">
+                <legend class="text-base font-semibold text-base-content border-b border-base-300 pb-2 w-full">Personal information</legend>
+                {% include "kura/_field.html" with field=form.email %}
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {% include "kura/_field.html" with field=form.first_name %}
+                    {% include "kura/_field.html" with field=form.last_name %}
                 </div>
+            </fieldset>
 
-                <div class="grid grid-cols-2 gap-4">
-                    <div class="form-control">
-                        <label for="id_first_name" class="label">
-                            <span class="label-text font-medium">First name</span>
-                        </label>
-                        {{ form.first_name }}
-                    </div>
-                    <div class="form-control">
-                        <label for="id_last_name" class="label">
-                            <span class="label-text font-medium">Last name</span>
-                        </label>
-                        {{ form.last_name }}
-                    </div>
-                </div>
+            <!-- Fieldset 2: Academic placement -->
+            <fieldset class="space-y-4">
+                <legend class="text-base font-semibold text-base-content border-b border-base-300 pb-2 w-full">Academic placement</legend>
+                {% include "kura/_field.html" with field=form.department %}
 
-                <div class="form-control">
-                    <label for="id_department" class="label">
-                        <span class="label-text font-medium">Department</span>
-                    </label>
-                    {{ form.department }}
-                    {% if form.department.errors %}
-                    <label class="label"><span class="label-text-alt text-error">{{ form.department.errors.0 }}</span></label>
-                    {% endif %}
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    {% include "kura/_field.html" with field=form.current_level %}
+                    {% include "kura/_field.html" with field=form.matriculation_year %}
                 </div>
+            </fieldset>
 
-                <div class="grid grid-cols-2 gap-4">
-                    <div class="form-control">
-                        <label for="id_current_level" class="label">
-                            <span class="label-text font-medium">Academic Level</span>
-                        </label>
-                        {{ form.current_level }}
-                        {% if form.current_level.errors %}
-                        <label class="label"><span class="label-text-alt text-error">{{ form.current_level.errors.0 }}</span></label>
-                        {% endif %}
-                    </div>
-                    <div class="form-control">
-                        <label for="id_matriculation_year" class="label">
-                            <span class="label-text font-medium">Matriculation Year</span>
-                        </label>
-                        {{ form.matriculation_year }}
-                        {% if form.matriculation_year.errors %}
-                        <label class="label"><span class="label-text-alt text-error">{{ form.matriculation_year.errors.0 }}</span></label>
-                        {% endif %}
-                    </div>
-                </div>
-
-                <div class="card-actions justify-end mt-6">
-                    <a href="{% url 'kura:enrollment_list' %}" class="btn btn-ghost btn-sm">
-                        Cancel
-                    </a>
-                    <button type="submit" class="btn btn-primary btn-sm">
-                        Create Student Account
-                    </button>
-                </div>
-            </form>
-        </div>
+            <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                <a href="{% url 'kura:student_list' %}" class="btn btn-ghost btn-sm">Cancel</a>
+                <button type="submit" class="btn btn-primary btn-sm">Provision student account</button>
+            </div>
+        </form>
     </div>
 </div>
 {% endblock %}
-

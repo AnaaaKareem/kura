@@ -1,72 +1,56 @@
 {% extends "kura/base.html" %}
 
-{% block title %}Create Schedule - {{ course.code }} - Kura{% endblock %}
+{% block title %}{% if editing %}Edit class time{% else %}Add class time{% endif %} - {{ course.code }} - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:schedule_list' %}" class="k-muted hover:text-primary">Schedule</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">{% if editing %}Edit class time{% else %}Add class time{% endif %}</li>
+</ol>
+{% endblock %}
 
 {% block content %}
-<div class="max-w-xl mx-auto mt-6">
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <h1 class="card-title text-2xl font-bold">{% if editing %}Edit Class Schedule{% else %}Add Class Schedule{% endif %}</h1>
-            <p class="text-sm text-base-content/70">
-                Define a recurring class schedule for <strong>{{ course.code }}</strong>. End time must be strictly after start time.
-            </p>
+<div class="max-w-xl mx-auto space-y-6">
+    <!-- Page Header (Section 8.2) -->
+    <header class="space-y-1">
+        <p class="k-eyebrow">{{ course.code }} &bull; {{ course.title }}</p>
+        <h1 class="text-2xl font-bold">{% if editing %}Edit class time{% else %}Add class time{% endif %}</h1>
+        <p class="text-sm k-muted">
+            Define a recurring class schedule for {{ course.code }}. End time must be strictly after start time.
+        </p>
+    </header>
 
-            <form method="post" class="mt-4 space-y-4">
-                {% csrf_token %}
-                {% if form.errors %}<div role="alert" class="alert alert-error">Please correct the highlighted fields. {{ form.errors }}</div>{% endif %}
+    <div class="k-card">
+        <form method="post" class="space-y-4">
+            {% csrf_token %}
 
-                <div class="grid grid-cols-2 gap-4">
-                    <div class="form-control">
-                        <label for="id_session_type" class="label"><span class="label-text font-medium">Session Format</span></label>
-                        {{ form.session_type }}
-                    </div>
-                    <div class="form-control">
-                        <label for="id_day" class="label"><span class="label-text font-medium">Day of Week</span></label>
-                        {{ form.day }}
-                    </div>
-                </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {% include "kura/_field.html" with field=form.session_type %}
+                {% include "kura/_field.html" with field=form.day %}
+            </div>
 
-                <div class="grid grid-cols-2 gap-4">
-                    <div class="form-control">
-                        <label for="id_start_time" class="label"><span class="label-text font-medium">Start Time</span></label>
-                        {{ form.start_time }}
-                    </div>
-                    <div class="form-control">
-                        <label for="id_end_time" class="label"><span class="label-text font-medium">End Time</span></label>
-                        {{ form.end_time }}
-                        {% if form.end_time.errors %}
-                        <label class="label"><span class="label-text-alt text-error">{{ form.end_time.errors.0 }}</span></label>
-                        {% endif %}
-                    </div>
-                </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {% include "kura/_field.html" with field=form.start_time %}
+                {% include "kura/_field.html" with field=form.end_time %}
+            </div>
 
-                <div class="form-control">
-                    <label for="id_location" class="label"><span class="label-text font-medium">Location</span></label>
-                    {{ form.location }}
-                </div>
+            {% include "kura/_field.html" with field=form.location %}
 
-                <div class="grid grid-cols-2 gap-4">
-                    <div class="form-control">
-                        <label for="id_recurrence_start" class="label"><span class="label-text font-medium">Term Start</span></label>
-                        {{ form.recurrence_start }}
-                    </div>
-                    <div class="form-control">
-                        <label for="id_recurrence_end" class="label"><span class="label-text font-medium">Term End</span></label>
-                        {{ form.recurrence_end }}
-                    </div>
-                </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                {% include "kura/_field.html" with field=form.recurrence_start %}
+                {% include "kura/_field.html" with field=form.recurrence_end %}
+            </div>
 
-                <div class="form-control">
-                    <label for="id_instructor" class="label"><span class="label-text font-medium">Instructor</span></label>
-                    {{ form.instructor }}
-                </div>
+            {% include "kura/_field.html" with field=form.instructor %}
 
-                <div class="card-actions justify-end mt-6">
-                    <a href="{% url 'kura:course_detail' course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
-                    <button type="submit" class="btn btn-primary btn-sm">Save Schedule</button>
-                </div>
-            </form>
-        </div>
+            <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                <a href="{% url 'kura:course_detail' course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
+                <button type="submit" class="btn btn-primary btn-sm">Save schedule</button>
+            </div>
+        </form>
     </div>
 </div>
 {% endblock %}
