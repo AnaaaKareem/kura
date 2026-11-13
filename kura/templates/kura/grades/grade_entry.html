@@ -17,7 +17,7 @@
 {% block form_errors %}{% endblock %}
 
 {% block content %}
-<div class="max-w-2xl mx-auto space-y-6">
+<div class="space-y-6">
     <header class="space-y-1">
         <p class="k-eyebrow">{{ attempt.assessment.section.module.course.code }}</p>
         <h1 class="text-2xl font-bold">Enter grade</h1>
@@ -26,19 +26,97 @@
         </p>
     </header>
 
-    <div class="k-card">
-        <form method="post" class="space-y-4">
-            {% csrf_token %}
-            {% include "kura/_form_errors.html" %}
+    <div class="grid grid-cols-1 lg:grid-cols-5 gap-6 items-start">
+        <div class="lg:col-span-3 space-y-6">
+            {% if question_reviews %}
+            <section class="k-card p-6 space-y-4">
+                <h2 class="text-base font-semibold border-b border-base-300 pb-2">Student responses</h2>
+                <div class="space-y-4">
+                    {% for item in question_reviews %}
+                    <article class="p-4 bg-base-200 rounded-box border border-base-300 space-y-2">
+                        <div class="flex items-start justify-between gap-3">
+                            <h3 class="text-sm font-semibold">Question {{ item.number }}</h3>
+                            {% if item.auto_evaluation %}
+                            <span class="badge badge-ghost badge-sm k-num">Auto: {{ item.auto_evaluation.points_awarded }} / {{ item.points }}</span>
+                            {% else %}
+                            <span class="badge badge-ghost badge-sm k-num">{{ item.points }} pts</span>
+                            {% endif %}
+                        </div>
+                        <p class="text-base leading-relaxed">{{ item.prompt }}</p>
+                        {% if item.type == 'multiple_choice' %}
+                        <div class="text-sm pt-1">
+                            {% if item.selected_options %}
+                            <ul class="list-disc pl-5 space-y-0.5">
+                                {% for opt_text in item.selected_options %}
+                                <li>{{ opt_text }}</li>
+                                {% endfor %}
+                            </ul>
+                            {% else %}
+                            <p class="k-muted">No option selected.</p>
+                            {% endif %}
+                        </div>
+                        {% elif item.type == 'matching' %}
+                        <div class="text-sm pt-1 space-y-1">
+                            {% for row in item.matching_rows %}
+                            <p><span class="font-medium">{{ row.left }}</span> &rarr; {{ row.selected|default:"(blank)" }}</p>
+                            {% endfor %}
+                        </div>
+                        {% else %}
+                        <p class="text-sm whitespace-pre-line bg-base-100 border border-base-300 rounded-btn p-3">{{ item.response_text|default:"No written answer submitted." }}</p>
+                        {% endif %}
+                    </article>
+                    {% endfor %}
+                </div>
+            </section>
+            {% endif %}
 
-            {% include "kura/_field.html" with field=form.score %}
-            {% include "kura/_field.html" with field=form.feedback %}
+            {% if attempt_files %}
+            <section class="k-card p-6 space-y-3">
+                <h2 class="text-base font-semibold">Submitted files</h2>
+                <div class="space-y-2">
+                    {% for att in attempt_files %}
+                    <div class="flex items-center justify-between p-3 bg-base-200 rounded-btn text-sm">
+                        <span class="font-medium truncate">{{ att.file.original_filename }} <span class="text-xs k-muted k-num">({{ att.file.size_bytes|filesizeformat }})</span></span>
+                        <a href="{% url 'kura:attempt_file_download' attempt.id att.file.id %}" class="btn btn-outline btn-xs">Download</a>
+                    </div>
+                    {% endfor %}
+                </div>
+            </section>
+            {% endif %}
 
-            <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
-                <a href="{% url 'kura:course_grades' attempt.assessment.section.module.course.id %}" class="btn btn-ghost">Cancel</a>
-                <button type="submit" class="btn btn-primary">Save draft</button>
+            {% if not question_reviews and not attempt_files %}
+            <div class="k-card p-6">
+                <p class="text-sm k-muted">No online responses or attached files were submitted for this attempt.</p>
             </div>
-        </form>
+            {% endif %}
+        </div>
+
+        <aside class="lg:col-span-2 lg:sticky lg:top-20">
+            <div class="k-card p-6 space-y-4">
+                <h2 class="text-base font-semibold border-b border-base-300 pb-2">Marking</h2>
+                {% if existing_grade and existing_grade.status != 'draft' %}
+                <div role="alert" class="alert alert-info text-sm">
+                    <span>This mark is {{ existing_grade.get_status_display|lower }}. To change a released mark, request a change.</span>
+                </div>
+                <div class="pt-2">
+                    <a href="{% url 'kura:course_grades' attempt.assessment.section.module.course.id %}" class="btn btn-outline btn-sm w-full">Back to gradebook</a>
+                </div>
+                {% else %}
+                <form method="post" class="space-y-4">
+                    {% csrf_token %}
+                    {% include "kura/_form_errors.html" %}
+
+                    {% include "kura/_field.html" with field=form.score %}
+                    {% include "kura/_field.html" with field=form.feedback %}
+
+                    <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                        <a href="{% url 'kura:course_grades' attempt.assessment.section.module.course.id %}" class="btn btn-ghost">Cancel</a>
+                        <button type="submit" class="btn btn-primary">Save draft</button>
+                    </div>
+                </form>
+                {% endif %}
+            </div>
+        </aside>
     </div>
 </div>
 {% endblock %}

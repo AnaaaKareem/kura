@@ -1,12 +1,12 @@
 {% extends "kura/base.html" %}
 
-{% block title %}Schedule - Kura{% endblock %}
+{% block title %}{% if is_student_view %}Timetable{% else %}Schedule{% endif %} - Kura{% endblock %}
 
 {% block breadcrumbs %}
 <ol class="flex items-center gap-1.5 text-sm">
     <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
     <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">Schedule</li>
+    <li aria-current="page" class="font-medium text-base-content">{% if is_student_view %}Timetable{% else %}Schedule{% endif %}</li>
 </ol>
 {% endblock %}
 
@@ -14,61 +14,96 @@
 <div class="space-y-6">
     <header class="space-y-1">
         <p class="k-eyebrow">Teaching &amp; learning</p>
-        <h1 class="text-2xl font-bold">Schedule</h1>
+        <h1 class="text-2xl font-bold">{% if is_student_view %}Timetable{% else %}Schedule{% endif %}</h1>
         <p class="text-sm k-muted">Weekly timetable, lecture halls, and lab meeting slots.</p>
     </header>
 
-    <div class="k-card p-0 overflow-x-auto">
-        <table class="k-table">
-            <caption class="sr-only">Weekly course schedule</caption>
-            <thead>
-                <tr>
-                    <th class="k-sticky-col">Course</th>
-                    <th>Format</th>
-                    <th>Day &amp; time</th>
-                    <th>Location</th>
-                    <th>Instructor</th>
-                    <th class="text-right">Actions</th>
-                </tr>
-            </thead>
-            <tbody>
-                {% for schedule in schedules %}
-                <tr>
-                    <td class="k-sticky-col">
-                        <div class="font-semibold">{{ schedule.course.code }}</div>
-                        <div class="text-xs k-muted">{{ schedule.course.title }}</div>
-                    </td>
-                    <td>
-                        <span class="badge badge-ghost badge-sm font-medium">{{ schedule.session_type|capfirst }}</span>
-                    </td>
-                    <td>
-                        <div class="font-medium">{{ schedule.day|capfirst }}</div>
-                        <div class="text-xs k-muted k-num">{{ schedule.start_time|time:"H:i" }} &ndash; {{ schedule.end_time|time:"H:i" }}</div>
-                    </td>
-                    <td class="text-sm">{{ schedule.location }}</td>
-                    <td class="text-sm">{% if schedule.instructor.first_name or schedule.instructor.last_name %}{{ schedule.instructor.first_name }} {{ schedule.instructor.last_name }}{% else %}{{ schedule.instructor.email }}{% endif %}</td>
-                    <td class="text-right">
-                        {% if schedule.can_manage %}
-                        <div class="inline-flex items-center justify-end gap-1.5">
-                            <a class="btn btn-ghost btn-sm" href="{% url 'kura:schedule_edit' schedule.id %}">Edit</a>
-                            <form method="post" action="{% url 'kura:schedule_delete' schedule.id %}" class="inline" data-confirm-action="Delete this scheduled meeting for {{ schedule.course.code }}?">
-                                {% csrf_token %}
-                                <input type="hidden" name="confirm" value="on">
-                                <button type="submit" class="btn btn-outline btn-error btn-sm">Delete</button>
-                            </form>
-                        </div>
-                        {% endif %}
-                    </td>
-                </tr>
+    {% if filter_form %}
+    <form method="get" class="k-card p-4 space-y-4 bg-base-100" role="search">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {% for field in filter_form %}
+            {% include "kura/_field.html" with field=field %}
+            {% endfor %}
+        </div>
+        <div class="flex items-center justify-end gap-2">
+            <a href="{% url 'kura:schedule_list' %}" class="btn btn-ghost btn-sm">Clear</a>
+            <button type="submit" class="btn btn-outline btn-sm">Apply</button>
+        </div>
+    </form>
+    {% endif %}
+
+    {% if schedules %}
+    <!-- Desktop week grid (Mon-Fri, plus Sat/Sun when scheduled). -->
+    <div class="hidden lg:grid gap-4 {% if week_days|length == 7 %}lg:grid-cols-7{% elif week_days|length == 6 %}lg:grid-cols-6{% else %}lg:grid-cols-5{% endif %}">
+        {% for day in week_days %}
+        <section class="space-y-3">
+            <h2 class="k-eyebrow border-b border-base-300 pb-2">{{ day.label }}</h2>
+            <div class="space-y-3">
+                {% for schedule in day.items %}
+                <article class="bg-base-100 border border-base-300 border-l-4 {% if schedule.session_type == 'lab' %}border-l-info{% elif schedule.session_type == 'tutorial' %}border-l-success{% elif schedule.session_type == 'seminar' %}border-l-warning{% else %}border-l-primary{% endif %} rounded-btn p-3 text-sm space-y-1.5">
+                    <p class="k-num font-semibold text-xs">{{ schedule.start_time|time:"H:i" }} &ndash; {{ schedule.end_time|time:"H:i" }}</p>
+                    <p class="font-semibold">{{ schedule.course.code }}</p>
+                    <p class="text-xs k-muted">{{ schedule.course.title }}</p>
+                    <div class="flex flex-wrap items-center gap-1.5 pt-0.5">
+                        <span class="badge badge-ghost badge-xs">{{ schedule.session_type|capfirst }}</span>
+                        <span class="text-xs k-muted">{{ schedule.location }}</span>
+                    </div>
+                    <p class="text-xs k-muted">{% if schedule.instructor.first_name or schedule.instructor.last_name %}{{ schedule.instructor.first_name }} {{ schedule.instructor.last_name }}{% else %}{{ schedule.instructor.email }}{% endif %}</p>
+                    {% if schedule.can_manage %}
+                    <div class="flex items-center gap-1.5 pt-2 border-t border-base-200">
+                        <a class="btn btn-ghost btn-xs" href="{% url 'kura:schedule_edit' schedule.id %}">Edit</a>
+                        <form method="post" action="{% url 'kura:schedule_delete' schedule.id %}" class="inline" data-confirm-action="Delete this scheduled meeting for {{ schedule.course.code }}?">
+                            {% csrf_token %}
+                            <input type="hidden" name="confirm" value="on">
+                            <button type="submit" class="btn btn-outline btn-error btn-xs">Delete</button>
+                        </form>
+                    </div>
+                    {% endif %}
+                </article>
                 {% empty %}
-                <tr>
-                    <td colspan="6" class="p-8 text-center">
-                        {% include "kura/_empty.html" with icon="schedule" title="No classes scheduled" text="There are no class meeting times registered on your timetable." %}
-                    </td>
-                </tr>
+                <p class="text-xs k-muted py-2">No classes</p>
                 {% endfor %}
-            </tbody>
-        </table>
+            </div>
+        </section>
+        {% endfor %}
     </div>
+
+    <!-- Mobile and tablet day-grouped list. -->
+    <div class="lg:hidden space-y-6">
+        {% for day in week_days %}
+        {% if day.items %}
+        <section class="space-y-3">
+            <h2 class="k-eyebrow">{{ day.label }}</h2>
+            <div class="space-y-2.5">
+                {% for schedule in day.items %}
+                <article class="k-card border-l-4 {% if schedule.session_type == 'lab' %}border-l-info{% elif schedule.session_type == 'tutorial' %}border-l-success{% elif schedule.session_type == 'seminar' %}border-l-warning{% else %}border-l-primary{% endif %} p-4 space-y-2">
+                    <div class="flex items-center justify-between gap-2">
+                        <span class="font-semibold">{{ schedule.course.code }} &bull; {{ schedule.course.title }}</span>
+                        <span class="badge badge-ghost badge-sm">{{ schedule.session_type|capfirst }}</span>
+                    </div>
+                    <p class="text-xs k-num k-muted">{{ schedule.start_time|time:"H:i" }} &ndash; {{ schedule.end_time|time:"H:i" }} &bull; {{ schedule.location }}</p>
+                    <p class="text-xs k-muted">{% if schedule.instructor.first_name or schedule.instructor.last_name %}{{ schedule.instructor.first_name }} {{ schedule.instructor.last_name }}{% else %}{{ schedule.instructor.email }}{% endif %}</p>
+                    {% if schedule.can_manage %}
+                    <div class="flex items-center gap-2 pt-2 border-t border-base-300">
+                        <a class="btn btn-ghost btn-xs" href="{% url 'kura:schedule_edit' schedule.id %}">Edit</a>
+                        <form method="post" action="{% url 'kura:schedule_delete' schedule.id %}" class="inline" data-confirm-action="Delete this scheduled meeting for {{ schedule.course.code }}?">
+                            {% csrf_token %}
+                            <input type="hidden" name="confirm" value="on">
+                            <button type="submit" class="btn btn-outline btn-error btn-xs">Delete</button>
+                        </form>
+                    </div>
+                    {% endif %}
+                </article>
+                {% endfor %}
+            </div>
+        </section>
+        {% endif %}
+        {% endfor %}
+    </div>
+    {% else %}
+    <div class="k-card p-8 text-center">
+        {% include "kura/_empty.html" with icon="schedule" title="No classes scheduled" text="There are no class meeting times registered on your timetable." %}
+    </div>
+    {% endif %}
 </div>
 {% endblock %}

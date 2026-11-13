@@ -31,6 +31,57 @@
         </a>
     </header>
 
+    {% if attendance_stats %}
+    <section class="grid grid-cols-2 sm:grid-cols-6 gap-4" aria-label="Attendance summary">
+        <div class="k-card p-4">
+            <p class="k-eyebrow">Attendance rate</p>
+            <p class="text-2xl font-bold k-num mt-1">{{ attendance_stats.present_pct }}%</p>
+        </div>
+        <div class="k-card p-4">
+            <p class="k-eyebrow">Total records</p>
+            <p class="text-2xl font-bold k-num mt-1">{{ attendance_stats.total }}</p>
+        </div>
+        {% if attendance_stats.present %}
+        <div class="k-card p-4">
+            <p class="k-eyebrow">Present</p>
+            <p class="text-2xl font-bold k-num mt-1">{{ attendance_stats.present }}</p>
+        </div>
+        {% endif %}
+        {% if attendance_stats.late %}
+        <div class="k-card p-4">
+            <p class="k-eyebrow">Late</p>
+            <p class="text-2xl font-bold k-num mt-1">{{ attendance_stats.late }}</p>
+        </div>
+        {% endif %}
+        {% if attendance_stats.absent %}
+        <div class="k-card p-4">
+            <p class="k-eyebrow">Absent</p>
+            <p class="text-2xl font-bold k-num mt-1">{{ attendance_stats.absent }}</p>
+        </div>
+        {% endif %}
+        {% if attendance_stats.excused %}
+        <div class="k-card p-4">
+            <p class="k-eyebrow">Excused</p>
+            <p class="text-2xl font-bold k-num mt-1">{{ attendance_stats.excused }}</p>
+        </div>
+        {% endif %}
+    </section>
+    {% endif %}
+
+    {% if filter_form %}
+    <form method="get" class="k-card p-4 space-y-4 bg-base-100" role="search">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+            {% for field in filter_form %}
+            {% include "kura/_field.html" with field=field %}
+            {% endfor %}
+        </div>
+        <div class="flex items-center justify-end gap-2">
+            <a href="{% url 'kura:attendance_history' %}" class="btn btn-ghost btn-sm">Clear</a>
+            <button type="submit" class="btn btn-outline btn-sm">Apply</button>
+        </div>
+    </form>
+    {% endif %}
+
     <div class="k-card p-0 overflow-x-auto">
         <table class="k-table">
             <caption class="sr-only">Attendance history</caption>
@@ -90,5 +141,6 @@
             </tbody>
         </table>
     </div>
+    {% include "kura/_pagination.html" %}
 </div>
 {% endblock %}
