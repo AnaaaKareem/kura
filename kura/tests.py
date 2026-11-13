@@ -9061,3 +9061,45 @@ class DisableInactiveAccountsTests(TestCase):
         self.assertIn('event="account.deactivated.inactive"', log_blob)
         self.assertIn(str(self.old_user.id), log_blob)
         self.assertIn('days="90"', log_blob)
+
+
+class CoursePageLinksTests(TestCase):
+    """
+    The course page must link staff to the gradebook and to live attendance,
+    and must not show those links to enrolled students.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.instructor = make_user("Instructor")
+        self.student = make_user("Student")
+        department = Department.objects.create(name="Computer Science", code="CS")
+        StudentProfile.objects.create(
+            user=self.student, department=department, current_level="level_4", matriculation_year=2026
+        )
+        self.course = Course.objects.create(
+            department=department,
+            code="CS210",
+            title="Networks",
+            semester="1",
+            academic_year=2026,
+            is_published=True,
+            published_by=self.instructor,
+            published_at=timezone.now(),
+        )
+        CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor")
+        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
+        self.module = Module.objects.create(course=self.course, title="Week 1", is_visible=True)
+
+    def test_staff_see_gradebook_and_attendance_links(self):
+        self.client.force_login(self.instructor)
+        response = self.client.get(reverse("kura:course_detail", args=[self.course.id]))
+        self.assertContains(response, reverse("kura:course_grades", args=[self.course.id]))
+        self.assertContains(response, reverse("kura:attendance_session_start", args=[self.module.id]))
+
+    def test_students_do_not_see_staff_links(self):
+        self.client.force_login(self.student)
+        response = self.client.get(reverse("kura:course_detail", args=[self.course.id]))
+        self.assertEqual(response.status_code, 200)
+        self.assertNotContains(response, reverse("kura:course_grades", args=[self.course.id]))
+        self.assertNotContains(response, reverse("kura:attendance_session_start", args=[self.module.id]))
