@@ -8,30 +8,25 @@
 {% endblock %}
 
 {% block content %}
-<div class="max-w-lg mx-auto my-8">
+<div class="max-w-lg mx-auto my-6">
     <div class="k-card p-6 sm:p-8 space-y-6">
         <header class="text-center space-y-2">
-            <div class="inline-flex items-center justify-center h-12 w-12 rounded-full bg-success/20 text-success mb-1">
-                {% include "kura/_icon.html" with name="check" class="h-6 w-6" %}
-            </div>
             <h1 class="text-2xl font-bold">Save your recovery codes</h1>
             <p class="text-sm k-muted">
-                Save these 10 recovery codes in a safe place. Each code can be used once if you lose access to your authenticator app.
+                Save these 10 recovery codes in a safe place. Each code works once if you lose your authenticator app.
             </p>
         </header>
 
-        <div class="k-card bg-base-200 p-4 border border-base-300">
-            <div class="grid grid-cols-2 gap-3 text-center">
-                {% for code in recovery_codes %}
-                <div class="badge badge-neutral p-3 font-semibold k-num tracking-wider w-full">
-                    <span data-recovery-code>{{ code }}</span>
-                </div>
-                {% endfor %}
-            </div>
+        <div role="alert" class="alert alert-warning text-sm">
+            <span>You will only see these once. Each code works one time.</span>
         </div>
 
-        <div role="alert" class="alert alert-warning text-xs">
-            <span><strong>Important:</strong> These recovery codes are only displayed once and cannot be viewed again.</span>
+        <div class="grid grid-cols-2 gap-2 text-center">
+            {% for code in recovery_codes %}
+            <div class="bg-base-200 border border-base-300 rounded-btn px-3 py-2 font-mono text-base font-semibold k-num tracking-wider">
+                <span data-recovery-code>{{ code }}</span>
+            </div>
+            {% endfor %}
         </div>
 
         <div class="flex gap-2">
@@ -48,7 +43,7 @@
     </div>
 </div>
 
-<!-- Paper copy for printing -->
+<!-- Paper copy formatted for A4 printing. -->
 <div class="recovery-sheet hidden" aria-hidden="true">
     <div class="sheet-logo">
         <span class="sheet-mark"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round"><path d="M7 4v16M17 5 7 12l10 7"/></svg></span>

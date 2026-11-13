@@ -12,47 +12,50 @@
 
 {% block content %}
 <div class="space-y-6">
-    <!-- Page Header (Section 8.2) -->
     <header class="space-y-1">
         <p class="k-eyebrow">Administration</p>
         <h1 class="text-2xl font-bold">Active sessions</h1>
-        <p class="text-sm k-muted">Search, monitor and revoke active sessions across the institution.</p>
+        <p class="text-sm k-muted">Everyone currently signed in to Kura.</p>
     </header>
 
-    <!-- Filters Bar (Section 8.5) -->
-    <form method="get" class="k-card p-4 space-y-3">
-        <div class="space-y-2">
-            {{ form.as_p }}
+    <!-- Render all fields of AdminSessionFilterForm using the shared field partial. -->
+    <form method="get" class="k-card p-4 space-y-4 bg-base-100" role="search">
+        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+            {% for field in form %}
+            {% include "kura/_field.html" with field=field %}
+            {% endfor %}
         </div>
-        <div class="flex items-center gap-2 pt-1">
-            <button type="submit" class="btn btn-primary btn-sm">Apply filters</button>
+        <div class="flex items-center justify-end gap-2">
             <a href="{% url 'kura:admin_sessions' %}" class="btn btn-ghost btn-sm">Clear</a>
+            <button type="submit" class="btn btn-outline btn-sm">Apply</button>
         </div>
     </form>
 
-    <!-- Selected User Bulk End -->
     {% if selected_user %}
-    <div class="k-card p-4 border-error/30 bg-error/5 flex items-center justify-between gap-4">
+    <div class="k-card p-4 border-error flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
             <p class="text-sm font-semibold">All sessions for {{ selected_user.email }}</p>
-            <p class="text-xs k-muted">Revoke all active sessions belonging to this user immediately.</p>
+            <p class="text-xs k-muted">End all active sessions belonging to this user immediately.</p>
         </div>
         <form method="post" action="{% url 'kura:admin_sessions_revoke' %}" data-confirm-action="End all active sessions for {{ selected_user.email }}?">
             {% csrf_token %}
             <input type="hidden" name="action" value="all">
             <input type="hidden" name="user_id" value="{{ selected_user.id }}">
-            <button type="submit" class="btn btn-error btn-sm">End all sessions</button>
+            <button type="submit" class="btn btn-outline btn-error btn-sm">End all sessions</button>
         </form>
     </div>
     {% endif %}
 
-    <!-- Sessions Table Card (Section 8.5) -->
+    <div class="flex items-center justify-between">
+        <p class="text-sm k-muted k-num">{{ sessions|length }} session{{ sessions|length|pluralize }}</p>
+    </div>
+
     <div class="k-card p-0 overflow-x-auto">
         <table class="k-table">
             <caption class="sr-only">User sessions</caption>
             <thead>
                 <tr>
-                    <th>User</th>
+                    <th class="k-sticky-col">User</th>
                     <th>Device</th>
                     <th>IP address</th>
                     <th>Started</th>
@@ -63,20 +66,22 @@
             <tbody>
                 {% for session in sessions %}
                 <tr>
-                    <td>
+                    <td class="k-sticky-col">
                         <span class="font-medium text-sm">{% if session.user.first_name or session.user.last_name %}{{ session.user.first_name }} {{ session.user.last_name }}{% else %}{{ session.user.email }}{% endif %}</span>
                         <span class="block text-xs k-muted">{{ session.user.email }}</span>
                     </td>
                     <td class="text-xs">{{ session.user_agent|default:"Unknown device" }}</td>
                     <td class="k-num text-xs">{{ session.ip_address|default:"Unknown" }}</td>
-                    <td class="text-xs k-muted">{{ session.created_at|date:"j M Y, H:i" }}</td>
+                    <td class="text-xs k-muted k-num">{{ session.created_at|date:"j M Y, H:i" }}</td>
                     <td>
                         {% if session.revoked_at %}
-                        <span class="badge badge-error badge-sm font-medium">Revoked</span>
+                        {% include "kura/_status_badge.html" with kind="session" value="revoked" %}
                         {% elif session.id|stringformat:"s" == current_session_id %}
-                        <span class="badge badge-primary badge-sm font-medium">This device</span>
+                        {% include "kura/_status_badge.html" with kind="session" value="this_device" %}
+                        {% elif form.cleaned_data.state == 'expired' %}
+                        {% include "kura/_status_badge.html" with kind="session" value="expired" %}
                         {% else %}
-                        <span class="badge badge-success badge-sm font-medium">{{ form.cleaned_data.state|default:"Active"|capfirst }}</span>
+                        {% include "kura/_status_badge.html" with kind="session" value="active" %}
                         {% endif %}
                     </td>
                     <td class="text-right">
@@ -85,7 +90,7 @@
                             {% csrf_token %}
                             <input type="hidden" name="action" value="one">
                             <input type="hidden" name="session_id" value="{{ session.id }}">
-                            <button type="submit" class="btn btn-ghost btn-sm text-error">End session</button>
+                            <button type="submit" class="btn btn-outline btn-error btn-sm">End session</button>
                         </form>
                         {% endif %}
                     </td>
@@ -93,7 +98,7 @@
                 {% empty %}
                 <tr>
                     <td colspan="6" class="p-8 text-center">
-                        {% include "kura/_empty.html" with icon="sessions" title="No sessions found" text="No active or revoked sessions match these filters." %}
+                        {% include "kura/_empty.html" with icon="sessions" title="No sessions found" text="No sessions match these filters." %}
                     </td>
                 </tr>
                 {% endfor %}

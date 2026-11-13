@@ -12,17 +12,16 @@
 
 {% block content %}
 <div class="space-y-6">
-    <!-- Page Header (Section 8.2) -->
-    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 border-b border-base-300 pb-5">
+    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div class="space-y-1">
             <p class="k-eyebrow">Records</p>
             <h1 class="text-2xl font-bold">Enrollments</h1>
-            <p class="text-sm k-muted">View institutional course enrollments and register students.</p>
+            <p class="text-sm k-muted">View course enrollments and register or drop students.</p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
-            <a href="{% url 'kura:student_list' %}" class="btn btn-outline btn-sm">Students</a>
-            <a href="{% url 'kura:student_create' %}" class="btn btn-outline btn-sm">+ New student</a>
-            <a href="{% url 'kura:enrollment_create' %}" class="btn btn-primary btn-sm">
+            <a href="{% url 'kura:student_list' %}" class="btn btn-ghost btn-sm">Students</a>
+            <a href="{% url 'kura:student_create' %}" class="btn btn-outline btn-sm">New student</a>
+            <a href="{% url 'kura:enrollment_create' %}" class="btn btn-primary btn-sm w-full sm:w-auto">
                 {% include "kura/_icon.html" with name="plus" class="h-4 w-4" %}
                 <span>Enroll student</span>
             </a>
@@ -44,7 +43,11 @@
     </form>
     {% endif %}
 
-    <!-- Enrollments Table (Section 8.5) -->
+    <div class="flex items-center justify-between">
+        <p class="text-sm k-muted k-num">{{ enrollments|length }} enrollment{{ enrollments|length|pluralize }}</p>
+    </div>
+
+    {% url 'kura:enrollment_create' as enroll_url %}
     <div class="k-card p-0 overflow-x-auto">
         <table class="k-table">
             <caption class="sr-only">Course enrollments</caption>
@@ -52,7 +55,8 @@
                 <tr>
                     <th class="k-sticky-col">Course</th>
                     <th>Student</th>
-                    <th>Enrolled by</th>
+                    <th>Term</th>
+                    <th>Enrolled</th>
                     <th>Status</th>
                     <th class="text-right">Action</th>
                 </tr>
@@ -68,34 +72,31 @@
                         <div class="font-semibold">{% if enrollment.student.first_name or enrollment.student.last_name %}{{ enrollment.student.first_name }} {{ enrollment.student.last_name }}{% else %}{{ enrollment.student.email }}{% endif %}</div>
                         <div class="text-xs k-muted font-mono">{{ enrollment.student.email }}</div>
                     </td>
+                    <td class="text-xs k-num">{{ enrollment.course.semester|capfirst }} {{ enrollment.course.academic_year }}</td>
                     <td class="text-xs">
                         <div>{{ enrollment.enrolled_by.email|default:"System" }}</div>
-                        <div class="text-xs k-muted">{{ enrollment.enrolled_at|date:"Y-m-d" }}</div>
+                        <div class="text-xs k-muted k-num">{{ enrollment.enrolled_at|date:"j M Y" }}</div>
                     </td>
                     <td>
-                        {% if enrollment.status == 'active' %}
-                        <span class="badge badge-success badge-sm font-medium">Active</span>
-                        {% elif enrollment.status == 'dropped' %}
-                        <span class="badge badge-error badge-sm font-medium">Dropped</span>
-                        {% else %}
-                        <span class="badge badge-ghost badge-sm font-medium">{{ enrollment.status }}</span>
-                        {% endif %}
+                        {% include "kura/_status_badge.html" with kind="enrollment" value=enrollment.status %}
                     </td>
                     <td class="text-right">
                         {% if enrollment.status == 'active' %}
                         <form method="post" action="{% url 'kura:enrollment_drop' enrollment.id %}" class="inline">
                             {% csrf_token %}
-                            <button type="submit" class="btn btn-ghost btn-xs text-error" data-confirm-action="Drop this student from the course?">
+                            <button type="submit" class="btn btn-outline btn-error btn-sm" data-confirm-action="Drop {{ enrollment.student.email }} from {{ enrollment.course.code }}?">
                                 Drop
                             </button>
                         </form>
+                        {% elif enrollment.status == 'dropped' and enrollment.dropped_at %}
+                        <span class="text-xs k-muted k-num">Dropped {{ enrollment.dropped_at|date:"j M Y" }}</span>
                         {% endif %}
                     </td>
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="5" class="p-8 text-center">
-                        {% include "kura/_empty.html" with icon="enrollments" title="No enrollments found" text="No student course enrollments match the selected filters." %}
+                    <td colspan="6" class="p-8 text-center">
+                        {% include "kura/_empty.html" with icon="enrollments" title="No enrollments found" text="No student course enrollments match the selected filters." action_url=enroll_url action_label="Enroll student" %}
                     </td>
                 </tr>
                 {% endfor %}
