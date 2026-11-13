@@ -7,12 +7,12 @@
     <title>{% block title %}Kura{% endblock %}</title>
     <!-- Disable HTMX injected inline styles so the strict style policy holds. -->
     <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
-    <link rel="icon" type="image/svg+xml" href="{% static 'img/kura-mark.svg' %}">
+    <link rel="icon" type="image/svg+xml" href="{% static 'img/kura-mark.svg' %}?v=2">
     <!-- Load theme before first paint to prevent a light-mode flash. -->
     <script src="{% static 'js/theme-init.js' %}"></script>
     <link rel="stylesheet" href="{% static 'css/tailwind.min.css' %}">
-    <link rel="stylesheet" href="{% static 'css/daisyui.min.css' %}">
-    <link rel="stylesheet" href="{% static 'css/kura.css' %}">
+    <link rel="stylesheet" href="{% static 'css/daisyui.min.css' %}?v=2">
+    <link rel="stylesheet" href="{% static 'css/kura.css' %}?v=3">
     <script src="{% static 'js/htmx.min.js' %}"></script>
     <script src="{% static 'js/theme.js' %}" defer></script>
     {% block head %}{% endblock %}
@@ -31,7 +31,7 @@
                         {% include "kura/_icon.html" with name="menu" class="h-5 w-5" %}
                     </label>
                     <a href="{% url 'kura:home' %}" class="flex items-center gap-2 text-lg font-semibold tracking-tight lg:hidden" data-close-sidebar>
-                        <img src="{% static 'img/kura-mark.svg' %}" alt="Kura" class="h-7 w-7">
+                        <img src="{% static 'img/kura-mark.svg' %}?v=2" alt="Kura" class="h-7 w-7">
                         <span>Kura</span>
                     </a>
 
@@ -96,7 +96,7 @@
     <!-- Anonymous pages use a distraction-free centred brand mark. -->
     <header class="pt-8 pb-2 flex justify-center">
         <a href="{% url 'kura:login' %}" class="flex items-center gap-2.5 text-2xl font-bold text-primary">
-            <img src="{% static 'img/kura-mark.svg' %}" alt="Kura" class="h-8 w-8">
+            <img src="{% static 'img/kura-mark.svg' %}?v=2" alt="Kura" class="h-8 w-8">
             <span>Kura</span>
         </a>
     </header>
@@ -117,7 +117,7 @@
             <label for="kura-sidebar-toggle" class="drawer-overlay" aria-label="Close navigation menu"></label>
             <aside class="flex min-h-full w-64 flex-col border-r border-base-300 bg-base-100 p-4" aria-label="Work areas">
                 <a href="{% url 'kura:home' %}" class="mb-6 flex items-center gap-3 px-2" data-close-sidebar>
-                    <img src="{% static 'img/kura-mark.svg' %}" alt="Kura" class="h-8 w-8">
+                    <img src="{% static 'img/kura-mark.svg' %}?v=2" alt="Kura" class="h-8 w-8">
                     <span class="text-xl font-bold tracking-tight">Kura</span>
                 </a>
 
