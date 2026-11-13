@@ -85,6 +85,25 @@
         </div>
     </div>
 
+    <!-- Grade scheme: how much each component counts towards the final result -->
+    <div class="card bg-base-100 border border-base-300">
+        <div class="card-body gap-3 p-4 sm:p-6">
+            <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+                <h3 class="font-bold text-base">Grade Scheme</h3>
+                {% if can_edit_scheme %}
+                <a href="{% url 'kura:course_grade_scheme' course.id %}" class="btn btn-outline btn-xs">Edit grade scheme</a>
+                {% endif %}
+            </div>
+            <div class="flex flex-wrap gap-2 text-xs">
+                {% for scheme in grade_schemes %}
+                <span class="badge badge-ghost">{{ scheme.get_component_type_display }}: {{ scheme.weight_percentage }}%</span>
+                {% empty %}
+                <span class="text-base-content/60">No grade scheme set yet, so calculated final results would all be 0%.</span>
+                {% endfor %}
+            </div>
+        </div>
+    </div>
+
     <!-- Appeals waiting for a verdict -->
     {% if pending_appeals %}
     <div class="card bg-base-100 border border-base-300 overflow-hidden">

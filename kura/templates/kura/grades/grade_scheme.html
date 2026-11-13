@@ -1,0 +1,41 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Grade Scheme - {{ course.code }} - Kura{% endblock %}
+
+{% block content %}
+<div class="max-w-xl mx-auto space-y-6">
+    <div class="card bg-base-100 border border-base-300">
+        <div class="card-body gap-4 p-4 sm:p-6">
+            <span class="badge badge-primary font-mono text-xs">{{ course.code }}</span>
+            <h1 class="card-title text-2xl font-bold mt-2">Grade Scheme</h1>
+            <p class="text-sm text-base-content/70">
+                Set how much each kind of assessment counts towards the final course result.
+                The weights must add up to 100%. Leave a component empty if the course does not use it.
+            </p>
+
+            <form method="post" class="mt-4 space-y-4">
+                {% csrf_token %}
+
+                {% if form.non_field_errors %}
+                <div role="alert" class="alert alert-error text-sm">{{ form.non_field_errors.0 }}</div>
+                {% endif %}
+
+                {% for field in form %}
+                <div class="form-control">
+                    <label for="{{ field.id_for_label }}" class="label"><span class="label-text font-medium">{{ field.label }}</span></label>
+                    {{ field }}
+                    {% if field.errors %}
+                    <label class="label"><span class="label-text-alt text-error">{{ field.errors.0 }}</span></label>
+                    {% endif %}
+                </div>
+                {% endfor %}
+
+                <div class="card-actions justify-end mt-6">
+                    <a href="{% url 'kura:course_grades' course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
+                    <button type="submit" class="btn btn-primary btn-sm">Save Grade Scheme</button>
+                </div>
+            </form>
+        </div>
+    </div>
+</div>
+{% endblock %}

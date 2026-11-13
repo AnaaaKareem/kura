@@ -49,6 +49,7 @@ from .forms import (
     AssessmentQuestionFormSet,
     AttendanceSessionStartForm,
     CourseCreateForm,
+    CourseGradeSchemeForm,
     CourseStaffAssignForm,
     DeleteConfirmationForm,
     EnrollmentForm,
@@ -111,6 +112,7 @@ from .models import (
     Grade,
     GradeAppeal,
     GradeChangeRequest,
+    GradeComponentType,
     GradeHistory,
     GradeStatus,
     Module,
@@ -5090,8 +5092,58 @@ def course_grades_view(request, course_id):
         "course_results": course_results,
         "pending_appeals": pending_appeals,
         "pending_change_requests": pending_change_requests,
+        "can_edit_scheme": is_course_instructor(request.user, course)
+        or is_department_head(request.user, course.department),
     }
     return render(request, "kura/grades/course_grades.html", context)
+
+
+@login_required
+def course_grade_scheme_view(request, course_id):
+    """
+    Sets how much each grade component (coursework, quiz, exam, ...) counts
+    towards the final course result.
+    Who can use it: lead or co-instructors of the course and its department head.
+    Security: Admins and Registrars are refused; teaching assistants are refused
+    because the specification denies them "alter course grade schemes".
+    Changes are POST with CSRF, validated by a form, saved atomically and logged.
+    """
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+
+    course = get_object_or_404(Course.objects.select_related("department"), id=course_id)
+
+    # Only an instructor of this course or its department head may change the
+    # weights. A TA assignment is not enough (is_course_instructor checks that).
+    if not (is_course_instructor(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+
+    # Fill the form with the weights saved now; a component with no row counts as 0.
+    current_weights = {}
+    for scheme in CourseGradeScheme.objects.filter(course=course):
+        current_weights[f"weight_{scheme.component_type}"] = scheme.weight_percentage
+    form = CourseGradeSchemeForm(request.POST or None, initial=current_weights)
+
+    if request.method == "POST" and form.is_valid():
+        # Replace the whole scheme in one transaction so the weights never
+        # add up to anything but 100 in the database.
+        with transaction.atomic():
+            for component, _ in GradeComponentType.choices:
+                weight = form.cleaned_data[f"weight_{component}"]
+                if weight:
+                    CourseGradeScheme.objects.update_or_create(
+                        course=course, component_type=component, defaults={"weight_percentage": weight}
+                    )
+                else:
+                    CourseGradeScheme.objects.filter(course=course, component_type=component).delete()
+
+        # Record who changed the scheme, not the weights themselves.
+        log_security_event(request, "grade.scheme.changed", {"course_id": course.id})
+        messages.success(request, "Grade scheme saved. Recalculate final results to apply it.")
+        return redirect("kura:course_grades", course_id=course.id)
+
+    return render(request, "kura/grades/grade_scheme.html", {"form": form, "course": course})
 
 
 @login_required
