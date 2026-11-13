@@ -12,43 +12,31 @@
 </ol>
 {% endblock %}
 
+{% block form_errors %}{% endblock %}
+
 {% block content %}
 <div class="max-w-md mx-auto space-y-6">
-    <!-- Page Header (Section 8.2) -->
-    <header class="space-y-1 text-center">
-        <div class="flex items-center justify-center gap-2 mb-2">
-            <span class="badge badge-primary font-mono text-xs">{{ session.module.course.code }}</span>
-            <span class="badge badge-success badge-sm font-medium">Check-in open</span>
-        </div>
-        <h1 class="text-2xl font-bold">Check in</h1>
-        <p class="text-sm font-medium">{{ session.title }} ({{ session.module.title }})</p>
-        <p class="text-xs k-muted">Closes at {{ session.expires_at|date:"H:i (Y-m-d)" }}</p>
-    </header>
+    <div class="k-card p-6 sm:p-8 space-y-6">
+        <header class="space-y-1 text-center">
+            <div class="flex items-center justify-center gap-2 mb-1">
+                <span class="k-eyebrow">{{ session.module.course.code }}</span>
+                {% include "kura/_status_badge.html" with kind="attendance_session" value="live" %}
+            </div>
+            <h1 class="text-2xl font-bold">Check in to {{ session.title }}</h1>
+            <p class="text-sm k-muted">{{ session.module.title }} &bull; Closes {{ session.expires_at|date:"j M Y, H:i" }}</p>
+        </header>
 
-    <div class="k-card">
         <form method="post" class="space-y-5">
             {% csrf_token %}
-
-            <div class="form-control w-full space-y-1">
-                <label for="id_passcode" class="label justify-center py-1">
-                    <span class="label-text font-semibold text-sm text-base-content">Enter 6-character passcode</span>
-                </label>
-                <div class="max-w-xs mx-auto w-full">
-                    {{ form.passcode }}
-                </div>
-                {% if form.passcode.errors %}
-                <div class="text-error text-xs font-medium text-center pt-1">
-                    {{ form.passcode.errors.0 }}
-                </div>
-                {% endif %}
-            </div>
+            {% include "kura/_form_errors.html" %}
+            {% include "kura/_field.html" with field=form.passcode %}
 
             <div class="pt-2">
-                <button type="submit" class="btn btn-primary w-full text-base">Submit check-in</button>
+                <button type="submit" class="btn btn-primary w-full">Check in</button>
             </div>
 
-            <div class="text-center pt-2">
-                <a href="{% url 'kura:attendance_history' %}" class="btn btn-ghost btn-sm text-xs k-muted">Cancel</a>
+            <div class="text-center">
+                <a href="{% url 'kura:attendance_history' %}" class="btn btn-ghost btn-sm">Cancel</a>
             </div>
         </form>
     </div>
