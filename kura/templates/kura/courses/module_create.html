@@ -33,7 +33,19 @@
 
             {% include "kura/_field.html" with field=form.title %}
             {% include "kura/_field.html" with field=form.description %}
-            {% include "kura/_field.html" with field=form.is_visible %}
+            <div class="form-control">
+                <label class="label cursor-pointer justify-start gap-3">
+                    {{ form.is_visible }}
+                    <span class="label-text font-medium text-sm text-base-content">{{ form.is_visible.label }}</span>
+                </label>
+                {% if form.is_visible.errors %}
+                <div class="text-error text-xs font-medium space-y-0.5 pt-0.5" role="alert">
+                    {% for error in form.is_visible.errors %}
+                    <p>{{ error }}</p>
+                    {% endfor %}
+                </div>
+                {% endif %}
+            </div>
 
             <fieldset class="space-y-2 pt-1">
                 <legend class="label-text font-medium text-sm text-base-content">Academic levels (leave empty for everyone)</legend>
