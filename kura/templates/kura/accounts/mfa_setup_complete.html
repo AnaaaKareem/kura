@@ -35,8 +35,12 @@
         </div>
         <p class="text-sm text-center font-medium text-success" role="status" data-recovery-status></p>
 
-        <div class="pt-2">
-            <a href="{% url 'kura:home' %}" class="btn btn-primary w-full">
+        <div class="pt-2 space-y-3">
+            <label class="label cursor-pointer justify-start gap-3 py-1" for="saved-codes-confirm">
+                <input id="saved-codes-confirm" type="checkbox" class="checkbox checkbox-primary checkbox-sm">
+                <span class="label-text text-sm">I've saved these codes somewhere safe</span>
+            </label>
+            <a href="{% url 'kura:home' %}" class="btn btn-primary w-full" data-requires="#saved-codes-confirm">
                 Continue to dashboard
             </a>
         </div>

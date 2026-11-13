@@ -27,7 +27,7 @@
             {% csrf_token %}
             {% include "kura/_form_errors.html" %}
 
-            <div class="space-y-2">
+            <div class="space-y-2" data-pick-container data-pick-select="id_course">
                 <label for="course-search" class="label py-0">
                     <span class="label-text font-medium text-sm text-base-content">Search published courses</span>
                 </label>
@@ -41,7 +41,11 @@
                            autocomplete="off">
                     <span id="course-loading" class="htmx-indicator absolute right-3 top-3 loading loading-spinner loading-xs text-primary"></span>
                 </div>
-                <div id="course-results" role="region" aria-live="polite" class="pt-1">
+                <div id="course-results" role="region" aria-live="polite"></div>
+                <p class="text-xs" data-picked-display hidden>
+                    Selected: <span class="badge badge-primary badge-outline badge-sm font-medium" data-picked-label></span>
+                </p>
+                <div class="pt-1">
                     {{ form.course }}
                 </div>
                 {% if form.course.errors %}
@@ -53,7 +57,7 @@
                 {% endif %}
             </div>
 
-            <div class="space-y-2">
+            <div class="space-y-2" data-pick-container data-pick-select="id_student">
                 <label for="student-search" class="label py-0">
                     <span class="label-text font-medium text-sm text-base-content">Search active students</span>
                 </label>
@@ -67,7 +71,11 @@
                            autocomplete="off">
                     <span id="student-loading" class="htmx-indicator absolute right-3 top-3 loading loading-spinner loading-xs text-primary"></span>
                 </div>
-                <div id="student-results" role="region" aria-live="polite" class="pt-1">
+                <div id="student-results" role="region" aria-live="polite"></div>
+                <p class="text-xs" data-picked-display hidden>
+                    Selected: <span class="badge badge-primary badge-outline badge-sm font-medium" data-picked-label></span>
+                </p>
+                <div class="pt-1">
                     {{ form.student }}
                 </div>
                 {% if form.student.errors %}

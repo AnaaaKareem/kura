@@ -6,13 +6,28 @@
 <div class="space-y-8">
     <!-- Page Header (Section 8.2) -->
     <header class="space-y-1">
-        <p class="k-eyebrow">Overview</p>
-        <h1 class="text-2xl font-bold">Dashboard</h1>
+        <p class="k-eyebrow">{{ today_date|date:"l j F"|default:"Overview" }}</p>
+        <h1 class="text-2xl font-bold">{% if greeting %}{{ greeting }}, {{ user.first_name|default:user.email }}{% else %}Dashboard{% endif %}</h1>
         <p class="text-sm k-muted">A quick view of work areas and recent records available to you.</p>
         {% for department in head_departments %}
         <p class="text-sm font-medium k-muted">Head of {{ department.name }}</p>
         {% endfor %}
     </header>
+
+    {% if attention_items %}
+    <!-- Role-scoped items needing timely attention (at most 3). -->
+    <section aria-labelledby="attention-heading" class="space-y-2">
+        <h2 id="attention-heading" class="text-lg font-semibold">Needs your attention</h2>
+        <div class="space-y-2">
+            {% for item in attention_items %}
+            <div class="alert border-l-4 border-warning bg-base-100 border border-base-300 flex items-center justify-between gap-4">
+                <span class="text-sm">{{ item.text }}</span>
+                <a href="{{ item.url }}" class="btn btn-outline btn-sm flex-shrink-0">{{ item.action_label }}</a>
+            </div>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
 
     <!-- Work Areas Link Cards (Section 8.6) -->
     <section aria-labelledby="work-areas-heading">
@@ -88,6 +103,40 @@
         </div>
     </section>
     {% endfor %}
+
+    {% if account_status %}
+    <!-- Compact account security status strip. -->
+    <section aria-labelledby="account-strip-heading" class="space-y-3">
+        <h2 id="account-strip-heading" class="text-lg font-semibold">Account</h2>
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            <div class="k-card p-4 flex items-center justify-between gap-3">
+                <div>
+                    <p class="k-eyebrow">Two-step verification</p>
+                    <p class="text-sm font-semibold mt-1">{% if account_status.mfa_enabled %}Enabled{% else %}Not set up{% endif %}</p>
+                </div>
+                {% if account_status.mfa_enabled %}
+                <span class="badge badge-success badge-sm">On</span>
+                {% else %}
+                <a href="{% url 'kura:mfa_setup' %}" class="btn btn-outline btn-xs">Set up</a>
+                {% endif %}
+            </div>
+            <a href="{% url 'kura:passkey_manage' %}" class="k-card k-card-link p-4 flex items-center justify-between gap-3">
+                <div>
+                    <p class="k-eyebrow">Passkeys</p>
+                    <p class="text-sm font-semibold mt-1 k-num">{{ account_status.passkey_count }} registered</p>
+                </div>
+                <span class="text-xs text-primary font-medium">Manage</span>
+            </a>
+            <a href="{% url 'kura:password_change' %}" class="k-card k-card-link p-4 flex items-center justify-between gap-3">
+                <div>
+                    <p class="k-eyebrow">Password changed</p>
+                    <p class="text-sm font-semibold mt-1 k-num">{{ account_status.password_changed_at|date:"j M Y" }}</p>
+                </div>
+                <span class="text-xs text-primary font-medium">Change</span>
+            </a>
+        </div>
+    </section>
+    {% endif %}
 
     <!-- Recent Activity Section -->
     <section aria-labelledby="recent-activity-heading" class="k-card p-0 overflow-hidden">

@@ -43,7 +43,7 @@
     {% endif %}
 
     <div class="flex items-center justify-between">
-        <p class="text-sm k-muted k-num">{{ students|length }} student{{ students|length|pluralize }}</p>
+        <p class="text-sm k-muted k-num">{% if page_obj %}{{ page_obj.paginator.count }} student{{ page_obj.paginator.count|pluralize }}{% else %}{{ students|length }} student{{ students|length|pluralize }}{% endif %}</p>
     </div>
 
     {% url 'kura:student_create' as new_student_url %}
@@ -97,5 +97,6 @@
             </tbody>
         </table>
     </div>
+    {% include "kura/_pagination.html" %}
 </div>
 {% endblock %}
