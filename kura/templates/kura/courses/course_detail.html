@@ -54,6 +54,7 @@
                         + Add Curriculum Module
                     </a>
                     <a href="{% url 'kura:schedule_create' course.id %}" class="btn btn-outline btn-sm">Add schedule</a>
+                    <a href="{% url 'kura:course_grades' course.id %}" class="btn btn-outline btn-sm">Gradebook</a>
                     {% endif %}
                 </div>
             </div>
@@ -117,6 +118,7 @@
                     <a href="{% url 'kura:section_create' module.id %}" class="btn btn-ghost btn-xs">
                         + Add Section
                     </a>
+                    <a href="{% url 'kura:attendance_session_start' module.id %}" class="btn btn-ghost btn-xs">Start attendance</a>
                     {% endif %}
                 </div>
 
