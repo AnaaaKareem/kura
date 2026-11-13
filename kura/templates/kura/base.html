@@ -27,7 +27,7 @@
             <!-- Sticky 56px top bar with mobile drawer toggle, breadcrumbs, and account menu. -->
             <header class="navbar sticky top-0 z-20 h-14 min-h-14 border-b border-base-300 bg-base-100 px-4 sm:px-6 flex items-center justify-between" aria-label="Top navigation">
                 <div class="flex items-center gap-3 min-w-0">
-                    <label for="kura-sidebar-toggle" class="btn btn-square btn-ghost btn-sm lg:hidden" aria-label="Open navigation menu">
+                    <label for="kura-sidebar-toggle" class="btn btn-square btn-ghost lg:hidden" aria-label="Open navigation menu">
                         {% include "kura/_icon.html" with name="menu" class="h-5 w-5" %}
                     </label>
                     <a href="{% url 'kura:home' %}" class="flex items-center gap-2 text-lg font-semibold tracking-tight lg:hidden" data-close-sidebar>
@@ -60,7 +60,7 @@
                             <span class="hidden sm:inline text-sm font-medium">{{ user.first_name }} {{ user.last_name }}</span>
                             {% include "kura/_icon.html" with name="chevron-down" class="h-3 w-3 k-muted" %}
                         </button>
-                        <ul tabindex="0" class="menu dropdown-content z-30 mt-2 w-64 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg">
+                        <ul tabindex="0" class="menu dropdown-content z-30 mt-2 w-64 rounded-box border border-base-300 bg-base-100 p-2">
                             <li class="px-3 py-2 border-b border-base-300">
                                 <p class="font-semibold text-sm truncate">{{ user.first_name }} {{ user.last_name }}</p>
                                 <p class="text-xs k-muted truncate">{{ user.email }}</p>

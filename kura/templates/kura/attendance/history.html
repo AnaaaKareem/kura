@@ -36,7 +36,7 @@
         <h2 class="text-lg font-semibold">Open check-ins</h2>
         <div class="space-y-2">
             {% for att_session in open_sessions %}
-            <div class="alert border-l-4 border-primary bg-base-100 border border-base-300 flex items-center justify-between gap-4">
+            <div class="alert border border-base-300 border-l-4 border-l-primary bg-base-100 text-base-content flex items-center justify-between gap-4">
                 <div>
                     <p class="text-sm font-semibold">{{ att_session.module.course.code }} &bull; {{ att_session.title }}</p>
                     <p class="text-xs k-muted">{{ att_session.module.title }} &bull; Closes {{ att_session.expires_at|date:"j M Y, H:i" }}</p>
