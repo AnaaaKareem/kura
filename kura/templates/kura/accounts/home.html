@@ -20,7 +20,7 @@
         <h2 id="attention-heading" class="text-lg font-semibold">Needs your attention</h2>
         <div class="space-y-2">
             {% for item in attention_items %}
-            <div class="alert border-l-4 border-warning bg-base-100 border border-base-300 flex items-center justify-between gap-4">
+            <div class="alert border border-base-300 border-l-4 border-l-warning bg-base-100 text-base-content flex items-center justify-between gap-4">
                 <span class="text-sm">{{ item.text }}</span>
                 <a href="{{ item.url }}" class="btn btn-outline btn-sm flex-shrink-0">{{ item.action_label }}</a>
             </div>

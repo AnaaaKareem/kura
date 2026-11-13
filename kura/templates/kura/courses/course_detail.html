@@ -42,7 +42,7 @@
                     <span>Actions</span>
                     {% include "kura/_icon.html" with name="chevron-down" class="h-3.5 w-3.5" %}
                 </button>
-                <ul tabindex="0" class="dropdown-content menu z-20 mt-1 w-56 rounded-box border border-base-300 bg-base-100 p-2 shadow-lg text-sm">
+                <ul tabindex="0" class="dropdown-content menu z-20 mt-1 w-56 rounded-box border border-base-300 bg-base-100 p-2 text-sm">
                     {% if is_head or is_admin %}
                     <li>
                         <form method="post" action="{% url 'kura:course_publish_toggle' course.id %}" class="p-0">
@@ -199,7 +199,7 @@
             {% if open_attendance_sessions %}
             <section class="space-y-2" aria-label="Open attendance check-ins">
                 {% for att_session in open_attendance_sessions %}
-                <div class="alert border-l-4 border-primary bg-base-100 border border-base-300 flex items-center justify-between gap-4">
+                <div class="alert border border-base-300 border-l-4 border-l-primary bg-base-100 text-base-content flex items-center justify-between gap-4">
                     <div>
                         <p class="text-sm font-semibold">Attendance open: {{ att_session.title }}</p>
                         <p class="text-xs k-muted">{{ att_session.module.title }} &bull; Closes {{ att_session.expires_at|date:"j M Y, H:i" }}</p>
