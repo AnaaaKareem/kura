@@ -3,6 +3,7 @@ import html
 import ipaddress
 import json
 import logging
+import random
 import secrets
 import time
 import urllib.parse
@@ -18,6 +19,7 @@ from django.contrib.auth import authenticate, login, logout, update_session_auth
 from django.contrib.auth.decorators import login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.cache import caches
+from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Avg, Prefetch, Q, Value
 from django.db.models.functions import Concat
@@ -47,9 +49,11 @@ from .forms import (
     AssessmentFileUploadForm,
     AssessmentQuestionAddForm,
     AssessmentQuestionFormSet,
+    AttendanceHistoryFilterForm,
     AttendanceSessionStartForm,
     CourseCreateForm,
     CourseGradeSchemeForm,
+    CourseGradesFilterForm,
     CourseStaffAssignForm,
     DeleteConfirmationForm,
     EnrollmentForm,
@@ -70,6 +74,7 @@ from .forms import (
     PasswordChangeForm,
     PasswordResetConfirmForm,
     PasswordResetRequestForm,
+    ScheduleFilterForm,
     ScheduleForm,
     ScannedPaperStaffUploadForm,
     SectionItemForm,
@@ -105,6 +110,7 @@ from .models import (
     CourseResult,
     CourseStaff,
     CourseStaffRole,
+    DayOfWeek,
     Department,
     Building,
     Room,
@@ -764,13 +770,112 @@ def logout_view(request):
     return redirect("kura:login")
 
 
+def paginate_queryset(request, queryset, per_page=25):
+    """Paginates a queryset and preserves active GET filters without the page param."""
+    paginator = Paginator(queryset, per_page)
+    page_obj = paginator.get_page(request.GET.get("page"))
+    params = request.GET.copy()
+    params.pop("page", None)
+    return page_obj, params.urlencode()
+
+
+def build_dashboard_attention(user, role_names, head_departments):
+    """Collects up to three role-scoped urgent items for the home dashboard."""
+    if has_role(user, "Admin") or has_role(user, "Registrar"):
+        return []
+    now = timezone.now()
+    items = []
+
+    # Department heads see pending post-release grade change requests they may review.
+    if "Department head" in role_names and head_departments.exists():
+        pending_changes = (
+            GradeChangeRequest.objects.filter(
+                grade__assessment__section__module__course__department__in=head_departments,
+                status=ChangeRequestStatus.PENDING,
+            )
+            .exclude(requested_by=user)
+            .exclude(grade__student=user)
+            .select_related("grade__assessment__section__module__course")
+            .order_by("created_at")[:3]
+        )
+        for req in pending_changes:
+            course = req.grade.assessment.section.module.course
+            items.append(
+                {
+                    "text": f"Grade change request waiting in {course.code} ({req.grade.assessment.title})",
+                    "url": reverse("kura:grade_change_request_review", args=[req.id]),
+                    "action_label": "Review",
+                }
+            )
+
+    # Instructors and TAs see submitted attempts waiting for manual marking in their courses.
+    if len(items) < 3 and ("Instructor" in role_names or "Teaching assistant" in role_names):
+        staff_roles = []
+        if "Instructor" in role_names:
+            staff_roles.extend([CourseStaffRole.LEAD_INSTRUCTOR, CourseStaffRole.CO_INSTRUCTOR])
+        if "Teaching assistant" in role_names:
+            staff_roles.append(CourseStaffRole.TEACHING_ASSISTANT)
+        assigned_course_ids = CourseStaff.objects.filter(user=user, staff_role__in=staff_roles).values_list(
+            "course_id", flat=True
+        )
+        needs_marking = (
+            AssessmentAttempt.objects.filter(
+                assessment__section__module__course_id__in=assigned_course_ids,
+                status=AttemptStatus.REQUIRES_MANUAL_GRADING,
+            )
+            .exclude(student=user)
+            .select_related("assessment__section__module__course")
+            .order_by("submitted_at")[: 3 - len(items)]
+        )
+        for attempt in needs_marking:
+            course = attempt.assessment.section.module.course
+            items.append(
+                {
+                    "text": f"Attempt needs marking in {course.code} ({attempt.assessment.title})",
+                    "url": reverse("kura:course_grades", args=[course.id]),
+                    "action_label": "Open gradebook",
+                }
+            )
+
+    # Students see open assessments closing within the next 48 hours.
+    if len(items) < 3 and "Student" in role_names:
+        enrolled_course_ids = Enrollment.objects.filter(student=user, status=EnrollmentStatus.ACTIVE).values_list(
+            "course_id", flat=True
+        )
+        closing_soon = (
+            Assessment.objects.filter(
+                section__module__course_id__in=enrolled_course_ids,
+                section__module__course__is_published=True,
+                section__module__is_visible=True,
+                section__is_visible=True,
+                opens_at__lte=now,
+                due_date__gte=now,
+                due_date__lte=now + timezone.timedelta(hours=48),
+            )
+            .select_related("section__module__course")
+            .order_by("due_date")[: 3 - len(items)]
+        )
+        for assessment in closing_soon:
+            course = assessment.section.module.course
+            due_local = timezone.localtime(assessment.due_date).strftime("%-d %b, %H:%M")
+            items.append(
+                {
+                    "text": f"{assessment.title} in {course.code} closes {due_local}",
+                    "url": reverse("kura:assessment_detail", args=[assessment.id]),
+                    "action_label": "Open",
+                }
+            )
+
+    return items[:3]
+
+
 @login_required
 def home_view(request):
     """
     Main dashboard displaying the work areas available to the user's roles.
     Who can use it: All authenticated users.
     Security: Requires login and active MFA.
-"""
+    """
     # Fetch roles assigned to this user to customize the dashboard.
     user_roles = UserRole.objects.filter(user=request.user).select_related("role")
     role_names = [ur.role.name for ur in user_roles]
@@ -796,6 +901,26 @@ def home_view(request):
 
     # Load simple counts and recent records only from data the signed-in roles may access.
     dashboard_summaries, recent_activity = dashboard_home_data(request.user, role_names, head_departments)
+    attention_items = build_dashboard_attention(request.user, role_names, head_departments)
+
+    # Compute Cairo-local greeting and account security summary for the dashboard strip.
+    local_now = timezone.localtime()
+    if local_now.hour < 12:
+        greeting = "Good morning"
+    elif local_now.hour < 17:
+        greeting = "Good afternoon"
+    else:
+        greeting = "Good evening"
+
+    from mfa.models import User_Keys
+
+    passkey_count = User_Keys.objects.filter(username=request.user.email, key_type="FIDO2", enabled=True).count()
+    latest_password = PasswordHistory.objects.filter(user=request.user).order_by("-created_at").first()
+    account_status = {
+        "mfa_enabled": request.user.mfa_enabled,
+        "passkey_count": passkey_count,
+        "password_changed_at": latest_password.created_at if latest_password else request.user.created_at,
+    }
 
     # Render the role-scoped work cards, counts, and activity records on the dashboard.
     return render(
@@ -808,6 +933,10 @@ def home_view(request):
             "dashboard_cards": dashboard_cards,
             "dashboard_summaries": dashboard_summaries,
             "recent_activity": recent_activity,
+            "greeting": greeting,
+            "today_date": local_now,
+            "attention_items": attention_items,
+            "account_status": account_status,
         },
     )
 
@@ -1428,9 +1557,11 @@ def mfa_setup_view(request):
 
     # Build the standard "otpauth://" link that authenticator apps read from the
     # QR code (Base32 seed, SHA1, 6 digits, 30-second period, issuer "Kura").
+    secret_b32 = b32encode(bytes.fromhex(seed_hex)).decode("ascii")
+    manual_key = " ".join(secret_b32[i : i + 4] for i in range(0, len(secret_b32), 4))
     otpauth_query = urllib.parse.urlencode(
         {
-            "secret": b32encode(bytes.fromhex(seed_hex)).decode("ascii"),
+            "secret": secret_b32,
             "algorithm": "SHA1",
             "digits": device.digits,
             "period": device.step,
@@ -1489,6 +1620,7 @@ def mfa_setup_view(request):
         {
             "form": form,
             "qr_code_url": qr_code_data_uri,
+            "manual_key": manual_key,
         },
     )
 
@@ -1592,12 +1724,18 @@ def quarantine_list_view(request):
     if not can_manage_quarantine(request.user):
         raise PermissionDenied
 
-    # Load the newest 200 records. defer("content") leaves the infected bytes
-    # in the database: the list never needs them.
-    quarantined_files = (
-        QuarantinedFile.objects.select_related("uploaded_by").defer("content").order_by("-created_at")[:200]
+    # Load quarantined records newest first without loading infected file bytes.
+    quarantined_qs = QuarantinedFile.objects.select_related("uploaded_by").defer("content").order_by("-created_at")
+    page_obj, pagination_query = paginate_queryset(request, quarantined_qs, per_page=25)
+    return render(
+        request,
+        "kura/accounts/quarantine_list.html",
+        {
+            "quarantined_files": page_obj.object_list,
+            "page_obj": page_obj,
+            "pagination_query": pagination_query,
+        },
     )
-    return render(request, "kura/accounts/quarantine_list.html", {"quarantined_files": quarantined_files})
 
 
 @login_required
@@ -1674,12 +1812,15 @@ def admin_sessions_view(request):
             sessions = sessions.filter(revoked_at__isnull=True, expires_at__lte=timezone.now())
 
     # The page marks the current device and offers bulk revoke only for an exact email search.
+    page_obj, pagination_query = paginate_queryset(request, sessions, per_page=25)
     return render(
         request,
         "kura/accounts/admin_sessions.html",
         {
             "form": form,
-            "sessions": sessions,
+            "sessions": page_obj.object_list,
+            "page_obj": page_obj,
+            "pagination_query": pagination_query,
             "selected_user": selected_user,
             "current_session_id": request.session.get("user_session_id"),
         },
@@ -1788,14 +1929,24 @@ def staff_list_view(request):
             head_department_names[department.head_user_id] = []
         head_department_names[department.head_user_id].append(department.name)
 
+    page_obj, pagination_query = paginate_queryset(request, staff_members, per_page=25)
+    page_staff = list(page_obj.object_list)
     # Attach each user's managed department names to their staff profile for display.
-    for staff_member in staff_members:
+    for staff_member in page_staff:
         staff_member.head_department_names = head_department_names.get(staff_member.user_id, [])
 
+    temp_account = request.session.pop("new_account_temp_password", None)
     return render(
         request,
         "kura/accounts/staff_list.html",
-        {"staff_members": staff_members, "now": timezone.now(), "filter_form": filter_form},
+        {
+            "staff_members": page_staff,
+            "page_obj": page_obj,
+            "pagination_query": pagination_query,
+            "temp_account": temp_account,
+            "now": timezone.now(),
+            "filter_form": filter_form,
+        },
     )
 
 
@@ -1853,7 +2004,9 @@ def staff_create_view(request):
         role_names = list(UserRole.objects.filter(user=new_user).values_list("role__name", flat=True))
         log_security_event(request, "admin.user.created", {"target_user_id": new_user.id, "roles": role_names})
 
-        messages.success(request, f"Staff account created for {email}. Temporary password: {temporary_password}")
+        # Keep the temporary password out of flash messages; show it once from the session.
+        request.session["new_account_temp_password"] = {"email": email, "password": temporary_password}
+        messages.success(request, f"Staff account created for {email}.")
         return redirect("kura:staff_list")
 
     # Log the rejected fields without the typed email, name or title (LOG-03).
@@ -2178,7 +2331,9 @@ def student_create_view(request):
             {"target_user_id": new_user.id, "roles": ["Student"]},
         )
 
-        messages.success(request, f"Student account created for {email}. Temporary password: {temporary_password}")
+        # Keep the temporary password out of flash messages; show it once from the session.
+        request.session["new_account_temp_password"] = {"email": email, "password": temporary_password}
+        messages.success(request, f"Student account created for {email}.")
         return redirect("kura:enrollment_list")
 
     return render(request, "kura/accounts/student_create.html", {"form": form})
@@ -2223,7 +2378,18 @@ def student_list_view(request):
             students = students.filter(user__is_active=True).filter(
                 Q(user__locked_until__isnull=True) | Q(user__locked_until__lte=now)
             )
-    return render(request, "kura/accounts/student_list.html", {"students": students, "filter_form": form, "now": now})
+    page_obj, pagination_query = paginate_queryset(request, students, per_page=25)
+    return render(
+        request,
+        "kura/accounts/student_list.html",
+        {
+            "students": page_obj.object_list,
+            "page_obj": page_obj,
+            "pagination_query": pagination_query,
+            "filter_form": form,
+            "now": now,
+        },
+    )
 
 
 @login_required
@@ -2335,7 +2501,19 @@ def enrollment_list_view(request):
             enrollments = enrollments.filter(course__semester=form.cleaned_data["semester"])
         if form.cleaned_data["year"]:
             enrollments = enrollments.filter(course__academic_year=form.cleaned_data["year"])
-    return render(request, "kura/accounts/enrollment_list.html", {"enrollments": enrollments, "filter_form": form})
+    page_obj, pagination_query = paginate_queryset(request, enrollments, per_page=25)
+    temp_account = request.session.pop("new_account_temp_password", None)
+    return render(
+        request,
+        "kura/accounts/enrollment_list.html",
+        {
+            "enrollments": page_obj.object_list,
+            "page_obj": page_obj,
+            "pagination_query": pagination_query,
+            "temp_account": temp_account,
+            "filter_form": form,
+        },
+    )
 
 
 @login_required
@@ -2483,10 +2661,20 @@ def course_list_view(request):
     # Check if the user is a department head to display the "Create Course" action button.
     is_head = has_role(request.user, "Department head") and Department.objects.filter(head_user=request.user).exists()
 
+    courses = courses.order_by("code")
+    page_obj, pagination_query = paginate_queryset(request, courses, per_page=24)
+
     return render(
         request,
         "kura/courses/course_list.html",
-        {"courses": courses, "is_head": is_head, "is_admin": is_admin, "filter_form": filter_form},
+        {
+            "courses": page_obj.object_list,
+            "page_obj": page_obj,
+            "pagination_query": pagination_query,
+            "is_head": is_head,
+            "is_admin": is_admin,
+            "filter_form": filter_form,
+        },
     )
 
 
@@ -2583,15 +2771,25 @@ def course_detail_view(request, course_id):
 
     course = get_object_or_404(Course.objects.select_related("department"), id=course_id)
 
-    # Administrators see course metadata and staff, never curriculum content.
+    # Administrators see course metadata, schedules, and staff, never curriculum content or grades.
     if is_admin_course_manager(request.user):
+        active_tab = request.GET.get("tab", "people")
+        if active_tab in ("content", "grades"):
+            raise PermissionDenied
+        if active_tab not in ("people", "schedule"):
+            active_tab = "people"
         staff_assignments = CourseStaff.objects.filter(course=course).select_related("user")
+        course_schedules = Schedule.objects.filter(course=course).select_related("instructor").order_by("day", "start_time")
+        enrolled_count = Enrollment.objects.filter(course=course, status=EnrollmentStatus.ACTIVE).count()
         return render(
             request,
             "kura/courses/course_detail.html",
             {
                 "course": course,
                 "staff_assignments": staff_assignments,
+                "course_schedules": course_schedules,
+                "enrolled_count": enrolled_count,
+                "active_tab": active_tab,
                 "is_admin": True,
             },
         )
@@ -2603,6 +2801,12 @@ def course_detail_view(request, course_id):
 
     if not (is_head or is_staff or (enrolled and course.is_published)):
         raise PermissionDenied
+
+    active_tab = request.GET.get("tab", "content")
+    if active_tab in ("people", "grades") and not (is_head or is_staff):
+        raise PermissionDenied
+    if active_tab not in ("content", "schedule", "people", "grades"):
+        active_tab = "content"
 
     # Load modules and target levels, then fetch only released items for students.
     modules_qs = Module.objects.filter(course=course).prefetch_related("target_levels")
@@ -2648,11 +2852,31 @@ def course_detail_view(request, course_id):
 
     # Check lead instructor authority to assign TAs.
     is_lead = is_lead_instructor(request.user, course)
+    course_schedules = Schedule.objects.filter(course=course).select_related("instructor").order_by("day", "start_time")
+    enrolled_count = Enrollment.objects.filter(course=course, status=EnrollmentStatus.ACTIVE).count()
+    grade_summary = None
+    if is_head or is_staff:
+        course_grades_qs = Grade.objects.filter(assessment__section__module__course=course).exclude(student=request.user)
+        grade_summary = {
+            "drafts": course_grades_qs.filter(status=GradeStatus.DRAFT).count(),
+            "finalized": course_grades_qs.filter(status=GradeStatus.FINALIZED).count(),
+            "released": course_grades_qs.filter(status=GradeStatus.RELEASED).count(),
+            "needs_marking": AssessmentAttempt.objects.filter(
+                assessment__section__module__course=course,
+                status=AttemptStatus.REQUIRES_MANUAL_GRADING,
+            )
+            .exclude(student=request.user)
+            .count(),
+        }
 
     context = {
         "course": course,
         "modules": modules_list,
         "staff_assignments": staff_assignments,
+        "course_schedules": course_schedules,
+        "enrolled_count": enrolled_count,
+        "grade_summary": grade_summary,
+        "active_tab": active_tab,
         "is_head": is_head,
         "is_staff": is_staff,
         "is_lead": is_lead,
@@ -3343,6 +3567,7 @@ def schedule_list_view(request):
     if has_role(request.user, "Department head"):
         dept_ids = Department.objects.filter(head_user=request.user).values_list("id", flat=True)
         schedules = Schedule.objects.filter(course__department_id__in=dept_ids)
+        allowed_courses = Course.objects.filter(department_id__in=dept_ids).order_by("code")
     elif has_role(request.user, "Instructor") or has_role(request.user, "Teaching assistant"):
         # Only assignments matching the user's current roles grant schedule access.
         staff_roles = []
@@ -3354,13 +3579,25 @@ def schedule_list_view(request):
             "course_id", flat=True
         )
         schedules = Schedule.objects.filter(course_id__in=staff_courses)
+        allowed_courses = Course.objects.filter(id__in=staff_courses).order_by("code")
     elif has_role(request.user, "Student"):
         enrolled_courses = Enrollment.objects.filter(student=request.user, status=EnrollmentStatus.ACTIVE).values_list(
             "course_id", flat=True
         )
         schedules = Schedule.objects.filter(course_id__in=enrolled_courses, course__is_published=True)
+        allowed_courses = Course.objects.filter(id__in=enrolled_courses, is_published=True).order_by("code")
     else:
         schedules = Schedule.objects.filter(course__is_published=True)
+        allowed_courses = Course.objects.filter(is_published=True).order_by("code")
+
+    filter_form = ScheduleFilterForm(request.GET or None, courses=allowed_courses)
+    if filter_form.is_valid():
+        if filter_form.cleaned_data["course"]:
+            schedules = schedules.filter(course=filter_form.cleaned_data["course"])
+        if filter_form.cleaned_data["day"]:
+            schedules = schedules.filter(day=filter_form.cleaned_data["day"])
+        if filter_form.cleaned_data["session_type"]:
+            schedules = schedules.filter(session_type=filter_form.cleaned_data["session_type"])
 
     schedules = schedules.select_related("course", "instructor").order_by("day", "start_time")
     # Show edit controls only for courses this non-admin user is assigned to or heads.
@@ -3368,12 +3605,33 @@ def schedule_list_view(request):
     headed_department_ids = set(Department.objects.filter(head_user=request.user).values_list("id", flat=True))
     is_admin = is_admin_course_manager(request.user)
     is_head = has_role(request.user, "Department head")
-    for schedule in schedules:
+    day_groups = {key: [] for key, _ in DayOfWeek.choices}
+    schedule_list = list(schedules)
+    for schedule in schedule_list:
         schedule.can_manage = not is_admin and (
             is_course_staff(request.user, schedule.course)
             or (is_head and schedule.course.department_id in headed_department_ids)
         )
-    return render(request, "kura/attendance/schedule_list.html", {"schedules": schedules})
+        if schedule.day in day_groups:
+            day_groups[schedule.day].append(schedule)
+
+    # Show Monday through Friday columns always; include weekend days only when scheduled.
+    week_days = []
+    for day_key, day_label in DayOfWeek.choices:
+        if day_key in ("saturday", "sunday") and not day_groups[day_key]:
+            continue
+        week_days.append({"key": day_key, "label": day_label, "items": day_groups[day_key]})
+
+    return render(
+        request,
+        "kura/attendance/schedule_list.html",
+        {
+            "schedules": schedule_list,
+            "week_days": week_days,
+            "filter_form": filter_form,
+            "is_student_view": has_role(request.user, "Student") and not is_head,
+        },
+    )
 
 
 @login_required
@@ -3558,7 +3816,23 @@ def attendance_session_detail_view(request, session_id):
         .select_related("student", "recorded_by")
         .order_by("-verified_at")
     )
+    if request.GET.get("fragment") == "1":
+        return render(
+            request,
+            "kura/attendance/_session_roll.html",
+            {"session": session, "is_live": is_live, "records": records},
+        )
     manual_form = ManualAttendanceForm()
+    manual_form.fields["student"].queryset = (
+        User.objects.filter(
+            student_profile__isnull=False,
+            is_active=True,
+            enrollments__course=course,
+            enrollments__status=EnrollmentStatus.ACTIVE,
+        )
+        .distinct()
+        .order_by("email")
+    )
 
     context = {
         "session": session,
@@ -3714,6 +3988,8 @@ def attendance_history_view(request):
     Who can use it: Students (own records only), Staff (assigned courses).
     Security: IDOR protection; students are strictly restricted to their own attendance entries.
 """
+    attendance_stats = None
+    filter_form = None
     if has_role(request.user, "Student"):
         # Students strictly see only their own attendance records.
         records = (
@@ -3723,6 +3999,20 @@ def attendance_history_view(request):
             .select_related("session__module__course")
             .order_by("-verified_at")
         )
+        total_count = records.count()
+        present_count = records.filter(status=AttendanceStatus.PRESENT).count()
+        late_count = records.filter(status=AttendanceStatus.LATE).count()
+        absent_count = records.filter(status=AttendanceStatus.ABSENT).count()
+        excused_count = records.filter(status=AttendanceStatus.EXCUSED).count()
+        present_pct = round(((present_count + late_count) / total_count) * 100) if total_count else 0
+        attendance_stats = {
+            "total": total_count,
+            "present": present_count,
+            "late": late_count,
+            "absent": absent_count,
+            "excused": excused_count,
+            "present_pct": present_pct,
+        }
         is_staff_view = False
     else:
         # Staff see records for their taught courses.
@@ -3742,13 +4032,38 @@ def attendance_history_view(request):
             .select_related("student", "session__module__course", "recorded_by")
             .order_by("-verified_at")
         )
+        filter_form = AttendanceHistoryFilterForm(
+            request.GET or None,
+            courses=Course.objects.filter(id__in=staff_courses).order_by("code"),
+        )
+        if filter_form.is_valid():
+            search = filter_form.cleaned_data["q"]
+            if search:
+                records = records.filter(
+                    Q(student__first_name__icontains=search)
+                    | Q(student__last_name__icontains=search)
+                    | Q(student__email__icontains=search)
+                )
+            if filter_form.cleaned_data["course"]:
+                records = records.filter(session__module__course=filter_form.cleaned_data["course"])
+            if filter_form.cleaned_data["status"]:
+                records = records.filter(status=filter_form.cleaned_data["status"])
+            if filter_form.cleaned_data["date_from"]:
+                records = records.filter(verified_at__date__gte=filter_form.cleaned_data["date_from"])
+            if filter_form.cleaned_data["date_to"]:
+                records = records.filter(verified_at__date__lte=filter_form.cleaned_data["date_to"])
         is_staff_view = True
 
+    page_obj, pagination_query = paginate_queryset(request, records, per_page=25)
     return render(
         request,
         "kura/attendance/history.html",
         {
-            "records": records,
+            "records": page_obj.object_list,
+            "page_obj": page_obj,
+            "pagination_query": pagination_query,
+            "attendance_stats": attendance_stats,
+            "filter_form": filter_form,
             "is_staff_view": is_staff_view,
         },
     )
@@ -4768,11 +5083,21 @@ def assessment_take_view(request, attempt_id):
     attempt_files = AttemptFile.objects.filter(attempt=attempt).select_related("file")
 
     # Pair each displayed question with this student's saved response, never the answer key.
+    settings_doc = attempt.assessment.settings_json or {}
+    shuffle_questions = bool(settings_doc.get("shuffle_questions", False))
+    shuffle_options = bool(settings_doc.get("shuffle_options", False))
+    allow_backtracking = bool(settings_doc.get("allow_backtracking", True))
+
     questions = []
-    for saved_question in attempt.assessment.questions_json:
+    for saved_question in attempt.assessment.questions_json or []:
         question = saved_question.copy()
         question["saved_answer"] = answers_map.get(question.get("question_id"), {})
-        if question.get("type") == "matching":
+        if question.get("type") == "multiple_choice":
+            options = [opt.copy() for opt in question.get("options", [])]
+            if shuffle_options and len(options) > 1:
+                random.Random(f"{attempt.id}:{question.get('question_id')}:options").shuffle(options)
+            question["options"] = options
+        elif question.get("type") == "matching":
             left_prompts = []
             for saved_pair in question.get("left_prompts", []):
                 pair = saved_pair.copy()
@@ -4780,8 +5105,15 @@ def assessment_take_view(request, attempt_id):
                     if match.get("pair_id") == pair.get("pair_id"):
                         pair["selected_match"] = match.get("selected_match")
                 left_prompts.append(pair)
+            available_matches = list(question.get("available_matches", []))
+            if shuffle_options and len(available_matches) > 1:
+                random.Random(f"{attempt.id}:{question.get('question_id')}:matches").shuffle(available_matches)
             question["left_prompts"] = left_prompts
+            question["available_matches"] = available_matches
         questions.append(question)
+
+    if shuffle_questions and len(questions) > 1:
+        random.Random(f"{attempt.id}:questions").shuffle(questions)
 
     context = {
         "attempt": attempt,
@@ -4790,6 +5122,7 @@ def assessment_take_view(request, attempt_id):
         "answers_map": answers_map,
         "attempt_files": attempt_files,
         "file_form": AssessmentFileUploadForm(),
+        "allow_backtracking": allow_backtracking,
     }
     return render(request, "kura/assessments/assessment_take.html", context)
 
@@ -5009,13 +5342,45 @@ def assessment_submit_view(request, attempt_id):
     return redirect("kura:attempt_detail", attempt_id=attempt.id)
 
 
+def build_question_reviews(attempt):
+    """Pairs each assessment question with a student's saved answers for staff review only."""
+    answers_by_id = {ans.get("question_id"): ans for ans in (attempt.answers_json or [])}
+    reviews = []
+    for index, question in enumerate(attempt.assessment.questions_json or [], start=1):
+        q_id = question.get("question_id")
+        q_type = question.get("type")
+        saved = answers_by_id.get(q_id, {})
+        item = {
+            "number": index,
+            "type": q_type,
+            "prompt": question.get("prompt", ""),
+            "points": question.get("points", 0),
+            "auto_evaluation": saved.get("auto_evaluation"),
+        }
+        if q_type == "multiple_choice":
+            selected_ids = set(saved.get("selected_option_ids", []))
+            item["selected_options"] = [
+                opt.get("text", "") for opt in question.get("options", []) if opt.get("option_id") in selected_ids
+            ]
+        elif q_type == "matching":
+            match_by_pair = {m.get("pair_id"): m.get("selected_match", "") for m in saved.get("submitted_matches", [])}
+            item["matching_rows"] = [
+                {"left": pair.get("text", ""), "selected": match_by_pair.get(pair.get("pair_id"), "")}
+                for pair in question.get("left_prompts", [])
+            ]
+        else:
+            item["response_text"] = saved.get("response_text", "")
+        reviews.append(item)
+    return reviews
+
+
 @login_required
 def attempt_detail_view(request, attempt_id):
     """
     Displays completed assessment attempt review and score telemetry.
     Who can use it: The attempting student, Course staff, Department Heads.
     Security: IDOR protection ensures students cannot inspect other students' attempts.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -5039,11 +5404,13 @@ def attempt_detail_view(request, attempt_id):
     if not (is_head or is_staff) and not attempt.assessment.section.is_visible:
         raise PermissionDenied
 
-    # Staff may see the marking breakdown; students may see only the released grade.
+    # Staff may see the marking breakdown and read-only answers; students see only the released grade.
     summary = {}
     released_grade = None
+    question_reviews = []
     if (is_head or is_staff) and attempt.student_id != request.user.id:
         summary = attempt.summary_score_json or {}
+        question_reviews = build_question_reviews(attempt)
     else:
         released_grade = Grade.objects.filter(
             attempt=attempt,
@@ -5059,6 +5426,7 @@ def attempt_detail_view(request, attempt_id):
         "is_staff": is_head or is_staff,
         "attempt_files": attempt_files,
         "summary": summary,
+        "question_reviews": question_reviews,
         "released_grade": released_grade,
     }
     return render(request, "kura/assessments/attempt_detail.html", context)
@@ -5102,6 +5470,36 @@ def course_grades_view(request, course_id):
     grades = grades.exclude(student=request.user)
     course_results = course_results.exclude(student=request.user)
 
+    # Compute course gradebook summary counts before applying row filters.
+    grade_stats = {
+        "drafts": grades.filter(status=GradeStatus.DRAFT).count(),
+        "finalized": grades.filter(status=GradeStatus.FINALIZED).count(),
+        "released": grades.filter(status=GradeStatus.RELEASED).count(),
+        "needs_marking": AssessmentAttempt.objects.filter(
+            assessment__section__module__course=course,
+            status=AttemptStatus.REQUIRES_MANUAL_GRADING,
+        )
+        .exclude(student=request.user)
+        .count(),
+    }
+
+    filter_form = CourseGradesFilterForm(
+        request.GET or None,
+        assessments=Assessment.objects.filter(section__module__course=course).order_by("title"),
+    )
+    if filter_form.is_valid():
+        search = filter_form.cleaned_data["q"]
+        if search:
+            grades = grades.filter(
+                Q(student__first_name__icontains=search)
+                | Q(student__last_name__icontains=search)
+                | Q(student__email__icontains=search)
+            )
+        if filter_form.cleaned_data["assessment"]:
+            grades = grades.filter(assessment=filter_form.cleaned_data["assessment"])
+        if filter_form.cleaned_data["status"]:
+            grades = grades.filter(status=filter_form.cleaned_data["status"])
+
     # Appeals waiting for a verdict on this course. The review page accepts any
     # assigned staff member or the department head, the two groups that reach
     # this view, so the list needs no extra check. Own grades are left out.
@@ -5133,6 +5531,8 @@ def course_grades_view(request, course_id):
     context = {
         "course": course,
         "grades": grades,
+        "grade_stats": grade_stats,
+        "filter_form": filter_form,
         "can_release": can_release,
         "can_enter_grade": is_course_staff(request.user, course)
         and (has_role(request.user, "Instructor") or has_role(request.user, "Teaching assistant")),
@@ -5295,7 +5695,19 @@ def grade_entry_view(request, attempt_id):
         )
         return redirect("kura:course_grades", course_id=course.id)
 
-    return render(request, "kura/grades/grade_entry.html", {"form": form, "attempt": attempt})
+    question_reviews = build_question_reviews(attempt)
+    attempt_files = AttemptFile.objects.filter(attempt=attempt).select_related("file")
+    return render(
+        request,
+        "kura/grades/grade_entry.html",
+        {
+            "form": form,
+            "attempt": attempt,
+            "existing_grade": existing_grade,
+            "question_reviews": question_reviews,
+            "attempt_files": attempt_files,
+        },
+    )
 
 
 @login_required
