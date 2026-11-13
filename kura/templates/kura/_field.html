@@ -21,11 +21,11 @@
     {% endif %}
 
     {% if field.help_text %}
-    <p id="{{ field.id_for_label }}-help" class="k-muted text-xs leading-normal pt-0.5">{{ field.help_text }}</p>
+    <p id="{{ field.auto_id }}_helptext" class="k-muted text-xs leading-normal pt-0.5">{{ field.help_text }}</p>
     {% endif %}
 
     {% if field.errors %}
-    <div id="{{ field.id_for_label }}-error" class="text-error text-xs font-medium space-y-0.5 pt-0.5" role="alert">
+    <div id="{{ field.auto_id }}_error" class="text-error text-xs font-medium space-y-0.5 pt-0.5" role="alert">
         {% for error in field.errors %}
         <p>{{ error }}</p>
         {% endfor %}
