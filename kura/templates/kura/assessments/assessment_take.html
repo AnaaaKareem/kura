@@ -129,9 +129,15 @@
 
         <div class="space-y-2 pt-1">
             {% for att in attempt_files %}
-            <div class="flex items-center justify-between p-3 bg-base-200 rounded-btn text-xs">
+            <div class="flex items-center justify-between gap-3 p-3 bg-base-200 rounded-btn text-xs">
                 <span class="font-medium truncate">{{ att.file.original_filename }} ({{ att.file.size_bytes|filesizeformat }})</span>
-                <span class="badge badge-success badge-xs flex-shrink-0">Attached</span>
+                <div class="flex items-center gap-2 flex-shrink-0">
+                    <span class="badge badge-success badge-xs">Attached</span>
+                    <form method="post" action="{% url 'kura:assessment_attempt_file_delete' attempt.id att.file.id %}" class="inline" data-confirm-action="Remove {{ att.file.original_filename }} from this attempt?">
+                        {% csrf_token %}
+                        <button type="submit" class="btn btn-outline btn-error btn-xs">Remove</button>
+                    </form>
+                </div>
             </div>
             {% empty %}
             <p class="text-xs k-muted py-2">No files attached yet.</p>

@@ -35,14 +35,30 @@
     <div class="k-card p-4 border-error flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
         <div>
             <p class="text-sm font-semibold">All sessions for {{ selected_user.email }}</p>
-            <p class="text-xs k-muted">End all active sessions belonging to this user immediately.</p>
+            <p class="text-xs k-muted">End all active sessions or manage account lock/status immediately.</p>
         </div>
-        <form method="post" action="{% url 'kura:admin_sessions_revoke' %}" data-confirm-action="End all active sessions for {{ selected_user.email }}?">
-            {% csrf_token %}
-            <input type="hidden" name="action" value="all">
-            <input type="hidden" name="user_id" value="{{ selected_user.id }}">
-            <button type="submit" class="btn btn-outline btn-error btn-sm">End all sessions</button>
-        </form>
+        <div class="flex flex-wrap items-center gap-2">
+            {% if selected_user.id != user.id %}
+            <form method="post" action="{% url 'kura:user_lock_toggle' selected_user.id %}" class="inline">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{% url 'kura:admin_sessions' %}?q={{ selected_user.email|urlencode }}">
+                <button type="submit" class="btn btn-outline btn-sm">Lock / Unlock</button>
+            </form>
+            {% if selected_user.is_active %}
+            <form method="post" action="{% url 'kura:user_deactivate' selected_user.id %}" class="inline" data-confirm-action="Deactivate {{ selected_user.email }}? Their sessions end immediately.">
+                {% csrf_token %}
+                <input type="hidden" name="next" value="{% url 'kura:admin_sessions' %}">
+                <button type="submit" class="btn btn-outline btn-error btn-sm">Deactivate account</button>
+            </form>
+            {% endif %}
+            {% endif %}
+            <form method="post" action="{% url 'kura:admin_sessions_revoke' %}" data-confirm-action="End all active sessions for {{ selected_user.email }}?">
+                {% csrf_token %}
+                <input type="hidden" name="action" value="all">
+                <input type="hidden" name="user_id" value="{{ selected_user.id }}">
+                <button type="submit" class="btn btn-outline btn-error btn-sm">End all sessions</button>
+            </form>
+        </div>
     </div>
     {% endif %}
 

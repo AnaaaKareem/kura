@@ -1,0 +1,122 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Users - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">Users</li>
+</ol>
+{% endblock %}
+
+{% block content %}
+<div class="space-y-6">
+    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+        <div class="space-y-1">
+            <p class="k-eyebrow">Administration</p>
+            <h1 class="text-2xl font-bold">User accounts</h1>
+            <p class="text-sm k-muted">
+                All staff and student accounts. Manage roles, locks, and deactivation without viewing academic records.
+            </p>
+        </div>
+        <div class="flex items-center gap-2">
+            <a href="{% url 'kura:staff_list' %}" class="btn btn-outline btn-sm">Staff directory</a>
+        </div>
+    </header>
+
+    {% if filter_form %}
+    <form method="get" class="k-card p-4 space-y-4 bg-base-100" role="search">
+        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+            {% for field in filter_form %}
+            {% include "kura/_field.html" with field=field %}
+            {% endfor %}
+        </div>
+        <div class="flex items-center justify-end gap-2">
+            <a href="{% url 'kura:admin_users' %}" class="btn btn-ghost btn-sm">Clear</a>
+            <button type="submit" class="btn btn-outline btn-sm">Apply</button>
+        </div>
+    </form>
+    {% endif %}
+
+    <div class="flex items-center justify-between">
+        <p class="text-sm k-muted k-num">{% if page_obj %}{{ page_obj.paginator.count }}{% else %}{{ accounts|length }}{% endif %} user{{ page_obj.paginator.count|default:accounts|length|pluralize }}</p>
+    </div>
+
+    <div class="k-card p-0 overflow-x-auto">
+        <table class="k-table">
+            <caption class="sr-only">All user accounts</caption>
+            <thead>
+                <tr>
+                    <th class="k-sticky-col">Name</th>
+                    <th>Roles</th>
+                    <th>Status</th>
+                    <th class="text-right">Actions</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for account in accounts %}
+                <tr>
+                    <td class="k-sticky-col">
+                        <div class="font-semibold">{% if account.first_name or account.last_name %}{{ account.first_name }} {{ account.last_name }}{% else %}{{ account.email }}{% endif %}</div>
+                        <div class="text-xs k-muted font-mono">{{ account.email }}</div>
+                    </td>
+                    <td>
+                        <div class="flex flex-wrap gap-1">
+                            {% for assignment in account.user_roles.all %}
+                            <span class="badge badge-secondary badge-outline badge-xs">{{ assignment.role.name }}</span>
+                            {% empty %}
+                            <span class="text-xs k-muted">No roles</span>
+                            {% endfor %}
+                        </div>
+                    </td>
+                    <td>
+                        {% if not account.is_active %}
+                        {% include "kura/_status_badge.html" with kind="account" value="deactivated" %}
+                        {% elif account.locked_until and account.locked_until > now %}
+                        <span class="badge badge-warning badge-sm font-medium">
+                            Locked until {{ account.locked_until|date:"d M, H:i" }}
+                        </span>
+                        {% else %}
+                        {% include "kura/_status_badge.html" with kind="account" value="active" %}
+                        {% endif %}
+                    </td>
+                    <td class="text-right">
+                        <div class="inline-flex items-center justify-end gap-1.5">
+                            <a href="{% url 'kura:user_roles' account.id %}" class="btn btn-ghost btn-sm">Roles</a>
+
+                            {% if account.id != user.id %}
+                            <form method="post" action="{% url 'kura:user_lock_toggle' account.id %}" class="inline" data-confirm-action="{% if account.locked_until and account.locked_until > now %}Unlock{% else %}Lock{% endif %} {{ account.email }}?">
+                                {% csrf_token %}
+                                <input type="hidden" name="next" value="{% url 'kura:admin_users' %}">
+                                <button type="submit" class="btn btn-outline btn-sm">
+                                    {% if account.locked_until and account.locked_until > now %}Unlock{% else %}Lock{% endif %}
+                                </button>
+                            </form>
+
+                            {% if account.is_active %}
+                            <form method="post" action="{% url 'kura:user_deactivate' account.id %}" class="inline" data-confirm-action="Deactivate {{ account.email }}? Their sessions end immediately.">
+                                {% csrf_token %}
+                                <input type="hidden" name="next" value="{% url 'kura:admin_users' %}">
+                                <button type="submit" class="btn btn-outline btn-error btn-sm">
+                                    Deactivate
+                                </button>
+                            </form>
+                            {% endif %}
+                            {% endif %}
+                        </div>
+                    </td>
+                </tr>
+                {% empty %}
+                <tr>
+                    <td colspan="4" class="p-8 text-center">
+                        {% include "kura/_empty.html" with icon="staff" title="No accounts found" text="No user accounts match the selected filters." %}
+                    </td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+    </div>
+    {% include "kura/_pagination.html" %}
+</div>
+{% endblock %}

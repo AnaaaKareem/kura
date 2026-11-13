@@ -87,7 +87,12 @@ class SessionValidationMiddleware:
                     messages.error(request, "Your session was ended. Please sign in again.")
                     return redirect("kura:login")
 
-        return self.get_response(request)
+        response = self.get_response(request)
+        response.setdefault(
+            "Permissions-Policy",
+            "camera=(), microphone=(), geolocation=(), payment=(), usb=()",
+        )
+        return response
 
 
 def add_no_store_headers(response):
