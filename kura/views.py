@@ -5050,6 +5050,34 @@ def course_grades_view(request, course_id):
     grades = grades.exclude(student=request.user)
     course_results = course_results.exclude(student=request.user)
 
+    # Appeals waiting for a verdict on this course. The review page accepts any
+    # assigned staff member or the department head, the two groups that reach
+    # this view, so the list needs no extra check. Own grades are left out.
+    pending_appeals = (
+        GradeAppeal.objects.filter(
+            grade__assessment__section__module__course=course,
+            status=AppealStatus.PENDING,
+        )
+        .exclude(grade__student=request.user)
+        .select_related("grade__assessment", "grade__student")
+        .order_by("created_at")
+    )
+
+    # Post-release change requests are decided only by this department's head,
+    # and never by the person who raised them (specification: no self-approval).
+    pending_change_requests = GradeChangeRequest.objects.none()
+    if is_department_head(request.user, course.department):
+        pending_change_requests = (
+            GradeChangeRequest.objects.filter(
+                grade__assessment__section__module__course=course,
+                status=ChangeRequestStatus.PENDING,
+            )
+            .exclude(requested_by=request.user)
+            .exclude(grade__student=request.user)
+            .select_related("grade__assessment", "grade__student", "requested_by")
+            .order_by("created_at")
+        )
+
     context = {
         "course": course,
         "grades": grades,
@@ -5060,6 +5088,8 @@ def course_grades_view(request, course_id):
         "can_finalize_grade": is_course_instructor(request.user, course),
         "grade_schemes": grade_schemes,
         "course_results": course_results,
+        "pending_appeals": pending_appeals,
+        "pending_change_requests": pending_change_requests,
     }
     return render(request, "kura/grades/course_grades.html", context)
 
