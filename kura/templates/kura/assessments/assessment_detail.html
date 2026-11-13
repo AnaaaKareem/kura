@@ -75,21 +75,110 @@
             </div>
 
             <!-- Attached Materials Card -->
-            <div class="k-card p-6 space-y-3">
-                <h2 class="text-base font-semibold">Assessment reference materials</h2>
-                <div class="space-y-2 pt-1">
+            <div class="k-card p-6 space-y-4">
+                <h2 class="text-base font-semibold">Reference materials</h2>
+                <div class="space-y-2">
                     {% for att in attached_files %}
-                    <div class="flex items-center justify-between p-3 bg-base-200 rounded-btn text-xs">
-                        <span class="font-medium truncate">{{ att.file.original_filename }} ({{ att.file.size_bytes }} bytes)</span>
-                        <a href="{% url 'kura:assessment_file_download' assessment.id att.file.id %}" class="btn btn-ghost btn-xs text-primary">
+                    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between p-3 bg-base-200 rounded-btn text-sm">
+                        <span class="font-medium truncate">{{ att.file.original_filename }} <span class="text-xs k-muted k-num">({{ att.file.size_bytes|filesizeformat }})</span></span>
+                        <a href="{% url 'kura:assessment_file_download' assessment.id att.file.id %}" class="btn btn-outline btn-xs">
                             Download
                         </a>
                     </div>
                     {% empty %}
-                    <p class="text-xs k-muted py-2">No reference files attached to this assessment.</p>
+                    <p class="text-sm k-muted py-1">No reference files attached to this assessment.</p>
                     {% endfor %}
                 </div>
+
+                {% if is_staff %}
+                <!-- Allow course staff to attach reference files to the assessment. -->
+                <form method="post" action="{% url 'kura:assessment_file_upload' assessment.id %}" enctype="multipart/form-data" class="pt-4 border-t border-base-300 flex flex-col sm:flex-row gap-3 sm:items-end">
+                    {% csrf_token %}
+                    <div class="flex-1">
+                        {% include "kura/_field.html" with field=file_upload_form.file %}
+                    </div>
+                    <button type="submit" class="btn btn-outline btn-sm">Upload material</button>
+                </form>
+                {% endif %}
             </div>
+
+            {% if is_staff and assessment.delivery_mode == 'paper_scanned' %}
+            <!-- Allow authorized course staff to upload a scanned script on behalf of an enrolled student. -->
+            <div class="k-card p-6 space-y-4">
+                <h2 class="text-base font-semibold">Upload a scanned paper for a student</h2>
+                <form method="post" action="{% url 'kura:scanned_paper_staff_upload' assessment.id %}" enctype="multipart/form-data" class="space-y-4">
+                    {% csrf_token %}
+                    {% for field in scanned_upload_form %}
+                    {% include "kura/_field.html" with field=field %}
+                    {% endfor %}
+                    <div class="flex justify-end">
+                        <button type="submit" class="btn btn-outline btn-sm">Upload scanned paper</button>
+                    </div>
+                </form>
+            </div>
+            {% endif %}
+
+            <!-- Attempts Table Card -->
+            <section class="space-y-3">
+                <div class="flex items-center justify-between">
+                    <h2 class="text-lg font-semibold">{% if is_staff %}Student attempts{% else %}Your attempts{% endif %}</h2>
+                    <span class="text-xs k-muted k-num">{{ attempts|length }} total</span>
+                </div>
+                <div class="k-card p-0 overflow-x-auto">
+                    <table class="k-table">
+                        <caption class="sr-only">{% if is_staff %}All student attempts{% else %}Your assessment attempts{% endif %}</caption>
+                        <thead>
+                            <tr>
+                                {% if is_staff %}
+                                <th class="k-sticky-col">Student</th>
+                                <th>Attempt</th>
+                                {% else %}
+                                <th class="k-sticky-col">Attempt</th>
+                                {% endif %}
+                                <th>Status</th>
+                                <th>Started</th>
+                                <th>Submitted</th>
+                                <th class="text-right">Action</th>
+                            </tr>
+                        </thead>
+                        <tbody>
+                            {% for attempt in attempts %}
+                            <tr>
+                                {% if is_staff %}
+                                <td class="k-sticky-col font-medium">
+                                    {% if attempt.student.first_name or attempt.student.last_name %}{{ attempt.student.first_name }} {{ attempt.student.last_name }}{% else %}{{ attempt.student.email }}{% endif %}
+                                    <span class="block text-xs k-muted">{{ attempt.student.email }}</span>
+                                </td>
+                                <td class="k-num">#{{ attempt.attempt_no }}</td>
+                                {% else %}
+                                <td class="k-sticky-col k-num font-medium">#{{ attempt.attempt_no }}</td>
+                                {% endif %}
+                                <td>
+                                    {% include "kura/_status_badge.html" with kind="attempt" value=attempt.status %}
+                                </td>
+                                <td class="text-xs k-muted k-num">{{ attempt.started_at|date:"j M Y, H:i" }}</td>
+                                <td class="text-xs k-muted k-num">{{ attempt.submitted_at|date:"j M Y, H:i"|default:"-" }}</td>
+                                <td class="text-right">
+                                    <div class="inline-flex items-center justify-end gap-1.5">
+                                        {% if attempt.status == 'In_Progress' and not is_staff %}
+                                        <a href="{% url 'kura:assessment_take' attempt.id %}" class="btn btn-primary btn-xs">Resume</a>
+                                        {% else %}
+                                        <a href="{% url 'kura:attempt_detail' attempt.id %}" class="btn btn-ghost btn-xs">View</a>
+                                        {% endif %}
+                                    </div>
+                                </td>
+                            </tr>
+                            {% empty %}
+                            <tr>
+                                <td colspan="{% if is_staff %}6{% else %}5{% endif %}" class="p-8 text-center">
+                                    {% include "kura/_empty.html" with icon="document-text" title="No attempts yet" text="Attempts will appear here once started." %}
+                                </td>
+                            </tr>
+                            {% endfor %}
+                        </tbody>
+                    </table>
+                </div>
+            </section>
         </div>
 
         <!-- Side Facts & Actions Column (spans 1) -->
