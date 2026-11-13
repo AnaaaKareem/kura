@@ -1,75 +1,87 @@
 {% extends "kura/base.html" %}
 
-{% block title %}Manage Roles - Kura{% endblock %}
+{% block title %}Roles for {{ target_user.get_full_name|default:target_user.email }} - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:staff_list' %}" class="k-muted hover:text-primary">Staff</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">User roles</li>
+</ol>
+{% endblock %}
 
 {% block content %}
-<div class="max-w-2xl mx-auto mt-6 space-y-6">
-    <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-            <h1 class="text-2xl font-bold">System Roles: {{ target_user.email }}</h1>
-            <p class="text-sm text-base-content/70 mt-1">
-                Assign or revoke fine-grained system roles for this user.
-            </p>
+<div class="max-w-2xl mx-auto space-y-6">
+    <!-- Page Header (Section 8.2) -->
+    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 border-b border-base-300 pb-5">
+        <div class="space-y-1">
+            <p class="k-eyebrow">Administration</p>
+            <h1 class="text-2xl font-bold">Roles for {{ target_user.get_full_name|default:target_user.email }}</h1>
+            <p class="text-sm k-muted font-mono">{{ target_user.email }}</p>
         </div>
         <a href="{% url 'kura:staff_list' %}" class="btn btn-ghost btn-sm">
-            &larr; Back to Staff
+            &larr; Back to staff
         </a>
-    </div>
+    </header>
 
     <!-- Currently assigned roles card -->
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <h2 class="card-title text-lg font-bold">Currently Assigned Roles</h2>
-            <div class="divide-y divide-base-200 mt-2">
-                {% for assignment in assigned_roles %}
-                <div class="py-3 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-                    <div>
-                        <div class="font-semibold">{{ assignment.role.name }}</div>
-                        <div class="text-xs text-base-content/60">{{ assignment.role.description|default:"No description" }}</div>
-                        <div class="text-xs text-base-content/50 mt-0.5">Assigned by {{ assignment.assigned_by.email|default:"System" }} on {{ assignment.assigned_at|date:"Y-m-d" }}</div>
-                    </div>
-                    <form method="post" action="{% url 'kura:user_roles' target_user.id %}">
-                        {% csrf_token %}
-                        <input type="hidden" name="action" value="remove">
-                        <input type="hidden" name="role_id" value="{{ assignment.role.id }}">
-                        <button type="submit" class="btn btn-ghost btn-xs text-error">
-                            Remove
-                        </button>
-                    </form>
-                </div>
-                {% empty %}
-                <p class="py-4 text-sm text-base-content/50 italic">No roles currently assigned.</p>
-                {% endfor %}
-            </div>
+    <section class="k-card space-y-4">
+        <div class="flex items-center justify-between border-b border-base-300 pb-2">
+            <h2 class="text-base font-semibold">Currently assigned roles</h2>
+            <span class="badge badge-ghost badge-sm k-num font-medium">{{ assigned_roles|length }}</span>
         </div>
-    </div>
+
+        <ul class="divide-y divide-base-200">
+            {% for assignment in assigned_roles %}
+            <li class="py-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div class="space-y-0.5">
+                    <p class="font-semibold text-sm">{{ assignment.role.name }}</p>
+                    <p class="text-xs k-muted">{{ assignment.role.description|default:"No description" }}</p>
+                    <p class="text-xs k-muted">Assigned by {{ assignment.assigned_by.email|default:"System" }} on {{ assignment.assigned_at|date:"Y-m-d" }}</p>
+                </div>
+                <form method="post" action="{% url 'kura:user_roles' target_user.id %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="remove">
+                    <input type="hidden" name="role_id" value="{{ assignment.role.id }}">
+                    <button type="submit" class="btn btn-outline btn-error btn-xs">
+                        Remove
+                    </button>
+                </form>
+            </li>
+            {% empty %}
+            <li class="py-6 text-center text-xs k-muted italic">No roles currently assigned.</li>
+            {% endfor %}
+        </ul>
+    </section>
 
     <!-- Available roles to assign card -->
     {% if available_roles %}
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <h2 class="card-title text-lg font-bold">Available Roles to Assign</h2>
-            <div class="divide-y divide-base-200 mt-2">
-                {% for role in available_roles %}
-                <div class="py-3 flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-                    <div>
-                        <div class="font-semibold">{{ role.name }}</div>
-                        <div class="text-xs text-base-content/60">{{ role.description|default:"No description" }}</div>
-                    </div>
-                    <form method="post" action="{% url 'kura:user_roles' target_user.id %}">
-                        {% csrf_token %}
-                        <input type="hidden" name="action" value="assign">
-                        <input type="hidden" name="role_id" value="{{ role.id }}">
-                        <button type="submit" class="btn btn-primary btn-xs">
-                            Assign Role
-                        </button>
-                    </form>
-                </div>
-                {% endfor %}
-            </div>
+    <section class="k-card space-y-4">
+        <div class="border-b border-base-300 pb-2">
+            <h2 class="text-base font-semibold">Available roles to assign</h2>
         </div>
-    </div>
+
+        <ul class="divide-y divide-base-200">
+            {% for role in available_roles %}
+            <li class="py-3.5 flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
+                <div class="space-y-0.5">
+                    <p class="font-semibold text-sm">{{ role.name }}</p>
+                    <p class="text-xs k-muted">{{ role.description|default:"No description" }}</p>
+                </div>
+                <form method="post" action="{% url 'kura:user_roles' target_user.id %}">
+                    {% csrf_token %}
+                    <input type="hidden" name="action" value="assign">
+                    <input type="hidden" name="role_id" value="{{ role.id }}">
+                    <button type="submit" class="btn btn-outline btn-primary btn-xs">
+                        Assign role
+                    </button>
+                </form>
+            </li>
+            {% endfor %}
+        </ul>
+    </section>
     {% endif %}
 </div>
 {% endblock %}
-

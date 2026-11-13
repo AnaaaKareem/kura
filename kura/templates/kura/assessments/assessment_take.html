@@ -3,144 +3,141 @@
 
 {% block title %}Taking: {{ assessment.title }} - Kura{% endblock %}
 
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:course_detail' assessment.section.module.course.id %}" class="k-muted hover:text-primary">{{ assessment.section.module.course.code }}</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content truncate max-w-[200px]">{{ assessment.title }}</li>
+</ol>
+{% endblock %}
+
 {% block content %}
 <div class="max-w-4xl mx-auto space-y-6">
-    <!-- Floating / Sticky Timer and Header -->
-    <div class="card bg-base-100 border-2 border-primary/30 sticky top-4 z-20">
-        <div class="card-body py-4 px-6 flex flex-row justify-between items-center">
-            <div>
-                <span class="badge badge-primary font-mono text-xs">{{ assessment.section.module.course.code }}</span>
-                <h1 class="text-lg font-bold inline-block ml-2">{{ assessment.title }}</h1>
+    <!-- Sticky Exam Bar (Section 8.9) -->
+    <div class="k-card shadow-md sticky top-14 z-20 p-4 border border-base-300 bg-base-100 mb-6">
+        <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+            <div class="flex items-center gap-2.5 min-w-0">
+                <span class="badge badge-primary font-mono text-xs flex-shrink-0">{{ assessment.section.module.course.code }}</span>
+                <h1 class="text-base font-semibold truncate">{{ assessment.title }}</h1>
             </div>
-            {% if assessment.delivery_mode == 'paper_scanned' %}
-            <p>Upload deadline: {{ attempt.expires_at|date:"d M Y, H:i" }}</p>
-            {% else %}
-            <div class="flex items-center gap-4">
-                <div id="autosave-status" role="status" aria-live="polite">
-                    <span class="badge badge-ghost badge-xs">Ready</span>
+
+            <div class="flex items-center justify-between sm:justify-end gap-4">
+                {% if assessment.delivery_mode == 'paper_scanned' %}
+                <p class="text-xs k-muted">Deadline: {{ attempt.expires_at|date:"d M Y, H:i" }}</p>
+                {% else %}
+                <div id="autosave-status" role="status" aria-live="polite" class="text-xs k-muted">
+                    <span class="text-xs k-muted">Ready</span>
                 </div>
                 <div class="text-right">
-                    <span class="text-xs uppercase font-bold text-base-content/60 tracking-wider">Time Remaining</span>
                     <div id="exam-timer"
-                         class="text-xl font-mono font-bold text-error"
+                         class="text-lg font-mono font-bold k-num"
                          data-expires-at="{{ attempt.expires_at|date:'c' }}"
                          data-autosave-url="{% url 'kura:assessment_autosave' attempt.id %}"
                          data-csrf-token="{{ csrf_token }}">--:--</div>
                 </div>
+                {% endif %}
+
+                <form method="post" action="{% url 'kura:assessment_submit' attempt.id %}" class="flex-shrink-0">
+                    {% csrf_token %}
+                    <button type="submit" class="btn btn-primary btn-sm" data-confirm-action="Submit assessment now? You will not be able to modify your responses.">
+                        Submit
+                    </button>
+                </form>
             </div>
-            {% endif %}
         </div>
     </div>
 
-    <!-- Questions Form -->
+    <!-- Questions Form List -->
     <div class="space-y-6">
         {% if assessment.delivery_mode != 'paper_scanned' %}
         {% for q in questions %}
-        <div class="card bg-base-100 shadow-sm border border-base-300">
-            <div class="card-body gap-4 p-4 sm:p-6">
-                <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-                    <h3 class="font-bold text-base">Question {{ forloop.counter }}</h3>
-                    <span class="badge badge-outline badge-sm">{{ q.points }} pts</span>
-                </div>
-                <p class="text-sm mt-2 font-medium">{{ q.prompt }}</p>
-
-                <!-- Multiple Choice -->
-                {% if q.type == 'multiple_choice' %}
-                <form hx-post="{% url 'kura:assessment_autosave' attempt.id %}" hx-trigger="change" hx-target="#autosave-status" class="mt-4 space-y-2">
-                    {% csrf_token %}
-                    <input type="hidden" name="question_id" value="{{ q.question_id }}">
-                    <input type="hidden" name="response_type" value="multiple_choice">
-
-                    {% for opt in q.options %}
-                    <label class="flex items-center gap-3 p-3 bg-base-200/50 rounded-box cursor-pointer hover:bg-base-200">
-                        <input type="checkbox" name="selected_options" value="{{ opt.option_id }}" class="checkbox checkbox-primary checkbox-sm"
-                            {% if opt.option_id in q.saved_answer.selected_option_ids %}checked{% endif %}>
-                        <span class="text-sm">{{ opt.text }}</span>
-                    </label>
-                    {% endfor %}
-                </form>
-
-                <!-- Matching -->
-                {% elif q.type == 'matching' %}
-                <form hx-post="{% url 'kura:assessment_autosave' attempt.id %}" hx-trigger="change" hx-target="#autosave-status" class="mt-4 space-y-3">
-                    {% csrf_token %}
-                    <input type="hidden" name="question_id" value="{{ q.question_id }}">
-                    <input type="hidden" name="response_type" value="matching">
-
-                    <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
-                        {% for pair in q.left_prompts %}
-                        <div class="flex items-center justify-between p-3 bg-base-200/50 rounded-box gap-4">
-                            <span class="text-sm font-medium">{{ pair.text }}</span>
-                            <select name="match_{{ pair.pair_id }}" class="select select-bordered select-sm">
-                                <option value="">-- Match --</option>
-                                {% for match_opt in q.available_matches %}
-                                <option value="{{ match_opt }}"{% if match_opt == pair.selected_match %} selected{% endif %}>{{ match_opt }}</option>
-                                {% endfor %}
-                            </select>
-                        </div>
-                        {% endfor %}
-                    </div>
-                </form>
-
-                <!-- Long Text / Essay -->
-                {% elif q.type == 'long_text' or q.type == 'essay' %}
-                <form hx-post="{% url 'kura:assessment_autosave' attempt.id %}" hx-trigger="keyup changed delay:1500ms" hx-target="#autosave-status" class="mt-4">
-                    {% csrf_token %}
-                    <input type="hidden" name="question_id" value="{{ q.question_id }}">
-                    <input type="hidden" name="response_type" value="long_text">
-
-                    <textarea name="response_text" rows="6" class="textarea textarea-bordered w-full text-sm" placeholder="Type your answer here (autosaves automatically)...">{{ q.saved_answer.response_text|default_if_none:"" }}</textarea>
-                </form>
-                {% endif %}
+        <article class="k-card p-6 space-y-4">
+            <div class="flex items-start justify-between gap-4 border-b border-base-300 pb-3">
+                <h2 class="text-base font-semibold">Question {{ forloop.counter }}</h2>
+                <span class="badge badge-ghost badge-sm k-num font-medium">{{ q.points }} pts</span>
             </div>
-        </div>
+            <p class="text-base font-medium leading-relaxed">{{ q.prompt }}</p>
+
+            <!-- Multiple Choice -->
+            {% if q.type == 'multiple_choice' %}
+            <form hx-post="{% url 'kura:assessment_autosave' attempt.id %}" hx-trigger="change" hx-target="#autosave-status" class="space-y-2 pt-2">
+                {% csrf_token %}
+                <input type="hidden" name="question_id" value="{{ q.question_id }}">
+                <input type="hidden" name="response_type" value="multiple_choice">
+
+                {% for opt in q.options %}
+                <label class="flex items-start gap-3 p-3 bg-base-200 rounded-btn cursor-pointer hover:bg-base-300 transition-colors">
+                    <input type="checkbox" name="selected_options" value="{{ opt.option_id }}" class="checkbox checkbox-primary checkbox-sm"
+                            {% if opt.option_id in q.saved_answer.selected_option_ids %}checked{% endif %}>
+                    <span class="text-base leading-normal">{{ opt.text }}</span>
+                </label>
+                {% endfor %}
+            </form>
+
+            <!-- Matching -->
+            {% elif q.type == 'matching' %}
+            <form hx-post="{% url 'kura:assessment_autosave' attempt.id %}" hx-trigger="change" hx-target="#autosave-status" class="space-y-3 pt-2">
+                {% csrf_token %}
+                <input type="hidden" name="question_id" value="{{ q.question_id }}">
+                <input type="hidden" name="response_type" value="matching">
+
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-3">
+                    {% for pair in q.left_prompts %}
+                    <div class="flex items-center justify-between p-3 bg-base-200 rounded-btn gap-4">
+                        <span class="text-base font-medium">{{ pair.text }}</span>
+                        <select name="match_{{ pair.pair_id }}" class="select select-bordered select-sm">
+                            <option value="">-- Match --</option>
+                            {% for match_opt in q.available_matches %}
+                            <option value="{{ match_opt }}"{% if match_opt == pair.selected_match %} selected{% endif %}>{{ match_opt }}</option>
+                            {% endfor %}
+                        </select>
+                    </div>
+                    {% endfor %}
+                </div>
+            </form>
+
+            <!-- Long Text / Essay -->
+            {% elif q.type == 'long_text' or q.type == 'essay' %}
+            <form hx-post="{% url 'kura:assessment_autosave' attempt.id %}" hx-trigger="keyup changed delay:1500ms" hx-target="#autosave-status" class="pt-2">
+                {% csrf_token %}
+                <input type="hidden" name="question_id" value="{{ q.question_id }}">
+                <input type="hidden" name="response_type" value="long_text">
+
+                <textarea name="response_text" rows="6" class="textarea textarea-bordered w-full text-base" placeholder="Type your answer here (autosaves automatically)...">{{ q.saved_answer.response_text|default_if_none:"" }}</textarea>
+            </form>
+            {% endif %}
+        </article>
         {% endfor %}
         {% endif %}
     </div>
 
-    <!-- Coursework Files Upload Section -->
-    <div class="card bg-base-100 shadow-sm border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <h3 class="card-title text-base font-bold">{% if assessment.delivery_mode == 'paper_scanned' %}Upload scanned paper{% else %}Upload Coursework Files{% endif %}</h3>
-            <p class="text-xs text-base-content/70">
-                {% if assessment.delivery_mode == 'paper_scanned' %}Upload a PDF or image of your scanned paper. Marking is manual.{% else %}Attach source code or report files. File uploads are locked once submitted or when the deadline expires.{% endif %}
-            </p>
+    <!-- Coursework / Scanned Script Files Upload Section -->
+    <div class="k-card p-6 space-y-4">
+        <h2 class="text-base font-semibold">{% if assessment.delivery_mode == 'paper_scanned' %}Upload scanned paper{% else %}Coursework file attachments{% endif %}</h2>
+        <p class="text-xs k-muted">
+            {% if assessment.delivery_mode == 'paper_scanned' %}Upload a PDF or image of your scanned paper. Marking is manual.{% else %}Attach required source code or project reports. File uploads are sealed once submitted or when the deadline expires.{% endif %}
+        </p>
 
-            <div class="mt-3 space-y-2">
-                {% for att in attempt_files %}
-                <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between p-2 bg-base-200 rounded text-xs">
-                    <span>{{ att.file.original_filename }} ({{ att.file.size_bytes }} bytes)</span>
-                    <span class="badge badge-success badge-xs">Attached</span>
-                </div>
-                {% empty %}
-                <p class="text-xs text-base-content/50">No files uploaded yet.</p>
-                {% endfor %}
+        <div class="space-y-2 pt-1">
+            {% for att in attempt_files %}
+            <div class="flex items-center justify-between p-3 bg-base-200 rounded-btn text-xs">
+                <span class="font-medium truncate">{{ att.file.original_filename }} ({{ att.file.size_bytes }} bytes)</span>
+                <span class="badge badge-success badge-xs flex-shrink-0">Attached</span>
             </div>
-
-            <form method="post" action="{% url 'kura:assessment_attempt_file_upload' attempt.id %}" enctype="multipart/form-data" class="mt-4 flex gap-3 items-end">
-                {% csrf_token %}
-                <div class="form-control flex-1">
-                    {{ file_form.file }}
-                </div>
-                <button type="submit" class="btn btn-secondary btn-sm">Upload File</button>
-            </form>
+            {% empty %}
+            <p class="text-xs k-muted py-2">No files attached yet.</p>
+            {% endfor %}
         </div>
-    </div>
 
-    <!-- Final Submission -->
-    <div class="card bg-base-100 border-t-2 border-primary">
-        <div class="card-body flex flex-row justify-between items-center">
-            <div>
-                <h3 class="font-bold">Ready to complete?</h3>
-                <p class="text-xs text-base-content/70">Submitting will calculate your cryptographic integrity hash and seal your answers.</p>
+        <form method="post" action="{% url 'kura:assessment_attempt_file_upload' attempt.id %}" enctype="multipart/form-data" class="pt-2 flex flex-col sm:flex-row gap-3 sm:items-end">
+            {% csrf_token %}
+            <div class="form-control flex-1">
+                {{ file_form.file }}
             </div>
-            <form method="post" action="{% url 'kura:assessment_submit' attempt.id %}">
-                {% csrf_token %}
-                <button type="submit" class="btn btn-primary btn-sm" data-confirm-action="Submit assessment now? You will not be able to modify your responses.">
-                    Finalize & Submit
-                </button>
-            </form>
-        </div>
+            <button type="submit" class="btn btn-outline btn-sm">Upload file</button>
+        </form>
     </div>
 </div>
 

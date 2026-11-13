@@ -1,40 +1,53 @@
 {% extends "kura/base.html" %}
 
-{% block title %}Step-up MFA: Release Grade - Kura{% endblock %}
+{% block title %}Release grade - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:course_list' %}" class="k-muted hover:text-primary">Courses</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:course_grades' grade.assessment.section.module.course.id %}" class="k-muted hover:text-primary">Gradebook</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">Release grade</li>
+</ol>
+{% endblock %}
 
 {% block content %}
-<div class="max-w-md mx-auto space-y-6">
-    <div class="card bg-base-100 border-2 border-primary/30">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <div class="flex items-center gap-2">
-                <span class="badge badge-warning badge-sm">Step-up Authentication</span>
-            </div>
-            <h1 class="card-title text-xl font-bold mt-2">Authorize Grade Release</h1>
-            <p class="text-xs text-base-content/70">
-                You are authorizing the irreversible release of a finalized grade for <strong>{{ grade.student.get_full_name|default:grade.student.email }}</strong> (Score: <strong>{{ grade.score }}</strong>).
+<div class="max-w-md mx-auto my-6">
+    <div class="k-card p-6 sm:p-8 space-y-6">
+        <header class="space-y-2 text-center">
+            <span class="badge badge-warning badge-sm font-medium">Step-up authentication</span>
+            <h1 class="text-2xl font-bold">Release grade</h1>
+            <p class="text-sm k-muted">
+                Authorizing release for <strong>{{ grade.student.get_full_name|default:grade.student.email }}</strong> (Score: <span class="k-num font-semibold">{{ grade.score }}</span>).
             </p>
-            <p class="text-xs text-base-content/60 mt-1">
-                Security policy mandates re-authenticating with your Multi-Factor Authentication (MFA) device before releasing grades.
+            <p class="text-xs k-muted">
+                Security policy mandates re-authenticating with your authenticator app code before publishing grades.
             </p>
+        </header>
 
-            <form method="post" class="mt-4 space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
-                {% csrf_token %}
+        <form method="post" class="space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+            {% csrf_token %}
 
-                <div class="form-control">
-                    <label for="id_otp_token" class="label"><span class="label-text font-medium text-xs">Enter 6-Digit MFA Security Code</span></label>
+            <div class="form-control w-full space-y-1">
+                <label for="id_otp_token" class="label justify-center py-1">
+                    <span class="label-text font-medium text-sm">Authenticator code (6 digits)</span>
+                </label>
+                <div class="flex justify-center">
                     {{ form.otp_token }}
-                    {% if form.otp_token.errors %}
-                    <label class="label"><span class="label-text-alt text-error">{{ form.otp_token.errors.0 }}</span></label>
-                    {% endif %}
                 </div>
+                {% if form.otp_token.errors %}
+                <p class="text-error text-xs font-medium text-center pt-0.5">{{ form.otp_token.errors.0 }}</p>
+                {% endif %}
+            </div>
 
-                <div class="card-actions justify-end mt-4">
-                    <a href="{% url 'kura:course_grades' grade.assessment.section.module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
-                    <button type="submit" class="btn btn-success btn-sm">Verify & Release Grade</button>
-                </div>
-            </form>
-        </div>
+            <div class="flex items-center justify-end gap-2 pt-4 border-t border-base-300">
+                <a href="{% url 'kura:course_grades' grade.assessment.section.module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
+                <button type="submit" class="btn btn-success btn-sm">Release grade</button>
+            </div>
+        </form>
     </div>
 </div>
 {% endblock %}
-

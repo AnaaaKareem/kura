@@ -1,39 +1,42 @@
 {% extends "kura/base.html" %}
 
-{% block title %}Create Section - Kura{% endblock %}
+{% block title %}{% if editing %}Edit section{% else %}Add section{% endif %} - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:course_list' %}" class="k-muted hover:text-primary">Courses</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:course_detail' module.course.id %}" class="k-muted hover:text-primary">{{ module.course.code }}</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">{% if editing %}Edit section{% else %}Add section{% endif %}</li>
+</ol>
+{% endblock %}
 
 {% block content %}
-<div class="max-w-md mx-auto mt-6">
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <h1 class="card-title text-2xl font-bold">{% if editing %}Edit Module Section{% else %}Add Module Section{% endif %}</h1>
-            <p class="text-sm text-base-content/70">
-                Group learning materials under module <strong>{{ module.title }}</strong>.
-            </p>
+<div class="max-w-xl mx-auto space-y-6">
+    <!-- Page Header (Section 8.2) -->
+    <header class="space-y-1">
+        <p class="k-eyebrow">{{ module.title }}</p>
+        <h1 class="text-2xl font-bold">{% if editing %}Edit section{% else %}Add section{% endif %}</h1>
+        <p class="text-sm k-muted">
+            Group learning materials and assessments under module <strong>{{ module.title }}</strong>.
+        </p>
+    </header>
 
-            <form method="post" class="mt-4 space-y-4">
-                {% csrf_token %}
-                {% if form.errors %}<div role="alert" class="alert alert-error">Please correct the highlighted fields. {{ form.errors }}</div>{% endif %}
+    <div class="k-card">
+        <form method="post" class="space-y-4">
+            {% csrf_token %}
 
-                <div class="form-control">
-                    <label for="id_title" class="label"><span class="label-text font-medium">Section Title</span></label>
-                    {{ form.title }}
-                    {% if form.title.errors %}
-                    <label class="label"><span class="label-text-alt text-error">{{ form.title.errors.0 }}</span></label>
-                    {% endif %}
-                </div>
+            {% include "kura/_field.html" with field=form.title %}
+            {% include "kura/_field.html" with field=form.section_type %}
 
-                <div class="form-control">
-                    <label for="id_section_type" class="label"><span class="label-text font-medium">Section Type</span></label>
-                    {{ form.section_type }}
-                </div>
-
-                <div class="card-actions justify-end mt-6">
-                    <a href="{% url 'kura:course_detail' module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
-                    <button type="submit" class="btn btn-primary btn-sm">{% if editing %}Save Section{% else %}Add Section{% endif %}</button>
-                </div>
-            </form>
-        </div>
+            <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                <a href="{% url 'kura:course_detail' module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
+                <button type="submit" class="btn btn-primary btn-sm">{% if editing %}Save section{% else %}Add section{% endif %}</button>
+            </div>
+        </form>
     </div>
 </div>
 {% endblock %}

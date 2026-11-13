@@ -1,24 +1,83 @@
 {% extends "kura/base.html" %}
-{% block title %}Departments and offices - Kura{% endblock %}
+
+{% block title %}Staff settings - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:staff_list' %}" class="k-muted hover:text-primary">Staff</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">Staff settings</li>
+</ol>
+{% endblock %}
+
 {% block content %}
 <div class="max-w-3xl mx-auto space-y-6">
-    <h1 class="text-2xl font-bold">Departments and offices</h1>
-    <p>Add departments, buildings, and rooms for staff accounts.</p>
-    <a href="{% url 'kura:staff_create' %}" class="link link-primary">Back to staff account creation</a>
-    <section class="card bg-base-100 p-4">
-        <h2 class="text-xl font-bold">Departments</h2>
-        <ul>{% for department in departments %}<li>{{ department }}</li>{% empty %}<li>No departments yet.</li>{% endfor %}</ul>
-        <form method="post">{% csrf_token %}<input type="hidden" name="kind" value="department">{{ department_form.as_p }}<button class="btn btn-primary btn-sm" type="submit">Add department</button></form>
+    <!-- Page Header (Section 8.2) -->
+    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 border-b border-base-300 pb-5">
+        <div class="space-y-1">
+            <p class="k-eyebrow">Administration</p>
+            <h1 class="text-2xl font-bold">Staff settings</h1>
+            <p class="text-sm k-muted">Configure university departments, campus buildings, and faculty office rooms.</p>
+        </div>
+        <a href="{% url 'kura:staff_create' %}" class="btn btn-outline btn-sm">
+            &larr; Back to staff creation
+        </a>
+    </header>
+
+    <!-- Departments Section -->
+    <section class="k-card space-y-4">
+        <h2 class="text-lg font-bold border-b border-base-300 pb-2">Departments</h2>
+        <ul class="divide-y divide-base-200 text-sm">
+            {% for department in departments %}
+            <li class="py-2.5 font-medium">{{ department }}</li>
+            {% empty %}
+            <li class="py-2.5 text-xs k-muted italic">No departments registered yet.</li>
+            {% endfor %}
+        </ul>
+        <form method="post" class="space-y-3 pt-3 border-t border-base-300">
+            {% csrf_token %}
+            <input type="hidden" name="kind" value="department">
+            {{ department_form.as_p }}
+            <button class="btn btn-primary btn-sm" type="submit">Add department</button>
+        </form>
     </section>
-    <section class="card bg-base-100 p-4">
-        <h2 class="text-xl font-bold">Buildings</h2>
-        <ul>{% for building in buildings %}<li>{{ building }}</li>{% empty %}<li>No buildings yet.</li>{% endfor %}</ul>
-        <form method="post">{% csrf_token %}<input type="hidden" name="kind" value="building">{{ building_form.as_p }}<button class="btn btn-primary btn-sm" type="submit">Add building</button></form>
+
+    <!-- Buildings Section -->
+    <section class="k-card space-y-4">
+        <h2 class="text-lg font-bold border-b border-base-300 pb-2">Buildings</h2>
+        <ul class="divide-y divide-base-200 text-sm">
+            {% for building in buildings %}
+            <li class="py-2.5 font-medium">{{ building }}</li>
+            {% empty %}
+            <li class="py-2.5 text-xs k-muted italic">No buildings registered yet.</li>
+            {% endfor %}
+        </ul>
+        <form method="post" class="space-y-3 pt-3 border-t border-base-300">
+            {% csrf_token %}
+            <input type="hidden" name="kind" value="building">
+            {{ building_form.as_p }}
+            <button class="btn btn-primary btn-sm" type="submit">Add building</button>
+        </form>
     </section>
-    <section class="card bg-base-100 p-4">
-        <h2 class="text-xl font-bold">Rooms</h2>
-        <ul>{% for room in rooms %}<li>{{ room }}</li>{% empty %}<li>No rooms yet.</li>{% endfor %}</ul>
-        <form method="post">{% csrf_token %}<input type="hidden" name="kind" value="room">{{ room_form.as_p }}<button class="btn btn-primary btn-sm" type="submit">Add room</button></form>
+
+    <!-- Rooms Section -->
+    <section class="k-card space-y-4">
+        <h2 class="text-lg font-bold border-b border-base-300 pb-2">Rooms</h2>
+        <ul class="divide-y divide-base-200 text-sm">
+            {% for room in rooms %}
+            <li class="py-2.5 font-medium">{{ room }}</li>
+            {% empty %}
+            <li class="py-2.5 text-xs k-muted italic">No rooms registered yet.</li>
+            {% endfor %}
+        </ul>
+        <form method="post" class="space-y-3 pt-3 border-t border-base-300">
+            {% csrf_token %}
+            <input type="hidden" name="kind" value="room">
+            {{ room_form.as_p }}
+            <button class="btn btn-primary btn-sm" type="submit">Add room</button>
+        </form>
     </section>
 </div>
 {% endblock %}

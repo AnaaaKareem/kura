@@ -1,63 +1,65 @@
 {% extends "kura/base.html" %}
 
-{% block title %}Add Learning Material Item - Kura{% endblock %}
+{% block title %}{% if editing %}Edit item{% else %}Add item{% endif %} - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:course_list' %}" class="k-muted hover:text-primary">Courses</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:course_detail' section.module.course.id %}" class="k-muted hover:text-primary">{{ section.module.course.code }}</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">{% if editing %}Edit item{% else %}Add item{% endif %}</li>
+</ol>
+{% endblock %}
 
 {% block content %}
-<div class="max-w-2xl mx-auto mt-6">
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <h1 class="card-title text-2xl font-bold">{% if editing %}Edit Item in{% else %}Add Item to{% endif %} {{ section.title }}</h1>
-            <p class="text-sm text-base-content/70">
-                Write notes in Markdown or attach a file.
-            </p>
+<div class="max-w-2xl mx-auto space-y-6">
+    <!-- Page Header (Section 8.2) -->
+    <header class="space-y-1">
+        <p class="k-eyebrow">{{ section.title }}</p>
+        <h1 class="text-2xl font-bold">{% if editing %}Edit item in {{ section.title }}{% else %}Add item to {{ section.title }}{% endif %}</h1>
+        <p class="text-sm k-muted">Write lecture notes in Markdown or attach documents and slides.</p>
+    </header>
 
-            <form method="post" enctype="multipart/form-data" class="mt-4 space-y-4">
-                {% csrf_token %}
-                {% if form.errors %}<div role="alert" class="alert alert-error">Please correct the highlighted fields. {{ form.errors }}</div>{% endif %}
+    <div class="k-card">
+        <form method="post" enctype="multipart/form-data" class="space-y-4">
+            {% csrf_token %}
 
-                <div class="form-control">
-                    <label for="id_title" class="label"><span class="label-text font-medium">Item Title</span></label>
-                    {{ form.title }}
-                    {% if form.title.errors %}
-                    <label class="label"><span class="label-text-alt text-error">{{ form.title.errors.0 }}</span></label>
-                    {% endif %}
+            {% include "kura/_field.html" with field=form.title %}
+
+            <div class="form-control w-full space-y-1">
+                <label class="label py-1" for="id_content_body">
+                    <span class="label-text font-medium text-sm text-base-content">
+                        Content body (optional if a file is attached)
+                    </span>
+                </label>
+                {{ form.content_body }}
+                <div class="pt-2 flex items-center gap-2">
+                    <button type="button" class="btn btn-outline btn-xs" hx-post="{% url 'kura:item_preview' section.id %}" hx-include="closest form" hx-target="#item-preview">
+                        Preview
+                    </button>
+                    <span class="htmx-indicator loading loading-spinner loading-xs text-primary"></span>
                 </div>
-
-                <div class="form-control">
-                    <label for="id_content_body" class="label"><span class="label-text font-medium">Content Body (optional if a file is attached)</span></label>
-                    {{ form.content_body }}
-                    <!-- Preview only this section's content through the checked POST endpoint. -->
-                    <button type="button" class="btn btn-outline btn-sm mt-2" hx-post="{% url 'kura:item_preview' section.id %}" hx-include="closest form" hx-target="#item-preview">Preview</button>
-                    <div id="item-preview" class="mt-2" aria-live="polite"></div>
-                    {% if form.content_body.errors %}
-                    <label class="label"><span class="label-text-alt text-error">{{ form.content_body.errors.0 }}</span></label>
-                    {% endif %}
+                <div id="item-preview" class="mt-2 text-sm leading-relaxed" aria-live="polite"></div>
+                {% if form.content_body.errors %}
+                <div id="id_content_body-error" class="text-error text-xs font-medium space-y-0.5 pt-0.5">
+                    {% for error in form.content_body.errors %}
+                    <p>{{ error }}</p>
+                    {% endfor %}
                 </div>
+                {% endif %}
+            </div>
 
-                <!-- Let staff choose an optional time before students can access the item. -->
-                <div class="form-control">
-                    <label for="id_released_at" class="label"><span class="label-text font-medium">Release at (optional)</span></label>
-                    {{ form.released_at }}
-                    {% if form.released_at.errors %}
-                    <label class="label"><span class="label-text-alt text-error">{{ form.released_at.errors.0 }}</span></label>
-                    {% endif %}
-                    <label class="label"><span class="label-text-alt text-base-content/60">Students can see the item only after this time and after it is released.</span></label>
-                </div>
+            {% include "kura/_field.html" with field=form.released_at %}
+            {% include "kura/_field.html" with field=form.file %}
 
-                <div class="form-control">
-                    <label for="id_file" class="label"><span class="label-text font-medium">Attach File (Optional, max 25 MiB)</span></label>
-                    {{ form.file }}
-                    {% if form.file.errors %}
-                    <label class="label"><span class="label-text-alt text-error">{{ form.file.errors.0 }}</span></label>
-                    {% endif %}
-                </div>
-
-                <div class="card-actions justify-end mt-6">
-                    <a href="{% url 'kura:course_detail' section.module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
-                    <button type="submit" class="btn btn-primary btn-sm">{% if editing %}Save Item{% else %}Create Item{% endif %}</button>
-                </div>
-            </form>
-        </div>
+            <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                <a href="{% url 'kura:course_detail' section.module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
+                <button type="submit" class="btn btn-primary btn-sm">{% if editing %}Save item{% else %}Create item{% endif %}</button>
+            </div>
+        </form>
     </div>
 </div>
 {% endblock %}

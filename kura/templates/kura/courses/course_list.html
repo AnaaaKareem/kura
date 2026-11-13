@@ -1,69 +1,88 @@
 {% extends "kura/base.html" %}
 
-{% block title %}Course Catalog - Kura{% endblock %}
+{% block title %}Courses - Kura{% endblock %}
+
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">Courses</li>
+</ol>
+{% endblock %}
 
 {% block content %}
 <div class="space-y-6">
-    <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between">
-        <div>
-            <h1 class="text-2xl font-bold">Course Catalog</h1>
-            <p class="text-sm text-base-content/70 mt-1">
+    <!-- Page Header (Section 8.2) -->
+    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 border-b border-base-300 pb-5">
+        <div class="space-y-1">
+            <p class="k-eyebrow">Teaching &amp; learning</p>
+            <h1 class="text-2xl font-bold">Courses</h1>
+            <p class="text-sm k-muted">
                 Browse academic courses and access curriculum materials.
             </p>
         </div>
-        {% if is_admin %}
-        <a href="{% url 'kura:admin_course_create' %}" class="btn btn-primary btn-sm">+ New Course</a>
-        {% elif is_head %}
-        <a href="{% url 'kura:course_create' %}" class="btn btn-primary btn-sm">
-            + New Course
-        </a>
-        {% endif %}
-    </div>
+        <div class="flex items-center gap-2">
+            {% if is_admin %}
+            <a href="{% url 'kura:admin_course_create' %}" class="btn btn-primary btn-sm">
+                {% include "kura/_icon.html" with name="plus" class="h-4 w-4" %}
+                <span>New course</span>
+            </a>
+            {% elif is_head %}
+            <a href="{% url 'kura:course_create' %}" class="btn btn-primary btn-sm">
+                {% include "kura/_icon.html" with name="plus" class="h-4 w-4" %}
+                <span>New course</span>
+            </a>
+            {% endif %}
+        </div>
+    </header>
 
-    {% if is_admin %}
-    <form method="get" class="card bg-base-100 p-4 space-y-2">
-        {{ filter_form.as_p }}
-        <button type="submit" class="btn btn-primary btn-sm">Filter courses</button>
-        <a href="{% url 'kura:course_list' %}" class="btn btn-ghost btn-sm">Clear</a>
+    {% if is_admin and filter_form %}
+    <!-- Filter bar for administrators -->
+    <form method="get" class="k-card p-4 flex flex-wrap items-center gap-4 bg-base-100">
+        <div class="flex-1 min-w-[200px]">
+            {{ filter_form.department }}
+        </div>
+        <div class="flex items-center gap-2">
+            <button type="submit" class="btn btn-outline btn-sm">Filter</button>
+            <a href="{% url 'kura:course_list' %}" class="btn btn-ghost btn-sm">Clear</a>
+        </div>
     </form>
     {% endif %}
-    <!-- Course cards grid with DaisyUI -->
+
+    <!-- Course cards grid -->
     <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
         {% for course in courses %}
-        <div class="card bg-base-100 border border-base-300">
-            <div class="card-body gap-4 p-4 sm:p-6">
-                <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
+        <article class="k-card flex flex-col justify-between hover:border-primary transition-colors">
+            <div class="space-y-3">
+                <div class="flex items-start justify-between gap-2">
                     <span class="badge badge-primary font-mono text-xs">{{ course.code }}</span>
-                    {% if course.is_published %}
-                    <span class="badge badge-success badge-sm">Published</span>
-                    {% else %}
-                    <span class="badge badge-warning badge-sm">Draft</span>
-                    {% endif %}
+                    {% include "kura/_status_badge.html" with kind="course" value=course.is_published %}
                 </div>
-                <h2 class="card-title text-lg mt-2">{{ course.title }}</h2>
-                <p class="text-xs text-base-content/70 line-clamp-2 mt-1">
-                    {{ course.description|default:"No curriculum description provided." }}
-                </p>
-                <div class="text-xs text-base-content/60 mt-3 pt-2 border-t border-base-200 flex justify-between">
-                    <span>{{ course.department.name }}</span>
-                    <span>{{ course.semester|capfirst }} {{ course.academic_year }}</span>
-                </div>
-                <div class="card-actions justify-end mt-4">
-                    <a href="{% url 'kura:course_detail' course.id %}" class="btn btn-outline btn-sm">
-                        View Course &rarr;
-                    </a>
+                <div>
+                    <h2 class="text-base font-semibold leading-snug">
+                        <a href="{% url 'kura:course_detail' course.id %}" class="hover:text-primary">
+                            {{ course.title }}
+                        </a>
+                    </h2>
+                    <p class="text-xs k-muted mt-1 line-clamp-2 leading-relaxed">
+                        {{ course.description|default:"No curriculum description provided." }}
+                    </p>
                 </div>
             </div>
-        </div>
+
+            <div class="mt-4 pt-3 border-t border-base-300 flex items-center justify-between text-xs">
+                <span class="k-muted truncate">{{ course.department.name }}</span>
+                <span class="k-num font-medium text-base-content flex-shrink-0">{{ course.semester|capfirst }} {{ course.academic_year }}</span>
+            </div>
+        </article>
         {% empty %}
-        <div class="col-span-full rounded-box border border-base-300 bg-base-100 p-6 text-center">
-            <p class="font-medium">No courses are available for your account.</p>
+        <div class="col-span-full">
             {% if is_admin %}
-            <a href="{% url 'kura:admin_course_create' %}" class="btn btn-primary btn-sm mt-4">Create a course</a>
+            {% include "kura/_empty.html" with icon="courses" title="No courses match the criteria" text="No academic courses are available." action_url="/admin/courses/new/" action_label="Create a course" %}
             {% elif is_head %}
-            <a href="{% url 'kura:course_create' %}" class="btn btn-primary btn-sm mt-4">Create a course</a>
+            {% include "kura/_empty.html" with icon="courses" title="No courses available" text="No courses have been created in your department yet." action_url="/courses/new/" action_label="Create a course" %}
             {% else %}
-            <p class="mt-2 text-sm text-base-content/70">Ask your course administrator if you expected to see a course here.</p>
+            {% include "kura/_empty.html" with icon="courses" title="No courses enrolled" text="Ask your course administrator if you expected to see a course here." %}
             {% endif %}
         </div>
         {% endfor %}

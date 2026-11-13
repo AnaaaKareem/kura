@@ -2,137 +2,133 @@
 
 {% block title %}Attempt #{{ attempt.attempt_no }} - {{ assessment.title }} - Kura{% endblock %}
 
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:course_detail' assessment.section.module.course.id %}" class="k-muted hover:text-primary">{{ assessment.section.module.course.code }}</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li><a href="{% url 'kura:assessment_detail' assessment.id %}" class="k-muted hover:text-primary truncate max-w-[150px]">{{ assessment.title }}</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">Attempt #{{ attempt.attempt_no }}</li>
+</ol>
+{% endblock %}
+
 {% block content %}
-<div class="max-w-4xl mx-auto space-y-6">
-    <div class="flex flex-col gap-4 sm:flex-row sm:items-start sm:justify-between">
-        <div>
+<div class="space-y-6">
+    <!-- Page Header (Section 8.2) -->
+    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
+        <div class="space-y-1">
             <div class="flex items-center gap-2">
                 <span class="badge badge-primary font-mono text-xs">{{ assessment.section.module.course.code }}</span>
                 {% if attempt.status == 'Fully_Graded' %}
-                <span class="badge badge-success badge-sm">Fully Graded</span>
+                <span class="badge badge-success badge-sm font-medium">Fully graded</span>
                 {% elif attempt.status == 'Requires_Manual_Grading' %}
-                <span class="badge badge-warning badge-sm">Requires Manual Grading</span>
+                <span class="badge badge-warning badge-sm font-medium">Requires manual grading</span>
                 {% else %}
-                <span class="badge badge-info badge-sm">In Progress</span>
+                <span class="badge badge-info badge-sm font-medium">In progress</span>
                 {% endif %}
             </div>
-            <h1 class="text-2xl font-bold mt-2">Attempt #{{ attempt.attempt_no }} Review</h1>
-            <p class="text-sm text-base-content/70">
-                Assessment: <strong>{{ assessment.title }}</strong> &bull;
-                Student: <strong>{{ attempt.student.get_full_name|default:attempt.student.email }}</strong>
+            <h1 class="text-2xl font-bold mt-1">Attempt #{{ attempt.attempt_no }} review</h1>
+            <p class="text-sm k-muted">
+                {{ assessment.title }} &bull; Student: <strong>{{ attempt.student.get_full_name|default:attempt.student.email }}</strong>
             </p>
         </div>
-        {% if is_staff and attempt.student_id != user.id and attempt.status == 'Requires_Manual_Grading' %}
-        {% if assessment.delivery_mode != 'paper_scanned' or attempt_files %}
-        <a href="{% url 'kura:grade_entry' attempt.id %}" class="btn btn-primary btn-sm">Enter manual grade</a>
-        {% endif %}
-        {% endif %}
-        <a href="{% url 'kura:assessment_detail' assessment.id %}" class="btn btn-outline btn-sm">
-            Assessment Details
-        </a>
-    </div>
-
-    <!-- Cryptographic Telemetry Card -->
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <h2 class="card-title text-base font-bold">Submission Telemetry & Non-Repudiation</h2>
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs mt-2">
-                <div>
-                    <span class="text-base-content/60">Started at:</span>
-                    <div class="font-semibold">{{ attempt.started_at|date:"Y-m-d H:i:s" }}</div>
-                </div>
-                <div>
-                    <span class="text-base-content/60">Submitted at:</span>
-                    <div class="font-semibold">{{ attempt.submitted_at|date:"Y-m-d H:i:s"|default:"Auto-saved" }}</div>
-                </div>
-                <div>
-                    <span class="text-base-content/60">Client Network Address:</span>
-                    <div class="font-mono">{{ attempt.ip_address }}</div>
-                </div>
-                <div>
-                    <span class="text-base-content/60">Tab Focus Lost Events:</span>
-                    <div class="font-semibold {% if attempt.tab_focus_lost_count > 0 %}text-warning{% endif %}">
-                        {{ attempt.tab_focus_lost_count }} time(s)
-                    </div>
-                </div>
-            </div>
-
-            {% if attempt.submission_hash %}
-            <div class="mt-4 p-3 bg-base-200 rounded-box border border-base-300">
-                <span class="text-xs uppercase font-bold text-base-content/60 tracking-wider">Cryptographic Submission Hash (SHA-256)</span>
-                <div class="font-mono text-xs break-all text-primary font-bold mt-1">
-                    {{ attempt.submission_hash }}
-                </div>
-            </div>
+        <div class="flex items-center gap-2">
+            {% if is_staff and attempt.student_id != user.id and attempt.status == 'Requires_Manual_Grading' %}
+            {% if assessment.delivery_mode != 'paper_scanned' or attempt_files %}
+            <a href="{% url 'kura:grade_entry' attempt.id %}" class="btn btn-primary btn-sm">Enter manual grade</a>
             {% endif %}
-        </div>
-    </div>
-
-    <!-- Score Breakdown Card -->
-    {% if summary %}
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <h2 class="card-title text-base font-bold">Evaluation Summary</h2>
-            <div class="grid grid-cols-2 md:grid-cols-4 gap-4 mt-2 text-center">
-                <div class="p-4 bg-base-200 rounded-box">
-                    <span class="text-xs text-base-content/60 uppercase">Auto-Graded</span>
-                    <div class="text-2xl font-bold text-primary mt-1">{{ summary.auto_graded_points }}</div>
-                </div>
-                <div class="p-4 bg-base-200 rounded-box">
-                    <span class="text-xs text-base-content/60 uppercase">Manual Score</span>
-                    <div class="text-2xl font-bold mt-1">{{ summary.manual_graded_points }}</div>
-                </div>
-                <div class="p-4 bg-base-200 rounded-box">
-                    <span class="text-xs text-base-content/60 uppercase">Total Score</span>
-                    <div class="text-2xl font-bold text-success mt-1">{{ summary.total_score }} / {{ summary.max_possible_points }}</div>
-                </div>
-                <div class="p-4 bg-base-200 rounded-box">
-                    <span class="text-xs text-base-content/60 uppercase">Evaluation Status</span>
-                    <div class="mt-2">
-                        {% if summary.is_fully_graded %}
-                        <span class="badge badge-success badge-sm">Finalized</span>
-                        {% else %}
-                        <span class="badge badge-warning badge-sm">Tutor Review Needed</span>
-                        {% endif %}
-                    </div>
-                </div>
-            </div>
-        </div>
-    </div>
-    {% endif %}
-
-    <!-- Students see only the grade staff have released, not the automatic marking breakdown. -->
-    {% if released_grade %}
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <h2 class="card-title text-base font-bold">Released Grade</h2>
-            <p>{{ released_grade.score }} / {{ assessment.max_score }}</p>
-            {% if released_grade.feedback %}
-            <p class="text-sm whitespace-pre-line">{{ released_grade.feedback }}</p>
             {% endif %}
+            <a href="{% url 'kura:assessment_detail' assessment.id %}" class="btn btn-outline btn-sm">Assessment details</a>
         </div>
-    </div>
-    {% endif %}
+    </header>
 
-    <!-- Attached Attempt Files -->
-    {% if attempt_files %}
-    <div class="card bg-base-100 border border-base-300">
-        <div class="card-body gap-4 p-4 sm:p-6">
-            <h2 class="card-title text-base font-bold">Submitted Coursework Files</h2>
-            <div class="space-y-2 mt-2">
-                {% for att in attempt_files %}
-                <div class="flex flex-col gap-4 sm:flex-row sm:items-end sm:justify-between p-3 bg-base-200 rounded-box text-xs">
+    <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
+        <!-- Main Column -->
+        <div class="xl:col-span-2 space-y-6">
+            <!-- Telemetry Card -->
+            <div class="k-card p-6 space-y-4">
+                <h2 class="text-base font-semibold">Submission telemetry &amp; verification</h2>
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-4 text-xs">
                     <div>
-                        <span class="font-medium">{{ att.file.original_filename }}</span>
-                        <span class="text-base-content/60 ml-2 font-mono">({{ att.file.size_bytes }} bytes &bull; SHA: {{ att.file.sha256_hash|truncatechars:12 }})</span>
+                        <span class="k-muted">Started at:</span>
+                        <div class="font-semibold text-sm">{{ attempt.started_at|date:"j M Y, H:i:s" }}</div>
                     </div>
-                    <span class="badge badge-ghost badge-xs">Sealed</span>
-                    <a href="{% url 'kura:attempt_file_download' attempt.id att.file.id %}" class="btn btn-outline btn-xs">Download</a>
+                    <div>
+                        <span class="k-muted">Submitted at:</span>
+                        <div class="font-semibold text-sm">{{ attempt.submitted_at|date:"j M Y, H:i:s"|default:"Auto-saved" }}</div>
+                    </div>
+                    <div>
+                        <span class="k-muted">Client network address:</span>
+                        <div class="k-num font-semibold text-sm">{{ attempt.ip_address }}</div>
+                    </div>
+                    <div>
+                        <span class="k-muted">Tab focus lost events:</span>
+                        <div class="font-semibold text-sm {% if attempt.tab_focus_lost_count > 0 %}text-warning{% endif %}">
+                            {{ attempt.tab_focus_lost_count }} time(s)
+                        </div>
+                    </div>
                 </div>
-                {% endfor %}
+
+                {% if attempt.submission_hash %}
+                <div class="mt-4 p-3 bg-base-200 rounded-btn">
+                    <span class="k-eyebrow">Cryptographic submission hash (SHA-256)</span>
+                    <p class="k-num text-xs break-all text-primary font-semibold mt-1">{{ attempt.submission_hash }}</p>
+                </div>
+                {% endif %}
             </div>
+
+            <!-- Attached Attempt Files -->
+            {% if attempt_files %}
+            <div class="k-card p-6 space-y-3">
+                <h2 class="text-base font-semibold">Submitted coursework files</h2>
+                <div class="space-y-2 pt-1">
+                    {% for att in attempt_files %}
+                    <div class="flex items-center justify-between p-3 bg-base-200 rounded-btn text-xs">
+                        <span class="font-medium truncate">{{ att.file.original_filename }} ({{ att.file.size_bytes }} bytes)</span>
+                        <a href="{% url 'kura:attempt_file_download' attempt.id att.file.id %}" class="btn btn-ghost btn-xs text-primary">
+                            Download
+                        </a>
+                    </div>
+                    {% endfor %}
+                </div>
+            </div>
+            {% endif %}
+        </div>
+
+        <!-- Side Evaluation Column -->
+        <div class="space-y-6">
+            {% if summary %}
+            <div class="k-card p-6 space-y-4">
+                <h2 class="text-base font-semibold border-b border-base-300 pb-2">Evaluation Summary</h2>
+                <div class="space-y-3">
+                    <div>
+                        <p class="k-eyebrow">Auto-graded</p>
+                        <p class="text-2xl font-bold text-primary k-num">{{ summary.auto_graded_points }}</p>
+                    </div>
+                    <div>
+                        <p class="k-eyebrow">Manual score</p>
+                        <p class="text-2xl font-bold k-num">{{ summary.manual_graded_points }}</p>
+                    </div>
+                    <div class="pt-2 border-t border-base-300">
+                        <p class="k-eyebrow">Total score</p>
+                        <p class="text-3xl font-bold text-success k-num">{{ summary.total_score }} / {{ summary.max_possible_points }}</p>
+                    </div>
+                </div>
+            </div>
+            {% endif %}
+
+            {% if released_grade %}
+            <div class="k-card p-6 space-y-2 border border-success">
+                <p class="k-eyebrow text-success">Released official grade</p>
+                <p class="text-3xl font-bold text-success k-num">{{ released_grade.score }} / {{ assessment.max_score }}</p>
+                {% if released_grade.feedback %}
+                <p class="text-sm whitespace-pre-line pt-2">{{ released_grade.feedback }}</p>
+                {% endif %}
+            </div>
+            {% endif %}
         </div>
     </div>
-    {% endif %}
 </div>
 {% endblock %}

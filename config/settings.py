@@ -31,7 +31,7 @@ load_dotenv(BASE_DIR / ".env")
 # Helper to read secrets from Docker secrets mount (/run/secrets/<name>) or environment variables
 def read_secret(name, fallback=""):
     """
-    Reads a sensitive credential, checking Docker secrets (/run/secrets/<name>) first,
+    Reads a sensitive credential, checking Docker secrets mount (/run/secrets/<name>) first,
     then falling back to environment variables.
     """
     secret_file = Path(f"/run/secrets/{name}")
@@ -137,6 +137,7 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
+                "kura.context_processors.nav_roles",
             ],
         },
     },
