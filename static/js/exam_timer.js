@@ -88,4 +88,54 @@ document.addEventListener("DOMContentLoaded", function () {
             body: formData,
         });
     });
+
+    // Live word counters for written-answer textareas.
+    document.querySelectorAll("[data-word-counter-input]").forEach(function (textarea) {
+        const counterId = textarea.getAttribute("data-word-counter-target");
+        const counter = counterId ? document.getElementById(counterId) : null;
+        if (!counter) return;
+        const maxWords = parseInt(textarea.getAttribute("data-max-words") || "0", 10);
+        const updateWordCount = function () {
+            const trimmed = textarea.value.trim();
+            const count = trimmed ? trimmed.split(/\s+/).length : 0;
+            counter.textContent = maxWords > 0 ? count + " / " + maxWords + " words" : count + " words";
+            counter.classList.toggle("text-error", maxWords > 0 && count > maxWords);
+        };
+        textarea.addEventListener("input", updateWordCount);
+        updateWordCount();
+    });
+
+    // Enforce one-question-at-a-time navigation when backtracking is disabled.
+    const questionsWrap = document.querySelector("[data-exam-questions]");
+    if (questionsWrap && questionsWrap.getAttribute("data-allow-backtracking") === "false") {
+        const cards = Array.from(questionsWrap.querySelectorAll("[data-question-card]"));
+        const nextBtn = document.querySelector("[data-next-question]");
+        const stepLabel = document.querySelector("[data-question-step]");
+        const storageKey = "kura-exam-step:" + window.location.pathname;
+        let currentIndex = parseInt(sessionStorage.getItem(storageKey) || "0", 10);
+        if (isNaN(currentIndex) || currentIndex < 0 || currentIndex >= cards.length) {
+            currentIndex = 0;
+        }
+        const renderStep = function () {
+            cards.forEach(function (card, idx) {
+                card.hidden = idx !== currentIndex;
+            });
+            if (stepLabel) {
+                stepLabel.textContent = "Question " + (currentIndex + 1) + " of " + cards.length;
+            }
+            if (nextBtn) {
+                nextBtn.hidden = currentIndex >= cards.length - 1;
+            }
+            sessionStorage.setItem(storageKey, String(currentIndex));
+        };
+        if (nextBtn) {
+            nextBtn.addEventListener("click", function () {
+                if (currentIndex < cards.length - 1) {
+                    currentIndex += 1;
+                    renderStep();
+                }
+            });
+        }
+        renderStep();
+    }
 });

@@ -51,6 +51,95 @@ document.addEventListener("DOMContentLoaded", function () {
         button.addEventListener("click", function () { window.print(); });
     });
 
+    // Gate links/buttons marked with data-requires until the target checkbox is ticked.
+    document.querySelectorAll("[data-requires]").forEach(function (control) {
+        const checkbox = document.querySelector(control.getAttribute("data-requires"));
+        if (!checkbox) return;
+        const syncRequired = function () {
+            const ready = checkbox.checked;
+            control.classList.toggle("btn-disabled", !ready);
+            control.setAttribute("aria-disabled", ready ? "false" : "true");
+        };
+        control.addEventListener("click", function (event) {
+            if (!checkbox.checked) {
+                event.preventDefault();
+                checkbox.focus();
+            }
+        });
+        checkbox.addEventListener("change", syncRequired);
+        syncRequired();
+    });
+
+    // Copy text from a referenced element into the clipboard.
+    document.querySelectorAll("[data-copy]").forEach(function (button) {
+        button.addEventListener("click", async function () {
+            const target = document.querySelector(button.getAttribute("data-copy"));
+            const status = button.parentElement ? button.parentElement.querySelector("[data-copy-status]") : null;
+            if (!target) return;
+            try {
+                await navigator.clipboard.writeText(target.textContent.trim());
+                if (status) status.textContent = "Copied.";
+            } catch (error) {
+                if (status) status.textContent = "Copy failed. Select and copy it manually.";
+            }
+        });
+    });
+
+    // Toggle projector fullscreen view for live attendance code and QR panels.
+    document.querySelectorAll("[data-fullscreen]").forEach(function (button) {
+        const target = document.querySelector(button.getAttribute("data-fullscreen"));
+        if (!target) return;
+        button.addEventListener("click", function () {
+            if (document.fullscreenElement === target && document.exitFullscreen) {
+                document.exitFullscreen();
+                return;
+            }
+            if (target.requestFullscreen) {
+                target.requestFullscreen().catch(function () {
+                    target.classList.toggle("fixed");
+                    target.classList.toggle("inset-0");
+                    target.classList.toggle("z-50");
+                });
+            } else {
+                target.classList.toggle("fixed");
+                target.classList.toggle("inset-0");
+                target.classList.toggle("z-50");
+            }
+        });
+    });
+
+    // Handle enrollment search suggestion picks while keeping the underlying <select> authoritative.
+    document.addEventListener("click", function (event) {
+        const dismissTargetBtn = event.target.closest("[data-dismiss-target]");
+        if (dismissTargetBtn) {
+            const el = document.querySelector(dismissTargetBtn.getAttribute("data-dismiss-target"));
+            if (el) el.remove();
+            return;
+        }
+        const pickBtn = event.target.closest("[data-pick-id]");
+        if (!pickBtn) return;
+        const container = pickBtn.closest("[data-pick-container]");
+        if (!container) return;
+        const selectId = container.getAttribute("data-pick-select");
+        const selectEl = selectId ? document.getElementById(selectId) : null;
+        if (selectEl) {
+            const value = pickBtn.getAttribute("data-pick-id");
+            const label = pickBtn.getAttribute("data-pick-label") || pickBtn.textContent.trim();
+            if (!Array.from(selectEl.options).some(function (opt) { return opt.value === value; })) {
+                selectEl.add(new Option(label, value));
+            }
+            selectEl.value = value;
+        }
+        const pickedBox = container.querySelector("[data-picked-display]");
+        const pickedText = container.querySelector("[data-picked-label]");
+        if (pickedBox && pickedText) {
+            pickedText.textContent = pickBtn.getAttribute("data-pick-label") || pickBtn.textContent.trim();
+            pickedBox.hidden = false;
+        }
+        const list = pickBtn.closest("[data-pick-list]");
+        if (list) list.replaceChildren();
+    });
+
     // -------------------------------------------------------------------------
     // 3. Theme Management (Light "kura", Dark "kura-dark", System "kura-system")
     // -------------------------------------------------------------------------
