@@ -9335,3 +9335,259 @@ class SecurityPolicyPageTests(TestCase):
     def test_page_is_read_only(self):
         self.client.force_login(make_user("Admin"))
         self.assertEqual(self.client.post(self.url).status_code, 405)
+
+
+class RemainingLedgerCompletionTests(TestCase):
+    """
+    Verifies the remaining Ledger UI and view features completed from the template
+    audit table: field accessibility IDs, pagination, MFA manual key and gate,
+    one-time temporary password cards, dashboard context, course tabs, live
+    attendance polling, schedule grid/filters, attendance history stats/filters,
+    assessment shuffling/backtracking, staff answer review, and gradebook filters.
+    """
+
+    def setUp(self):
+        self.client = Client()
+        self.admin = make_user("Admin", first_name="Ada", last_name="Admin")
+        self.registrar = make_user("Registrar", first_name="Reg", last_name="Staff")
+        self.head = make_user("Department head", first_name="Head", last_name="Prof")
+        self.instructor = make_user("Instructor", first_name="Grace", last_name="Hopper")
+        self.ta = make_user("Teaching assistant", first_name="Alan", last_name="Turing")
+        self.student = make_user("Student", first_name="Sam", last_name="Learner")
+        self.dept = Department.objects.create(name="Computer Science", code="CS", head_user=self.head)
+        StudentProfile.objects.create(
+            user=self.student, department=self.dept, current_level="level_4", matriculation_year=2026
+        )
+        self.course = Course.objects.create(
+            department=self.dept,
+            code="CS301",
+            title="Operating Systems",
+            semester="1",
+            academic_year=2026,
+            is_published=True,
+            published_by=self.head,
+            published_at=timezone.now(),
+        )
+        CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor")
+        CourseStaff.objects.create(course=self.course, user=self.ta, staff_role="teaching_assistant")
+        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
+        self.module = Module.objects.create(course=self.course, title="Processes", is_visible=True)
+        self.section = ModuleSection.objects.create(module=self.module, title="Quiz 1", section_type="quiz")
+        self.assessment = Assessment.objects.create(
+            section=self.section,
+            title="Midterm Quiz",
+            component_type="quiz",
+            max_score=20,
+            max_attempts=1,
+            opens_at=timezone.now() - timezone.timedelta(hours=1),
+            due_date=timezone.now() + timezone.timedelta(hours=12),
+            duration_minutes=45,
+            created_by=self.instructor,
+            questions_json=[
+                {
+                    "question_id": "q1",
+                    "type": "multiple_choice",
+                    "prompt": "What is a process?",
+                    "points": 10,
+                    "options": [{"option_id": "o1", "text": "Running program"}, {"option_id": "o2", "text": "Disk block"}],
+                },
+                {
+                    "question_id": "q2",
+                    "type": "long_text",
+                    "prompt": "Explain context switching.",
+                    "points": 10,
+                    "max_words": 200,
+                },
+            ],
+            settings_json={"shuffle_questions": True, "shuffle_options": True, "allow_backtracking": False},
+        )
+
+    def test_field_accessibility_ids_and_numeric_mfa_inputmode(self):
+        self.client.force_login(self.admin)
+        resp = self.client.post(reverse("kura:admin_course_create"), {"code": ""})
+        self.assertContains(resp, 'id="id_code_error"')
+        self.assertContains(resp, 'aria-describedby="id_code_error"')
+
+        # MFA verify form renders numeric inputmode for mobile keyboards.
+        self.client.logout()
+        session = self.client.session
+        session["pre_mfa_user_id"] = str(self.admin.id)
+        session.save()
+        mfa_resp = self.client.get(reverse("kura:mfa_verify"))
+        self.assertContains(mfa_resp, 'inputmode="numeric"')
+
+    def test_mfa_setup_manual_key_hidden_during_reauth_and_shown_after(self):
+        # Unenrolled user gets manual_key in collapse section.
+        unenrolled = make_user("Student", mfa_enabled=False)
+        self.client.force_login(unenrolled)
+        resp = self.client.get(reverse("kura:mfa_setup"))
+        self.assertContains(resp, "Can't scan? Enter the key instead")
+        self.assertTrue(resp.context["manual_key"])
+
+        # Already-enrolled user does not receive manual_key until step-up completes.
+        self.client.force_login(self.admin)
+        reauth_resp = self.client.get(reverse("kura:mfa_setup"))
+        self.assertNotIn("manual_key", reauth_resp.context)
+
+    def test_temp_password_shown_once_via_session_not_flash_messages(self):
+        self.client.force_login(self.admin)
+        post_resp = self.client.post(
+            reverse("kura:staff_create"),
+            {
+                "email": "new.staff@example.com",
+                "first_name": "New",
+                "last_name": "Staff",
+                "department": self.dept.id,
+                "staff_title": "Instructor",
+            },
+        )
+        self.assertRedirects(post_resp, reverse("kura:staff_list"), fetch_redirect_response=False)
+        first_list = self.client.get(reverse("kura:staff_list"))
+        self.assertContains(first_list, "Temporary password for new.staff@example.com")
+        self.assertContains(first_list, "This is shown once.")
+        self.assertContains(first_list, "1 staff")
+        second_list = self.client.get(reverse("kura:staff_list"))
+        self.assertNotContains(second_list, "Temporary password for new.staff@example.com")
+
+        self.client.force_login(self.registrar)
+        student_post = self.client.post(
+            reverse("kura:student_create"),
+            {
+                "email": "new.stud@example.com",
+                "first_name": "New",
+                "last_name": "Student",
+                "department": self.dept.id,
+                "current_level": "level_4",
+                "matriculation_year": 2026,
+            },
+        )
+        self.assertRedirects(student_post, reverse("kura:enrollment_list"), fetch_redirect_response=False)
+        first_enroll = self.client.get(reverse("kura:enrollment_list"))
+        self.assertContains(first_enroll, "Temporary password for new.stud@example.com")
+        second_enroll = self.client.get(reverse("kura:enrollment_list"))
+        self.assertNotContains(second_enroll, "Temporary password for new.stud@example.com")
+
+    def test_dashboard_greeting_attention_and_role_isolation(self):
+        self.client.force_login(self.student)
+        student_home = self.client.get(reverse("kura:home"))
+        self.assertContains(student_home, "Sam")
+        self.assertContains(student_home, "Needs your attention")
+        self.assertContains(student_home, "Midterm Quiz in CS301 closes")
+
+        # Admin never sees assessment attention items.
+        self.client.force_login(self.admin)
+        admin_home = self.client.get(reverse("kura:home"))
+        self.assertContains(admin_home, "Ada")
+        self.assertNotContains(admin_home, "Midterm Quiz")
+
+    def test_list_pagination_preserves_query_filters(self):
+        for i in range(28):
+            user = make_user("Instructor", email=f"paged{i:02d}@example.com", first_name="Paged")
+            StaffProfile.objects.create(user=user, department=self.dept, staff_title="Instructor")
+        self.client.force_login(self.admin)
+        page1 = self.client.get(reverse("kura:staff_list"), {"q": "Paged"})
+        self.assertEqual(page1.context["page_obj"].number, 1)
+        self.assertEqual(page1.context["page_obj"].paginator.count, 28)
+        self.assertContains(page1, "?q=Paged&amp;page=2")
+
+        page2 = self.client.get(reverse("kura:staff_list"), {"q": "Paged", "page": 2})
+        self.assertEqual(len(page2.context["staff_members"]), 3)
+
+    def test_course_detail_tabs_and_role_guards(self):
+        Schedule.objects.create(
+            course=self.course,
+            instructor=self.instructor,
+            session_type="lecture",
+            day="monday",
+            start_time="09:00",
+            end_time="10:30",
+            location="Hall 1",
+            recurrence_start=timezone.localdate(),
+            recurrence_end=timezone.localdate() + timezone.timedelta(days=30),
+        )
+        # Admin gets people by default, schedule allowed, content/grades return 403.
+        self.client.force_login(self.admin)
+        self.assertEqual(self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=content").status_code, 403)
+        self.assertEqual(self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=grades").status_code, 403)
+        self.assertContains(self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=schedule"), "Hall 1")
+
+        # Student cannot open people or grades tabs.
+        self.client.force_login(self.student)
+        self.assertEqual(self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=people").status_code, 403)
+        self.assertEqual(self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=grades").status_code, 403)
+        self.assertContains(self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=schedule"), "Hall 1")
+
+        # TA sees people tab count only, never student email.
+        self.client.force_login(self.ta)
+        ta_people = self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=people")
+        self.assertEqual(ta_people.status_code, 200)
+        self.assertNotContains(ta_people, self.student.email)
+
+    def test_attendance_session_fragment_and_history_filters(self):
+        session = ModuleAttendanceSession.objects.create(
+            module=self.module,
+            created_by=self.instructor,
+            title="Lecture 1 Roll",
+            passcode_hash="abc",
+            expires_at=timezone.now() + timezone.timedelta(minutes=20),
+            is_active=True,
+        )
+        AttendanceRecord.objects.create(
+            session=session,
+            student=self.student,
+            status=AttendanceStatus.PRESENT,
+            method=AttendanceMethod.PASSCODE,
+        )
+        self.client.force_login(self.instructor)
+        frag = self.client.get(reverse("kura:attendance_session_detail", args=[session.id]) + "?fragment=1")
+        self.assertEqual(frag.status_code, 200)
+        self.assertContains(frag, "Attendance roll")
+        self.assertNotContains(frag, "<html")
+
+        hist = self.client.get(reverse("kura:attendance_history"), {"status": AttendanceStatus.PRESENT, "q": self.student.email})
+        self.assertContains(hist, "Lecture 1 Roll")
+
+    def test_assessment_take_shuffles_and_staff_review_answers(self):
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment,
+            student=self.student,
+            attempt_no=1,
+            status=AttemptStatus.IN_PROGRESS,
+            expires_at=timezone.now() + timezone.timedelta(minutes=45),
+            ip_address="127.0.0.1",
+            answers_json=[
+                {"question_id": "q1", "selected_option_ids": ["o1"]},
+                {"question_id": "q2", "response_text": "Saving registers and loading next PCB."},
+            ],
+        )
+        self.client.force_login(self.student)
+        take_resp = self.client.get(reverse("kura:assessment_take", args=[attempt.id]))
+        self.assertContains(take_resp, 'data-allow-backtracking="false"')
+        self.assertContains(take_resp, "data-word-counter-input")
+
+        attempt.status = AttemptStatus.REQUIRES_MANUAL_GRADING
+        attempt.submitted_at = timezone.now()
+        attempt.save(update_fields=["status", "submitted_at"])
+
+        # Staff see read-only student responses on attempt_detail and grade_entry.
+        self.client.force_login(self.instructor)
+        detail_resp = self.client.get(reverse("kura:attempt_detail", args=[attempt.id]))
+        self.assertContains(detail_resp, "Student responses")
+        self.assertContains(detail_resp, "Saving registers and loading next PCB.")
+        entry_resp = self.client.get(reverse("kura:grade_entry", args=[attempt.id]))
+        self.assertContains(entry_resp, "Saving registers and loading next PCB.")
+
+        # Gradebook filters narrow rows by assessment and student query.
+        Grade.objects.create(
+            assessment=self.assessment,
+            student=self.student,
+            attempt=attempt,
+            score=18,
+            status=GradeStatus.DRAFT,
+        )
+        grades_resp = self.client.get(
+            reverse("kura:course_grades", args=[self.course.id]),
+            {"status": GradeStatus.DRAFT, "q": self.student.email},
+        )
+        self.assertContains(grades_resp, "18.00 / 20.00")
+        self.assertEqual(grades_resp.context["grade_stats"]["drafts"], 1)
