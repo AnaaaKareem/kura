@@ -1409,6 +1409,8 @@ class Grade(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="graded_grades"
     )
     score = models.DecimalField(max_digits=6, decimal_places=2, validators=[MinValueValidator(0)])
+    # Written comments from the marker. Students see them only once the grade is released.
+    feedback = models.TextField(blank=True, default="")
     status = models.CharField(max_length=20, choices=GradeStatus.choices, default=GradeStatus.DRAFT)
     graded_at = models.DateTimeField(auto_now_add=True)
     finalized_by = models.ForeignKey(
