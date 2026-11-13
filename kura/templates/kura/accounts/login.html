@@ -2,39 +2,33 @@
 
 {% block title %}Log in - Kura{% endblock %}
 
+{% block form_errors %}{% endblock %}
+
 {% block content %}
-<div class="max-w-md mx-auto my-8">
+<div class="max-w-md mx-auto my-6">
     <div class="k-card p-6 sm:p-8 space-y-6">
         <header class="text-center space-y-2">
             <h1 class="text-2xl font-bold">Log in</h1>
-            <p class="text-sm k-muted">Enter your institutional email address and password.</p>
+            <p class="text-sm k-muted">Use your university email and password.</p>
         </header>
 
         <form method="post" action="{% url 'kura:login' %}" class="space-y-4">
             {% csrf_token %}
-
-            <div class="form-control w-full space-y-1">
-                <label for="id_email" class="label py-1">
-                    <span class="label-text font-medium text-sm">Email address</span>
-                </label>
-                {{ form.email }}
-                {% if form.email.errors %}
-                <p class="text-error text-xs font-medium pt-0.5">{{ form.email.errors.0 }}</p>
-                {% endif %}
-            </div>
+            {% include "kura/_form_errors.html" %}
+            {% include "kura/_field.html" with field=form.email %}
 
             <div class="form-control w-full space-y-1">
                 <div class="flex justify-between items-center py-1">
                     <label for="id_password" class="label p-0">
                         <span class="label-text font-medium text-sm">Password</span>
                     </label>
-                    <a href="{% url 'kura:password_reset_request' %}" class="text-xs text-primary hover:underline font-medium">
-                        Forgot your password?
+                    <a href="{% url 'kura:password_reset_request' %}" class="link link-primary text-xs font-medium">
+                        Forgot password?
                     </a>
                 </div>
                 {{ form.password }}
                 {% if form.password.errors %}
-                <p class="text-error text-xs font-medium pt-0.5">{{ form.password.errors.0 }}</p>
+                <p id="id_password-error" class="text-error text-xs font-medium pt-0.5" role="alert">{{ form.password.errors.0 }}</p>
                 {% endif %}
             </div>
 

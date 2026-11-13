@@ -2,74 +2,63 @@
 
 {% block title %}{% if needs_reauth %}Confirm it's you{% else %}Set up two-step verification{% endif %} - Kura{% endblock %}
 
+{% block form_errors %}{% endblock %}
+
 {% block content %}
-<div class="max-w-lg mx-auto my-8">
+<div class="max-w-lg mx-auto my-6">
     <div class="k-card p-6 sm:p-8 space-y-6">
         {% if needs_reauth %}
         <header class="text-center space-y-2">
-            <h1 class="text-2xl font-bold">Confirm Your Identity</h1>
+            <h1 class="text-2xl font-bold">Confirm it's you</h1>
             <p class="text-sm k-muted">
                 Two-step verification is already enabled. To view your setup or generate new recovery codes, enter a code from your authenticator app or an unused recovery code.
             </p>
             <p class="text-xs k-muted">
-                Note: Entering a recovery code will consume it.
+                Entering a recovery code uses it up.
             </p>
         </header>
 
         <form method="post" action="{% url 'kura:mfa_setup' %}" class="space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
             {% csrf_token %}
-
-            <div class="form-control w-full space-y-1">
-                <label for="id_code" class="label justify-center py-1">
-                    <span class="label-text font-medium text-sm">Security code</span>
-                </label>
-                <div class="flex justify-center">
-                    {{ form.code }}
-                </div>
-                {% if form.code.errors %}
-                <p class="text-error text-xs font-medium text-center pt-0.5">{{ form.code.errors.0 }}</p>
-                {% endif %}
-            </div>
+            {% include "kura/_form_errors.html" %}
+            {% include "kura/_field.html" with field=form.code %}
 
             <div class="pt-2">
                 <button type="submit" class="btn btn-primary w-full">
-                    Verify &amp; continue
+                    Verify and continue
                 </button>
             </div>
         </form>
         {% else %}
         <header class="text-center space-y-2">
-            <h1 class="text-2xl font-bold">Set up Multi-Factor Authentication</h1>
+            <h1 class="text-2xl font-bold">Set up two-step verification</h1>
             <p class="text-sm k-muted">
-                Two-step verification is required for all Kura accounts. Scan the QR code below using an authenticator app, then enter the 6-digit code to confirm.
+                Kura requires an authenticator app for every account.
             </p>
         </header>
 
         {% if qr_code_url %}
-        <div class="my-4 flex justify-center">
-            <div class="p-3 bg-white border border-base-300 rounded-box">
-                <img src="{{ qr_code_url }}" alt="TOTP QR Code" class="w-56 h-56">
-            </div>
-        </div>
+        <ol class="list-decimal pl-5 space-y-4 text-sm">
+            <li>Install an authenticator app (Microsoft Authenticator, Google Authenticator, Aegis, or 2FAS).</li>
+            <li>
+                <p class="mb-3">Scan this QR code with your authenticator app.</p>
+                <div class="flex justify-center">
+                    <div class="p-3 bg-white border border-base-300 rounded-box">
+                        <img src="{{ qr_code_url }}" alt="TOTP QR Code" class="w-48 h-48">
+                    </div>
+                </div>
+            </li>
+            <li>Enter the 6-digit code shown in your app.</li>
+        </ol>
 
         <form method="post" action="{% url 'kura:mfa_setup' %}" class="space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
             {% csrf_token %}
-
-            <div class="form-control w-full space-y-1">
-                <label for="id_code" class="label justify-center py-1">
-                    <span class="label-text font-medium text-sm">Verification code</span>
-                </label>
-                <div class="flex justify-center">
-                    {{ form.code }}
-                </div>
-                {% if form.code.errors %}
-                <p class="text-error text-xs font-medium text-center pt-0.5">{{ form.code.errors.0 }}</p>
-                {% endif %}
-            </div>
+            {% include "kura/_form_errors.html" %}
+            {% include "kura/_field.html" with field=form.code %}
 
             <div class="pt-2">
                 <button type="submit" class="btn btn-primary w-full">
-                    Confirm &amp; enable
+                    Turn on two-step verification
                 </button>
             </div>
         </form>

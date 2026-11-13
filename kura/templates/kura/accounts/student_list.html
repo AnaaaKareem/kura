@@ -12,17 +12,19 @@
 
 {% block content %}
 <div class="space-y-6">
-    <!-- Page Header (Section 8.2) -->
-    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 border-b border-base-300 pb-5">
+    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div class="space-y-1">
             <p class="k-eyebrow">Records</p>
             <h1 class="text-2xl font-bold">Students</h1>
-            <p class="text-sm k-muted">Manage university student records, enrollments, and academic levels.</p>
+            <p class="text-sm k-muted">Find students and manage student accounts.</p>
         </div>
-        <a href="{% url 'kura:student_create' %}" class="btn btn-primary btn-sm">
-            {% include "kura/_icon.html" with name="plus" class="h-4 w-4" %}
-            <span>New student</span>
-        </a>
+        <div class="flex flex-wrap items-center gap-2">
+            <a href="{% url 'kura:enrollment_create' %}" class="btn btn-ghost btn-sm">Enroll a student</a>
+            <a href="{% url 'kura:student_create' %}" class="btn btn-primary btn-sm w-full sm:w-auto">
+                {% include "kura/_icon.html" with name="plus" class="h-4 w-4" %}
+                <span>New student</span>
+            </a>
+        </div>
     </header>
 
     {% if filter_form %}
@@ -40,7 +42,11 @@
     </form>
     {% endif %}
 
-    <!-- Students Table (Section 8.5) -->
+    <div class="flex items-center justify-between">
+        <p class="text-sm k-muted k-num">{{ students|length }} student{{ students|length|pluralize }}</p>
+    </div>
+
+    {% url 'kura:student_create' as new_student_url %}
     <div class="k-card p-0 overflow-x-auto">
         <table class="k-table">
             <caption class="sr-only">Student records</caption>
@@ -50,7 +56,8 @@
                     <th>Student ID</th>
                     <th>Department</th>
                     <th>Level</th>
-                    <th class="text-right">Status</th>
+                    <th>Status</th>
+                    <th class="text-right">Action</th>
                 </tr>
             </thead>
             <tbody>
@@ -65,22 +72,25 @@
                     <td class="k-num text-xs">{{ student.user_id }}</td>
                     <td>{{ student.department.name }}</td>
                     <td>{{ student.get_current_level_display }}</td>
-                    <td class="text-right">
+                    <td>
                         {% if not student.user.is_active %}
-                        <span class="badge badge-error badge-sm font-medium">Deactivated</span>
+                        {% include "kura/_status_badge.html" with kind="account" value="deactivated" %}
                         {% elif student.user.locked_until and student.user.locked_until > now %}
                         <span class="badge badge-warning badge-sm font-medium">
                             Locked until {{ student.user.locked_until|date:"d M, H:i" }}
                         </span>
                         {% else %}
-                        <span class="badge badge-success badge-sm font-medium">Active</span>
+                        {% include "kura/_status_badge.html" with kind="account" value="active" %}
                         {% endif %}
+                    </td>
+                    <td class="text-right">
+                        <a href="{% url 'kura:student_profile' student.user_id %}" class="btn btn-ghost btn-sm">View</a>
                     </td>
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="5" class="p-8 text-center">
-                        {% include "kura/_empty.html" with icon="students" title="No students found" text="No student records match the selected filters." %}
+                    <td colspan="6" class="p-8 text-center">
+                        {% include "kura/_empty.html" with icon="students" title="No students found" text="No student records match the selected filters." action_url=new_student_url action_label="New student" %}
                     </td>
                 </tr>
                 {% endfor %}

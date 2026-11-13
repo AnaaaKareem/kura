@@ -2,19 +2,30 @@
 
 {% block title %}Security policy - Kura{% endblock %}
 
+{% block breadcrumbs %}
+<ol class="flex items-center gap-1.5 text-sm">
+    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
+    <li aria-hidden="true" class="k-muted">/</li>
+    <li aria-current="page" class="font-medium text-base-content">Security policy</li>
+</ol>
+{% endblock %}
+
 {% block content %}
 <div class="space-y-6">
-    <header>
+    <header class="space-y-1">
+        <p class="k-eyebrow">Administration</p>
         <h1 class="text-2xl font-bold">Security policy</h1>
-        <p>The rules Kura enforces right now. They are set in the server configuration, so a change goes through code review and a redeploy.</p>
+        <p class="text-sm k-muted max-w-prose">
+            Active security rules read from server configuration. Changes go through code review and redeployment.
+        </p>
     </header>
 
-    <div class="overflow-x-auto bg-base-100 border border-base-300 rounded-box">
-        <table class="table table-sm w-full">
+    <div class="k-card p-0 overflow-x-auto">
+        <table class="k-table">
             <caption class="sr-only">Security rules in force</caption>
-            <thead class="bg-base-200">
+            <thead>
                 <tr>
-                    <th>Area</th>
+                    <th class="k-sticky-col">Area</th>
                     <th>Rule</th>
                     <th>Value</th>
                 </tr>
@@ -22,9 +33,9 @@
             <tbody>
                 {% for area, rule, value in policies %}
                 <tr>
-                    <td class="font-semibold">{% ifchanged area %}{{ area }}{% endifchanged %}</td>
+                    <td class="k-sticky-col font-semibold">{% ifchanged area %}{{ area }}{% endifchanged %}</td>
                     <td>{{ rule }}</td>
-                    <td>{{ value }}</td>
+                    <td class="k-num font-medium">{{ value }}</td>
                 </tr>
                 {% endfor %}
             </tbody>

@@ -12,17 +12,16 @@
 
 {% block content %}
 <div class="space-y-6">
-    <!-- Page Header (Section 8.2) -->
-    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4 border-b border-base-300 pb-5">
+    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
         <div class="space-y-1">
             <p class="k-eyebrow">Administration</p>
             <h1 class="text-2xl font-bold">Staff</h1>
             <p class="text-sm k-muted">
-                Manage university instructional and administrative staff members.
+                Accounts for everyone who works at the university.
             </p>
         </div>
         <div class="flex items-center gap-2">
-            <a href="{% url 'kura:staff_create' %}" class="btn btn-primary btn-sm">
+            <a href="{% url 'kura:staff_create' %}" class="btn btn-primary btn-sm w-full sm:w-auto">
                 {% include "kura/_icon.html" with name="plus" class="h-4 w-4" %}
                 <span>Add staff member</span>
             </a>
@@ -44,13 +43,16 @@
     </form>
     {% endif %}
 
-    <!-- Staff Table (Section 8.5) -->
+    <div class="flex items-center justify-between">
+        <p class="text-sm k-muted k-num">{{ staff_members|length }} staff</p>
+    </div>
+
     <div class="k-card p-0 overflow-x-auto">
         <table class="k-table">
             <caption class="sr-only">Staff accounts</caption>
             <thead>
                 <tr>
-                    <th class="k-sticky-col">Name &amp; email</th>
+                    <th class="k-sticky-col">Name</th>
                     <th>Department</th>
                     <th>Title &amp; office</th>
                     <th>Status</th>
@@ -76,37 +78,39 @@
                     </td>
                     <td>
                         {% if not profile.user.is_active %}
-                        <span class="badge badge-error badge-sm font-medium">Deactivated</span>
+                        {% include "kura/_status_badge.html" with kind="account" value="deactivated" %}
                         {% elif profile.user.locked_until and profile.user.locked_until > now %}
                         <span class="badge badge-warning badge-sm font-medium">
                             Locked until {{ profile.user.locked_until|date:"d M, H:i" }}
                         </span>
                         {% else %}
-                        <span class="badge badge-success badge-sm font-medium">Active</span>
+                        {% include "kura/_status_badge.html" with kind="account" value="active" %}
                         {% endif %}
                     </td>
-                    <td class="text-right space-x-1">
-                        <a href="{% url 'kura:user_roles' profile.user.id %}" class="btn btn-ghost btn-xs">
-                            Roles
-                        </a>
+                    <td class="text-right">
+                        <div class="inline-flex items-center justify-end gap-1.5">
+                            <a href="{% url 'kura:user_roles' profile.user.id %}" class="btn btn-ghost btn-sm">
+                                Roles
+                            </a>
 
-                        {% if profile.user.id != user.id %}
-                        <form method="post" action="{% url 'kura:user_lock_toggle' profile.user.id %}" class="inline">
-                            {% csrf_token %}
-                            <button type="submit" class="btn btn-ghost btn-xs text-warning">
-                                {% if profile.user.locked_until and profile.user.locked_until > now %}Unlock{% else %}Lock{% endif %}
-                            </button>
-                        </form>
+                            {% if profile.user.id != user.id %}
+                            <form method="post" action="{% url 'kura:user_lock_toggle' profile.user.id %}" class="inline" data-confirm-action="{% if profile.user.locked_until and profile.user.locked_until > now %}Unlock{% else %}Lock{% endif %} {{ profile.user.email }}?">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-outline btn-sm">
+                                    {% if profile.user.locked_until and profile.user.locked_until > now %}Unlock{% else %}Lock{% endif %}
+                                </button>
+                            </form>
 
-                        {% if profile.user.is_active %}
-                        <form method="post" action="{% url 'kura:user_deactivate' profile.user.id %}" class="inline">
-                            {% csrf_token %}
-                            <button type="submit" class="btn btn-ghost btn-xs text-error" data-confirm-action="Deactivate this staff member?">
-                                Deactivate
-                            </button>
-                        </form>
-                        {% endif %}
-                        {% endif %}
+                            {% if profile.user.is_active %}
+                            <form method="post" action="{% url 'kura:user_deactivate' profile.user.id %}" class="inline" data-confirm-action="Deactivate {{ profile.user.email }}? Their sessions end immediately.">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-outline btn-error btn-sm">
+                                    Deactivate
+                                </button>
+                            </form>
+                            {% endif %}
+                            {% endif %}
+                        </div>
                     </td>
                 </tr>
                 {% empty %}

@@ -12,22 +12,23 @@
 </ol>
 {% endblock %}
 
+{% block form_errors %}{% endblock %}
+
 {% block content %}
 <div class="max-w-2xl mx-auto space-y-6">
-    <!-- Page Header (Section 8.2) -->
     <header class="space-y-1">
         <p class="k-eyebrow">Administration</p>
         <h1 class="text-2xl font-bold">Add staff member</h1>
         <p class="text-sm k-muted">
-            Provision a new staff account. A secure temporary password will be generated automatically and displayed upon submission.
+            A temporary password is created automatically. They must change it on first sign-in.
         </p>
     </header>
 
     <div class="k-card">
         <form method="post" class="space-y-6">
             {% csrf_token %}
+            {% include "kura/_form_errors.html" %}
 
-            <!-- Fieldset 1: Person -->
             <fieldset class="space-y-4">
                 <legend class="text-base font-semibold text-base-content border-b border-base-300 pb-2 w-full">Person</legend>
                 {% include "kura/_field.html" with field=form.email %}
@@ -38,9 +39,8 @@
                 </div>
             </fieldset>
 
-            <!-- Fieldset 2: Role and department -->
             <fieldset class="space-y-4">
-                <legend class="text-base font-semibold text-base-content border-b border-base-300 pb-2 w-full">Role &amp; department</legend>
+                <legend class="text-base font-semibold text-base-content border-b border-base-300 pb-2 w-full">Role and department</legend>
                 {% include "kura/_field.html" with field=form.department %}
                 <p class="text-xs">
                     <a class="link link-primary" href="{% url 'kura:staff_settings' %}">Manage departments and offices</a>
@@ -48,7 +48,6 @@
                 {% include "kura/_field.html" with field=form.staff_title %}
             </fieldset>
 
-            <!-- Fieldset 3: Office -->
             <fieldset class="space-y-4">
                 <legend class="text-base font-semibold text-base-content border-b border-base-300 pb-2 w-full">Office</legend>
                 <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -59,8 +58,8 @@
             </fieldset>
 
             <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
-                <a href="{% url 'kura:staff_list' %}" class="btn btn-ghost btn-sm">Cancel</a>
-                <button type="submit" class="btn btn-primary btn-sm">Provision staff account</button>
+                <a href="{% url 'kura:staff_list' %}" class="btn btn-ghost">Cancel</a>
+                <button type="submit" class="btn btn-primary">Create account</button>
             </div>
         </form>
     </div>

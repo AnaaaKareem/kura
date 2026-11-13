@@ -12,16 +12,14 @@
 
 {% block content %}
 <div class="space-y-6">
-    <!-- Page Header (Section 8.2) -->
-    <header class="space-y-1 border-b border-base-300 pb-5">
+    <header class="space-y-1">
         <p class="k-eyebrow">Security</p>
         <h1 class="text-2xl font-bold">Quarantined uploads</h1>
         <p class="text-sm k-muted">
-            Files rejected by the virus scanner in the last 7 days. Quarantined records are automatically purged after 7 days.
+            Files rejected by the virus scanner in the last 7 days. Records are purged automatically after 7 days.
         </p>
     </header>
 
-    <!-- Quarantine Table (Section 8.5) -->
     <div class="k-card p-0 overflow-x-auto">
         <table class="k-table">
             <caption class="sr-only">Quarantined uploads</caption>
@@ -30,16 +28,16 @@
                     <th class="k-sticky-col">Uploaded</th>
                     <th>Uploaded by</th>
                     <th>File name</th>
-                    <th>Size</th>
+                    <th class="k-num">Size</th>
                     <th>Detection</th>
-                    <th>SHA-256</th>
+                    <th>Integrity hash</th>
                     <th class="text-right">Action</th>
                 </tr>
             </thead>
             <tbody>
                 {% for quarantined_file in quarantined_files %}
                 <tr>
-                    <td class="k-sticky-col k-num text-xs">{{ quarantined_file.created_at|date:"Y-m-d H:i" }}</td>
+                    <td class="k-sticky-col k-num text-xs">{{ quarantined_file.created_at|date:"j M Y, H:i" }}</td>
                     <td class="font-mono text-xs">{{ quarantined_file.uploaded_by.email }}</td>
                     <td class="font-medium text-xs break-all max-w-xs">{{ quarantined_file.original_filename }}</td>
                     <td class="k-num text-xs">{{ quarantined_file.size_bytes|filesizeformat }}</td>
@@ -48,20 +46,17 @@
                     </td>
                     <td class="k-num text-xs break-all max-w-xs">{{ quarantined_file.sha256_hash }}</td>
                     <td class="text-right">
-                        <form method="post" action="{% url 'kura:quarantine_delete' quarantined_file.id %}" class="inline-flex items-center justify-end gap-1.5">
+                        <form method="post" action="{% url 'kura:quarantine_delete' quarantined_file.id %}" data-confirm-action="Delete quarantined file {{ quarantined_file.original_filename }}? This cannot be undone.">
                             {% csrf_token %}
-                            <label class="text-xs k-muted cursor-pointer flex items-center gap-1">
-                                <input type="checkbox" name="confirm" class="checkbox checkbox-xs" required>
-                                <span>Confirm</span>
-                            </label>
-                            <button type="submit" class="btn btn-outline btn-error btn-xs">Delete</button>
+                            <input type="hidden" name="confirm" value="on">
+                            <button type="submit" class="btn btn-outline btn-error btn-sm">Delete</button>
                         </form>
                     </td>
                 </tr>
                 {% empty %}
                 <tr>
                     <td colspan="7" class="p-8 text-center">
-                        {% include "kura/_empty.html" with icon="quarantine" title="No quarantined uploads" text="All uploaded coursework and scanned documents have passed malware scanning." %}
+                        {% include "kura/_empty.html" with icon="quarantine" title="No quarantined uploads" text="All uploaded files have passed malware scanning." %}
                     </td>
                 </tr>
                 {% endfor %}
