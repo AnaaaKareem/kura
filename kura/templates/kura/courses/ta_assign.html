@@ -14,26 +14,28 @@
 </ol>
 {% endblock %}
 
+{% block form_errors %}{% endblock %}
+
 {% block content %}
-<div class="max-w-xl mx-auto space-y-6">
-    <!-- Page Header (Section 8.2) -->
+<div class="max-w-2xl mx-auto space-y-6">
     <header class="space-y-1">
         <p class="k-eyebrow">{{ course.code }}</p>
         <h1 class="text-2xl font-bold">Assign teaching assistant</h1>
         <p class="text-sm k-muted">
-            Assign a teaching assistant to {{ course.code }}. Teaching assistants help with materials and draft scores.
+            Teaching assistants can add materials, run attendance, and enter draft marks. They cannot finalize or release grades.
         </p>
     </header>
 
     <div class="k-card">
         <form method="post" class="space-y-4">
             {% csrf_token %}
+            {% include "kura/_form_errors.html" %}
 
             {% include "kura/_field.html" with field=form.user %}
 
             <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
-                <a href="{% url 'kura:course_detail' course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
-                <button type="submit" class="btn btn-primary btn-sm">Assign TA</button>
+                <a href="{% url 'kura:course_detail' course.id %}" class="btn btn-ghost">Cancel</a>
+                <button type="submit" class="btn btn-primary">Assign TA</button>
             </div>
         </form>
     </div>
