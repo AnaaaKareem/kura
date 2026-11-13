@@ -1,3 +1,4 @@
+{# Map domain status values to consistent DaisyUI badge classes and plain labels. #}
 {% with val=value|lower %}
 {% if kind == 'course' %}
   {% if val == 'published' or val == 'true' or value is True %}
@@ -5,7 +6,13 @@
   {% else %}
     <span class="badge badge-ghost badge-sm font-medium">Draft</span>
   {% endif %}
-{% elif kind == 'item' or kind == 'module' %}
+{% elif kind == 'item' %}
+  {% if val == 'visible' or val == 'released' or val == 'true' or value is True %}
+    <span class="badge badge-success badge-sm font-medium">Released</span>
+  {% else %}
+    <span class="badge badge-ghost badge-sm font-medium">Hidden</span>
+  {% endif %}
+{% elif kind == 'module' or kind == 'section' %}
   {% if val == 'visible' or val == 'true' or value is True %}
     <span class="badge badge-info badge-sm font-medium">Visible</span>
   {% else %}
@@ -16,6 +23,12 @@
     <span class="badge badge-success badge-sm font-medium">Released</span>
   {% elif val == 'finalized' or val == 'pending release' or val == 'awaiting release' %}
     <span class="badge badge-warning badge-sm font-medium">Awaiting release</span>
+  {% else %}
+    <span class="badge badge-ghost badge-sm font-medium">Draft</span>
+  {% endif %}
+{% elif kind == 'course_result' %}
+  {% if val == 'released' %}
+    <span class="badge badge-success badge-sm font-medium">Released on transcript</span>
   {% else %}
     <span class="badge badge-ghost badge-sm font-medium">Draft</span>
   {% endif %}
@@ -30,6 +43,8 @@
 {% elif kind == 'attempt' %}
   {% if val == 'submitted' or val == 'fully_graded' %}
     <span class="badge badge-success badge-sm font-medium">Submitted</span>
+  {% elif val == 'requires_manual_grading' %}
+    <span class="badge badge-warning badge-sm font-medium">Needs marking</span>
   {% elif val == 'expired' %}
     <span class="badge badge-error badge-sm font-medium">Time ran out</span>
   {% else %}
@@ -40,14 +55,54 @@
     <span class="badge badge-success badge-sm font-medium">Present</span>
   {% elif val == 'late' %}
     <span class="badge badge-warning badge-sm font-medium">Late</span>
+  {% elif val == 'excused' %}
+    <span class="badge badge-info badge-sm font-medium">Excused</span>
   {% else %}
     <span class="badge badge-error badge-sm font-medium">Absent</span>
+  {% endif %}
+{% elif kind == 'attendance_session' %}
+  {% if val == 'live' or val == 'true' or value is True %}
+    <span class="badge badge-success badge-sm font-medium">Live</span>
+  {% else %}
+    <span class="badge badge-ghost badge-sm font-medium">Closed</span>
+  {% endif %}
+{% elif kind == 'assessment_window' %}
+  {% if val == 'open' or val == 'true' or value is True %}
+    <span class="badge badge-success badge-sm font-medium">Open</span>
+  {% else %}
+    <span class="badge badge-ghost badge-sm font-medium">Closed</span>
+  {% endif %}
+{% elif kind == 'enrollment' %}
+  {% if val == 'active' %}
+    <span class="badge badge-success badge-sm font-medium">Active</span>
+  {% elif val == 'completed' %}
+    <span class="badge badge-info badge-sm font-medium">Completed</span>
+  {% elif val == 'dropped' %}
+    <span class="badge badge-error badge-sm font-medium">Dropped</span>
+  {% else %}
+    <span class="badge badge-ghost badge-sm font-medium">{{ value|capfirst }}</span>
   {% endif %}
 {% elif kind == 'account' %}
   {% if val == 'active' or val == 'true' or value is True %}
     <span class="badge badge-success badge-sm font-medium">Active</span>
+  {% elif val == 'locked' %}
+    <span class="badge badge-warning badge-sm font-medium">Locked</span>
+  {% elif val == 'deactivated' or val == 'false' or value is False %}
+    <span class="badge badge-error badge-sm font-medium">Deactivated</span>
   {% else %}
     <span class="badge badge-ghost badge-sm font-medium">Disabled</span>
+  {% endif %}
+{% elif kind == 'session' %}
+  {% if val == 'this_device' %}
+    <span class="badge badge-primary badge-sm font-medium">This device</span>
+  {% elif val == 'current' %}
+    <span class="badge badge-primary badge-sm font-medium">Current session</span>
+  {% elif val == 'revoked' %}
+    <span class="badge badge-error badge-sm font-medium">Revoked</span>
+  {% elif val == 'expired' %}
+    <span class="badge badge-ghost badge-sm font-medium">Expired</span>
+  {% else %}
+    <span class="badge badge-success badge-sm font-medium">Active</span>
   {% endif %}
 {% elif kind == 'upload' %}
   {% if val == 'quarantined' %}

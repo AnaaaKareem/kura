@@ -97,20 +97,13 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     });
 
-    // -------------------------------------------------------------------------
-    // 5. Dismissible Messages
-    // -------------------------------------------------------------------------
+    // Dismiss flash messages without inline style changes.
     document.addEventListener("click", function (event) {
         const dismissBtn = event.target.closest("[data-dismiss-message]");
         if (dismissBtn) {
             const messageItem = dismissBtn.closest("[data-message-item]");
             if (messageItem) {
-                messageItem.style.transition = "opacity 150ms ease-out, transform 150ms ease-out";
-                messageItem.style.opacity = "0";
-                messageItem.style.transform = "translateY(-4px)";
-                setTimeout(function () {
-                    messageItem.remove();
-                }, 150);
+                messageItem.remove();
             }
         }
     });
@@ -139,6 +132,7 @@ document.addEventListener("DOMContentLoaded", function () {
                     const formToSubmit = pendingSubmitForm;
                     pendingSubmitForm = null;
                     confirmModal.close();
+                    formToSubmit.dataset.confirmed = "true";
                     if (typeof formToSubmit.requestSubmit === "function") {
                         formToSubmit.requestSubmit();
                     } else {
@@ -187,15 +181,14 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 
-    // -------------------------------------------------------------------------
-    // 7. Prevent Double Submit / Loading State
-    // -------------------------------------------------------------------------
+    // Disable the submit button after a POST submits so users cannot trigger duplicate writes.
     document.addEventListener("submit", function (event) {
         const form = event.target;
-        if (!form || form.method.toUpperCase() !== "POST") return;
-        const submitBtn = form.querySelector('button[type="submit"]:not([data-no-loading])');
-        if (submitBtn && !submitBtn.disabled) {
-            // Restore button if user navigates back using browser cache
+        if (!form || form.method.toUpperCase() !== "POST" || event.defaultPrevented) return;
+        const submitBtn = event.submitter || form.querySelector('button[type="submit"]:not([data-no-loading])');
+        if (submitBtn && !submitBtn.disabled && !submitBtn.hasAttribute("data-no-loading")) {
+            submitBtn.disabled = true;
+            submitBtn.classList.add("loading", "loading-spinner");
             window.addEventListener("pageshow", function () {
                 submitBtn.disabled = false;
                 submitBtn.classList.remove("loading", "loading-spinner");

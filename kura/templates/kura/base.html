@@ -5,10 +5,10 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}Kura{% endblock %}</title>
-    <!-- Disable HTMX injected inline styles to adhere to strict CSP -->
+    <!-- Disable HTMX injected inline styles so the strict style policy holds. -->
     <meta name="htmx-config" content='{"includeIndicatorStyles": false}'>
     <link rel="icon" type="image/svg+xml" href="{% static 'img/kura-mark.svg' %}">
-    <!-- Blocking theme initialization to eliminate theme-switch flash -->
+    <!-- Load theme before first paint to prevent a light-mode flash. -->
     <script src="{% static 'js/theme-init.js' %}"></script>
     <link rel="stylesheet" href="{% static 'css/tailwind.min.css' %}">
     <link rel="stylesheet" href="{% static 'css/daisyui.min.css' %}">
@@ -18,16 +18,15 @@
     {% block head %}{% endblock %}
 </head>
 <body class="min-h-screen bg-base-200 font-sans text-base-content antialiased flex flex-col">
-    <!-- Skip to main content link for accessibility -->
     <a href="#main" class="k-skip">Skip to content</a>
 
     {% if user.is_authenticated %}
     <div class="drawer lg:drawer-open flex-1">
         <input id="kura-sidebar-toggle" type="checkbox" class="drawer-toggle">
         <div class="drawer-content flex min-h-screen flex-col bg-base-200">
-            <!-- 56px Sticky Top Bar -->
+            <!-- Sticky 56px top bar with mobile drawer toggle, breadcrumbs, and account menu. -->
             <header class="navbar sticky top-0 z-20 h-14 min-h-14 border-b border-base-300 bg-base-100 px-4 sm:px-6 flex items-center justify-between" aria-label="Top navigation">
-                <div class="flex items-center gap-3">
+                <div class="flex items-center gap-3 min-w-0">
                     <label for="kura-sidebar-toggle" class="btn btn-square btn-ghost btn-sm lg:hidden" aria-label="Open navigation menu">
                         {% include "kura/_icon.html" with name="menu" class="h-5 w-5" %}
                     </label>
@@ -36,31 +35,23 @@
                         <span>Kura</span>
                     </a>
 
-                    <!-- Breadcrumbs Block -->
                     {% if request.resolver_match.url_name != 'home' %}
-                    <div class="text-sm flex items-center" aria-label="Breadcrumb">
+                    <nav class="text-sm flex items-center min-w-0" aria-label="Breadcrumb">
                         {% block breadcrumbs %}
                         <ol class="flex items-center gap-1.5 text-sm">
                             <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
                             <li aria-hidden="true" class="k-muted">/</li>
-                            <li aria-current="page" class="font-medium text-base-content"><span data-breadcrumb-current>{{ request.resolver_match.url_name|capfirst }}</span></li>
+                            <li aria-current="page" class="font-medium text-base-content truncate"><span data-breadcrumb-current>{{ request.resolver_match.url_name|capfirst }}</span></li>
                         </ol>
                         {% endblock %}
-                    </div>
+                    </nav>
                     {% endif %}
                 </div>
 
-                <!-- Account & Theme Menu -->
-                <div class="flex items-center gap-2 sm:gap-3">
-                    <label class="hidden sm:flex items-center gap-1.5 text-xs font-medium k-muted">
-                        <span>Theme</span>
-                        <select id="theme-selector" name="theme" class="select select-bordered select-xs w-24" data-theme-selector aria-label="Choose color theme">
-                            <option value="system">System</option><option value="light">Light</option><option value="dark">Dark</option>
-                        </select>
-                    </label>
-
+                <!-- Account menu holding security links, theme selector, and log out. -->
+                <div class="flex items-center gap-2">
                     <div class="dropdown dropdown-end">
-                        <button tabindex="0" class="btn btn-ghost btn-sm gap-2 normal-case font-medium" aria-label="Open account menu">
+                        <button type="button" tabindex="0" class="btn btn-ghost btn-sm gap-2 normal-case font-medium" aria-label="Open account menu">
                             <span class="avatar placeholder">
                                 <span class="bg-primary text-primary-content rounded-full w-7 h-7 text-xs font-semibold flex items-center justify-center">
                                     {{ user.first_name|slice:":1" }}{{ user.last_name|slice:":1" }}
@@ -78,6 +69,16 @@
                             <li><a href="{% url 'kura:passkey_manage' %}">{% include "kura/_icon.html" with name="passkey" class="h-4 w-4" %}<span>Passkeys</span></a></li>
                             <li><a href="{% url 'kura:user_sessions' %}">{% include "kura/_icon.html" with name="sessions" class="h-4 w-4" %}<span>My sessions</span></a></li>
                             <li><a href="{% url 'kura:password_change' %}">{% include "kura/_icon.html" with name="lock" class="h-4 w-4" %}<span>Change password</span></a></li>
+                            <li class="border-t border-base-300 mt-2 pt-2 px-3 py-1">
+                                <label class="flex items-center justify-between gap-2 text-xs font-medium k-muted p-0">
+                                    <span>Theme</span>
+                                    <select id="theme-selector" name="theme" class="select select-bordered select-xs w-28" data-theme-selector aria-label="Choose color theme">
+                                        <option value="system">System</option>
+                                        <option value="light">Light</option>
+                                        <option value="dark">Dark</option>
+                                    </select>
+                                </label>
+                            </li>
                             <li class="border-t border-base-300 mt-2 pt-1">
                                 <form method="post" action="{% url 'kura:logout' %}" class="p-0">
                                     {% csrf_token %}
@@ -92,30 +93,26 @@
                 </div>
             </header>
     {% else %}
-    <!-- Public Header -->
-    <header class="navbar border-b border-base-300 bg-base-100 px-4 sm:px-8 flex justify-between items-center h-14">
-        <a href="{% url 'kura:login' %}" class="flex items-center gap-2.5 text-lg font-bold">
+    <!-- Anonymous pages use a distraction-free centred brand mark. -->
+    <header class="pt-8 pb-2 flex justify-center">
+        <a href="{% url 'kura:login' %}" class="flex items-center gap-2.5 text-2xl font-bold text-primary">
             <img src="{% static 'img/kura-mark.svg' %}" alt="Kura" class="h-8 w-8">
             <span>Kura</span>
         </a>
     </header>
     {% endif %}
 
-    <!-- Main Content Area (Section 5.2: max-w-6xl) -->
+    <!-- Main page content column. -->
     <main id="main" tabindex="-1" class="mx-auto w-full max-w-6xl flex-1 px-4 py-6 sm:px-6 lg:py-8">
         {% include "kura/_messages.html" %}
-        {% include "kura/_form_errors.html" %}
+        {% block form_errors %}{% include "kura/_form_errors.html" %}{% endblock %}
         {% block content %}{% endblock %}
     </main>
 
     {% if user.is_authenticated %}
-            <!-- Footer -->
-            <footer class="border-t border-base-300 bg-base-100 py-4 px-6 text-center text-xs k-muted">
-                Kura &bull; Academic Secure Learning Environment
-            </footer>
         </div>
 
-        <!-- Sidebar Drawer (Section 6.1) -->
+        <!-- Deduplicated, grouped sidebar navigation by user roles. -->
         <div class="drawer-side z-30">
             <label for="kura-sidebar-toggle" class="drawer-overlay" aria-label="Close navigation menu"></label>
             <aside class="flex min-h-full w-64 flex-col border-r border-base-300 bg-base-100 p-4" aria-label="Work areas">
@@ -132,14 +129,15 @@
                         </a>
                     </li>
 
-                    {# Group 1: Teaching and learning #}
                     {% if 'Instructor' in nav_roles or 'Teaching assistant' in nav_roles or 'Student' in nav_roles or 'Department head' in nav_roles or 'Admin' in nav_roles %}
                     <li class="k-eyebrow px-3 pt-4 pb-1">Teaching &amp; learning</li>
                     <li>
-                        <a href="{% url 'kura:course_list' %}" class="{% if 'course' in request.resolver_match.url_name and 'grade' not in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'course' in request.resolver_match.url_name and 'grade' not in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
+                        {% with url_name=request.resolver_match.url_name %}
+                        <a href="{% url 'kura:course_list' %}" class="{% if 'course' in url_name or 'module' in url_name or 'section' in url_name or 'item_' in url_name or 'assessment' in url_name or 'attempt' in url_name or 'grade_' in url_name and url_name != 'grade_appeal_create' %}active font-medium{% endif %}" {% if 'course' in url_name or 'module' in url_name or 'section' in url_name or 'item_' in url_name or 'assessment' in url_name or 'attempt' in url_name or 'grade_' in url_name and url_name != 'grade_appeal_create' %}aria-current="page"{% endif %} data-close-sidebar>
                             {% include "kura/_icon.html" with name="courses" %}
                             <span>Courses</span>
                         </a>
+                        {% endwith %}
                     </li>
                     {% if 'Instructor' in nav_roles or 'Student' in nav_roles or 'Department head' in nav_roles %}
                     <li>
@@ -151,7 +149,7 @@
                     {% endif %}
                     {% if 'Instructor' in nav_roles or 'Teaching assistant' in nav_roles or 'Student' in nav_roles %}
                     <li>
-                        <a href="{% url 'kura:attendance_history' %}" class="{% if 'attendance' in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'attendance' in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
+                        <a href="{% url 'kura:attendance_history' %}" class="{% if 'attendance' in request.resolver_match.url_name or 'checkin' in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'attendance' in request.resolver_match.url_name or 'checkin' in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
                             {% include "kura/_icon.html" with name="attendance" %}
                             <span>Attendance</span>
                         </a>
@@ -159,7 +157,7 @@
                     {% endif %}
                     {% if 'Student' in nav_roles %}
                     <li>
-                        <a href="{% url 'kura:student_grades' %}" class="{% if 'student_grades' in request.resolver_match.url_name or 'appeal' in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'student_grades' in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
+                        <a href="{% url 'kura:student_grades' %}" class="{% if request.resolver_match.url_name == 'student_grades' or request.resolver_match.url_name == 'grade_appeal_create' %}active font-medium{% endif %}" {% if request.resolver_match.url_name == 'student_grades' or request.resolver_match.url_name == 'grade_appeal_create' %}aria-current="page"{% endif %} data-close-sidebar>
                             {% include "kura/_icon.html" with name="grades" %}
                             <span>Grades</span>
                         </a>
@@ -173,18 +171,17 @@
                     {% endif %}
                     {% endif %}
 
-                    {# Group 2: Records #}
                     {% if 'Registrar' in nav_roles or user.headed_departments.exists %}
                     <li class="k-eyebrow px-3 pt-4 pb-1">Records</li>
                     {% if 'Registrar' in nav_roles %}
                     <li>
-                        <a href="{% url 'kura:student_list' %}" class="{% if 'student' in request.resolver_match.url_name and 'grade' not in request.resolver_match.url_name and 'transcript' not in request.resolver_match.url_name and 'checkin' not in request.resolver_match.url_name %}active font-medium{% endif %}" data-close-sidebar>
+                        <a href="{% url 'kura:student_list' %}" class="{% if request.resolver_match.url_name == 'student_list' or request.resolver_match.url_name == 'student_create' or request.resolver_match.url_name == 'student_profile' %}active font-medium{% endif %}" {% if request.resolver_match.url_name == 'student_list' or request.resolver_match.url_name == 'student_create' or request.resolver_match.url_name == 'student_profile' %}aria-current="page"{% endif %} data-close-sidebar>
                             {% include "kura/_icon.html" with name="students" %}
                             <span>Students</span>
                         </a>
                     </li>
                     <li>
-                        <a href="{% url 'kura:enrollment_list' %}" class="{% if 'enrollment' in request.resolver_match.url_name %}active font-medium{% endif %}" data-close-sidebar>
+                        <a href="{% url 'kura:enrollment_list' %}" class="{% if 'enrollment' in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'enrollment' in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
                             {% include "kura/_icon.html" with name="enrollments" %}
                             <span>Enrollments</span>
                         </a>
@@ -192,7 +189,7 @@
                     {% endif %}
                     {% for department in user.headed_departments.all %}
                     <li>
-                        <a href="{% url 'kura:department_reports' department.id %}" class="{% if 'department_reports' in request.resolver_match.url_name %}active font-medium{% endif %}" data-close-sidebar>
+                        <a href="{% url 'kura:department_reports' department.id %}" class="{% if 'department_reports' in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'department_reports' in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
                             {% include "kura/_icon.html" with name="reports" %}
                             <span>Department reports</span>
                         </a>
@@ -200,23 +197,28 @@
                     {% endfor %}
                     {% endif %}
 
-                    {# Group 3: Administration #}
                     {% if 'Admin' in nav_roles %}
                     <li class="k-eyebrow px-3 pt-4 pb-1">Administration</li>
                     <li>
-                        <a href="{% url 'kura:staff_list' %}" class="{% if 'staff' in request.resolver_match.url_name or 'user_roles' in request.resolver_match.url_name %}active font-medium{% endif %}" data-close-sidebar>
+                        <a href="{% url 'kura:staff_list' %}" class="{% if 'staff' in request.resolver_match.url_name or 'user_roles' in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'staff' in request.resolver_match.url_name or 'user_roles' in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
                             {% include "kura/_icon.html" with name="staff" %}
                             <span>Staff</span>
                         </a>
                     </li>
                     <li>
-                        <a href="{% url 'kura:admin_sessions' %}" class="{% if 'admin_sessions' in request.resolver_match.url_name %}active font-medium{% endif %}" data-close-sidebar>
+                        <a href="{% url 'kura:admin_sessions' %}" class="{% if 'admin_sessions' in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'admin_sessions' in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
                             {% include "kura/_icon.html" with name="sessions" %}
                             <span>Active sessions</span>
                         </a>
                     </li>
                     <li>
-                        <a href="{% url 'kura:quarantine_list' %}" class="{% if 'quarantine' in request.resolver_match.url_name %}active font-medium{% endif %}" data-close-sidebar>
+                        <a href="{% url 'kura:security_policy' %}" class="{% if 'security_policy' in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'security_policy' in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
+                            {% include "kura/_icon.html" with name="shield-check" %}
+                            <span>Security policy</span>
+                        </a>
+                    </li>
+                    <li>
+                        <a href="{% url 'kura:quarantine_list' %}" class="{% if 'quarantine' in request.resolver_match.url_name %}active font-medium{% endif %}" {% if 'quarantine' in request.resolver_match.url_name %}aria-current="page"{% endif %} data-close-sidebar>
                             {% include "kura/_icon.html" with name="quarantine" %}
                             <span>Quarantine</span>
                         </a>
@@ -224,13 +226,13 @@
                     {% endif %}
                 </ul>
 
-                <!-- User Card in Sidebar Footer -->
+                <!-- Signed-in user summary in sidebar footer. -->
                 <div class="mt-6 border-t border-base-300 pt-4 px-2">
                     <p class="truncate text-sm font-semibold">{{ user.first_name }} {{ user.last_name }}</p>
                     <p class="truncate text-xs k-muted">{{ user.email }}</p>
                     <div class="flex flex-wrap gap-1 mt-2">
                         {% for assignment in user.user_roles.all %}
-                        <span class="badge badge-ghost badge-sm text-xs">{{ assignment.role.name }}</span>
+                        <span class="badge badge-secondary badge-outline badge-sm">{{ assignment.role.name }}</span>
                         {% endfor %}
                     </div>
                     {% for department in user.headed_departments.all %}
@@ -242,10 +244,10 @@
     </div>
     {% endif %}
 
-    <!-- Accessible Modal Confirmation Dialog (Section 8.10) -->
+    <!-- Shared modal dialog for destructive POST confirmations. -->
     <dialog id="k-confirm" class="modal modal-bottom sm:modal-middle" aria-labelledby="k-confirm-title">
         <div class="modal-box k-card p-6 max-w-md">
-            <h3 id="k-confirm-title" class="text-lg font-bold">Confirm action</h3>
+            <h2 id="k-confirm-title" class="text-lg font-bold">Confirm action</h2>
             <p data-confirm-message class="py-4 text-sm k-muted leading-normal"></p>
             <div class="modal-action flex justify-end gap-2 pt-2">
                 <button type="button" class="btn btn-ghost btn-sm" data-confirm-cancel>Cancel</button>

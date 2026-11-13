@@ -1,9 +1,10 @@
+{# Empty state shown when a table or card grid has no records to display. #}
 <div class="k-card text-center py-12 px-4 space-y-3">
-    <div class="flex justify-center text-base-content opacity-40">
+    <div class="flex justify-center k-muted">
         {% include "kura/_icon.html" with name=icon|default:"info" class="h-10 w-10" %}
     </div>
     <div class="space-y-1">
-        <h3 class="text-base font-semibold">{{ title }}</h3>
+        <p class="text-base font-semibold">{{ title }}</p>
         {% if text %}
         <p class="k-muted text-sm max-w-sm mx-auto">{{ text }}</p>
         {% endif %}
