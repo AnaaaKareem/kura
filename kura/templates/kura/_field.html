@@ -1,16 +1,19 @@
+{# Render one Django form field with its label, optional marker, help text, and error messages. #}
 <div class="form-control w-full space-y-1">
-    {% if field.field.widget.input_type == 'checkbox' %}
+    {% if field.field.widget.input_type == 'checkbox' and not field.field.widget.allow_multiple_selected %}
     <label class="label cursor-pointer justify-start gap-3 py-1" for="{{ field.id_for_label }}">
         {{ field }}
-        <span class="label-text font-medium text-sm text-base-content">{{ field.label }}</span>
-        {% if field.field.required %}<span class="text-xs text-error font-semibold" aria-hidden="true">*</span>{% endif %}
+        <span class="label-text font-medium text-sm text-base-content">
+            {{ field.label }}
+            {% if not field.field.required %}<span class="k-muted font-normal"> (optional)</span>{% endif %}
+        </span>
     </label>
     {% else %}
     {% if field.label %}
     <label class="label py-1" for="{{ field.id_for_label }}">
         <span class="label-text font-medium text-sm text-base-content">
             {{ field.label }}
-            {% if field.field.required %}<span class="text-xs text-error font-semibold ml-0.5" aria-hidden="true">*</span>{% endif %}
+            {% if not field.field.required %}<span class="k-muted font-normal"> (optional)</span>{% endif %}
         </span>
     </label>
     {% endif %}
@@ -22,7 +25,7 @@
     {% endif %}
 
     {% if field.errors %}
-    <div id="{{ field.id_for_label }}-error" class="text-error text-xs font-medium space-y-0.5 pt-0.5">
+    <div id="{{ field.id_for_label }}-error" class="text-error text-xs font-medium space-y-0.5 pt-0.5" role="alert">
         {% for error in field.errors %}
         <p>{{ error }}</p>
         {% endfor %}
