@@ -57,9 +57,8 @@
                         {% for enrollment in enrollments %}
                         <tr>
                             <td class="k-sticky-col">
-                                <a href="{% url 'kura:course_detail' enrollment.course.id %}" class="link link-primary font-semibold block">
-                                    {{ enrollment.course.code }} &mdash; {{ enrollment.course.title }}
-                                </a>
+                                <span class="font-semibold block">{{ enrollment.course.code }}</span>
+                                <span class="text-xs k-muted">{{ enrollment.course.title }}</span>
                             </td>
                             <td class="text-xs">{{ enrollment.course.semester|capfirst }} {{ enrollment.course.academic_year }}</td>
                             <td class="text-right">
