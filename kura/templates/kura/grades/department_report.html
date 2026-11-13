@@ -14,32 +14,29 @@
 
 {% block content %}
 <div class="space-y-8">
-    <!-- Page Header (Section 8.2) -->
     <header class="space-y-1">
         <p class="k-eyebrow">{{ department.code }}</p>
         <h1 class="text-2xl font-bold">{{ department.name }} report</h1>
-        <p class="text-sm k-muted">Department enrollment metrics, active curriculum, and released academic marks.</p>
+        <p class="text-sm k-muted">Department enrollment figures, courses, and average released marks.</p>
     </header>
 
-    <!-- Stat Cards (Section 8.6) -->
     <section class="grid grid-cols-1 md:grid-cols-3 gap-4" aria-label="Department summary figures">
         <article class="k-card p-5 space-y-1">
-            <p class="k-eyebrow">Active courses</p>
-            <p class="text-3xl font-semibold k-num text-primary">{{ courses|length }}</p>
+            <p class="k-eyebrow">Courses</p>
+            <p class="text-3xl font-semibold k-num">{{ courses|length }}</p>
         </article>
         <article class="k-card p-5 space-y-1">
             <p class="k-eyebrow">Active enrollments</p>
-            <p class="text-3xl font-semibold k-num text-secondary">{{ enrollment_count }}</p>
+            <p class="text-3xl font-semibold k-num">{{ enrollment_count }}</p>
         </article>
         <article class="k-card p-5 space-y-1">
             <p class="k-eyebrow">Average released result</p>
-            <p class="text-3xl font-semibold k-num text-success">{% if avg_score %}{{ avg_score }}%{% else %}&mdash;{% endif %}</p>
+            <p class="text-3xl font-semibold k-num">{% if avg_score %}{{ avg_score }}%{% else %}&mdash;{% endif %}</p>
         </article>
     </section>
 
-    <!-- Courses Table (Section 8.5) -->
     <section class="space-y-3">
-        <h2 class="text-lg font-semibold">Department courses overview</h2>
+        <h2 class="text-lg font-semibold">Department courses</h2>
         <div class="k-card p-0 overflow-x-auto">
             <table class="k-table">
                 <caption class="sr-only">Courses in {{ department.name }}</caption>
@@ -57,20 +54,20 @@
                     <tr>
                         <td class="font-mono font-bold k-sticky-col">{{ c.code }}</td>
                         <td class="font-medium">{{ c.title }}</td>
-                        <td>{{ c.semester|capfirst }} {{ c.academic_year }}</td>
+                        <td class="k-num">{{ c.semester|capfirst }} {{ c.academic_year }}</td>
                         <td>
                             {% include "kura/_status_badge.html" with kind="course" value=c.is_published %}
                         </td>
                         <td class="text-right">
-                            <a href="{% url 'kura:course_grades' c.id %}" class="btn btn-ghost btn-xs text-primary">
-                                View gradebook
+                            <a href="{% url 'kura:course_grades' c.id %}" class="btn btn-ghost btn-sm">
+                                Gradebook
                             </a>
                         </td>
                     </tr>
                     {% empty %}
                     <tr>
                         <td colspan="5" class="p-8 text-center">
-                            {% include "kura/_empty.html" with icon="courses" title="No courses listed" text="No academic courses are registered in this department." %}
+                            {% include "kura/_empty.html" with icon="courses" title="No courses listed" text="No courses are registered in this department." %}
                         </td>
                     </tr>
                     {% endfor %}

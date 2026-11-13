@@ -14,31 +14,33 @@
 </ol>
 {% endblock %}
 
+{% block form_errors %}{% endblock %}
+
 {% block content %}
-<div class="max-w-xl mx-auto my-6">
-    <div class="k-card p-6 sm:p-8 space-y-6">
-        <header class="space-y-1">
-            <p class="k-eyebrow">{{ appeal.grade.assessment.section.module.course.code }}</p>
-            <h1 class="text-2xl font-bold">Review grade appeal</h1>
-            <p class="text-sm k-muted">
-                Student: <strong>{% if appeal.grade.student.first_name or appeal.grade.student.last_name %}{{ appeal.grade.student.first_name }} {{ appeal.grade.student.last_name }}{% else %}{{ appeal.grade.student.email }}{% endif %}</strong> &bull; Assessment: <strong>{{ appeal.grade.assessment.title }}</strong> &bull; Disputed score: <span class="k-num font-semibold">{{ appeal.grade.score }}</span>
-            </p>
-        </header>
+<div class="max-w-2xl mx-auto space-y-6">
+    <header class="space-y-1">
+        <p class="k-eyebrow">{{ appeal.grade.assessment.section.module.course.code }}</p>
+        <h1 class="text-2xl font-bold">Review appeal</h1>
+        <p class="text-sm k-muted">
+            Student: <strong class="text-base-content">{% if appeal.grade.student.first_name or appeal.grade.student.last_name %}{{ appeal.grade.student.first_name }} {{ appeal.grade.student.last_name }}{% else %}{{ appeal.grade.student.email }}{% endif %}</strong> &bull; {{ appeal.grade.assessment.title }} &bull; Score: <span class="k-num font-semibold">{{ appeal.grade.score }} / {{ appeal.grade.assessment.max_score }}</span>
+        </p>
+    </header>
 
-        <div class="p-4 bg-base-200 rounded-btn text-xs space-y-1">
-            <p class="font-semibold uppercase tracking-wider text-base-content">Student rationale</p>
-            <p class="text-sm k-muted whitespace-pre-wrap">{{ appeal.reason }}</p>
-        </div>
+    <div class="k-card space-y-2">
+        <h2 class="text-base font-semibold">Student's appeal</h2>
+        <p class="text-sm k-muted italic whitespace-pre-line">{{ appeal.reason }}</p>
+    </div>
 
+    <div class="k-card">
         <form method="post" class="space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
             {% csrf_token %}
-
+            {% include "kura/_form_errors.html" %}
             {% include "kura/_field.html" with field=form.status %}
             {% include "kura/_field.html" with field=form.response %}
 
-            <div class="flex items-center justify-end gap-2 pt-4 border-t border-base-300">
-                <a href="{% url 'kura:course_grades' appeal.grade.assessment.section.module.course.id %}" class="btn btn-ghost btn-sm">Cancel</a>
-                <button type="submit" class="btn btn-primary btn-sm">Save verdict</button>
+            <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
+                <a href="{% url 'kura:course_grades' appeal.grade.assessment.section.module.course.id %}" class="btn btn-ghost">Cancel</a>
+                <button type="submit" class="btn btn-primary">Save decision</button>
             </div>
         </form>
     </div>
