@@ -47,6 +47,15 @@
                         <img src="{{ qr_code_url }}" alt="TOTP QR Code" class="w-48 h-48">
                     </div>
                 </div>
+                {% if manual_key %}
+                <div class="collapse collapse-arrow bg-base-200 border border-base-300 rounded-box mt-3">
+                    <input type="checkbox" aria-label="Show manual setup key">
+                    <div class="collapse-title text-xs font-medium">Can't scan? Enter the key instead</div>
+                    <div class="collapse-content">
+                        <p class="k-mono text-sm tracking-wider break-all select-all">{{ manual_key }}</p>
+                    </div>
+                </div>
+                {% endif %}
             </li>
             <li>Enter the 6-digit code shown in your app.</li>
         </ol>

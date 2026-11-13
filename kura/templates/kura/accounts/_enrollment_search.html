@@ -1,9 +1,20 @@
-<!-- Search results contain only validated choices; the final form checks the selected ID again. -->
-<select name="{{ kind }}" id="id_{{ kind }}" class="select select-bordered w-full" required>
-    <option value="">Select a result</option>
+<!-- Search results contain only validated choices; clicking an item updates the form select below. -->
+<ul class="menu bg-base-100 border border-base-300 rounded-box shadow-lg mt-1 text-sm" data-pick-list>
     {% for result in results %}
-    <option value="{{ result.pk }}">{% if kind == 'course' %}{{ result.code }} — {{ result.title }}{% else %}{% if result.first_name or result.last_name %}{{ result.first_name }} {{ result.last_name }} — {% endif %}{{ result.email }}{% endif %}</option>
+    <li>
+        {% if kind == 'course' %}
+        <button type="button" data-pick-id="{{ result.pk }}" data-pick-label="{{ result.code }} — {{ result.title }}" class="text-left">
+            <span class="font-semibold">{{ result.code }}</span>
+            <span class="k-muted">{{ result.title }}</span>
+        </button>
+        {% else %}
+        <button type="button" data-pick-id="{{ result.pk }}" data-pick-label="{% if result.first_name or result.last_name %}{{ result.first_name }} {{ result.last_name }} — {% endif %}{{ result.email }}" class="text-left">
+            <span class="font-semibold">{% if result.first_name or result.last_name %}{{ result.first_name }} {{ result.last_name }}{% else %}{{ result.email }}{% endif %}</span>
+            <span class="k-muted text-xs">{{ result.email }}</span>
+        </button>
+        {% endif %}
+    </li>
     {% empty %}
-    <option value="" disabled>No {{ kind }}s match your search</option>
+    <li class="disabled"><span class="k-muted text-xs">No {{ kind }}s match your search.</span></li>
     {% endfor %}
-</select>
+</ul>
