@@ -126,13 +126,13 @@ echo "[5/9] Setting up temporary database users..."
 
 #    a) In PostgreSQL (as kura-admin through the container's local socket):
 #       make kura_app NOLOGIN and create vault_admin (docker/postgres/vault-roles.sql).
-docker compose exec -T db psql -q -U kura-admin -d kura -v ON_ERROR_STOP=1 < docker/postgres/vault-roles.sql > /dev/null
+docker compose exec -T db sh -c 'PGPASSWORD="$(tr -d "\r\n" < /run/secrets/db_password)" exec psql -q -U kura-admin -d kura -v ON_ERROR_STOP=1' < docker/postgres/vault-roles.sql > /dev/null
 
 #    b) Give vault_admin a random first password. It only lives for a moment:
 #       step d) replaces it with one that only Vault knows.
 FIRST_PASSWORD=$(openssl rand -hex 24)
 printf "ALTER ROLE vault_admin WITH PASSWORD '%s';\n" "$FIRST_PASSWORD" | \
-    docker compose exec -T db psql -q -U kura-admin -d kura -v ON_ERROR_STOP=1
+    docker compose exec -T db sh -c 'PGPASSWORD="$(tr -d "\r\n" < /run/secrets/db_password)" exec psql -q -U kura-admin -d kura -v ON_ERROR_STOP=1'
 
 #    c) Connect Vault's database engine to PostgreSQL:
 #       - TLS with the database certificate checked (verify-full) and Vault's
@@ -215,7 +215,7 @@ echo "$INTERMEDIATE_CERT" | vault_root write pki_int/intermediate/set-signed cer
 # service names (alloy = the metrics collector's PostgreSQL login) (plus localhost / 127.0.0.1 for health checks inside a
 # container), for at most 1 year, usable as both server and client certificate.
 vault_root write pki_int/roles/kura-service \
-    allowed_domains="nginx,waf,web,db,vault,relay,alloy,netbird.kura.lan,localhost" \
+    allowed_domains="nginx,waf,web,db,vault,relay,alloy,kura_migrator,netbird.kura.lan,localhost" \
     allow_bare_domains=true \
     allow_subdomains=false \
     allow_wildcard_certificates=false \

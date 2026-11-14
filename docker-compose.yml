@@ -214,10 +214,9 @@ services:
 
   # ============================================================================
   # Database Migrations (one-off job, never left running)
-  # Runs "manage.py migrate" as kura-admin, the database owner, because creating
-  # and changing tables needs more rights than kura_app has. It is the only Kura
-  # container given the kura-admin password, and it exits when it is done.
-  # The "tools" profile stops "docker compose up" from starting it. Run it with:
+  # Runs "manage.py migrate" as kura_migrator over mutual TLS (CN=kura_migrator),
+  # never as superuser kura-admin. The "tools" profile stops "docker compose up"
+  # from starting it. Run it with:
   #   docker compose run --rm migrate
   # ============================================================================
   migrate:
@@ -228,26 +227,29 @@ services:
       - /tmp:size=64M,mode=1777
     command: ["python", "manage.py", "migrate", "--noinput"]
     volumes:
-      # Only the CA certificate, to check it is really talking to our database.
+      # CA certificate plus kura_migrator's client certificate and key for mTLS.
       - ./certs/internal/ca.crt:/certs/internal/ca.crt:ro
+      - ./certs/internal/migrator.crt:/certs/internal/migrator.crt:ro
+      - ./certs/internal/migrator.key:/certs/internal/migrator.key:ro
     # backend only: it needs the database and nothing else.
     networks:
       - backend
     secrets:
-      - db_password
       - django_secret_key
     environment:
       DEBUG: "False"
       DATABASE_NAME: kura
-      DATABASE_USER: kura-admin
+      DATABASE_USER: kura_migrator
       DATABASE_HOST: db
       DATABASE_PORT: "5432"
       # Migrations never encrypt anything, so this job does not talk to Vault.
       VAULT_ENABLED: "False"
-      # Password login (pg_hba.conf "scram-sha-256") inside TLS, and the
-      # database's certificate must be signed by our CA and named "db".
+      # Client-certificate login (pg_hba.conf "cert clientcert=verify-full")
+      # inside verified TLS; no superuser password needed.
       DB_SSL_MODE: "verify-full"
       DB_SSL_ROOTCERT: "/certs/internal/ca.crt"
+      DB_SSL_CERT: "/certs/internal/migrator.crt"
+      DB_SSL_KEY: "/certs/internal/migrator.key"
     cap_drop:
       - ALL
     security_opt:

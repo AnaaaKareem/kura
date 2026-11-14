@@ -118,6 +118,8 @@ generate_cert "vault" "vault" "DNS:vault,DNS:vault.kura.internal,DNS:localhost,I
 generate_cert "relay" "relay" "DNS:relay"
 # 7. Alloy (client certificate for its PostgreSQL login as role "alloy").
 generate_cert "alloy" "alloy" "DNS:alloy"
+# 7b. Migration role (client certificate for schema migrations as role "kura_migrator").
+generate_cert "migrator" "kura_migrator" "DNS:kura_migrator"
 # 8. The self-hosted NetBird VPN server (admins reach https://netbird.kura.lan).
 generate_cert "netbird" "netbird.kura.lan" "DNS:netbird.kura.lan"
 
@@ -134,6 +136,7 @@ if [ "$(uname -s)" = "Linux" ]; then
   echo "[*] Linux: giving each private key to its container user (needs sudo)..."
   sudo chown 26 "$DIR/db.key"       # "postgres" user in the pgEdge image
   sudo chown 10001 "$DIR/web.key"   # "kura" user in our Dockerfile
+  sudo chown 10001 "$DIR/migrator.key" # "kura" user in our Dockerfile (migrate job)
   sudo chown 101 "$DIR/waf.key"     # "nginx" user in the Coraza WAF image
   sudo chown 0 "$DIR/nginx.key"     # Nginx reads its keys as root at start-up
   sudo chown 100 "$DIR/vault.key"   # "vault" user in the HashiCorp Vault image
