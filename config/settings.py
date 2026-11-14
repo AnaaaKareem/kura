@@ -164,11 +164,12 @@ DATABASES = {
 
 # ==============================================================================
 # Database Mutual TLS (mTLS) Settings (Hop 2: Django -> PostgreSQL)
-# Security: enforces verify-full SSL mode and client certificates in production.
-# When DB_SSL_MODE is omitted (development/testing), standard connection is used.
+# Security: defaults to verify-full when DEBUG is False and DATABASE_HOST is not
+# loopback; local development/test runners on localhost stay usable unless overridden.
 # ==============================================================================
 DB_OPTIONS = {}
-DB_SSL_MODE = os.environ.get("DB_SSL_MODE", "")
+_default_db_ssl_mode = "" if (DEBUG or DATABASES["default"]["HOST"] in ("localhost", "127.0.0.1", "::1")) else "verify-full"
+DB_SSL_MODE = os.environ.get("DB_SSL_MODE", _default_db_ssl_mode)
 if DB_SSL_MODE:
     DB_OPTIONS["sslmode"] = DB_SSL_MODE
     if os.environ.get("DB_SSL_ROOTCERT"):
@@ -296,11 +297,10 @@ CACHES = {
 }
 
 
-# Password hashing with Argon2id primary
+# Password hashing with Argon2id primary (legacy SHA-1 hasher removed)
 PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.Argon2PasswordHasher",
     "django.contrib.auth.hashers.PBKDF2PasswordHasher",
-    "django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher",
     "django.contrib.auth.hashers.BCryptSHA256PasswordHasher",
     "django.contrib.auth.hashers.ScryptPasswordHasher",
 ]

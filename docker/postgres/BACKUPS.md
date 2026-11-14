@@ -141,4 +141,9 @@ Result of the first drill:
 - The PITR restore to the target time contained **only row A**.
 - Restore and recovery took 3 seconds for a 33 MB database.
 
-The off-site repo2 drill is still to do (it needs the S3 details).
+The off-site `repo2` repository is configured in `docker/postgres/pgbackrest.conf`
+(`repo2-path=/var/lib/pgbackrest-offsite`, `repo2-cipher-type=aes-256-cbc`) with
+a scheduled `backup-offsite` cron job (`docker/cron/kura.crontab`). Point
+`KURA_OFFSITE_BACKUP_DIR` in `.env` at an external disk or off-host mount, or
+switch `repo2-*` settings to S3/Backblaze B2 with Object Lock when institutional
+credentials are provisioned, then re-run `restore-drill.sh` against `repo2`.

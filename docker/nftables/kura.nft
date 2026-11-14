@@ -35,8 +35,9 @@ table inet kura_host {
         udp dport 51820 accept
         # Self-hosted NetBird SERVER (docker/netbird/server): admins on the LAN
         # reach https://netbird.kura.lan on TCP 443, and its STUN service on
-        # UDP 3478. Published by Docker only when NETBIRD_BIND_ADDRESS=0.0.0.0.
-        tcp dport 443 accept
-        udp dport 3478 accept
+        # UDP 3478. Restricted to RFC1918 LAN ranges (narrow further to your
+        # specific campus/office subnet if needed).
+        ip saddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } tcp dport 443 accept
+        ip saddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } udp dport 3478 accept
     }
 }

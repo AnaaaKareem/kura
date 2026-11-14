@@ -12087,3 +12087,94 @@ class AuditGroup6PolicyAndGdprTests(TestCase):
         self.assertIsNotNone(student.erasure_requested_at)
         self.assertEqual(Grade.objects.filter(student=student).count(), 2)
         self.assertTrue((Path(settings.BASE_DIR) / "docs" / "PRIVACY_AND_ROPA.md").exists())
+
+
+class AuditGroup7InfraAndConfigTests(TestCase):
+    """Tests for Audit Group 7: M3, M8, M9, P10, P11, P12, P15, P16."""
+
+    def test_ci_workflow_gates_build_scans_all_images_and_pins_digests(self):
+        ci_text = (Path(settings.BASE_DIR) / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
+        self.assertIn("needs: [semgrep-scan]", ci_text)
+        self.assertIn('severity: "HIGH,CRITICAL"', ci_text)
+        self.assertIn('exit-code: "1"', ci_text)
+        self.assertIn("kura-breach-proxy:${{ github.sha }}", ci_text)
+        self.assertIn("postgres:17-alpine@sha256:", ci_text)
+        self.assertIn("semgrep/semgrep@sha256:", ci_text)
+        self.assertIn("ghcr.io/zaproxy/zaproxy:stable@sha256:", ci_text)
+
+    def test_nginx_limit_conn_and_body_size_loki_audit_rule_and_alertmanager_webhook(self):
+        nginx_main = (Path(settings.BASE_DIR) / "docker" / "nginx" / "nginx.conf").read_text(encoding="utf-8")
+        nginx_site = (Path(settings.BASE_DIR) / "docker" / "nginx" / "conf.d" / "kura.conf").read_text(encoding="utf-8")
+        loki_rules = (
+            Path(settings.BASE_DIR) / "docker" / "loki" / "rules" / "fake" / "kura-alerts.yml"
+        ).read_text(encoding="utf-8")
+        alertmanager = (
+            Path(settings.BASE_DIR) / "docker" / "alertmanager" / "alertmanager.yml"
+        ).read_text(encoding="utf-8")
+
+        self.assertIn("limit_conn_zone $binary_remote_addr zone=conn_limit:10m;", nginx_main)
+        self.assertIn("limit_conn_status 429;", nginx_main)
+        self.assertIn("client_max_body_size 26M;", nginx_site)
+        self.assertIn("limit_conn conn_limit 10;", nginx_site)
+        self.assertIn("limit_conn conn_limit 30;", nginx_site)
+        self.assertIn("- alert: AuditDiscrepancy", loki_rules)
+        self.assertIn('- name: "webhook-alerts"', alertmanager)
+        self.assertIn("webhook_configs:", alertmanager)
+
+    def test_offsite_backup_repo2_and_container_hardening_and_nftables_lan_scope(self):
+        pgbackrest_conf = (Path(settings.BASE_DIR) / "docker" / "postgres" / "pgbackrest.conf").read_text(
+            encoding="utf-8"
+        )
+        entrypoint_sh = (Path(settings.BASE_DIR) / "docker" / "postgres" / "entrypoint.sh").read_text(
+            encoding="utf-8"
+        )
+        wrapper_sh = (Path(settings.BASE_DIR) / "docker" / "postgres" / "pgbackrest-wrapper.sh").read_text(
+            encoding="utf-8"
+        )
+        crontab_text = (Path(settings.BASE_DIR) / "docker" / "cron" / "kura.crontab").read_text(encoding="utf-8")
+        compose_text = (Path(settings.BASE_DIR) / "docker-compose.yml").read_text(encoding="utf-8")
+        nft_text = (Path(settings.BASE_DIR) / "docker" / "nftables" / "kura.nft").read_text(encoding="utf-8")
+
+        self.assertIn("repo2-path=/var/lib/pgbackrest-offsite", pgbackrest_conf)
+        self.assertIn("repo2-cipher-type=aes-256-cbc", pgbackrest_conf)
+        self.assertIn("PGBACKREST_REPO2_CIPHER_PASS", entrypoint_sh)
+        self.assertIn("PGBACKREST_REPO2_CIPHER_PASS", wrapper_sh)
+        self.assertIn("backup-offsite", crontab_text)
+        self.assertIn("--repo=2", crontab_text)
+
+        # Grafana, netbird-dashboard, and netbird client run with read_only: true and cap_drop: ALL.
+        grafana_block = compose_text.split("  grafana:\n", 1)[1].split("  netbird:\n", 1)[0]
+        self.assertIn("read_only: true", grafana_block)
+        self.assertIn("cap_drop:\n      - ALL", grafana_block)
+        nb_dash_block = compose_text.split("  netbird-dashboard:\n", 1)[1].split("  # Mail Relay", 1)[0]
+        self.assertIn("read_only: true", nb_dash_block)
+        self.assertIn("cap_drop:\n      - ALL", nb_dash_block)
+        nb_client_block = compose_text.split("  netbird:\n", 1)[1].split("  vault:\n", 1)[0]
+        self.assertIn("read_only: true", nb_client_block)
+
+        self.assertIn("ip saddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } tcp dport 443 accept", nft_text)
+        self.assertIn("ip saddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } udp dport 3478 accept", nft_text)
+
+    def test_settings_hardening_and_pinned_requirements(self):
+        self.assertNotIn("django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher", settings.PASSWORD_HASHERS)
+
+        reqs = (Path(settings.BASE_DIR) / "requirements.txt").read_text(encoding="utf-8").splitlines()
+        pkg_lines = [line.strip() for line in reqs if line.strip() and not line.strip().startswith("#")]
+        self.assertEqual(len(pkg_lines), 15)
+        for line in pkg_lines:
+            self.assertIn("==", line)
+            self.assertNotIn(">=", line)
+
+        # Non-loopback production DB connections default DB_SSL_MODE to verify-full.
+        env = dict(os.environ)
+        env.pop("DB_SSL_MODE", None)
+        env["DEBUG"] = "False"
+        env["DATABASE_HOST"] = "db"
+        env["SECRET_KEY"] = "test-prod-secret-key-length-at-least-fifty-characters-0123456789"
+        out = subprocess.check_output(
+            [sys.executable, "-c", "import os, django; os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings'); from django.conf import settings; print(settings.DB_SSL_MODE)"],
+            cwd=settings.BASE_DIR,
+            env=env,
+            text=True,
+        ).strip()
+        self.assertEqual(out, "verify-full")

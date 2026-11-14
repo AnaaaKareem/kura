@@ -41,12 +41,11 @@ KURA_METRICS_DIR=/var/lib/kura-metrics
 0 5 1 * * /bin/sh $KURA_DIR/docker/cron/run-job.sh purge-retention docker compose exec -T web python manage.py purge_retention --days=180 >> /var/log/kura/purge-retention.log 2>&1
 0 5 * * 0 /bin/sh $KURA_DIR/docker/cron/run-job.sh anonymize-ips docker compose exec -T web python manage.py anonymize_ips --days=180 >> /var/log/kura/anonymize-ips.log 2>&1
 
-# Backups (pgBackRest, local encrypted repository repo1 in the db container's
-# backup volume). WAL is archived continuously by PostgreSQL itself.
+# Backups (pgBackRest, local encrypted repository repo1 and secondary repo2).
+# WAL is archived continuously by PostgreSQL itself.
 # Full backup every Sunday at 02:00; differential every other day at 02:00;
-# a consistency check every day at 06:00.
-0 2 * * 0 /bin/sh $KURA_DIR/docker/cron/run-job.sh backup-full docker compose exec -T db pgbackrest --stanza=kura --type=full backup >> /var/log/kura/backup.log 2>&1
-0 2 * * 1-6 /bin/sh $KURA_DIR/docker/cron/run-job.sh backup-diff docker compose exec -T db pgbackrest --stanza=kura --type=diff backup >> /var/log/kura/backup.log 2>&1
+# secondary repo2 sync/backup daily at 03:00; consistency check every day at 06:00.
+0 2 * * 0 /bin/sh $KURA_DIR/docker/cron/run-job.sh backup-full docker compose exec -T db pgbackrest --stanza=kura --repo=1 --type=full backup >> /var/log/kura/backup.log 2>&1
+0 2 * * 1-6 /bin/sh $KURA_DIR/docker/cron/run-job.sh backup-diff docker compose exec -T db pgbackrest --stanza=kura --repo=1 --type=diff backup >> /var/log/kura/backup.log 2>&1
+0 3 * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh backup-offsite docker compose exec -T db pgbackrest --stanza=kura --repo=2 --type=diff backup >> /var/log/kura/backup-offsite.log 2>&1
 0 6 * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh backup-check docker compose exec -T db pgbackrest --stanza=kura check >> /var/log/kura/backup.log 2>&1
-# Off-site copy (repo2, S3) and the Vault backup are added once the storage
-# details exist (WP10 in docs/INFRASTRUCTURE_HANDOFF.md).
