@@ -19,7 +19,7 @@ import qrcode.image.svg
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
-from django.contrib.auth.decorators import login_required
+from django.contrib.auth.decorators import login_not_required, login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.cache import caches
 from django.core.paginator import Paginator
@@ -30,6 +30,7 @@ from django.http import Http404, HttpResponse, HttpResponseForbidden, HttpRespon
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template import loader
 from django.urls import reverse
+from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 from django.utils.crypto import salted_hmac
@@ -253,6 +254,7 @@ def axes_lockout_callable(request, credentials=None):
     return response
 
 
+@login_not_required
 def permission_denied_view(request, exception):
     """Show a generic denial page and record the denied request.
 
@@ -265,6 +267,7 @@ def permission_denied_view(request, exception):
     return render(request, "403.html", status=403)
 
 
+@login_not_required
 def csrf_failure_view(request, reason=""):
     """Show a generic page when Django rejects a request's CSRF token.
 
@@ -276,6 +279,7 @@ def csrf_failure_view(request, reason=""):
     return render(request, "403.html", status=403)
 
 
+@login_not_required
 def not_found_view(request, exception):
     """Show a generic 404 page and record missing-object lookups for probing detection.
 
@@ -286,6 +290,7 @@ def not_found_view(request, exception):
     return render(request, "404.html", status=404)
 
 
+@login_not_required
 def server_error_view(request):
     """Show a generic 500 page and record unexpected server errors without touching the database.
 
@@ -483,15 +488,21 @@ def has_valid_pre_mfa_window(request):
     return age <= PRE_MFA_WINDOW_SECONDS
 
 
+def hash_session_token(session_key):
+    """Return a 64-hex keyed HMAC-SHA256 digest binding UserSession to a Django session key."""
+    return salted_hmac("kura.user_session_token", str(session_key), algorithm="sha256").hexdigest()
+
+
 # ACL-06: concurrent sessions are allowed by owner decision; users can see and revoke them at account/sessions/
 def create_user_session(request, user, method="password"):
     """
     Creates a new tracked UserSession record for an authenticated user.
     Records client IP address, browser user-agent, and the absolute expiry (ACL-07).
     """
-    # Generate random bytes for the session bearer token hash.
-    raw_token = secrets.token_hex(32)
-    token_hash = hashlib.sha256(raw_token.encode("utf-8")).hexdigest()
+    # Ensure Django has issued a session key and bind session_token_hash to it (W7).
+    if not request.session.session_key:
+        request.session.save()
+    token_hash = hash_session_token(request.session.session_key)
 
     # Read the real visitor's IP address (not the WAF's).
     ip_address = get_client_ip(request)
@@ -521,6 +532,8 @@ def create_user_session(request, user, method="password"):
     return user_session
 
 
+@login_not_required
+@never_cache
 def login_view(request):
     """
     Authenticates users using email and password.
@@ -609,6 +622,8 @@ def login_view(request):
     )
 
 
+@login_not_required
+@never_cache
 def mfa_verify_view(request):
     """
     Verifies the TOTP code, backup code, or WebAuthn/FIDO2 Passkey during two-factor login.
@@ -708,6 +723,7 @@ def mfa_verify_view(request):
     )
 
 
+@login_not_required
 def mfa_login_callback(request, username):
     """
     Callback executed by django-mfa2 upon successful FIDO2 / Passkey authentication.
@@ -873,6 +889,7 @@ def passkey_register_complete_view(request):
     return normalized
 
 
+@login_not_required
 @csrf_exempt
 def passkey_auth_complete_view(request):
     """
@@ -1471,9 +1488,14 @@ def password_change_view(request):
             request.user.password_changed_at = timezone.now()
             request.user.save()
 
-        # Keep current session logged in after password hash changes, and revoke all other sessions.
+        # Keep current session logged in after password hash changes, update its token hash
+        # after cycle_key(), and revoke all other sessions (W7).
         update_session_auth_hash(request, request.user)
         current_session_id = request.session.get("user_session_id")
+        if current_session_id and request.session.session_key:
+            UserSession.objects.filter(id=current_session_id, user=request.user, revoked_at__isnull=True).update(
+                session_token_hash=hash_session_token(request.session.session_key)
+            )
         other_sessions = UserSession.objects.filter(user=request.user, revoked_at__isnull=True)
         if current_session_id:
             other_sessions = other_sessions.exclude(id=current_session_id)
@@ -1558,6 +1580,8 @@ def create_reset_token(user):
     return raw_token, record
 
 
+@login_not_required
+@never_cache
 def password_reset_request_view(request):
     """
     Starts a password reset by emailing a single-use, 30-minute link.
@@ -1621,6 +1645,8 @@ def password_reset_request_view(request):
     )
 
 
+@login_not_required
+@never_cache
 def password_reset_confirm_view(request, token):
     """
     Completes password reset using a token from the email.
@@ -2561,6 +2587,17 @@ def user_roles_view(request, user_id):
             messages.success(request, f"Removed role {target_role.name} from {target_user.email}.")
 
         if added_roles or removed_roles:
+            # Force re-authentication with a fresh session ID whenever roles change (M6).
+            revoked_count = UserSession.objects.filter(user=target_user, revoked_at__isnull=True).update(
+                revoked_at=timezone.now()
+            )
+            if revoked_count:
+                log_security_event(
+                    request,
+                    "session.revoked",
+                    {"target_user_id": target_user.id, "count": revoked_count, "by": "role_change"},
+                    logging.WARNING,
+                )
             log_security_event(
                 request,
                 "admin.role.changed",
@@ -4225,13 +4262,14 @@ def schedule_delete_view(request, schedule_id):
 def attendance_session_start_view(request, module_id):
     """
     Launches a live attendance check-in session with a rotating passcode and QR code.
-    Who can use it: Course instructors and Teaching Assistants.
-    Security: Server generates random 6-character passcode and stores only its SHA-256 hash.
+    Who can use it: Course instructors and Teaching Assistants (not Department Heads).
+    Security: Server generates random 6-character passcode and stores only its keyed HMAC-SHA256 digest.
 """
     module = get_object_or_404(Module.objects.select_related("course"), id=module_id)
     course = module.course
 
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+    # Only assigned course instructors or teaching assistants may launch attendance (O1).
+    if not is_course_staff(request.user, course):
         raise PermissionDenied
 
     form = AttendanceSessionStartForm(request.POST or None)
@@ -4331,6 +4369,7 @@ def attendance_session_detail_view(request, session_id):
         .order_by("email")
     )
 
+    can_manage_attendance = is_course_staff(request.user, course)
     context = {
         "session": session,
         "is_live": is_live,
@@ -4338,6 +4377,7 @@ def attendance_session_detail_view(request, session_id):
         "qr_code_url": qr_code_data_uri,
         "records": records,
         "manual_form": manual_form,
+        "can_manage_attendance": can_manage_attendance,
     }
     return render(request, "kura/attendance/session_detail.html", context)
 
@@ -4346,7 +4386,7 @@ def attendance_session_detail_view(request, session_id):
 def attendance_session_close_view(request, session_id):
     """
     Closes an active attendance check-in session immediately.
-    Who can use it: Course staff and Department Heads.
+    Who can use it: Course instructors and Teaching Assistants (not Department Heads).
     Security: POST only; marks is_active=False.
 """
     if request.method != "POST":
@@ -4355,7 +4395,7 @@ def attendance_session_close_view(request, session_id):
     session = get_object_or_404(ModuleAttendanceSession.objects.select_related("module__course"), id=session_id)
     course = session.module.course
 
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+    if not is_course_staff(request.user, course):
         raise PermissionDenied
 
     session.is_active = False
@@ -4471,7 +4511,7 @@ def student_checkin_view(request, session_id):
 def attendance_manual_record_view(request, session_id):
     """
     Manually logs or adjusts an attendance entry with a required written justification.
-    Who can use it: Course instructors and Teaching Assistants.
+    Who can use it: Course instructors and Teaching Assistants (not Department Heads).
     Security: Server sets method=manual, records staff ID, and enforces non-empty override_reason.
 """
     if request.method != "POST":
@@ -4480,7 +4520,7 @@ def attendance_manual_record_view(request, session_id):
     session = get_object_or_404(ModuleAttendanceSession.objects.select_related("module__course"), id=session_id)
     course = session.module.course
 
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+    if not is_course_staff(request.user, course):
         raise PermissionDenied
 
     form = ManualAttendanceForm(request.POST)

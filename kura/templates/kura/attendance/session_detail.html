@@ -28,7 +28,7 @@
             </p>
         </div>
 
-        {% if is_live %}
+        {% if is_live and can_manage_attendance %}
         <form method="post" action="{% url 'kura:attendance_session_close' session.id %}">
             {% csrf_token %}
             <button type="submit" class="btn btn-outline btn-error btn-sm w-full sm:w-auto" data-confirm-action="Close this check-in window now? Students will no longer be able to check in.">
@@ -91,6 +91,7 @@
                 </dl>
             </div>
 
+            {% if can_manage_attendance %}
             <div class="k-card space-y-4">
                 <div class="border-b border-base-300 pb-2">
                     <h2 class="text-base font-semibold">Manual entry</h2>
@@ -109,6 +110,7 @@
                     </button>
                 </form>
             </div>
+            {% endif %}
         </aside>
     </div>
 </div>
