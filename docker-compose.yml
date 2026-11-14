@@ -29,8 +29,10 @@ services:
       - ./certs/internal/db.key:/var/lib/postgresql/certs/db.key:ro
       # Runs once on first start: creates the least-privilege roles and grants.
       - ./docker/postgres/init-roles.sql:/docker-entrypoint-initdb.d/01-init-roles.sql:ro
-      # pgBackRest configuration (points at the pgEdge data path).
+      # pgBackRest configuration and wrapper (supplies PGBACKREST_REPO1_CIPHER_PASS from Docker secret).
       - ./docker/postgres/pgbackrest.conf:/etc/pgbackrest/pgbackrest.conf:ro
+      - ./docker/postgres/entrypoint.sh:/usr/local/bin/kura-db-entrypoint.sh:ro
+      - ./docker/postgres/pgbackrest-wrapper.sh:/usr/local/bin/pgbackrest:ro
       # Backup and restore operators available inside the container.
       - ./docker/postgres/backup.sh:/usr/local/bin/backup.sh:ro
       - ./docker/postgres/restore.sh:/usr/local/bin/restore.sh:ro
@@ -52,9 +54,13 @@ services:
       # UTF-8 database with page checksums (the image defaults to a C locale).
       POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C.UTF-8 --data-checksums
       PGDATA: /var/lib/pgsql/17/data
+    # Wrap the image entrypoint so PostgreSQL exports PGBACKREST_REPO1_CIPHER_PASS
+    # from /run/secrets/backup_encryption_key for archive_command/restore_command.
+    entrypoint: ["/usr/local/bin/kura-db-entrypoint.sh"]
     # Point the server at the mounted configuration and authentication files,
     # overriding the default copies generated inside the data directory.
     command:
+      - postgres
       - -c
       - config_file=/etc/postgresql/postgresql.conf
       - -c
