@@ -93,9 +93,13 @@ pgBackRest 2.59.3) inside an isolated Compose project with fresh volumes;
 the production volumes and data were never touched:
 
 - `stanza-create`, two `full` backups, and `pgbackrest info` all succeeded;
-  the repository reports `cipher: aes-256-cbc` (the passphrase is loaded from
-  the Docker secret via `repo1-cipher-pass=file:/run/secrets/backup_encryption_key`,
-  confirmed working empirically with pgBackRest 2.59.3).
+  the repository reports `cipher: aes-256-cbc`. Note: that earlier drill used
+  `repo1-cipher-pass=file:/run/secrets/backup_encryption_key` in `pgbackrest.conf`;
+  pgBackRest does not support `file:` indirection and treated that literal
+  string as the passphrase, so the passphrase is now exported via
+  `PGBACKREST_REPO1_CIPHER_PASS` from `/run/secrets/backup_encryption_key` by
+  `docker/postgres/entrypoint.sh` and `docker/postgres/pgbackrest-wrapper.sh`.
+  Re-create the stanza and take a fresh full backup after deploying this fix.
 - Continuous WAL archiving pushed segments 1–8 (`pg_switch_wal` used to force
   segment completion).
 - A table inserted between the two backup sets restored correctly with the

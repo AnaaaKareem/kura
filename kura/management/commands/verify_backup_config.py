@@ -74,8 +74,15 @@ class Command(BaseCommand):
         pgbackrest_config_text = pgbackrest_conf.read_text(encoding="utf-8")
         if "repo1-cipher-type=aes-256-cbc" not in pgbackrest_config_text:
             raise CommandError("[-] pgBackRest configuration must enforce repo1-cipher-type=aes-256-cbc")
-        if "repo1-cipher-pass=" not in pgbackrest_config_text:
-            raise CommandError("[-] pgBackRest configuration must reference repo1-cipher-pass")
+        if "repo1-cipher-pass=file:" in pgbackrest_config_text:
+            raise CommandError("[-] pgBackRest does not support file: syntax for repo1-cipher-pass; use PGBACKREST_REPO1_CIPHER_PASS")
+
+        wrapper_path = base_dir / "docker" / "postgres" / "pgbackrest-wrapper.sh"
+        entrypoint_path = base_dir / "docker" / "postgres" / "entrypoint.sh"
+        if not wrapper_path.exists() or "PGBACKREST_REPO1_CIPHER_PASS" not in wrapper_path.read_text(encoding="utf-8"):
+            raise CommandError("[-] pgbackrest-wrapper.sh must export PGBACKREST_REPO1_CIPHER_PASS from the Docker secret")
+        if not entrypoint_path.exists() or "PGBACKREST_REPO1_CIPHER_PASS" not in entrypoint_path.read_text(encoding="utf-8"):
+            raise CommandError("[-] docker/postgres/entrypoint.sh must export PGBACKREST_REPO1_CIPHER_PASS from the Docker secret")
 
         self.stdout.write(self.style.SUCCESS("[✓] pgBackRest configuration enforces AES-256-CBC repository encryption"))
 

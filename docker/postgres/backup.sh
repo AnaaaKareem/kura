@@ -31,6 +31,13 @@ if [ ! -f "${KEY_FILE}" ]; then
     exit 1
 fi
 
+PGBACKREST_REPO1_CIPHER_PASS="$(tr -d '\r\n' < "${KEY_FILE}")"
+if [ -z "${PGBACKREST_REPO1_CIPHER_PASS}" ]; then
+    echo "[-] ERROR: Backup encryption key at ${KEY_FILE} is empty!" >&2
+    exit 1
+fi
+export PGBACKREST_REPO1_CIPHER_PASS
+
 # 2. Check if pgbackrest is installed
 if ! command -v pgbackrest &> /dev/null; then
     echo "[!] pgbackrest binary not found in current host PATH."
