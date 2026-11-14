@@ -58,34 +58,38 @@ class SessionValidationMiddleware:
             messages.error(request, f"This account is currently locked until {lock_time}.")
             return redirect("kura:login")
 
-        # Check whether the tracked session record has been revoked or expired.
+        # Check whether the tracked session record exists, is active, and is unexpired.
         if request.user.is_authenticated:
             session_id = request.session.get("user_session_id")
-            if session_id:
-                try:
-                    user_session = UserSession.objects.filter(
-                        id=session_id,
-                        user=request.user,
-                    ).first()
+            if not session_id:
+                log_security_event(request, "session.invalid", {"reason": "untracked"}, level=logging.WARNING)
+                logout(request)
+                messages.error(request, "Your session was ended. Please sign in again.")
+                return redirect("kura:login")
+            try:
+                user_session = UserSession.objects.filter(
+                    id=session_id,
+                    user=request.user,
+                ).first()
 
-                    if not user_session or user_session.revoked_at is not None:
-                        reason = "revoked"
-                    elif user_session.expires_at <= timezone.now():
-                        reason = "expired"
-                    else:
-                        reason = None
+                if not user_session or user_session.revoked_at is not None:
+                    reason = "revoked"
+                elif user_session.expires_at <= timezone.now():
+                    reason = "expired"
+                else:
+                    reason = None
 
-                    # End revoked or expired sessions and ask the user to log in again.
-                    if reason:
-                        log_security_event(request, "session.invalid", {"reason": reason}, level=logging.WARNING)
-                        logout(request)
-                        messages.error(request, "Your session was ended. Please sign in again.")
-                        return redirect("kura:login")
-                except (ValueError, TypeError):
-                    log_security_event(request, "session.invalid", {"reason": "revoked"}, level=logging.WARNING)
+                # End revoked or expired sessions and ask the user to log in again.
+                if reason:
+                    log_security_event(request, "session.invalid", {"reason": reason}, level=logging.WARNING)
                     logout(request)
                     messages.error(request, "Your session was ended. Please sign in again.")
                     return redirect("kura:login")
+            except (ValueError, TypeError):
+                log_security_event(request, "session.invalid", {"reason": "revoked"}, level=logging.WARNING)
+                logout(request)
+                messages.error(request, "Your session was ended. Please sign in again.")
+                return redirect("kura:login")
 
         response = self.get_response(request)
         response.setdefault(
