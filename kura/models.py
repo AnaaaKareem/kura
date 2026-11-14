@@ -670,34 +670,6 @@ class UserSession(models.Model):
         return f"Session {self.id} - {self.user}"
 
 
-class LoginAttempt(models.Model):
-    """
-    Authentication failures, client IP addresses, and lockout timestamps.
-    Django-axes uses this table to enforce progressive delays and block credential stuffing.
-    """
-
-    id = models.BigAutoField(primary_key=True)
-    user = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="login_attempts"
-    )
-    username_attempted = models.CharField(max_length=255)
-    ip_address = models.GenericIPAddressField()
-    user_agent = models.CharField(max_length=255, null=True, blank=True)
-    failed_count = models.IntegerField(default=1)
-    locked_until = models.DateTimeField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = "login_attempts"
-
-    def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
-        return f"Attempt by {self.username_attempted} from {self.ip_address} (Count: {self.failed_count})"
-
-
 # ==========================================
 # Courses, Staff & Grading Schemes
 # ==========================================

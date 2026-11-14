@@ -5956,9 +5956,10 @@ class DataRetentionAndIPAnonymizationTests(TestCase):
         self.assertEqual(anonymize_ip_address("not-an-ip"), "not-an-ip")
 
     def test_anonymize_ips_command_execution(self):
-        # Records older than the retention cutoff have their IP addresses anonymized.
+        # Records older than the retention cutoff have their IP addresses pseudonymised.
         import io
-        from kura.models import AssessmentAttempt, LoginAttempt, UserSession
+        from axes.models import AccessAttempt, AccessLog
+        from kura.models import AssessmentAttempt, UserSession
 
         now = timezone.now()
         past_date = now - timezone.timedelta(days=200)
@@ -5980,14 +5981,18 @@ class DataRetentionAndIPAnonymizationTests(TestCase):
             expires_at=now + timezone.timedelta(hours=1),
         )
 
-        # 3. Old login attempt
-        old_attempt = LoginAttempt.objects.create(
-            user=self.student,
-            username_attempted=self.student.email,
+        # 3. Old django-axes AccessAttempt and AccessLog
+        old_attempt = AccessAttempt.objects.create(
+            username=self.student.email,
             ip_address="203.0.113.15",
-            failed_count=1,
+            failures_since_start=1,
         )
-        LoginAttempt.objects.filter(id=old_attempt.id).update(created_at=past_date)
+        AccessAttempt.objects.filter(id=old_attempt.id).update(attempt_time=past_date)
+        old_access_log = AccessLog.objects.create(
+            username=self.student.email,
+            ip_address="203.0.113.25",
+        )
+        AccessLog.objects.filter(id=old_access_log.id).update(attempt_time=past_date)
 
         # 4. Old assessment attempt
         old_exam = AssessmentAttempt.objects.create(
@@ -6004,12 +6009,15 @@ class DataRetentionAndIPAnonymizationTests(TestCase):
         out = io.StringIO()
         call_command("anonymize_ips", days=180, stdout=out)
 
-        # Old records should have anonymized IPs (ending in .0)
+        # Old records should have masked IPs (ending in .0)
         old_session.refresh_from_db()
         self.assertEqual(old_session.ip_address, "198.51.100.0")
 
         old_attempt.refresh_from_db()
         self.assertEqual(old_attempt.ip_address, "203.0.113.0")
+
+        old_access_log.refresh_from_db()
+        self.assertEqual(old_access_log.ip_address, "203.0.113.0")
 
         old_exam.refresh_from_db()
         self.assertEqual(old_exam.ip_address, "192.0.2.0")
@@ -6021,16 +6029,15 @@ class DataRetentionAndIPAnonymizationTests(TestCase):
     def test_anonymize_ips_command_dry_run(self):
         # In dry-run mode, no changes are committed to the database.
         import io
-        from kura.models import LoginAttempt
+        from axes.models import AccessAttempt
 
         past_date = timezone.now() - timezone.timedelta(days=200)
-        attempt = LoginAttempt.objects.create(
-            user=self.student,
-            username_attempted=self.student.email,
+        attempt = AccessAttempt.objects.create(
+            username=self.student.email,
             ip_address="203.0.113.55",
-            failed_count=1,
+            failures_since_start=1,
         )
-        LoginAttempt.objects.filter(id=attempt.id).update(created_at=past_date)
+        AccessAttempt.objects.filter(id=attempt.id).update(attempt_time=past_date)
 
         out = io.StringIO()
         call_command("anonymize_ips", days=180, dry_run=True, stdout=out)
@@ -6039,9 +6046,10 @@ class DataRetentionAndIPAnonymizationTests(TestCase):
         self.assertEqual(attempt.ip_address, "203.0.113.55")
 
     def test_purge_retention_command_execution(self):
-        # Expired sessions and resolved login attempts older than cutoff are deleted.
+        # Expired sessions and old axes records older than cutoff are deleted; active lockouts remain.
         import io
-        from kura.models import LoginAttempt, UserSession
+        from axes.models import AccessAttempt, AccessLog
+        from kura.models import UserSession
 
         now = timezone.now()
         past_date = now - timezone.timedelta(days=200)
@@ -6059,14 +6067,23 @@ class DataRetentionAndIPAnonymizationTests(TestCase):
             expires_at=now + timezone.timedelta(hours=2),
         )
 
-        # Old resolved login attempt
-        old_attempt = LoginAttempt.objects.create(
-            user=self.student,
-            username_attempted=self.student.email,
+        # Old axes AccessAttempt and AccessLog + recent active AccessAttempt
+        old_attempt = AccessAttempt.objects.create(
+            username=self.student.email,
             ip_address="198.51.100.1",
-            failed_count=1,
+            failures_since_start=5,
         )
-        LoginAttempt.objects.filter(id=old_attempt.id).update(created_at=past_date)
+        AccessAttempt.objects.filter(id=old_attempt.id).update(attempt_time=past_date)
+        recent_attempt = AccessAttempt.objects.create(
+            username=self.student.email,
+            ip_address="198.51.100.2",
+            failures_since_start=5,
+        )
+        old_log = AccessLog.objects.create(
+            username=self.student.email,
+            ip_address="198.51.100.3",
+        )
+        AccessLog.objects.filter(id=old_log.id).update(attempt_time=past_date)
 
         out = io.StringIO()
         call_command("purge_retention", days=180, stdout=out)
@@ -6075,8 +6092,10 @@ class DataRetentionAndIPAnonymizationTests(TestCase):
         self.assertFalse(UserSession.objects.filter(id=expired_old.id).exists())
         self.assertTrue(UserSession.objects.filter(id=active_session.id).exists())
 
-        # Old resolved attempt should be purged
-        self.assertFalse(LoginAttempt.objects.filter(id=old_attempt.id).exists())
+        # Old axes records purged; recent active attempt preserved
+        self.assertFalse(AccessAttempt.objects.filter(id=old_attempt.id).exists())
+        self.assertTrue(AccessAttempt.objects.filter(id=recent_attempt.id).exists())
+        self.assertFalse(AccessLog.objects.filter(id=old_log.id).exists())
 
 
 # Where the incident-response runbook lives. The docs/ folder is kept on the
@@ -10692,8 +10711,8 @@ class WorkItem4AccessControlTests(TestCase):
             ip_address="127.0.0.1",
         )
         with connection.cursor() as cursor:
-            # Mirror init-roles.sql default table privileges for outgoing_emails created after 0004.
-            cursor.execute("GRANT SELECT, DELETE ON outgoing_emails TO kura_app;")
+            # Mirror init-roles.sql default table privileges for tables created after 0004.
+            cursor.execute("GRANT SELECT, DELETE ON outgoing_emails, axes_accessattempt, axes_accesslog TO kura_app;")
             cursor.execute("SET ROLE kura_app;")
             try:
                 call_command("finalize_attempts", stdout=StringIO())
@@ -11795,3 +11814,34 @@ class AuditGroup4AccessAndSessionsTests(TestCase):
             bad_resp = self.client.get(reverse("kura:mfa_setup"))
         self.assertRedirects(bad_resp, reverse("kura:login"))
         self.assertTrue(any('event="session.invalid"' in line and 'reason="token_mismatch"' in line for line in cap.output))
+
+
+class AuditGroup5RetentionAndLokiTests(TestCase):
+    """Tests for Audit Group 5: O7, P3, P4, W8."""
+
+    def test_login_attempt_model_removed_and_loki_ruler_api_disabled(self):
+        from kura import models as kura_models
+
+        self.assertFalse(hasattr(kura_models, "LoginAttempt"))
+        loki_yml = (Path(settings.BASE_DIR) / "docker" / "loki" / "loki.yml").read_text(encoding="utf-8")
+        self.assertIn("enable_api: false", loki_yml)
+        self.assertNotIn("enable_api: true", loki_yml)
+
+    def test_retention_commands_re_raise_and_log_failures_instead_of_swallowing(self):
+        from axes.models import AccessAttempt, AccessLog
+
+        with patch.object(AccessAttempt.objects, "filter", side_effect=RuntimeError("db failure")):
+            with self.assertLogs("kura.security", level="ERROR") as cap_purge:
+                with self.assertRaises(RuntimeError):
+                    call_command("purge_retention", "--days=180", stdout=StringIO())
+            self.assertTrue(
+                any('event="retention.job_failed"' in line and 'command="purge_retention"' in line for line in cap_purge.output)
+            )
+
+        with patch.object(AccessLog.objects, "filter", side_effect=RuntimeError("db failure")):
+            with self.assertLogs("kura.security", level="ERROR") as cap_anon:
+                with self.assertRaises(RuntimeError):
+                    call_command("anonymize_ips", "--days=180", stdout=StringIO())
+            self.assertTrue(
+                any('event="retention.job_failed"' in line and 'command="anonymize_ips"' in line for line in cap_anon.output)
+            )

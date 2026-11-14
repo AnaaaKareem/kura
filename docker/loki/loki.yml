@@ -68,5 +68,5 @@ ruler:
   ring:
     kvstore:
       store: inmemory
-  enable_api: true
+  enable_api: false
   enable_sharding: false

@@ -36,9 +36,10 @@ To balance cybersecurity auditability with student privacy, Kura implements **su
 ## 3. Automated Management Jobs
 
 ### A. IP Anonymization Job (`anonymize_ips`)
-Scans historic `UserSession`, `LoginAttempt`, `AttendanceRecord`, and
-`AssessmentAttempt` records older than the selected age. It anonymizes stored IP
-addresses where those models have one; it does not delete the associated records.
+Scans historic `UserSession`, `AttendanceRecord`, `AssessmentAttempt`, and
+django-axes (`AccessAttempt` and `AccessLog`) records older than the selected age.
+It pseudonymises stored IP addresses to `/24` (IPv4) or `/48` (IPv6) subnets
+where those models have one; it does not delete the associated records.
 
 ```bash
 # Dry-run inspection
@@ -50,8 +51,9 @@ python manage.py anonymize_ips --days=180
 
 ### B. Retention Purge Job (`purge_retention`)
 Deletes `UserSession` records whose expiry timestamp is older than the selected
-cutoff, eligible historical `LoginAttempt` records, and old django-axes
-`AccessLog` records.
+cutoff, eligible historical django-axes `AccessAttempt` and `AccessLog` records
+(preserving attempts inside the active cool-off window), and sent `OutgoingEmail`
+rows older than 30 days.
 It does not purge general-purpose tokens, attendance, assessment, or grade data.
 Active account locks are retained.
 
