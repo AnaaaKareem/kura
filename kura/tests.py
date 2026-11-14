@@ -1835,6 +1835,7 @@ class InstructorModulesAndContentTests(TestCase):
         self.dept = Department.objects.create(name="Physics", code="PHYS", head_user=self.head)
         self.lead = make_user("Instructor", mfa_enabled=True)
         self.ta = make_user("Teaching assistant", mfa_enabled=True)
+        StaffProfile.objects.create(user=self.ta, department=self.dept, staff_title="Teaching assistant")
 
         self.course = Course.objects.create(
             department=self.dept,
@@ -10488,3 +10489,181 @@ class WorkItem3SessionTests(TestCase):
         self.assertIsNotNone(key_before)
         self.assertIsNotNone(key_after)
         self.assertNotEqual(key_before, key_after)
+
+
+class WorkItem4AccessControlTests(TestCase):
+    """Tests for Work Item 4: role boundaries, department scoping, self-role protection, RLS deny-by-default, and pending appeal uniqueness."""
+
+    def setUp(self):
+        self.dept = Department.objects.create(code="CSAC", name="CS Access")
+        self.other_dept = Department.objects.create(code="MATHAC", name="Math Access")
+        self.head = make_user("Department head", mfa_enabled=True)
+        self.dept.head_user = self.head
+        self.dept.save()
+
+        self.instructor = make_user("Instructor", mfa_enabled=True)
+        StaffProfile.objects.create(user=self.instructor, department=self.dept, staff_title="Instructor")
+        self.other_dept_instructor = make_user("Instructor", mfa_enabled=True)
+        StaffProfile.objects.create(user=self.other_dept_instructor, department=self.other_dept, staff_title="Instructor")
+
+        self.ta = make_user("Teaching assistant", mfa_enabled=True)
+        StaffProfile.objects.create(user=self.ta, department=self.dept, staff_title="Teaching assistant")
+        self.other_dept_ta = make_user("Teaching assistant", mfa_enabled=True)
+        StaffProfile.objects.create(user=self.other_dept_ta, department=self.other_dept, staff_title="Teaching assistant")
+
+        self.student = make_user("Student", mfa_enabled=True)
+        StudentProfile.objects.create(user=self.student, department=self.dept, current_level="level_4", matriculation_year=2025)
+
+        now = timezone.now()
+        self.course = Course.objects.create(
+            department=self.dept, code="AC101", title="Access Control", semester="1", academic_year=2026,
+            created_by=self.head, is_published=True, published_by=self.head, published_at=now,
+        )
+        CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True, assigned_by=self.head)
+        CourseStaff.objects.create(course=self.course, user=self.ta, staff_role="teaching_assistant", can_release_grades=False, assigned_by=self.instructor)
+        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE, enrolled_by=self.head)
+
+        self.module = Module.objects.create(course=self.course, title="Mod 1", is_visible=True, created_by=self.instructor)
+        self.section = ModuleSection.objects.create(module=self.module, title="Sec 1", section_type="coursework")
+        self.assessment = Assessment.objects.create(
+            section=self.section, title="Quiz", component_type=GradeComponentType.QUIZ,
+            max_score=Decimal("10.00"), opens_at=now - timezone.timedelta(hours=1),
+            due_date=now + timezone.timedelta(hours=2), duration_minutes=30, created_by=self.instructor,
+        )
+        self.attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment, student=self.student, attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED, expires_at=now + timezone.timedelta(minutes=30), ip_address="127.0.0.1",
+        )
+        self.grade = Grade.objects.create(
+            attempt=self.attempt, assessment=self.assessment, student=self.student,
+            grader=self.instructor, score=Decimal("8.00"), status=GradeStatus.RELEASED,
+            released_by=self.instructor, released_at=now,
+        )
+        self.appeal = GradeAppeal.objects.create(grade=self.grade, reason="Recheck please", status=AppealStatus.PENDING)
+        self.schedule = Schedule.objects.create(
+            course=self.course, instructor=self.instructor, session_type="lecture",
+            day="monday", start_time="09:00", end_time="10:00", location="Hall 1",
+            recurrence_start=now.date(), recurrence_end=now.date() + timezone.timedelta(days=30),
+            created_by=self.instructor,
+        )
+
+    def test_ta_denied_on_appeals_results_schedules_and_assessments_while_instructor_allowed(self):
+        # TA gets 403 on appeal view/decide, result calculate, schedule create/edit/delete, assessment create/edit/delete/question/upload.
+        login_with_session(self.client, self.ta)
+        self.assertEqual(self.client.get(reverse("kura:grade_appeal_review", args=[self.appeal.id])).status_code, 403)
+        self.assertEqual(self.client.post(reverse("kura:grade_appeal_review", args=[self.appeal.id]), {"status": AppealStatus.APPROVED, "response": "ok"}).status_code, 403)
+        self.assertEqual(self.client.post(reverse("kura:course_result_calculate", args=[self.course.id])).status_code, 403)
+        self.assertEqual(self.client.get(reverse("kura:schedule_create", args=[self.course.id])).status_code, 403)
+        self.assertEqual(self.client.get(reverse("kura:schedule_edit", args=[self.schedule.id])).status_code, 403)
+        self.assertEqual(self.client.post(reverse("kura:schedule_delete", args=[self.schedule.id]), {"confirm": "on"}).status_code, 403)
+        self.assertEqual(self.client.get(reverse("kura:assessment_create", args=[self.section.id])).status_code, 403)
+        self.assertEqual(self.client.get(reverse("kura:assessment_edit", args=[self.assessment.id])).status_code, 403)
+        self.assertEqual(self.client.post(reverse("kura:assessment_delete", args=[self.assessment.id]), {"confirm": "on"}).status_code, 403)
+        self.assertEqual(self.client.get(reverse("kura:assessment_question_form", args=[self.section.id]), {"type": "written", "questions-TOTAL_FORMS": "0"}).status_code, 403)
+        pdf = SimpleUploadedFile("a.pdf", b"%PDF-1.4 a", content_type="application/pdf")
+        self.assertEqual(self.client.post(reverse("kura:assessment_file_upload", args=[self.assessment.id]), {"file": pdf}).status_code, 403)
+
+        # TA retains read access to schedule list.
+        self.assertEqual(self.client.get(reverse("kura:schedule_list")).status_code, 200)
+
+        # Department head can view appeal read-only (200) but gets 403 on deciding (POST) and result calculation.
+        login_with_session(self.client, self.head)
+        head_get = self.client.get(reverse("kura:grade_appeal_review", args=[self.appeal.id]))
+        self.assertEqual(head_get.status_code, 200)
+        self.assertContains(head_get, "read-only")
+        self.assertEqual(self.client.post(reverse("kura:grade_appeal_review", args=[self.appeal.id]), {"status": AppealStatus.APPROVED, "response": "ok"}).status_code, 403)
+        self.assertEqual(self.client.post(reverse("kura:course_result_calculate", args=[self.course.id])).status_code, 403)
+
+        # Course instructor succeeds on appeal review, result calculation, schedule edit, and assessment authoring.
+        login_with_session(self.client, self.instructor)
+        self.assertEqual(self.client.get(reverse("kura:grade_appeal_review", args=[self.appeal.id])).status_code, 200)
+        self.assertEqual(self.client.post(reverse("kura:grade_appeal_review", args=[self.appeal.id]), {"status": AppealStatus.APPROVED, "response": "Approved."}).status_code, 302)
+        self.assertEqual(self.client.post(reverse("kura:course_result_calculate", args=[self.course.id])).status_code, 302)
+        self.assertEqual(self.client.get(reverse("kura:schedule_edit", args=[self.schedule.id])).status_code, 200)
+        self.assertEqual(self.client.get(reverse("kura:assessment_create", args=[self.section.id])).status_code, 200)
+
+    def test_head_cannot_assign_staff_or_ta_from_other_department(self):
+        login_with_session(self.client, self.head)
+        resp = self.client.post(
+            reverse("kura:course_staff_assign", args=[self.course.id]),
+            {"user": str(self.other_dept_instructor.id), "staff_role": "co_instructor"},
+        )
+        self.assertEqual(resp.status_code, 400)
+        self.assertFalse(CourseStaff.objects.filter(course=self.course, user=self.other_dept_instructor).exists())
+
+        resp_ta = self.client.post(
+            reverse("kura:course_ta_assign", args=[self.course.id]),
+            {"user": str(self.other_dept_ta.id)},
+        )
+        self.assertEqual(resp_ta.status_code, 400)
+        self.assertFalse(CourseStaff.objects.filter(course=self.course, user=self.other_dept_ta).exists())
+
+    def test_admin_cannot_remove_own_admin_role(self):
+        admin = make_user("Admin", mfa_enabled=True)
+        admin_role = Role.objects.get(name="Admin")
+        login_with_session(self.client, admin)
+        sess = self.client.session
+        sess["mfa_reauth_at"] = timezone.now().timestamp()
+        sess.save()
+
+        resp = self.client.post(
+            reverse("kura:user_roles", args=[admin.id]),
+            {"action": "remove", "role_id": str(admin_role.id)},
+            follow=True,
+        )
+        self.assertContains(resp, "You cannot remove the Admin role from yourself.")
+        self.assertTrue(UserRole.objects.filter(user=admin, role=admin_role).exists())
+
+    def test_student_checkin_enforces_publication_and_level_match(self):
+        now = timezone.now()
+        att_sess = ModuleAttendanceSession.objects.create(
+            module=self.module, created_by=self.instructor, title="Roll",
+            passcode_hash=hashlib.sha256(b"ABC123").hexdigest(),
+            expires_at=now + timezone.timedelta(minutes=20), is_active=True,
+        )
+        login_with_session(self.client, self.student)
+
+        # Level mismatch -> 403.
+        lvl = ModuleTargetLevel.objects.create(module=self.module, target_level="level_6")
+        self.assertEqual(self.client.get(reverse("kura:student_checkin", args=[att_sess.id])).status_code, 403)
+        lvl.delete()
+
+        # Unpublished course -> 403.
+        self.course.is_published = False
+        self.course.published_by = None
+        self.course.published_at = None
+        self.course.save()
+        self.assertEqual(self.client.get(reverse("kura:student_checkin", args=[att_sess.id])).status_code, 403)
+
+    def test_grade_rls_denies_unset_user_and_allows_service_commands(self):
+        # Under kura_app with no kura.current_user_id or kura.service_role set, ORM query sees 0 rows.
+        with connection.cursor() as cursor:
+            cursor.execute("SET ROLE kura_app;")
+            try:
+                self.assertEqual(Grade.objects.count(), 0)
+            finally:
+                cursor.execute("RESET ROLE;")
+
+        # Management commands finalize_attempts and purge_retention succeed under kura_app with service RLS context,
+        # and seed_demo_data succeeds with service RLS context too.
+        overdue_attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment, student=make_user("Student"), attempt_no=1,
+            status=AttemptStatus.IN_PROGRESS, expires_at=timezone.now() - timezone.timedelta(minutes=5),
+            ip_address="127.0.0.1",
+        )
+        with connection.cursor() as cursor:
+            cursor.execute("SET ROLE kura_app;")
+            try:
+                call_command("finalize_attempts", stdout=StringIO())
+                call_command("purge_retention", "--days=180", stdout=StringIO())
+            finally:
+                cursor.execute("RESET ROLE;")
+        with override_settings(DEBUG=True):
+            call_command("seed_demo_data", stdout=StringIO())
+        overdue_attempt.refresh_from_db()
+        self.assertNotEqual(overdue_attempt.status, AttemptStatus.IN_PROGRESS)
+
+    def test_second_pending_appeal_raises_integrity_error_at_database(self):
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                GradeAppeal.objects.create(grade=self.grade, reason="Second pending appeal", status=AppealStatus.PENDING)

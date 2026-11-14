@@ -1501,6 +1501,13 @@ class GradeAppeal(models.Model):
 
     class Meta:
         db_table = "grade_appeals"
+        constraints = [
+            models.UniqueConstraint(
+                fields=["grade"],
+                condition=models.Q(status=AppealStatus.PENDING),
+                name="unique_pending_appeal_per_grade",
+            ),
+        ]
 
     def __str__(self):
         """

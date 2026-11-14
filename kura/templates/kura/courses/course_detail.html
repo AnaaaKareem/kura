@@ -63,7 +63,9 @@
                     {% if can_assign_ta %}
                     <li><a href="{% url 'kura:course_ta_assign' course.id %}">Assign teaching assistant</a></li>
                     {% endif %}
+                    {% if can_manage_schedules %}
                     <li><a href="{% url 'kura:schedule_create' course.id %}">Add schedule</a></li>
+                    {% endif %}
                     <li><a href="{% url 'kura:course_grades' course.id %}">Gradebook</a></li>
                     {% endif %}
                 </ul>
@@ -91,7 +93,7 @@
             <section class="space-y-4">
                 <div class="flex items-center justify-between gap-3">
                     <h2 class="text-xl font-bold">Class meetings</h2>
-                    {% if not is_admin and is_staff or not is_admin and is_head %}
+                    {% if can_manage_schedules %}
                     <a href="{% url 'kura:schedule_create' course.id %}" class="btn btn-outline btn-sm">Add meeting</a>
                     {% endif %}
                 </div>
@@ -301,7 +303,9 @@
                                     <a href="{% url 'kura:item_create' section.id %}" class="btn btn-outline btn-xs">
                                         + Add item
                                     </a>
+                                    {% if can_author_assessments %}
                                     <a href="{% url 'kura:assessment_create' section.id %}" class="btn btn-ghost btn-xs">Add assessment</a>
+                                    {% endif %}
                                     <a href="{% url 'kura:section_edit' section.id %}" class="btn btn-ghost btn-xs">Edit section</a>
                                     <form method="post" action="{% url 'kura:section_visibility_toggle' section.id %}" class="inline">
                                         {% csrf_token %}
