@@ -5,7 +5,7 @@ from django.conf import settings
 from django.contrib.auth.models import AbstractBaseUser, BaseUserManager
 from django.core.exceptions import ValidationError
 from django.core.validators import MinValueValidator, MaxValueValidator
-from django.db import models
+from django.db import DatabaseError, models
 
 
 # ==========================================
@@ -336,7 +336,7 @@ class UserManager(BaseUserManager):
 class User(AbstractBaseUser):
     """
     User accounts, authentication credentials, and multi-factor settings.
-    Passwords use Argon2id hashes, and failed-login lockouts live separately in the login attempts table.
+    Passwords use Argon2id hashes, and failed-login lockouts live in django-axes tables.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -349,11 +349,13 @@ class User(AbstractBaseUser):
     is_active = models.BooleanField(default=True)
     must_change_password = models.BooleanField(default=True)
     # Admin-imposed lock from the user management interface.
-    # Failed login attempts use separate, temporary locks tracked in login_attempts.
+    # Failed login attempts use separate, temporary locks tracked in django-axes.
     locked_until = models.DateTimeField(null=True, blank=True)
     last_login = models.DateTimeField(null=True, blank=True, db_column="last_login_at")
     password_changed_at = models.DateTimeField(null=True, blank=True)
     deactivated_at = models.DateTimeField(null=True, blank=True)
+    is_processing_restricted = models.BooleanField(default=False)
+    erasure_requested_at = models.DateTimeField(null=True, blank=True)
     created_by = models.ForeignKey(
         "self", on_delete=models.SET_NULL, null=True, blank=True, related_name="created_users"
     )
@@ -1595,7 +1597,7 @@ class CourseResult(models.Model):
 
 
 class PasswordHistory(models.Model):
-    """Previous password hashes, used to block reuse of the last 5 passwords (AUTH-06)."""
+    """Previous password hashes, used to block reuse of recent passwords (AUTH-06)."""
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     user = models.ForeignKey(settings.AUTH_USER_MODEL, on_delete=models.CASCADE, related_name="password_history")
@@ -1605,3 +1607,105 @@ class PasswordHistory(models.Model):
     class Meta:
         db_table = "password_history"
         ordering = ["-created_at"]
+
+
+class SecurityPolicy(models.Model):
+    """Single-row configurable security policy edited by Admins with step-up MFA (O6)."""
+
+    id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
+    min_password_length = models.PositiveSmallIntegerField(
+        default=12, validators=[MinValueValidator(12), MaxValueValidator(128)]
+    )
+    password_history_count = models.PositiveSmallIntegerField(
+        default=5, validators=[MinValueValidator(1), MaxValueValidator(24)]
+    )
+    axes_failure_limit = models.PositiveSmallIntegerField(
+        default=5, validators=[MinValueValidator(3), MaxValueValidator(20)]
+    )
+    axes_cooloff_hours = models.PositiveSmallIntegerField(
+        default=1, validators=[MinValueValidator(1), MaxValueValidator(24)]
+    )
+    session_idle_minutes = models.PositiveSmallIntegerField(
+        default=30, validators=[MinValueValidator(5), MaxValueValidator(240)]
+    )
+    session_absolute_hours = models.PositiveSmallIntegerField(
+        default=12, validators=[MinValueValidator(1), MaxValueValidator(72)]
+    )
+    updated_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="updated_security_policies",
+    )
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        db_table = "security_policies"
+        constraints = [
+            models.CheckConstraint(condition=models.Q(id=1), name="security_policy_singleton"),
+            models.CheckConstraint(
+                condition=models.Q(min_password_length__gte=12) & models.Q(min_password_length__lte=128),
+                name="security_policy_min_pw_bounds",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(password_history_count__gte=1) & models.Q(password_history_count__lte=24),
+                name="security_policy_pw_history_bounds",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(axes_failure_limit__gte=3) & models.Q(axes_failure_limit__lte=20),
+                name="security_policy_axes_limit_bounds",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(axes_cooloff_hours__gte=1) & models.Q(axes_cooloff_hours__lte=24),
+                name="security_policy_axes_cooloff_bounds",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(session_idle_minutes__gte=5) & models.Q(session_idle_minutes__lte=240),
+                name="security_policy_idle_bounds",
+            ),
+            models.CheckConstraint(
+                condition=models.Q(session_absolute_hours__gte=1) & models.Q(session_absolute_hours__lte=72),
+                name="security_policy_absolute_bounds",
+            ),
+        ]
+
+    def __str__(self):
+        return "Active Security Policy"
+
+
+def get_security_policy():
+    """Return active SecurityPolicy values from the DB, falling back to settings defaults."""
+    min_pw = 12
+    for validator in getattr(settings, "AUTH_PASSWORD_VALIDATORS", []):
+        if validator["NAME"].endswith("MinimumLengthValidator"):
+            min_pw = validator.get("OPTIONS", {}).get("min_length", 12)
+
+    raw_limit = getattr(settings, "AXES_FAILURE_LIMIT", 5)
+    default_limit = raw_limit if isinstance(raw_limit, int) else 5
+
+    raw_cooloff = getattr(settings, "AXES_COOLOFF_TIME", 1)
+    default_cooloff = raw_cooloff if isinstance(raw_cooloff, int) else 1
+
+    defaults = {
+        "min_password_length": min_pw,
+        "password_history_count": getattr(settings, "PASSWORD_HISTORY_COUNT", 5),
+        "axes_failure_limit": default_limit,
+        "axes_cooloff_hours": default_cooloff,
+        "session_idle_minutes": max(1, getattr(settings, "SESSION_COOKIE_AGE", 1800) // 60),
+        "session_absolute_hours": getattr(settings, "SESSION_ABSOLUTE_HOURS", 12),
+    }
+    try:
+        row = SecurityPolicy.objects.filter(pk=1).first()
+    except DatabaseError:
+        return defaults
+    if row is None:
+        return defaults
+    return {
+        "min_password_length": row.min_password_length,
+        "password_history_count": row.password_history_count,
+        "axes_failure_limit": row.axes_failure_limit,
+        "axes_cooloff_hours": row.axes_cooloff_hours,
+        "session_idle_minutes": row.session_idle_minutes,
+        "session_absolute_hours": row.session_absolute_hours,
+    }

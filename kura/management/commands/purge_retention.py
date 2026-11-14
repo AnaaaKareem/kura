@@ -5,7 +5,7 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from kura.logging_utils import log_security_event
-from kura.models import OutgoingEmail, OutgoingEmailStatus, UserSession
+from kura.models import OutgoingEmail, OutgoingEmailStatus, UserSession, get_security_policy
 from kura.permissions import service_rls_context
 
 
@@ -42,11 +42,7 @@ class Command(BaseCommand):
         cutoff = now - timezone.timedelta(days=days)
         email_cutoff = now - timezone.timedelta(days=email_days)
 
-        cooloff_hours = getattr(settings, "AXES_COOLOFF_TIME", 1)
-        if hasattr(cooloff_hours, "total_seconds"):
-            cooloff_delta = cooloff_hours
-        else:
-            cooloff_delta = timezone.timedelta(hours=float(cooloff_hours))
+        cooloff_delta = timezone.timedelta(hours=get_security_policy()["axes_cooloff_hours"])
         attempt_cutoff = min(cutoff, now - cooloff_delta)
 
         self.stdout.write(

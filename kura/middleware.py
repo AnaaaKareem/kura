@@ -9,7 +9,7 @@ from django.shortcuts import redirect
 from django.urls import reverse
 from django.utils.crypto import constant_time_compare
 from django.utils import timezone
-from .models import UserSession
+from .models import UserSession, get_security_policy
 from .views import get_client_ip, hash_session_token, log_security_event
 
 User = get_user_model()
@@ -92,6 +92,10 @@ class SessionValidationMiddleware:
                     logout(request)
                     messages.error(request, "Your session was ended. Please sign in again.")
                     return redirect("kura:login")
+
+                # Refresh sliding idle timeout from the active SecurityPolicy row (O6).
+                idle_seconds = get_security_policy()["session_idle_minutes"] * 60
+                request.session.set_expiry(idle_seconds)
             except (ValueError, TypeError):
                 log_security_event(request, "session.invalid", {"reason": "revoked"}, level=logging.WARNING)
                 logout(request)

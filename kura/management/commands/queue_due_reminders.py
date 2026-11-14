@@ -52,7 +52,10 @@ class Command(BaseCommand):
                 )
 
                 enrollments = Enrollment.objects.filter(
-                    course=course, status=EnrollmentStatus.ACTIVE, student__is_active=True
+                    course=course,
+                    status=EnrollmentStatus.ACTIVE,
+                    student__is_active=True,
+                    student__is_processing_restricted=False,
                 ).select_related("student")
                 for enrollment in enrollments:
                     if enrollment.student_id in submitted_student_ids:
