@@ -9399,8 +9399,8 @@ class GradeFeedbackTests(TestCase):
 
 class SecurityPolicyPageTests(TestCase):
     """
-    Admins can review the security rules in force; nobody else can, and the
-    page cannot change anything.
+    Admins can review and update configurable security rules with step-up MFA;
+    nobody else can reach the page.
     """
 
     def setUp(self):
@@ -9424,9 +9424,37 @@ class SecurityPolicyPageTests(TestCase):
             login_with_session(self.client, make_user(role_name))
             self.assertEqual(self.client.get(self.url).status_code, 403)
 
-    def test_page_is_read_only(self):
-        login_with_session(self.client, make_user("Admin"))
-        self.assertEqual(self.client.post(self.url).status_code, 405)
+    def test_post_requires_fresh_second_factor_and_validates_bounds(self):
+        admin = make_user("Admin", mfa_enabled=True)
+        login_with_session(self.client, admin)
+        # Without fresh second factor, POST redirects to mfa_reauth.
+        stale = self.client.post(
+            self.url,
+            {
+                "min_password_length": 14,
+                "password_history_count": 6,
+                "axes_failure_limit": 4,
+                "axes_cooloff_hours": 2,
+                "session_idle_minutes": 20,
+                "session_absolute_hours": 8,
+            },
+        )
+        self.assertRedirects(stale, f"{reverse('kura:mfa_reauth')}?next={self.url}", fetch_redirect_response=False)
+
+        # Unsafe min_password_length (< 12) returns 400 when step-up is fresh.
+        confirm_second_factor(self.client)
+        bad = self.client.post(
+            self.url,
+            {
+                "min_password_length": 8,
+                "password_history_count": 5,
+                "axes_failure_limit": 5,
+                "axes_cooloff_hours": 1,
+                "session_idle_minutes": 30,
+                "session_absolute_hours": 12,
+            },
+        )
+        self.assertEqual(bad.status_code, 400)
 
 
 class RemainingLedgerCompletionTests(TestCase):
@@ -11845,3 +11873,217 @@ class AuditGroup5RetentionAndLokiTests(TestCase):
             self.assertTrue(
                 any('event="retention.job_failed"' in line and 'command="anonymize_ips"' in line for line in cap_anon.output)
             )
+
+
+class AuditGroup6PolicyAndGdprTests(TestCase):
+    """Tests for Audit Group 6: O6 (editable SecurityPolicy) and O3 (GDPR data subject rights)."""
+
+    def test_admin_can_update_security_policy_with_step_up_and_runtime_readers_use_it(self):
+        from kura.models import SecurityPolicy, get_security_policy
+        from kura.views import get_axes_cooloff_timedelta, get_axes_failure_limit
+
+        admin = make_user("Admin", mfa_enabled=True)
+        login_with_session(self.client, admin)
+        confirm_second_factor(self.client)
+
+        with self.assertLogs("kura.security", level="WARNING") as cap:
+            resp = self.client.post(
+                reverse("kura:security_policy"),
+                {
+                    "min_password_length": 16,
+                    "password_history_count": 7,
+                    "axes_failure_limit": 3,
+                    "axes_cooloff_hours": 2,
+                    "session_idle_minutes": 15,
+                    "session_absolute_hours": 6,
+                },
+            )
+        self.assertRedirects(resp, reverse("kura:security_policy"))
+        self.assertTrue(any('event="admin.security_policy.changed"' in line for line in cap.output))
+
+        policy = SecurityPolicy.objects.get(pk=1)
+        self.assertEqual(policy.min_password_length, 16)
+        self.assertEqual(get_security_policy()["session_idle_minutes"], 15)
+        self.assertEqual(get_axes_failure_limit(), 3)
+        self.assertEqual(get_axes_cooloff_timedelta(), timezone.timedelta(hours=2))
+
+        # Password change form enforces the updated 16-character minimum length.
+        old_pw = "ValidPassword123!"
+        student = make_user("Student", password=old_pw, mfa_enabled=True)
+        stud_client = Client()
+        stud_session = login_with_session(stud_client, student)
+        with patch("kura.validators.BreachedPasswordValidator.validate", return_value=None):
+            short_resp = stud_client.post(
+                reverse("kura:password_change"),
+                {
+                    "old_password": old_pw,
+                    "new_password": "FourteenChar!9",  # 14 chars (< 16)
+                    "confirm_password": "FourteenChar!9",
+                },
+            )
+        self.assertEqual(short_resp.status_code, 400)
+        self.assertContains(short_resp, "at least 16 characters", status_code=400)
+
+        # Idle expiry reflects updated 15-minute idle policy (900 seconds).
+        self.assertEqual(stud_client.session.get_expiry_age(), 900)
+
+        # Lockout triggers at 3 failures and sets Retry-After: 7200 (2 hours).
+        anon_client = Client()
+        locked_user = make_user("Student", password="AnotherValidPassword!123")
+        for _ in range(3):
+            locked_resp = anon_client.post(
+                reverse("kura:login"),
+                {"email": locked_user.email, "password": "WrongPassword!999"},
+            )
+        self.assertEqual(locked_resp.status_code, 429)
+        self.assertEqual(locked_resp.headers.get("Retry-After"), "7200")
+        self.assertIsNotNone(stud_session)
+
+    def test_gdpr_privacy_notice_export_restriction_and_erasure_with_academic_exceptions(self):
+        # Public privacy notice works without login.
+        notice = self.client.get(reverse("kura:privacy_notice"))
+        self.assertEqual(notice.status_code, 200)
+        self.assertContains(notice, "Privacy notice")
+
+        dept = Department.objects.create(code="CSGD", name="CS GDPR")
+        head = make_user("Department head", mfa_enabled=True)
+        dept.head_user = head
+        dept.save()
+        instructor = make_user("Instructor", mfa_enabled=True)
+        student = make_user("Student", mfa_enabled=True)
+        StudentProfile.objects.create(
+            user=student, department=dept, current_level="level_4", matriculation_year=2025
+        )
+        now = timezone.now()
+        course = Course.objects.create(
+            department=dept,
+            code="GDPR101",
+            title="Privacy",
+            semester="1",
+            academic_year=2026,
+            created_by=head,
+            is_published=True,
+            published_by=head,
+            published_at=now,
+        )
+        Enrollment.objects.create(
+            course=course, student=student, status=EnrollmentStatus.ACTIVE, enrolled_by=head
+        )
+        mod = Module.objects.create(course=course, title="M", is_visible=True, created_by=instructor)
+        sec = ModuleSection.objects.create(module=mod, title="S", section_type="exam")
+        assessment = Assessment.objects.create(
+            section=sec,
+            title="GDPR Exam",
+            component_type=GradeComponentType.EXAM,
+            max_score=Decimal("100.00"),
+            opens_at=now - timezone.timedelta(hours=1),
+            due_date=now + timezone.timedelta(hours=12),
+            duration_minutes=30,
+            created_by=instructor,
+        )
+        ExamAnswerKey.objects.create(
+            assessment=assessment, answer_key_json={"ciphertext": "vault:v1:secret"}, created_by=instructor
+        )
+        att_rel = AssessmentAttempt.objects.create(
+            assessment=assessment,
+            student=student,
+            attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED,
+            expires_at=now + timezone.timedelta(minutes=30),
+            submitted_at=now,
+            ip_address="198.51.100.40",
+        )
+        Grade.objects.create(
+            assessment=assessment,
+            student=student,
+            attempt=att_rel,
+            score=Decimal("88.00"),
+            feedback="Good work",
+            status=GradeStatus.RELEASED,
+            released_by=instructor,
+            released_at=now,
+        )
+        # Unreleased draft grade on a second assessment must NOT appear in export.
+        assessment_draft = Assessment.objects.create(
+            section=sec,
+            title="Draft Quiz",
+            component_type=GradeComponentType.QUIZ,
+            max_score=Decimal("10.00"),
+            opens_at=now - timezone.timedelta(hours=1),
+            due_date=now + timezone.timedelta(hours=12),
+            duration_minutes=15,
+            created_by=instructor,
+        )
+        att_draft = AssessmentAttempt.objects.create(
+            assessment=assessment_draft,
+            student=student,
+            attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED,
+            expires_at=now + timezone.timedelta(minutes=15),
+            submitted_at=now,
+            ip_address="198.51.100.40",
+        )
+        Grade.objects.create(
+            assessment=assessment_draft,
+            student=student,
+            attempt=att_draft,
+            score=Decimal("5.00"),
+            feedback="Draft Feedback",
+            status=GradeStatus.DRAFT,
+        )
+
+        old_session = UserSession.objects.create(
+            user=student,
+            session_token_hash=hash_session_token("old-gdpr-key"),
+            ip_address="203.0.113.77",
+            user_agent="OldBrowser",
+            expires_at=now + timezone.timedelta(hours=12),
+        )
+        PasswordResetToken.objects.create(
+            user=student,
+            token_hash=hashlib.sha256(b"gdpr-reset").hexdigest(),
+            expires_at=now + timezone.timedelta(minutes=30),
+        )
+
+        # Own-data JSON export includes released grade but omits draft grade, secrets, and answer keys.
+        login_with_session(self.client, student)
+        with self.assertLogs("kura.security", level="INFO") as cap_exp:
+            export_resp = self.client.get(reverse("kura:privacy_export"))
+        self.assertEqual(export_resp.status_code, 200)
+        self.assertIn("no-store", export_resp.headers.get("Cache-Control", ""))
+        self.assertTrue(any('event="privacy.data_exported"' in line for line in cap_exp.output))
+        data = json.loads(export_resp.content.decode("utf-8"))
+        self.assertEqual(data["account"]["email"], student.email)
+        self.assertEqual(len(data["released_grades"]), 1)
+        self.assertEqual(data["released_grades"][0]["score"], "88.00")
+        self.assertNotIn("5.00", export_resp.content.decode("utf-8"))
+        self.assertNotIn("Draft Feedback", export_resp.content.decode("utf-8"))
+        self.assertNotIn("vault:v1:secret", export_resp.content.decode("utf-8"))
+
+        # Restriction flag stops queue_due_reminders from emailing the restricted student.
+        with self.assertLogs("kura.security", level="INFO") as cap_res:
+            res_resp = self.client.post(reverse("kura:privacy_restrict"))
+        self.assertRedirects(res_resp, reverse("kura:privacy_dashboard"))
+        student.refresh_from_db()
+        self.assertTrue(student.is_processing_restricted)
+        self.assertTrue(any('event="privacy.restriction_updated"' in line for line in cap_res.output))
+
+        call_command("queue_due_reminders", stdout=StringIO())
+        self.assertFalse(OutgoingEmail.objects.filter(to_email=student.email).exists())
+
+        # Erasure request clears auxiliary metadata while preserving academic records.
+        with self.assertLogs("kura.security", level="WARNING") as cap_er:
+            er_resp = self.client.post(reverse("kura:privacy_erasure"), {"confirm": "on"})
+        self.assertRedirects(er_resp, reverse("kura:privacy_dashboard"))
+        self.assertTrue(
+            any('event="privacy.erasure_requested"' in line and 'retained_academic_records="True"' in line for line in cap_er.output)
+        )
+        old_session.refresh_from_db()
+        self.assertIsNone(old_session.ip_address)
+        self.assertEqual(old_session.user_agent, "")
+        self.assertIsNotNone(old_session.revoked_at)
+        self.assertFalse(PasswordResetToken.objects.filter(user=student, used_at__isnull=True).exists())
+        student.refresh_from_db()
+        self.assertIsNotNone(student.erasure_requested_at)
+        self.assertEqual(Grade.objects.filter(student=student).count(), 2)
+        self.assertTrue((Path(settings.BASE_DIR) / "docs" / "PRIVACY_AND_ROPA.md").exists())

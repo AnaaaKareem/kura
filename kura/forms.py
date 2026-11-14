@@ -22,9 +22,11 @@ from .models import (
     PasswordHistory,
     Role,
     SectionType,
+    SecurityPolicy,
     SemesterType,
     SessionType,
     User,
+    get_security_policy,
     validate_cidr,
 )
 
@@ -33,12 +35,23 @@ def password_was_used_recently(user, raw_password):
     """Return True if raw_password matches the current password or recent history (AUTH-06)."""
     if user.check_password(raw_password):
         return True
-    history_limit = getattr(settings, "PASSWORD_HISTORY_COUNT", 5)
+    history_limit = get_security_policy()["password_history_count"]
     recent_hashes = PasswordHistory.objects.filter(user=user).order_by("-created_at", "-id")[:history_limit]
     for entry in recent_hashes:
         if check_password(raw_password, entry.password_hash):
             return True
     return False
+
+
+def validate_password_policy(raw_password, user=None):
+    """Validate raw_password against Django validators and the live SecurityPolicy min length."""
+    validate_password(raw_password, user)
+    min_length = get_security_policy()["min_password_length"]
+    if len(raw_password) < min_length:
+        raise ValidationError(
+            f"This password is too short. It must contain at least {min_length} characters.",
+            code="password_too_short",
+        )
 
 
 class AdminCourseFilterForm(forms.Form):
@@ -256,10 +269,10 @@ class PasswordChangeForm(forms.Form):
         if new_password and password_was_used_recently(self.user, new_password):
             self.add_error("new_password", "Choose a password you have not used recently.")
 
-        # Run configured Django password validators on the new password.
+        # Run configured Django password validators and live SecurityPolicy min length.
         if new_password:
             try:
-                validate_password(new_password, self.user)
+                validate_password_policy(new_password, self.user)
             except ValidationError as error:
                 self.add_error("new_password", error)
 
@@ -351,9 +364,9 @@ class PasswordResetConfirmForm(forms.Form):
         if new_password and password_was_used_recently(self.user, new_password):
             self.add_error("new_password", "Choose a password you have not used recently.")
 
-        # Run validators against password rules.
+        # Run validators against password rules and live SecurityPolicy min length.
         if new_password:
-            validate_password(new_password, self.user)
+            validate_password_policy(new_password, self.user)
 
         return cleaned_data
 
@@ -1755,3 +1768,55 @@ def validate_summary_score_json(summary):
     if not isinstance(summary.get("is_fully_graded"), bool):
         raise ValidationError("Summary score 'is_fully_graded' must be a boolean.")
     return summary
+
+
+class SecurityPolicyForm(forms.ModelForm):
+    """Validate editable security policy bounds for Administrators (O6)."""
+
+    class Meta:
+        model = SecurityPolicy
+        fields = [
+            "min_password_length",
+            "password_history_count",
+            "axes_failure_limit",
+            "axes_cooloff_hours",
+            "session_idle_minutes",
+            "session_absolute_hours",
+        ]
+        labels = {
+            "min_password_length": "Minimum password length (12 to 128 characters)",
+            "password_history_count": "Password reuse history count (1 to 24)",
+            "axes_failure_limit": "Failed login attempts before lockout (3 to 20)",
+            "axes_cooloff_hours": "Lockout duration in hours (1 to 24)",
+            "session_idle_minutes": "Session idle timeout in minutes (5 to 240)",
+            "session_absolute_hours": "Session absolute limit in hours (1 to 72)",
+        }
+        widgets = {
+            "min_password_length": forms.NumberInput(attrs={"class": "input input-bordered w-full", "min": 12, "max": 128}),
+            "password_history_count": forms.NumberInput(attrs={"class": "input input-bordered w-full", "min": 1, "max": 24}),
+            "axes_failure_limit": forms.NumberInput(attrs={"class": "input input-bordered w-full", "min": 3, "max": 20}),
+            "axes_cooloff_hours": forms.NumberInput(attrs={"class": "input input-bordered w-full", "min": 1, "max": 24}),
+            "session_idle_minutes": forms.NumberInput(attrs={"class": "input input-bordered w-full", "min": 5, "max": 240}),
+            "session_absolute_hours": forms.NumberInput(attrs={"class": "input input-bordered w-full", "min": 1, "max": 72}),
+        }
+
+    def clean(self):
+        cleaned_data = super().clean()
+        idle_minutes = cleaned_data.get("session_idle_minutes")
+        absolute_hours = cleaned_data.get("session_absolute_hours")
+        if idle_minutes is not None and absolute_hours is not None:
+            if idle_minutes > absolute_hours * 60:
+                self.add_error(
+                    "session_idle_minutes",
+                    "Idle timeout cannot exceed the absolute session limit.",
+                )
+        return cleaned_data
+
+
+class PrivacyErasureForm(forms.Form):
+    """Require explicit confirmation before requesting GDPR account erasure (O3)."""
+
+    confirm = forms.BooleanField(
+        required=True,
+        label="I understand that non-exempt personal metadata will be cleared while academic and audit records remain retained as required by law.",
+    )
