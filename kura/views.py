@@ -27,6 +27,7 @@ from django.db.models import Avg, Count, Prefetch, Q, Value
 from django.db.models.functions import Concat
 from django.http import HttpResponse, HttpResponseForbidden, HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
+from django.template import loader
 from django.urls import reverse
 from django.utils import timezone
 from django.utils.crypto import salted_hmac
@@ -96,7 +97,7 @@ from .forms import (
     validate_attempt_answers_json,
     validate_summary_score_json,
 )
-from .logging_utils import get_client_ip, log_invalid_form, log_security_event
+from .logging_utils import get_client_ip, hash_login_identifier, log_invalid_form, log_security_event
 from .models import (
     ALLOWED_UPLOAD_MIME_TYPES,
     MAX_UPLOAD_BYTES,
@@ -261,6 +262,27 @@ def csrf_failure_view(request, reason=""):
     log_security_event(request, "access.csrf_failed", {"reason": str(reason)[:200]}, logging.WARNING)
     return render(request, "403.html", status=403)
 
+
+def not_found_view(request, exception):
+    """Show a generic 404 page and record missing-object lookups for probing detection.
+
+    Who can reach it: Any visitor hitting an unknown route or missing scoped record.
+    Security: Logs the requested path and correlation ID without leaking object details.
+    """
+    log_security_event(request, "access.not_found", {}, logging.INFO)
+    return render(request, "404.html", status=404)
+
+
+def server_error_view(request):
+    """Show a generic 500 page and record unexpected server errors without touching the database.
+
+    Who can reach it: Any visitor whose request triggers an unhandled exception.
+    Security: Skips actor/database lookups and omits exception details from logs and HTML.
+    """
+    log_security_event(request, "server.error", {}, logging.ERROR, include_actor=False)
+    html_body = loader.get_template("500.html").render({})
+    return HttpResponse(html_body, status=500)
+
 def queue_email(event_key, to_email, subject, body):
     """
     Puts one email in the outbox (OutgoingEmail) for send_queued_emails to send.
@@ -410,7 +432,7 @@ def hash_recovery_code(code):
 
 
 # ACL-06: concurrent sessions are allowed by owner decision; users can see and revoke them at account/sessions/
-def create_user_session(request, user):
+def create_user_session(request, user, method="password"):
     """
     Creates a new tracked UserSession record for an authenticated user.
     Records client IP address, browser user-agent, and the absolute expiry (ACL-07).
@@ -437,8 +459,13 @@ def create_user_session(request, user):
         expires_at=expires_at,
     )
 
-    # Store session id in the Django request session.
+    # Store session id in the Django request session and emit session lifecycle event.
     request.session["user_session_id"] = str(user_session.id)
+    log_security_event(
+        request,
+        "session.created",
+        {"session_id": user_session.id, "method": method},
+    )
     return user_session
 
 
@@ -480,7 +507,7 @@ def login_view(request):
                 log_security_event(
                     request,
                     "auth.login.failed",
-                    {"login_identifier": email[:254], "reason": reason},
+                    {"login_identifier_hash": hash_login_identifier(email), "reason": reason},
                     logging.WARNING,
                 )
                 messages.error(request, "Invalid email or password.")
@@ -493,7 +520,7 @@ def login_view(request):
                 log_security_event(
                     request,
                     "auth.login.failed",
-                    {"login_identifier": email[:254], "reason": "status_changed"},
+                    {"login_identifier_hash": hash_login_identifier(email), "reason": "status_changed"},
                     logging.WARNING,
                 )
                 messages.error(request, "Invalid email or password.")
@@ -510,7 +537,7 @@ def login_view(request):
             login(request, user)
             user.last_login = timezone.now()
             user.save(update_fields=["last_login"])
-            create_user_session(request, user)
+            create_user_session(request, user, method="password")
 
             # Force first-login password change if required.
             if user.must_change_password:
@@ -518,6 +545,8 @@ def login_view(request):
 
             # Direct new users to set up mandatory MFA.
             return redirect("kura:mfa_setup")
+
+        log_invalid_form(request, form)
 
     return render(request, "kura/accounts/login.html", {"form": form})
 
@@ -585,13 +614,16 @@ def mfa_verify_view(request):
         login(request, user, backend="kura.backends.KuraAuthBackend")
         user.last_login = timezone.now()
         user.save(update_fields=["last_login"])
-        create_user_session(request, user)
+        create_user_session(request, user, method=verification_method)
 
         # Handle first-login password rotation if needed.
         if user.must_change_password:
             return redirect("kura:password_change")
 
         return redirect("kura:home")
+
+    if request.method == "POST":
+        log_invalid_form(request, form)
 
     return render(request, "kura/accounts/mfa_verify.html", {"form": form, "has_passkeys": has_passkeys})
 
@@ -627,7 +659,7 @@ def mfa_login_callback(request, username):
     login(request, user, backend="kura.backends.KuraAuthBackend")
     user.last_login = timezone.now()
     user.save(update_fields=["last_login"])
-    create_user_session(request, user)
+    create_user_session(request, user, method="passkey")
 
     request.session.pop("pre_mfa_user_id", None)
     request.session.pop("base_username", None)
@@ -1376,6 +1408,11 @@ def create_reset_token(user):
         token_hash=token_hash,
         expires_at=timezone.now() + timezone.timedelta(minutes=30),
     )
+    log_security_event(
+        None,
+        "password_reset.token_created",
+        {"user_id": user.id, "expires_at": record.expires_at.isoformat()},
+    )
     return raw_token, record
 
 
@@ -1430,6 +1467,9 @@ def password_reset_request_view(request):
             request, "If an account exists with that email address, password reset instructions have been sent."
         )
         return redirect("kura:login")
+
+    if request.method == "POST":
+        log_invalid_form(request, form)
 
     return render(request, "kura/accounts/password_reset_request.html", {"form": form})
 
@@ -1521,6 +1561,9 @@ def password_reset_confirm_view(request, token):
 
         messages.success(request, "Your password has been reset. Please log in with your new password.")
         return redirect("kura:login")
+
+    if request.method == "POST":
+        log_invalid_form(request, form)
 
     context = {"form": form, "needs_code": reset_record.user.mfa_enabled}
     return render(request, "kura/accounts/password_reset_confirm.html", context)
@@ -2425,6 +2468,9 @@ def student_create_view(request):
         messages.success(request, f"Student account created for {email}.")
         return redirect("kura:enrollment_list")
 
+    if request.method == "POST":
+        log_invalid_form(request, form)
+
     return render(request, "kura/accounts/student_create.html", {"form": form})
 
 
@@ -2493,6 +2539,12 @@ def student_profile_view(request, student_id):
         raise PermissionDenied
     student = get_object_or_404(StudentProfile.objects.select_related("user", "department"), user_id=student_id)
     enrollments = Enrollment.objects.filter(student=student.user).select_related("course").order_by("-enrolled_at")
+    if student.user_id != request.user.id:
+        log_security_event(
+            request,
+            "record.viewed",
+            {"record_type": "student_profile", "record_id": student.user_id},
+        )
     return render(
         request,
         "kura/accounts/student_profile.html",
@@ -2653,6 +2705,9 @@ def enrollment_create_view(request):
         log_security_event(request, "enrollment.created", {"course_id": course.id, "student_id": student.id})
         messages.success(request, f"Enrolled {student.email} in {course.code}.")
         return redirect("kura:enrollment_list")
+
+    if request.method == "POST":
+        log_invalid_form(request, form)
 
     return render(request, "kura/accounts/enrollment_create.html", {"form": form})
 
@@ -2834,7 +2889,7 @@ def course_create_view(request):
     form = CourseCreateForm(request.POST or None)
 
     if request.method == "POST" and form.is_valid():
-        Course.objects.create(
+        course = Course.objects.create(
             department=department,
             code=form.cleaned_data["code"],
             title=form.cleaned_data["title"],
@@ -2844,6 +2899,7 @@ def course_create_view(request):
             created_by=request.user,
             is_published=False,
         )
+        log_security_event(request, "course.created", {"course_id": course.id})
         messages.success(request, f"Course {form.cleaned_data['code']} created as draft.")
         return redirect("kura:course_list")
 
@@ -3036,7 +3092,7 @@ def course_publish_toggle_view(request, course_id):
         event_name = "admin.course.published"
     else:
         event_name = "admin.course.unpublished"
-    log_security_event(request, event_name, {"course_id": course.id})
+    log_security_event(request, event_name, {"course_id": course.id, "is_published": course.is_published})
     return redirect("kura:course_detail", course_id=course.id)
 
 
@@ -3118,6 +3174,11 @@ def course_ta_assign_view(request, course_id):
                 "assigned_by": request.user,
             },
         )
+        log_security_event(
+            request,
+            "admin.ta.assigned",
+            {"course_id": course.id, "target_user_id": user.id},
+        )
         messages.success(request, f"Assigned {user.email} as Teaching Assistant.")
         return redirect("kura:course_detail", course_id=course.id)
 
@@ -3164,6 +3225,7 @@ def module_create_view(request, course_id):
             for level in target_levels:
                 ModuleTargetLevel.objects.create(module=module, target_level=level)
 
+        log_security_event(request, "course.module.created", {"module_id": module.id, "course_id": course.id})
         messages.success(request, f"Module '{title}' created successfully.")
         return redirect("kura:course_detail", course_id=course.id)
 
@@ -3255,6 +3317,7 @@ def module_edit_view(request, module_id):
                     assessment, "assessment-new", f"New {assessment.get_component_type_display()}: {assessment.title}",
                     "A new assessment has been published in one of your courses.",
                 )
+        log_security_event(request, "course.module.edited", {"module_id": module.id, "course_id": course.id})
         messages.success(request, "Module updated.")
         return redirect("kura:course_detail", course_id=course.id)
     return render(request, "kura/courses/module_create.html", {"form": form, "course": course, "editing": True})
@@ -3285,6 +3348,11 @@ def section_edit_view(request, section_id):
         section.title = form.cleaned_data["title"]
         section.section_type = form.cleaned_data["section_type"]
         section.save(update_fields=["title", "section_type"])
+        log_security_event(
+            request,
+            "course.section.edited",
+            {"section_id": section.id, "module_id": section.module_id},
+        )
         messages.success(request, "Section updated.")
         return redirect("kura:course_detail", course_id=course.id)
     return render(
@@ -3315,10 +3383,15 @@ def section_create_view(request, module_id):
     form = ModuleSectionForm(request.POST or None)
 
     if request.method == "POST" and form.is_valid():
-        ModuleSection.objects.create(
+        section = ModuleSection.objects.create(
             module=module,
             title=form.cleaned_data["title"],
             section_type=form.cleaned_data["section_type"],
+        )
+        log_security_event(
+            request,
+            "course.section.created",
+            {"section_id": section.id, "module_id": module.id},
         )
         messages.success(request, f"Section '{form.cleaned_data['title']}' created.")
         return redirect("kura:course_detail", course_id=course.id)
@@ -3427,7 +3500,12 @@ def item_edit_view(request, item_id):
                 item.released_at = form.cleaned_data["released_at"]
                 item.save(update_fields=["title", "content_body", "released_at"])
                 if form.cleaned_data["file"]:
-                    stored = validate_and_save_upload(form.cleaned_data["file"], request.user)
+                    stored = validate_and_save_upload(
+                        form.cleaned_data["file"],
+                        request.user,
+                        request=request,
+                        log_context={"context": "section_item", "item_id": item.id},
+                    )
                     SectionItemFile.objects.create(section_item=item, file=stored)
         except ValidationError as error:
             if hasattr(error, "message"):
@@ -3436,6 +3514,11 @@ def item_edit_view(request, item_id):
                 error_message = str(error)
             messages.error(request, error_message)
         else:
+            log_security_event(
+                request,
+                "course.item.edited",
+                {"item_id": item.id, "section_id": section.id, "is_visible": item.is_visible},
+            )
             messages.success(request, "Item updated.")
             return redirect("kura:course_detail", course_id=course.id)
     return render(request, "kura/courses/item_create.html", {"form": form, "section": section, "editing": True})
@@ -3516,7 +3599,12 @@ def item_create_view(request, section_id):
             # If a file was attached, validate and save it.
             if uploaded_file:
                 try:
-                    stored_file = validate_and_save_upload(uploaded_file, request.user)
+                    stored_file = validate_and_save_upload(
+                        uploaded_file,
+                        request.user,
+                        request=request,
+                        log_context={"context": "section_item", "item_id": item.id},
+                    )
                     SectionItemFile.objects.create(section_item=item, file=stored_file)
                 except ValidationError as e:
                     if hasattr(e, "message"):
@@ -3530,6 +3618,11 @@ def item_create_view(request, section_id):
             messages.error(request, upload_error)
             return render(request, "kura/courses/item_create.html", {"form": form, "section": section})
 
+        log_security_event(
+            request,
+            "course.item.created",
+            {"item_id": item.id, "section_id": section.id, "is_visible": item.is_visible},
+        )
         messages.success(request, f"Item '{title}' created hidden. Release it when ready.")
         return redirect("kura:course_detail", course_id=course.id)
 
@@ -3601,6 +3694,11 @@ def item_visibility_toggle_view(request, item_id):
     # Flip the saved state and tell the staff member what happened.
     item.is_visible = not item.is_visible
     item.save(update_fields=["is_visible"])
+    log_security_event(
+        request,
+        "course.item.visibility_changed",
+        {"item_id": item.id, "section_id": item.section_id, "is_visible": item.is_visible},
+    )
     if item.is_visible:
         status_message = "released"
     else:
@@ -3761,7 +3859,7 @@ def schedule_create_view(request, course_id):
     form = ScheduleForm(request.POST or None)
 
     if request.method == "POST" and form.is_valid():
-        Schedule.objects.create(
+        schedule = Schedule.objects.create(
             course=course,
             instructor=form.cleaned_data["instructor"],
             session_type=form.cleaned_data["session_type"],
@@ -3772,6 +3870,11 @@ def schedule_create_view(request, course_id):
             recurrence_start=form.cleaned_data["recurrence_start"],
             recurrence_end=form.cleaned_data["recurrence_end"],
             created_by=request.user,
+        )
+        log_security_event(
+            request,
+            "course.schedule.created",
+            {"schedule_id": schedule.id, "course_id": course.id},
         )
         messages.success(request, f"Class schedule created for {course.code}.")
         return redirect("kura:course_detail", course_id=course.id)
@@ -3815,6 +3918,11 @@ def schedule_edit_view(request, schedule_id):
         schedule.recurrence_start = form.cleaned_data["recurrence_start"]
         schedule.recurrence_end = form.cleaned_data["recurrence_end"]
         schedule.save()
+        log_security_event(
+            request,
+            "course.schedule.edited",
+            {"schedule_id": schedule.id, "course_id": course.id},
+        )
         messages.success(request, "Schedule updated.")
         return redirect("kura:schedule_list")
     return render(request, "kura/attendance/schedule_create.html", {"form": form, "course": course, "editing": True})
@@ -3882,6 +3990,11 @@ def attendance_session_start_view(request, module_id):
         # Store raw passcode in request session temporarily to display on projector screen.
         request.session[f"session_passcode_{session.id}"] = raw_passcode
 
+        log_security_event(
+            request,
+            "attendance.session_started",
+            {"session_id": session.id, "module_id": module.id},
+        )
         messages.success(request, f"Attendance roll started for {title}.")
         return redirect("kura:attendance_session_detail", session_id=session.id)
 
@@ -3976,6 +4089,11 @@ def attendance_session_close_view(request, session_id):
     session.is_active = False
     session.save(update_fields=["is_active"])
 
+    log_security_event(
+        request,
+        "attendance.session_closed",
+        {"session_id": session.id, "module_id": session.module_id},
+    )
     messages.success(request, f"Attendance roll closed for {session.title}.")
     return redirect("kura:attendance_session_detail", session_id=session.id)
 
@@ -3997,18 +4115,32 @@ def student_checkin_view(request, session_id):
     if not is_enrolled(request.user, course):
         raise PermissionDenied
 
+    # Check if passcode was provided in QR code URL query parameter.
+    qr_code_param = request.GET.get("code")
+    checkin_method = AttendanceMethod.QR_CODE if qr_code_param else AttendanceMethod.PASSCODE
+
     # Verify session is currently active and unexpired.
     if not session.is_active or session.expires_at <= timezone.now():
+        log_security_event(
+            request,
+            "attendance.checkin_failed",
+            {"session_id": session.id, "method": checkin_method, "reason": "expired"},
+            logging.WARNING,
+        )
         messages.error(request, "This attendance session is closed or has expired.")
         return redirect("kura:attendance_history")
 
     # Check if student already checked in (enforce one record per student per session).
     if AttendanceRecord.objects.filter(session=session, student=request.user).exists():
+        log_security_event(
+            request,
+            "attendance.checkin_failed",
+            {"session_id": session.id, "method": checkin_method, "reason": "duplicate"},
+            logging.WARNING,
+        )
         messages.warning(request, "You have already checked in for this attendance session.")
         return redirect("kura:attendance_history")
 
-    # Check if passcode was provided in QR code URL query parameter.
-    qr_code_param = request.GET.get("code")
     initial_code = ""
     if qr_code_param:
         initial_code = qr_code_param.strip().upper()
@@ -4023,14 +4155,17 @@ def student_checkin_view(request, session_id):
 
             # Verify passcode matches.
             if submitted_hash != session.passcode_hash:
+                log_security_event(
+                    request,
+                    "attendance.checkin_failed",
+                    {"session_id": session.id, "method": checkin_method, "reason": "bad_passcode"},
+                    logging.WARNING,
+                )
                 messages.error(request, "Invalid attendance passcode.")
                 return render(request, "kura/attendance/checkin.html", {"form": form, "session": session})
 
             # Server sets check-in method: QR_CODE if scanned via query param, otherwise PASSCODE.
-            if qr_code_param:
-                method = AttendanceMethod.QR_CODE
-            else:
-                method = AttendanceMethod.PASSCODE
+            method = checkin_method
             client_ip = get_client_ip(request)
 
             # Create attendance record.
@@ -4042,6 +4177,11 @@ def student_checkin_view(request, session_id):
                 ip_address=client_ip,
             )
 
+            log_security_event(
+                request,
+                "attendance.checked_in",
+                {"session_id": session.id, "method": method},
+            )
             messages.success(request, f"Attendance verified for {session.title}!")
             return redirect("kura:attendance_history")
 
@@ -4086,8 +4226,20 @@ def attendance_manual_record_view(request, session_id):
                 "override_reason": override_reason,
             },
         )
+        # Never log free-text justification; record only whether one was provided.
+        log_security_event(
+            request,
+            "attendance.manual_recorded",
+            {
+                "session_id": session.id,
+                "student_id": student.id,
+                "status": status,
+                "has_justification": bool(override_reason.strip()),
+            },
+        )
         messages.success(request, f"Manual attendance recorded for {student.email}.")
     else:
+        log_invalid_form(request, form)
         messages.error(request, "A written justification reason is required for manual roll entries.")
 
     return redirect("kura:attendance_session_detail", session_id=session.id)
@@ -4938,7 +5090,12 @@ def scanned_paper_staff_upload_view(request, assessment_id):
                 )
 
             # Inspect and attach only a PDF or image before sealing the attempt.
-            stored_file = validate_and_save_upload(form.cleaned_data["file"], request.user)
+            stored_file = validate_and_save_upload(
+                form.cleaned_data["file"],
+                request.user,
+                request=request,
+                log_context={"context": "scanned_paper", "attempt_id": attempt.id},
+            )
             if stored_file.mime_type not in {"application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp"}:
                 raise ValidationError("Upload a PDF or image of the scanned paper.")
             AttemptFile.objects.create(attempt=attempt, file=stored_file)
@@ -5036,7 +5193,12 @@ def assessment_file_upload_view(request, assessment_id):
     if form.is_valid():
         uploaded_file = form.cleaned_data["file"]
         try:
-            stored_file = validate_and_save_upload(uploaded_file, request.user)
+            stored_file = validate_and_save_upload(
+                uploaded_file,
+                request.user,
+                request=request,
+                log_context={"context": "assessment", "assessment_id": assessment.id},
+            )
             AssessmentFile.objects.create(assessment=assessment, file=stored_file)
             messages.success(request, f"Attached {stored_file.original_filename} to assessment.")
         except ValidationError as e:
@@ -5425,7 +5587,12 @@ def assessment_attempt_file_upload_view(request, attempt_id):
                 attempt = AssessmentAttempt.objects.select_for_update().get(id=attempt.id, student=request.user)
                 if attempt.status != AttemptStatus.IN_PROGRESS or timezone.now() >= attempt.expires_at:
                     raise ValidationError("Files cannot be uploaded: attempt is closed or deadline has passed.")
-                stored_file = validate_and_save_upload(uploaded_file, request.user)
+                stored_file = validate_and_save_upload(
+                    uploaded_file,
+                    request.user,
+                    request=request,
+                    log_context={"context": "attempt", "attempt_id": attempt.id},
+                )
                 if attempt.assessment.delivery_mode == AssessmentDeliveryMode.PAPER_SCANNED:
                     allowed_scan_types = {"application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp"}
                     if stored_file.mime_type not in allowed_scan_types:
@@ -5623,6 +5790,13 @@ def attempt_detail_view(request, attempt_id):
             student=request.user,
             status=GradeStatus.RELEASED,
         ).first()
+
+    if attempt.student_id != request.user.id:
+        log_security_event(
+            request,
+            "record.viewed",
+            {"record_type": "assessment_attempt", "record_id": attempt.id},
+        )
 
     attempt_files = AttemptFile.objects.filter(attempt=attempt).select_related("file")
 
@@ -5902,6 +6076,9 @@ def grade_entry_view(request, attempt_id):
         )
         return redirect("kura:course_grades", course_id=course.id)
 
+    if request.method == "POST":
+        log_invalid_form(request, form)
+
     question_reviews = build_question_reviews(attempt)
     attempt_files = AttemptFile.objects.filter(attempt=attempt).select_related("file")
     return render(
@@ -6081,6 +6258,9 @@ def grade_release_view(request, grade_id):
         )
         return redirect("kura:course_grades", course_id=course.id)
 
+    if request.method == "POST":
+        log_invalid_form(request, form)
+
     return render(request, "kura/grades/grade_release.html", {"form": form, "grade": grade})
 
 
@@ -6159,6 +6339,9 @@ def grade_appeal_create_view(request, grade_id):
         log_security_event(request, "appeal.created", {"appeal_id": appeal.id, "status": appeal.status})
         messages.success(request, "Your grade appeal has been submitted for instructor review.")
         return redirect("kura:student_grades")
+
+    if request.method == "POST":
+        log_invalid_form(request, form)
 
     return render(request, "kura/grades/appeal_create.html", {"form": form, "grade": grade})
 
@@ -6280,6 +6463,9 @@ def grade_change_request_create_view(request, grade_id):
         messages.success(request, "Grade change request submitted for Department Head approval.")
         return redirect("kura:course_grades", course_id=course.id)
 
+    if request.method == "POST":
+        log_invalid_form(request, form)
+
     return render(request, "kura/grades/change_request_create.html", {"form": form, "grade": grade})
 
 
@@ -6360,6 +6546,9 @@ def grade_change_request_review_view(request, request_id):
         messages.success(request, f"Grade change request {decision.lower()} successfully.")
         return redirect("kura:course_grades", course_id=course.id)
 
+    if request.method == "POST":
+        log_invalid_form(request, form)
+
     return render(request, "kura/grades/change_request_review.html", {"form": form, "change_request": change_request})
 
 
@@ -6390,6 +6579,7 @@ def course_result_calculate_view(request, course_id):
     schemes = CourseGradeScheme.objects.filter(course=course)
     enrollments = Enrollment.objects.filter(course=course, status=EnrollmentStatus.ACTIVE).select_related("student")
 
+    calculated_count = 0
     with transaction.atomic():
         # Serialize result calculation and release for this course.
         Course.objects.select_for_update().get(id=course.id)
@@ -6428,7 +6618,13 @@ def course_result_calculate_view(request, course_id):
                     "status": GradeStatus.DRAFT,
                 },
             )
+            calculated_count += 1
 
+    log_security_event(
+        request,
+        "course.result.calculated",
+        {"course_id": course.id, "count": calculated_count},
+    )
     messages.success(request, "Course results calculated from released grades.")
     return redirect("kura:course_grades", course_id=course.id)
 
@@ -6462,12 +6658,17 @@ def course_result_release_view(request, course_id):
     with transaction.atomic():
         Course.objects.select_for_update().get(id=course.id)
         now = timezone.now()
-        CourseResult.objects.filter(course=course).exclude(status=GradeStatus.RELEASED).update(
+        released_count = CourseResult.objects.filter(course=course).exclude(status=GradeStatus.RELEASED).update(
             status=GradeStatus.RELEASED,
             finalized_by=request.user,
             finalized_at=now,
             released_at=now,
         )
+    log_security_event(
+        request,
+        "course.result.released",
+        {"course_id": course.id, "count": released_count},
+    )
     messages.success(request, "Course results released to transcripts.")
     return redirect("kura:course_grades", course_id=course.id)
 
@@ -6593,6 +6794,11 @@ def department_reports_view(request, department_id):
                     row["avg_score"] if row["avg_score"] is not None else "",
                 ]
             )
+        log_security_event(
+            request,
+            "report.exported",
+            {"department_id": department.id, "row_count": len(course_rows)},
+        )
         response = HttpResponse(buffer.getvalue(), content_type="text/csv; charset=utf-8")
         response["Content-Disposition"] = f'attachment; filename="{department.code.lower()}_report.csv"'
         response["X-Content-Type-Options"] = "nosniff"

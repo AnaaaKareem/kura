@@ -8,8 +8,8 @@ Grafana Alloy is Grafana's official, open-source telemetry collector (the modern
 
 ## How it Works in Kura
 
-1. **Log Ingestion:** Alloy mounts the shared `nginx_logs` volume read-only at `/var/log/nginx`.
-2. **Tagging:** It attaches metadata tags (`service="nginx"`, `env="production"`, `component="reverse-proxy"`) to incoming log entries.
+1. **Log Ingestion:** Alloy reads container logs via the read-only Docker socket proxy and tails host cron logs mounted read-only at `/var/log/kura/*.log` (`service="cron"`, `job=<filename>`).
+2. **Tagging:** It keeps low-cardinality labels (`service`, `stream`, `level`, `job`) and extracts logfmt fields (`event`, `request_id`) as structured metadata.
 3. **Forwarding:** Streams processed logs over HTTP to `http://loki:3100/loki/api/v1/push`.
 4. **Metrics:** Scrapes its own health metrics and Vault over verified HTTPS, then forwards them to Prometheus with the remote-write receiver. Additional service exporters are being added in WP3.
 

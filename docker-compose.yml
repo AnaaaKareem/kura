@@ -950,6 +950,8 @@ services:
       # Script-health and app-metric files written by the cron jobs (WP11).
       # Set KURA_METRICS_DIR=/var/lib/kura-metrics in .env on the VM.
       - ${KURA_METRICS_DIR:-./var/metrics}:/var/lib/kura-metrics:ro
+      # Host cron job logs (/var/log/kura/*.log), mounted read-only into Alloy.
+      - ${KURA_LOG_DIR:-./var/log/kura}:/var/log/kura:ro
       # Host CPU, memory, disk and network figures, read-only (WP3).
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
