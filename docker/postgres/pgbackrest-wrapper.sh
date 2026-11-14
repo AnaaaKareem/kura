@@ -18,4 +18,10 @@ if [ -z "${PGBACKREST_REPO1_CIPHER_PASS:-}" ]; then
     export PGBACKREST_REPO1_CIPHER_PASS
 fi
 
+DB_PASS_FILE="/run/secrets/db_password"
+if [ -z "${PGPASSWORD:-}" ] && [ -r "$DB_PASS_FILE" ]; then
+    PGPASSWORD="$(tr -d '\r\n' < "$DB_PASS_FILE")"
+    export PGPASSWORD
+fi
+
 exec /usr/bin/pgbackrest "$@"
