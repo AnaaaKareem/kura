@@ -49,6 +49,7 @@ from .vault import (
     get_vault_client,
 )
 from .views import (
+    compute_submission_hash,
     evaluate_attempt,
     hash_attendance_passcode,
     hash_proctor_code,
@@ -11078,3 +11079,280 @@ class AuditGroup1HighDefectsTests(TestCase):
         compose_text = (Path(settings.BASE_DIR) / "docker-compose.yml").read_text(encoding="utf-8")
         self.assertIn("kura-db-entrypoint.sh", compose_text)
         self.assertIn("./docker/postgres/pgbackrest-wrapper.sh:/usr/local/bin/pgbackrest:ro", compose_text)
+
+
+class AuditGroup2DataIntegrityTests(TestCase):
+    """Tests for Audit Group 2: W6, M1, M2, P1, P2, W10."""
+
+    def setUp(self):
+        self.dept = Department.objects.create(code="CSG2", name="CS Group 2")
+        self.head = make_user("Department head", mfa_enabled=True)
+        self.dept.head_user = self.head
+        self.dept.save()
+        self.instructor = make_user("Instructor", mfa_enabled=True)
+        StaffProfile.objects.create(user=self.instructor, department=self.dept, staff_title="Instructor")
+        self.student = make_user("Student", mfa_enabled=True)
+        StudentProfile.objects.create(
+            user=self.student, department=self.dept, current_level="level_4", matriculation_year=2025
+        )
+        now = timezone.now()
+        self.course = Course.objects.create(
+            department=self.dept,
+            code="G201",
+            title="Data Integrity",
+            semester="1",
+            academic_year=2026,
+            created_by=self.head,
+            is_published=True,
+            published_by=self.head,
+            published_at=now,
+        )
+        CourseStaff.objects.create(
+            course=self.course,
+            user=self.instructor,
+            staff_role="lead_instructor",
+            can_release_grades=True,
+            assigned_by=self.head,
+        )
+        Enrollment.objects.create(
+            course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE, enrolled_by=self.head
+        )
+        CourseGradeScheme.objects.create(
+            course=self.course, component_type=GradeComponentType.EXAM, weight_percentage=Decimal("100.00")
+        )
+        self.mod = Module.objects.create(course=self.course, title="M", is_visible=True, created_by=self.instructor)
+        self.sec = ModuleSection.objects.create(module=self.mod, title="S", section_type="exam")
+        self.assessment = Assessment.objects.create(
+            section=self.sec,
+            title="Integrity Exam",
+            component_type=GradeComponentType.EXAM,
+            max_score=Decimal("100.00"),
+            max_attempts=1,
+            opens_at=now - timezone.timedelta(hours=1),
+            due_date=now + timezone.timedelta(hours=2),
+            duration_minutes=30,
+            questions_json=[
+                {
+                    "question_id": "q1",
+                    "type": "multiple_choice",
+                    "points": 100.0,
+                    "prompt": "Pick A",
+                    "options": [{"option_id": "a", "text": "A"}, {"option_id": "b", "text": "B"}],
+                }
+            ],
+            created_by=self.instructor,
+        )
+        ExamAnswerKey.objects.create(
+            assessment=self.assessment,
+            answer_key_json=encrypt_answer_key({"q1": {"correct_option_ids": ["a"]}}),
+            created_by=self.instructor,
+        )
+
+    def test_submission_hash_recomputes_from_saved_answers_and_trigger_blocks_update(self):
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment,
+            student=self.student,
+            attempt_no=1,
+            status=AttemptStatus.IN_PROGRESS,
+            expires_at=timezone.now() + timezone.timedelta(minutes=30),
+            answers_json=[{"question_id": "q1", "type": "multiple_choice", "selected_option_ids": ["a"]}],
+            ip_address="127.0.0.1",
+        )
+        login_with_session(self.client, self.student)
+        resp = self.client.post(reverse("kura:assessment_submit", args=[attempt.id]))
+        self.assertEqual(resp.status_code, 302)
+
+        attempt.refresh_from_db()
+        self.assertEqual(attempt.submission_hash, compute_submission_hash(attempt))
+
+        # PostgreSQL trigger blocks any later modification of submission_hash.
+        with self.assertRaises(DatabaseError):
+            with transaction.atomic():
+                AssessmentAttempt.objects.filter(id=attempt.id).update(submission_hash="f" * 64)
+
+    def test_decided_appeal_and_change_request_cannot_be_re_decided_and_recalculates_released_course_result(self):
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment,
+            student=self.student,
+            attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED,
+            expires_at=timezone.now() + timezone.timedelta(minutes=30),
+            submitted_at=timezone.now(),
+            submission_hash="a" * 64,
+            ip_address="127.0.0.1",
+        )
+        grade = Grade.objects.create(
+            assessment=self.assessment,
+            student=self.student,
+            attempt=attempt,
+            score=Decimal("70.00"),
+            status=GradeStatus.RELEASED,
+            finalized_by=self.instructor,
+            finalized_at=timezone.now(),
+            released_by=self.instructor,
+            released_at=timezone.now(),
+        )
+        result = CourseResult.objects.create(
+            course=self.course,
+            student=self.student,
+            final_score=Decimal("70.00"),
+            status=GradeStatus.RELEASED,
+            finalized_by=self.instructor,
+            finalized_at=timezone.now(),
+            released_at=timezone.now(),
+        )
+        appeal = GradeAppeal.objects.create(grade=grade, reason="Check question 1", status=AppealStatus.PENDING)
+        change_req = GradeChangeRequest.objects.create(
+            grade=grade,
+            appeal=appeal,
+            requested_by=self.instructor,
+            current_score=Decimal("70.00"),
+            proposed_score=Decimal("90.00"),
+            reason="Rubric adjustment",
+            status=ChangeRequestStatus.PENDING,
+        )
+
+        # Decide appeal once -> succeeds; second POST -> 404; head GET read-only -> 200.
+        login_with_session(self.client, self.instructor)
+        self.assertEqual(
+            self.client.post(
+                reverse("kura:grade_appeal_review", args=[appeal.id]),
+                {"status": AppealStatus.APPROVED, "response": "Adjusted."},
+            ).status_code,
+            302,
+        )
+        self.assertEqual(
+            self.client.post(
+                reverse("kura:grade_appeal_review", args=[appeal.id]),
+                {"status": AppealStatus.REJECTED, "response": "Overwrite."},
+            ).status_code,
+            404,
+        )
+        appeal.refresh_from_db()
+        self.assertEqual(appeal.status, AppealStatus.APPROVED)
+
+        head_client = Client()
+        login_with_session(head_client, self.head)
+        self.assertEqual(head_client.get(reverse("kura:grade_appeal_review", args=[appeal.id])).status_code, 200)
+
+        # Approve change request -> updates grade AND recalculates released CourseResult, then blocks re-decision (404).
+        with self.assertLogs("kura.security", level="INFO") as cap:
+            self.assertEqual(
+                head_client.post(
+                    reverse("kura:grade_change_request_review", args=[change_req.id]),
+                    {"decision": ChangeRequestStatus.APPROVED, "review_note": "Verified."},
+                ).status_code,
+                302,
+            )
+        log_text = "\n".join(cap.output)
+        self.assertIn('event="course.result.recalculated"', log_text)
+        self.assertNotIn("90.00", log_text)
+
+        result.refresh_from_db()
+        self.assertEqual(result.final_score, Decimal("90.00"))
+        self.assertEqual(result.status, GradeStatus.RELEASED)
+
+        self.assertEqual(
+            head_client.post(
+                reverse("kura:grade_change_request_review", args=[change_req.id]),
+                {"decision": ChangeRequestStatus.REJECTED, "review_note": "Reverse it."},
+            ).status_code,
+            404,
+        )
+        grade.refresh_from_db()
+        self.assertEqual(grade.score, Decimal("90.00"))
+
+    def test_locked_reset_token_and_locked_grade_release_prevent_reuse(self):
+        raw_token = "wi-p1-reset-token-value"
+        reset_user = make_user("Student", mfa_enabled=False)
+        PasswordResetToken.objects.create(
+            user=reset_user,
+            token_hash=hashlib.sha256(raw_token.encode("utf-8")).hexdigest(),
+            expires_at=timezone.now() + timezone.timedelta(minutes=30),
+        )
+        url = reverse("kura:password_reset_confirm", args=[raw_token])
+        new_pw = "ValidResetPassword!987"
+        with patch("kura.validators.BreachedPasswordValidator.validate", return_value=None):
+            first = self.client.post(url, {"new_password": new_pw, "confirm_password": new_pw})
+            self.assertEqual(first.status_code, 302)
+            second = self.client.post(url, {"new_password": new_pw + "x", "confirm_password": new_pw + "x"})
+            self.assertRedirects(second, reverse("kura:password_reset_request"), fetch_redirect_response=False)
+
+        # P2: grade_release_view re-checks FINALIZED under select_for_update inside atomic().
+        static_device = StaticDevice.objects.create(user=self.instructor, name="backup", confirmed=True)
+        StaticToken.objects.create(device=static_device, token=hash_recovery_code("888999"))
+        StaticToken.objects.create(device=static_device, token=hash_recovery_code("777666"))
+
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment,
+            student=self.student,
+            attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED,
+            expires_at=timezone.now() + timezone.timedelta(minutes=30),
+            submitted_at=timezone.now(),
+            ip_address="127.0.0.1",
+        )
+        grade = Grade.objects.create(
+            assessment=self.assessment,
+            student=self.student,
+            attempt=attempt,
+            score=Decimal("80.00"),
+            status=GradeStatus.FINALIZED,
+            finalized_by=self.instructor,
+            finalized_at=timezone.now(),
+        )
+        login_with_session(self.client, self.instructor)
+        self.assertEqual(
+            self.client.post(reverse("kura:grade_release", args=[grade.id]), {"otp_token": "888999"}).status_code,
+            302,
+        )
+        # Second release attempt refuses because status is already RELEASED.
+        self.assertEqual(
+            self.client.post(reverse("kura:grade_release", args=[grade.id]), {"otp_token": "777666"}).status_code,
+            302,
+        )
+        self.assertEqual(GradeHistory.objects.filter(grade=grade, new_status=GradeStatus.RELEASED).count(), 1)
+
+    def test_empty_reason_constraints_rejected_at_database(self):
+        att_session = ModuleAttendanceSession.objects.create(
+            module=self.mod,
+            created_by=self.instructor,
+            title="Roll",
+            passcode_hash=hash_attendance_passcode("123456"),
+            expires_at=timezone.now() + timezone.timedelta(minutes=15),
+        )
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                AttendanceRecord.objects.create(
+                    session=att_session,
+                    student=self.student,
+                    status=AttendanceStatus.PRESENT,
+                    method=AttendanceMethod.MANUAL,
+                    recorded_by=self.instructor,
+                    override_reason="",
+                )
+
+        attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment,
+            student=self.student,
+            attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED,
+            expires_at=timezone.now() + timezone.timedelta(minutes=30),
+            submitted_at=timezone.now(),
+            ip_address="127.0.0.1",
+        )
+        grade = Grade.objects.create(
+            assessment=self.assessment, student=self.student, attempt=attempt, score=Decimal("85.00"), status=GradeStatus.RELEASED
+        )
+        with self.assertRaises(IntegrityError):
+            with transaction.atomic():
+                GradeHistory.objects.create(
+                    grade=grade,
+                    old_score=Decimal("85.00"),
+                    new_score=Decimal("90.00"),
+                    old_status=GradeStatus.RELEASED,
+                    new_status=GradeStatus.RELEASED,
+                    changed_by=self.instructor,
+                    approved_by=self.head,
+                    reason="",
+                )
