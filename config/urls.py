@@ -38,5 +38,7 @@ urlpatterns = [
     path("", include("kura.urls")),
 ]
 
-# Route permission exceptions through the security logger and a generic page.
+# Route permission, not-found, and server-error responses through security logging and generic pages.
 handler403 = "kura.views.permission_denied_view"
+handler404 = "kura.views.not_found_view"
+handler500 = "kura.views.server_error_view"

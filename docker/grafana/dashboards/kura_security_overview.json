@@ -336,7 +336,7 @@
       "options": { "showHeader": true },
       "transformations": [
         { "id": "organize", "options": {
-          "renameByName": { "Time": "time", "detection": "detection", "sha256": "SHA-256", "filename": "filename" }
+          "renameByName": { "Time": "time", "detection": "detection", "sha256": "SHA-256", "user_id": "uploader ID" }
         } }
       ]
     },
@@ -351,6 +351,92 @@
         {
           "refId": "A",
           "expr": "{service=\"web\"} | logfmt | event=\"admin.role.changed\"",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": false
+      }
+    },
+    {
+      "type": "row",
+      "gridPos": { "x": 0, "y": 44, "w": 24, "h": 1 },
+      "id": 16,
+      "title": "Errors, sessions, and scheduled jobs"
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 0, "y": 45, "w": 8, "h": 6 },
+      "id": 17,
+      "title": "Server errors & file crypto/integrity failures",
+      "description": "Counts of server.error, file.decrypt_failed, file.integrity_failed, vault.error, and rls.context_failed per 5 minutes.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (event) (count_over_time({service=\"web\"} | logfmt | event=~\"server\\.error|file\\.decrypt_failed|file\\.integrity_failed|vault\\.error|rls\\.context_failed\" [5m]))",
+          "legendFormat": "{{event}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "timeseries",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 8, "y": 45, "w": 8, "h": 6 },
+      "id": 18,
+      "title": "404 probing & session events",
+      "description": "Missing-resource lookups (access.not_found) alongside session.created and session.invalid events.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "sum by (event) (count_over_time({service=\"web\"} | logfmt | event=~\"access\\.not_found|session\\.created|session\\.invalid\" [5m]))",
+          "legendFormat": "{{event}}",
+          "queryType": "range"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "color": { "mode": "palette-classic" },
+          "custom": { "fillOpacity": 10, "lineWidth": 2, "showPoints": "never" },
+          "unit": "short",
+          "min": 0
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "list", "placement": "bottom", "showLegend": true },
+        "tooltip": { "mode": "single", "sort": "none" }
+      }
+    },
+    {
+      "type": "logs",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 16, "y": 45, "w": 8, "h": 6 },
+      "id": 19,
+      "title": "Scheduled job security events",
+      "description": "Structured events emitted by host cron jobs (/var/log/kura/*.log).",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service=\"cron\"} | logfmt | event != \"\"",
           "queryType": "range"
         }
       ],

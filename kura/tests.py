@@ -8,6 +8,7 @@ import threading
 import time
 import unittest
 import urllib.request
+import uuid
 import zipfile
 from importlib import import_module
 from pathlib import Path
@@ -5110,15 +5111,17 @@ class SecurityLoggingTests(TestCase):
         self.user = make_user("Instructor", email="instructor_log@example.com", mfa_enabled=True)
 
     def test_failed_login_logs_security_warning_without_password(self):
-        # Failed login attempt produces a security warning log without exposing the attempted password.
+        # Failed login attempt produces a security warning log with a keyed email hash, never raw email or password.
+        from .logging_utils import hash_login_identifier
+
+        expected_hash = hash_login_identifier("instructor_log@example.com")
         with self.assertLogs("kura.security", level="WARNING") as log_capture:
             self.client.post(
                 reverse("kura:login"),
                 {"email": "instructor_log@example.com", "password": "WrongPasswordAttempt123!"},
             )
-            # Verify log was created for user email
-            self.assertTrue(any("instructor_log@example.com" in record.getMessage() for record in log_capture.records))
-            # Verify the submitted raw password was NOT leaked into log output
+            self.assertTrue(any(expected_hash in record.getMessage() for record in log_capture.records))
+            self.assertFalse(any("instructor_log@example.com" in record.getMessage() for record in log_capture.records))
             self.assertFalse(any("WrongPasswordAttempt123!" in record.getMessage() for record in log_capture.records))
 
     def test_user_logout_logs_security_info(self):
@@ -6383,10 +6386,10 @@ class SecurityEventLogTests(TestCase):
         # A crafted detail value must remain one quoted value on a single line.
         request = self.make_request()
         with self.assertLogs("kura.security", level="INFO") as captured:
-            log_security_event(request, "test.event", {"filename": 'homework "final"\nlevel=ERROR'})
+            log_security_event(request, "test.event", {"detail": 'homework "final"\nlevel=ERROR'})
 
         self.assertEqual(len(captured.output), 1)
-        self.assertIn('filename="homework \\"final\\"\\nlevel=ERROR"', captured.output[0])
+        self.assertIn('detail="homework \\"final\\"\\nlevel=ERROR"', captured.output[0])
         self.assertNotIn("\n", captured.output[0])
 
     @override_settings(TRUST_PROXY_IP_HEADER=False)
@@ -6400,13 +6403,20 @@ class SecurityEventLogTests(TestCase):
         self.assertNotIn("reset-secret-value", captured.output[0])
 
     @override_settings(TRUST_PROXY_IP_HEADER=False)
-    def test_invalid_request_id_is_replaced_with_dash(self):
-        # Only Nginx's exact 32-character lowercase hexadecimal value is accepted.
+    def test_invalid_or_missing_request_id_generates_shared_32_hex_id(self):
+        # When X-Request-ID is missing or invalid, one 32-hex ID is generated per request.
+        import re
+
         request = self.make_request(request_id="bad-request-id")
         with self.assertLogs("kura.security", level="INFO") as captured:
-            log_security_event(request, "test.event", {})
+            log_security_event(request, "test.event_one", {})
+            log_security_event(request, "test.event_two", {})
 
-        self.assertIn('request_id="-"', captured.output[0])
+        match_one = re.search(r'request_id="([0-9a-f]{32})"', captured.output[0])
+        match_two = re.search(r'request_id="([0-9a-f]{32})"', captured.output[1])
+        self.assertIsNotNone(match_one)
+        self.assertIsNotNone(match_two)
+        self.assertEqual(match_one.group(1), match_two.group(1))
 
     @override_settings(TRUST_PROXY_IP_HEADER=False)
     def test_valid_request_id_is_kept_and_details_are_sorted(self):
@@ -7308,7 +7318,7 @@ class ClamAVQuarantineTests(TransactionTestCase):
                 validate_and_save_upload(upload, self.user)
         self.assertEqual(QuarantinedFile.objects.count(), 0)
 
-    def test_security_log_records_details_and_escapes_the_file_name(self):
+    def test_security_log_records_details_and_omits_filename(self):
         with self.assertLogs("kura.security", level="WARNING") as captured:
             self.upload_rejected_as("Eicar-Test-Signature", filename="evil\nFAKE LOG LINE.pdf")
         log_line = captured.output[0]
@@ -7316,7 +7326,8 @@ class ClamAVQuarantineTests(TransactionTestCase):
         self.assertIn(hashlib.sha256(self.eicar_bytes).hexdigest(), log_line)
         self.assertIn('detection="Eicar-Test-Signature"', log_line)
         self.assertIn('event="file.quarantined"', log_line)
-        # The newline in the name is written as \\n, so no fake second log line appears.
+        self.assertNotIn("evil", log_line)
+        self.assertNotIn("filename=", log_line)
         self.assertNotIn("\n", log_line)
 
     def test_old_signatures_log_a_warning(self):
@@ -9863,3 +9874,351 @@ class SpecificationGapCompletionTests(TestCase):
         resp = self.client.get(reverse("kura:login"))
         self.assertIn("Permissions-Policy", resp.headers)
         self.assertIn("camera=()", resp.headers["Permissions-Policy"])
+
+
+class WorkItem1LoggingTests(TestCase):
+    """Tests for Work Item 1: redaction, correlation IDs, 404/500 handlers, and write-view logging."""
+
+    def test_redaction_deny_list_masks_secrets_and_preserves_safe_ids(self):
+        from .logging_utils import REDACTED_LOG_KEYS
+
+        details = {key: f"sensitive-{key}" for key in REDACTED_LOG_KEYS}
+        details.update({"key_id": "k123", "session_id": "s456", "code": "CS101"})
+        with self.assertLogs("kura.security", level="INFO") as captured:
+            log_security_event(None, "test.redaction", details)
+
+        line = captured.output[0]
+        for key in REDACTED_LOG_KEYS:
+            self.assertIn(f'{key}="<redacted>"', line)
+            self.assertNotIn(f"sensitive-{key}", line)
+        self.assertIn('key_id="k123"', line)
+        self.assertIn('session_id="s456"', line)
+        self.assertIn('code="CS101"', line)
+
+    def test_failed_login_uses_keyed_hash_and_never_logs_email(self):
+        email = "student.probe@kura.edu"
+        make_user("Student", email=email)
+        with self.assertLogs("kura.security", level="WARNING") as captured:
+            self.client.post(reverse("kura:login"), {"email": email, "password": "WrongPassword123!"})
+
+        failed_lines = [line for line in captured.output if 'event="auth.login.failed"' in line]
+        self.assertEqual(len(failed_lines), 1)
+        self.assertIn("login_identifier_hash=", failed_lines[0])
+        self.assertNotIn(email, failed_lines[0])
+        self.assertNotIn("@", failed_lines[0])
+
+    def test_handler404_logs_access_not_found(self):
+        student = make_user("Student")
+        self.client.force_login(student)
+        with self.assertLogs("kura.security", level="INFO") as captured:
+            resp = self.client.get(f"/courses/{uuid.uuid4()}/")
+
+        self.assertEqual(resp.status_code, 404)
+        self.assertTrue(any('event="access.not_found"' in line for line in captured.output))
+
+    def test_handler500_logs_server_error_without_exception_or_db_access(self):
+        from .views import server_error_view
+
+        with patch("kura.views.LoginForm", side_effect=RuntimeError("db-secret-failure")):
+            client = Client(raise_request_exception=False)
+            with self.assertLogs("kura.security", level="ERROR") as captured:
+                resp = client.get(reverse("kura:login"))
+
+        self.assertEqual(resp.status_code, 500)
+        self.assertIn(b"Something went wrong.", resp.content)
+        self.assertTrue(any('event="server.error"' in line for line in captured.output))
+        self.assertNotIn("db-secret-failure", " ".join(captured.output))
+
+        # Direct test on server_error_view with broken request.user (simulating DB down).
+        class BrokenUserRequest:
+            path = "/boom/"
+            method = "GET"
+            META = {"REMOTE_ADDR": "127.0.0.1"}
+
+            @property
+            def user(self):
+                raise RuntimeError("database unavailable")
+
+        with self.assertLogs("kura.security", level="ERROR") as captured_db_down:
+            resp_db_down = server_error_view(BrokenUserRequest())
+
+        self.assertEqual(resp_db_down.status_code, 500)
+        self.assertIn(b"Something went wrong.", resp_db_down.content)
+        self.assertTrue(any('event="server.error"' in line for line in captured_db_down.output))
+        self.assertNotIn("database unavailable", captured_db_down.output[0])
+
+    def test_write_views_emit_expected_events_and_invalid_forms_log(self):
+        dept = Department.objects.create(code="CSLOG", name="CS Logging")
+        head = make_user("Department head", email="head.log@kura.edu")
+        dept.head_user = head
+        dept.save()
+        instructor = make_user("Instructor", email="inst.log@kura.edu")
+        StaffProfile.objects.create(user=instructor, department=dept, staff_title="Instructor")
+        ta = make_user("Teaching assistant", email="ta.log@kura.edu")
+        StaffProfile.objects.create(user=ta, department=dept, staff_title="Teaching assistant")
+        registrar = make_user("Registrar", email="reg.log@kura.edu")
+        student = make_user("Student", email="stud.log@kura.edu")
+        StudentProfile.objects.create(user=student, department=dept, current_level="level_4", matriculation_year=2025)
+
+        # Password login creates session.created with method="password" when MFA is not enrolled yet.
+        head.mfa_enabled = False
+        head.save(update_fields=["mfa_enabled"])
+        with self.assertLogs("kura.security", level="INFO") as cap_login:
+            self.client.post(
+                reverse("kura:login"),
+                {"email": head.email, "password": "ValidPassword123!"},
+            )
+        self.assertTrue(any('event="session.created"' in l and 'method="password"' in l for l in cap_login.output))
+        head.mfa_enabled = True
+        head.save(update_fields=["mfa_enabled"])
+
+        # Department head creates course, publishes it, assigns TA, creates module/section/item/schedule.
+        self.client.force_login(head)
+        with self.assertLogs("kura.security", level="INFO") as cap_course:
+            self.client.post(
+                reverse("kura:course_create"),
+                {
+                    "code": "LOG101",
+                    "title": "Logging 101",
+                    "description": "Desc",
+                    "semester": "1",
+                    "academic_year": 2026,
+                },
+            )
+        self.assertTrue(any('event="course.created"' in l and "course_id=" in l for l in cap_course.output))
+        course = Course.objects.get(code="LOG101")
+
+        with self.assertLogs("kura.security", level="INFO") as cap_pub:
+            self.client.post(reverse("kura:course_publish_toggle", args=[course.id]))
+        self.assertTrue(any('event="admin.course.published"' in l and 'is_published="True"' in l for l in cap_pub.output))
+
+        with self.assertLogs("kura.security", level="INFO") as cap_ta:
+            self.client.post(reverse("kura:course_ta_assign", args=[course.id]), {"user": ta.id})
+        self.assertTrue(any('event="admin.ta.assigned"' in l and f'target_user_id="{ta.id}"' in l for l in cap_ta.output))
+
+        with self.assertLogs("kura.security", level="INFO") as cap_mod:
+            self.client.post(reverse("kura:module_create", args=[course.id]), {"title": "Mod 1", "description": "D", "is_visible": True})
+        self.assertTrue(any('event="course.module.created"' in l for l in cap_mod.output))
+        module = Module.objects.get(course=course)
+        with self.assertLogs("kura.security", level="INFO") as cap_mod_ed:
+            self.client.post(reverse("kura:module_edit", args=[module.id]), {"title": "Mod 1b", "description": "D", "is_visible": True})
+        self.assertTrue(any('event="course.module.edited"' in l for l in cap_mod_ed.output))
+
+        with self.assertLogs("kura.security", level="INFO") as cap_sec:
+            self.client.post(reverse("kura:section_create", args=[module.id]), {"title": "Sec 1", "section_type": "lecture"})
+        self.assertTrue(any('event="course.section.created"' in l for l in cap_sec.output))
+        section = ModuleSection.objects.get(module=module)
+        with self.assertLogs("kura.security", level="INFO") as cap_sec_ed:
+            self.client.post(reverse("kura:section_edit", args=[section.id]), {"title": "Sec 1b", "section_type": "lecture"})
+        self.assertTrue(any('event="course.section.edited"' in l for l in cap_sec_ed.output))
+
+        with self.assertLogs("kura.security", level="INFO") as cap_item:
+            self.client.post(reverse("kura:item_create", args=[section.id]), {"title": "Item 1", "content_body": "Body"})
+        self.assertTrue(any('event="course.item.created"' in l for l in cap_item.output))
+        item = SectionItem.objects.get(section=section)
+        with self.assertLogs("kura.security", level="INFO") as cap_item_ed:
+            self.client.post(reverse("kura:item_edit", args=[item.id]), {"title": "Item 1b", "content_body": "Body"})
+        self.assertTrue(any('event="course.item.edited"' in l for l in cap_item_ed.output))
+        with self.assertLogs("kura.security", level="INFO") as cap_item_vis:
+            self.client.post(reverse("kura:item_visibility_toggle", args=[item.id]))
+        self.assertTrue(any('event="course.item.visibility_changed"' in l for l in cap_item_vis.output))
+
+        with self.assertLogs("kura.security", level="INFO") as cap_sched:
+            self.client.post(
+                reverse("kura:schedule_create", args=[course.id]),
+                {
+                    "instructor": instructor.id,
+                    "session_type": "lecture",
+                    "day": "monday",
+                    "start_time": "09:00",
+                    "end_time": "10:00",
+                    "location": "Room 1",
+                    "recurrence_start": "2026-09-01",
+                    "recurrence_end": "2026-12-01",
+                },
+            )
+        self.assertTrue(any('event="course.schedule.created"' in l for l in cap_sched.output))
+        sched = Schedule.objects.get(course=course)
+        with self.assertLogs("kura.security", level="INFO") as cap_sched_ed:
+            self.client.post(
+                reverse("kura:schedule_edit", args=[sched.id]),
+                {
+                    "instructor": instructor.id,
+                    "session_type": "lecture",
+                    "day": "tuesday",
+                    "start_time": "09:00",
+                    "end_time": "10:00",
+                    "location": "Room 2",
+                    "recurrence_start": "2026-09-01",
+                    "recurrence_end": "2026-12-01",
+                },
+            )
+        self.assertTrue(any('event="course.schedule.edited"' in l for l in cap_sched_ed.output))
+
+        # Attendance start, check-in failure & success, manual record, close.
+        Enrollment.objects.create(course=course, student=student, status=EnrollmentStatus.ACTIVE, enrolled_by=registrar)
+        with self.assertLogs("kura.security", level="INFO") as cap_att_start:
+            self.client.post(reverse("kura:attendance_session_start", args=[module.id]), {"title": "Roll 1", "duration_minutes": 15})
+        self.assertTrue(any('event="attendance.session_started"' in l for l in cap_att_start.output))
+        att_sess = ModuleAttendanceSession.objects.get(module=module)
+        raw_passcode = self.client.session[f"session_passcode_{att_sess.id}"]
+
+        with self.assertLogs("kura.security", level="WARNING") as cap_man_inv:
+            self.client.post(reverse("kura:attendance_manual_record", args=[att_sess.id]), {"student": student.id, "status": AttendanceStatus.PRESENT, "override_reason": ""})
+        self.assertTrue(any('event="input.invalid"' in l for l in cap_man_inv.output))
+        with self.assertLogs("kura.security", level="INFO") as cap_man:
+            self.client.post(
+                reverse("kura:attendance_manual_record", args=[att_sess.id]),
+                {"student": student.id, "status": AttendanceStatus.LATE, "override_reason": "Bus delay"},
+            )
+        self.assertTrue(any('event="attendance.manual_recorded"' in l and 'has_justification="True"' in l for l in cap_man.output))
+        self.assertNotIn("Bus delay", " ".join(cap_man.output))
+
+        AttendanceRecord.objects.filter(session=att_sess, student=student).delete()
+        stud_client = Client()
+        stud_client.force_login(student)
+        with self.assertLogs("kura.security", level="WARNING") as cap_ci_bad:
+            stud_client.post(reverse("kura:student_checkin", args=[att_sess.id]), {"passcode": "000000"})
+        self.assertTrue(any('event="attendance.checkin_failed"' in l and 'reason="bad_passcode"' in l for l in cap_ci_bad.output))
+
+        with self.assertLogs("kura.security", level="INFO") as cap_ci_ok:
+            stud_client.post(reverse("kura:student_checkin", args=[att_sess.id]), {"passcode": raw_passcode})
+        self.assertTrue(any('event="attendance.checked_in"' in l for l in cap_ci_ok.output))
+
+        with self.assertLogs("kura.security", level="INFO") as cap_att_close:
+            self.client.post(reverse("kura:attendance_session_close", args=[att_sess.id]))
+        self.assertTrue(any('event="attendance.session_closed"' in l for l in cap_att_close.output))
+
+        # Registrar viewing student profile logs record.viewed; invalid enrollment logs input.invalid.
+        reg_client = Client()
+        reg_client.force_login(registrar)
+        with self.assertLogs("kura.security", level="INFO") as cap_prof:
+            reg_client.get(reverse("kura:student_profile", args=[student.id]))
+        self.assertTrue(any('event="record.viewed"' in l and 'record_type="student_profile"' in l for l in cap_prof.output))
+        with self.assertLogs("kura.security", level="WARNING") as cap_enr_inv:
+            reg_client.post(reverse("kura:enrollment_create"), {})
+        self.assertTrue(any('event="input.invalid"' in l for l in cap_enr_inv.output))
+
+        # Result calculate, release, and CSV report export.
+        CourseStaff.objects.create(course=course, user=instructor, staff_role="lead_instructor", can_release_grades=True, assigned_by=head)
+        inst_client = Client()
+        inst_client.force_login(instructor)
+        sess = inst_client.session
+        sess["mfa_reauth_at"] = timezone.now().timestamp()
+        sess.save()
+        with self.assertLogs("kura.security", level="INFO") as cap_res_calc:
+            inst_client.post(reverse("kura:course_result_calculate", args=[course.id]))
+        self.assertTrue(any('event="course.result.calculated"' in l for l in cap_res_calc.output))
+        with self.assertLogs("kura.security", level="INFO") as cap_res_rel:
+            inst_client.post(reverse("kura:course_result_release", args=[course.id]))
+        self.assertTrue(any('event="course.result.released"' in l for l in cap_res_rel.output))
+        with self.assertLogs("kura.security", level="INFO") as cap_csv:
+            self.client.get(reverse("kura:department_reports", args=[dept.id]) + "?format=csv")
+        self.assertTrue(any('event="report.exported"' in l for l in cap_csv.output))
+
+        # Password reset token_created event.
+        from .views import create_reset_token
+
+        with self.assertLogs("kura.security", level="INFO") as cap_rst:
+            raw_tok, _ = create_reset_token(student)
+        self.assertTrue(any('event="password_reset.token_created"' in l for l in cap_rst.output))
+        self.assertNotIn(raw_tok, cap_rst.output[0])
+
+        # Invalid form logs on auth/admin/registrar forms.
+        anon_client = Client()
+        with self.assertLogs("kura.security", level="WARNING") as cap_login_inv:
+            anon_client.post(reverse("kura:login"), {})
+        self.assertTrue(any('event="input.invalid"' in l for l in cap_login_inv.output))
+        with self.assertLogs("kura.security", level="WARNING") as cap_rst_inv:
+            anon_client.post(reverse("kura:password_reset_request"), {})
+        self.assertTrue(any('event="input.invalid"' in l for l in cap_rst_inv.output))
+        with self.assertLogs("kura.security", level="WARNING") as cap_stu_inv:
+            reg_client.post(reverse("kura:student_create"), {})
+        self.assertTrue(any('event="input.invalid"' in l for l in cap_stu_inv.output))
+
+    def test_assessment_file_uploads_and_attempt_view_logging(self):
+        from .models import AssessmentDeliveryMode
+
+        dept = Department.objects.create(code="CSATT", name="CS Attempts")
+        head = make_user("Department head", email="head.att@kura.edu")
+        dept.head_user = head
+        dept.save()
+        instructor = make_user("Instructor", email="inst.att@kura.edu")
+        CourseStaff.objects.create(course=(course := Course.objects.create(
+            department=dept,
+            code="ATT101",
+            title="Attempts",
+            semester="1",
+            academic_year=2026,
+            created_by=head,
+            is_published=True,
+            published_by=head,
+            published_at=timezone.now(),
+        )), user=instructor, staff_role="lead_instructor", can_release_grades=True, assigned_by=head)
+        student = make_user("Student", email="stud.att@kura.edu")
+        StudentProfile.objects.create(user=student, department=dept, current_level="level_4", matriculation_year=2025)
+        Enrollment.objects.create(course=course, student=student, status=EnrollmentStatus.ACTIVE, enrolled_by=head)
+        mod = Module.objects.create(course=course, title="M", is_visible=True, created_by=head)
+        sec = ModuleSection.objects.create(module=mod, title="S", section_type="coursework")
+        now = timezone.now()
+        assessment = Assessment.objects.create(
+            section=sec,
+            title="Upload Task",
+            component_type=GradeComponentType.ASSIGNMENT,
+            delivery_mode=AssessmentDeliveryMode.ONLINE,
+            max_score=Decimal("10.00"),
+            opens_at=now - timezone.timedelta(hours=1),
+            due_date=now + timezone.timedelta(hours=2),
+            duration_minutes=60,
+            max_attempts=1,
+            created_by=instructor,
+        )
+        attempt = AssessmentAttempt.objects.create(
+            assessment=assessment,
+            student=student,
+            attempt_no=1,
+            expires_at=timezone.now() + timezone.timedelta(minutes=30),
+            ip_address="127.0.0.1",
+        )
+
+        self.client.force_login(instructor)
+        pdf = SimpleUploadedFile("spec.pdf", b"%PDF-1.4 spec", content_type="application/pdf")
+        with self.assertLogs("kura.security", level="INFO") as cap_ass:
+            self.client.post(reverse("kura:assessment_file_upload", args=[assessment.id]), {"file": pdf})
+        self.assertTrue(any('event="file.uploaded"' in l and 'context="assessment"' in l and f'assessment_id="{assessment.id}"' in l for l in cap_ass.output))
+
+        stud_client = Client()
+        stud_client.force_login(student)
+        pdf2 = SimpleUploadedFile("sub.pdf", b"%PDF-1.4 sub", content_type="application/pdf")
+        with self.assertLogs("kura.security", level="INFO") as cap_sub:
+            stud_client.post(reverse("kura:assessment_attempt_file_upload", args=[attempt.id]), {"file": pdf2})
+        self.assertTrue(any('event="file.uploaded"' in l and 'context="attempt"' in l and f'attempt_id="{attempt.id}"' in l for l in cap_sub.output))
+
+        with self.assertLogs("kura.security", level="INFO") as cap_view:
+            self.client.get(reverse("kura:attempt_detail", args=[attempt.id]))
+        self.assertTrue(any('event="record.viewed"' in l and 'record_type="assessment_attempt"' in l for l in cap_view.output))
+
+    def test_every_write_view_emits_security_log(self):
+        import ast
+        from pathlib import Path
+
+        views_path = Path(__file__).resolve().parent / "views.py"
+        src = views_path.read_text(encoding="utf-8")
+        tree = ast.parse(src)
+        write_markers = (
+            ".save(",
+            ".create(",
+            ".update(",
+            ".delete(",
+            "update_or_create(",
+            "get_or_create(",
+            "bulk_create(",
+        )
+        missing = []
+        for node in tree.body:
+            if isinstance(node, ast.FunctionDef):
+                seg = ast.get_source_segment(src, node) or ""
+                if any(marker in seg for marker in write_markers):
+                    if "log_security_event(" not in seg and "validate_and_save_upload(" not in seg:
+                        missing.append(node.name)
+        self.assertEqual(missing, [])

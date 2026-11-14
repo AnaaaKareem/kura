@@ -183,7 +183,7 @@ def check_signature_age():
         log_security_event(None, "clamav.signatures_old", {"age_days": signature_age.days}, level=logging.WARNING)
 
 
-def validate_and_save_upload(uploaded_file, user):
+def validate_and_save_upload(uploaded_file, user, request=None, log_context=None):
     """
     Validates file size (up to 25 MiB), checks bytes for malware with ClamAV,
     detects real MIME type with python-magic, computes a SHA-256 digest,
@@ -192,10 +192,10 @@ def validate_and_save_upload(uploaded_file, user):
     # Enforce file size limits: between 1 byte and 25 MiB.
     file_size = uploaded_file.size
     if file_size <= 0:
-        log_security_event(None, "file.upload_rejected", {"reason": "empty_file"}, level=logging.WARNING)
+        log_security_event(request, "file.upload_rejected", {"reason": "empty_file"}, level=logging.WARNING)
         raise ValidationError("Uploaded file is empty.")
     if file_size > MAX_UPLOAD_BYTES:
-        log_security_event(None, "file.upload_rejected", {"reason": "size_limit"}, level=logging.WARNING)
+        log_security_event(request, "file.upload_rejected", {"reason": "size_limit"}, level=logging.WARNING)
         raise ValidationError(f"File size exceeds the maximum limit of {MAX_UPLOAD_BYTES // (1024 * 1024)} MiB.")
 
     # Read binary content to detect real MIME type and compute hash.
@@ -208,7 +208,7 @@ def validate_and_save_upload(uploaded_file, user):
         # Only a file ClamAV rejected is quarantined; scanner outages are not.
         if error.code != "malware":
             # Scanner failures also reject the upload, but are not malware quarantines.
-            log_security_event(None, "file.upload_rejected", {"reason": "scanner_unavailable"}, level=logging.WARNING)
+            log_security_event(request, "file.upload_rejected", {"reason": "scanner_unavailable"}, level=logging.WARNING)
             raise
         detection = error.params["detection"]
         original_filename = sanitize_filename(uploaded_file.name)
@@ -227,16 +227,15 @@ def validate_and_save_upload(uploaded_file, user):
             content=content_bytes,
         )
 
-        # The helper quotes every value, so a hostile filename cannot forge fields.
+        # Log only safe file identifiers; omit original_filename to keep PII out of logs.
         log_security_event(
-            None,
+            request,
             "file.quarantined",
             {
                 "user_id": user.id,
                 "sha256": content_sha256,
                 "size": file_size,
                 "detection": detection[:500],
-                "filename": original_filename[:500],
             },
             level=logging.WARNING,
         )
@@ -250,7 +249,7 @@ def validate_and_save_upload(uploaded_file, user):
 
     # Validate against allowed MIME types.
     if detected_mime_type not in ALLOWED_UPLOAD_MIME_TYPES:
-        log_security_event(None, "file.upload_rejected", {"reason": "mime_type"}, level=logging.WARNING)
+        log_security_event(request, "file.upload_rejected", {"reason": "mime_type"}, level=logging.WARNING)
         raise ValidationError(
             "This file type isn't allowed. Allowed: PDF, Word, PowerPoint, Excel, "
             "OpenDocument, CSV, text, Markdown, images (PNG, JPEG, GIF, WebP), MP4, MP3, ZIP."
@@ -264,7 +263,7 @@ def validate_and_save_upload(uploaded_file, user):
     original_filename = sanitize_filename(uploaded_file.name)
     extension = os.path.splitext(original_filename)[1].lower()
     if extension not in ALLOWED_EXTENSIONS_BY_MIME.get(detected_mime_type, set()):
-        log_security_event(None, "file.upload_rejected", {"reason": "extension_mismatch"}, level=logging.WARNING)
+        log_security_event(request, "file.upload_rejected", {"reason": "extension_mismatch"}, level=logging.WARNING)
         raise ValidationError("The file extension does not match the detected file type.")
 
     # Save metadata to StoredFile.
@@ -283,16 +282,15 @@ def validate_and_save_upload(uploaded_file, user):
     )
 
     # Record safe metadata after both the file record and its content are stored.
-    log_security_event(
-        None,
-        "file.uploaded",
-        {
-            "file_id": stored_file.id,
-            "sha256": content_sha256,
-            "size": file_size,
-            "mime": detected_mime_type,
-        },
-    )
+    upload_details = {
+        "file_id": stored_file.id,
+        "sha256": content_sha256,
+        "size": file_size,
+        "mime": detected_mime_type,
+    }
+    if log_context:
+        upload_details.update(log_context)
+    log_security_event(request, "file.uploaded", upload_details)
 
     return stored_file
 
