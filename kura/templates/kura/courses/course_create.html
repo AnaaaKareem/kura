@@ -28,6 +28,9 @@
         <form method="post" class="space-y-4">
             {% csrf_token %}
             {% include "kura/_form_errors.html" %}
+            {% if head_departments|length > 1 %}
+            {% include "kura/_field.html" with field=form.department %}
+            {% endif %}
 
             <div class="grid grid-cols-1 md:grid-cols-3 gap-4">
                 <div class="md:col-span-1">

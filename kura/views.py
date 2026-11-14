@@ -23,7 +23,7 @@ from django.contrib.auth.decorators import login_not_required, login_required
 from django.core.exceptions import PermissionDenied, ValidationError
 from django.core.cache import caches
 from django.core.paginator import Paginator
-from django.db import transaction
+from django.db import IntegrityError, transaction
 from django.db.models import Avg, Count, Prefetch, Q, Value
 from django.db.models.functions import Concat
 from django.http import Http404, HttpResponse, HttpResponseForbidden, HttpResponseNotAllowed, JsonResponse
@@ -89,6 +89,7 @@ from .forms import (
     SecurityPolicyForm,
     StaffCreateForm,
     DepartmentForm,
+    DepartmentHeadAssignForm,
     BuildingForm,
     RoomForm,
     StudentCheckinForm,
@@ -2672,30 +2673,53 @@ def security_policy_view(request):
 
 @login_required
 def staff_settings_view(request):
-    """Manage departments and office locations. Admin only; POST and form validation protect changes."""
+    """Manage departments (including appointing heads), buildings, and rooms. Admin only (M11)."""
     if not has_role(request.user, "Admin"):
         raise PermissionDenied
 
     # Bind only the submitted form so unrelated forms remain usable.
     kind = request.POST.get("kind") if request.method == "POST" else None
     department_form = DepartmentForm(request.POST if kind == "department" else None)
+    department_head_form = DepartmentHeadAssignForm(request.POST if kind == "department_head" else None)
     building_form = BuildingForm(request.POST if kind == "building" else None)
     room_form = RoomForm(request.POST if kind == "room" else None)
-    forms = {"department": department_form, "building": building_form, "room": room_form}
+    forms = {
+        "department": department_form,
+        "department_head": department_head_form,
+        "building": building_form,
+        "room": room_form,
+    }
     if request.method == "POST" and kind in forms:
         submitted_form = forms[kind]
         if submitted_form.is_valid():
-            obj = submitted_form.save()
-            # kind is one of the fixed keys in the forms dict, never a raw POST value,
-            # so the event name cannot be chosen by the client. Log the ID only (LOG-02).
-            log_security_event(request, f"admin.{kind}.saved", {"id": str(obj.pk)})
+            if kind == "department_head":
+                department = submitted_form.cleaned_data["department"]
+                head_user = submitted_form.cleaned_data["head_user"]
+                with transaction.atomic():
+                    department.head_user = head_user
+                    department.save(update_fields=["head_user"])
+                log_security_event(
+                    request,
+                    "admin.department_head.assigned",
+                    {
+                        "department_id": department.id,
+                        "target_user_id": str(head_user.id) if head_user else None,
+                    },
+                )
+            else:
+                obj = submitted_form.save()
+                # kind is one of the fixed keys in the forms dict, never a raw POST value (LOG-02).
+                log_security_event(request, f"admin.{kind}.saved", {"id": str(obj.pk)})
             messages.success(request, "Saved successfully.")
             return redirect("kura:staff_settings")
         # Log which fields failed, never the submitted names or codes (LOG-03).
         log_invalid_form(request, submitted_form)
     return render(request, "kura/accounts/staff_settings.html", {
-        "department_form": department_form, "building_form": building_form, "room_form": room_form,
-        "departments": Department.objects.order_by("name"),
+        "department_form": department_form,
+        "department_head_form": department_head_form,
+        "building_form": building_form,
+        "room_form": room_form,
+        "departments": Department.objects.select_related("head_user").order_by("name"),
         "buildings": Building.objects.order_by("name"),
         "rooms": Room.objects.select_related("building").order_by("building__name", "name"),
     }, status=400 if request.method == "POST" else 200)
@@ -3196,34 +3220,38 @@ def enrollment_create_view(request):
         course = form.cleaned_data["course"]
         student = form.cleaned_data["student"]
 
-        # Check if enrollment already exists.
-        existing = Enrollment.objects.filter(course=course, student=student).first()
-        if existing and existing.status == EnrollmentStatus.ACTIVE:
-            messages.error(request, "This student is already actively enrolled in this course.")
+        # Create or reactivate inside a transaction, catching concurrent duplicate inserts cleanly (P8).
+        try:
+            with transaction.atomic():
+                existing = Enrollment.objects.select_for_update().filter(course=course, student=student).first()
+                if existing and existing.status == EnrollmentStatus.ACTIVE:
+                    form.add_error(None, "This student is already actively enrolled in this course.")
+                    return render(request, "kura/accounts/enrollment_create.html", {"form": form}, status=400)
+
+                if existing:
+                    existing.status = EnrollmentStatus.ACTIVE
+                    existing.enrolled_by = request.user
+                    existing.dropped_by = None
+                    existing.dropped_at = None
+                    existing.save()
+                    log_security_event(
+                        request,
+                        "enrollment.created",
+                        {"course_id": course.id, "student_id": student.id},
+                    )
+                    messages.success(request, f"Re-enrolled {student.email} in {course.code}.")
+                    return redirect("kura:enrollment_list")
+
+                Enrollment.objects.create(
+                    course=course,
+                    student=student,
+                    status=EnrollmentStatus.ACTIVE,
+                    enrolled_by=request.user,
+                )
+        except IntegrityError:
+            form.add_error(None, "This student is already actively enrolled in this course.")
             return render(request, "kura/accounts/enrollment_create.html", {"form": form}, status=400)
 
-        if existing:
-            # Re-activate previously dropped enrollment.
-            existing.status = EnrollmentStatus.ACTIVE
-            existing.enrolled_by = request.user
-            existing.dropped_by = None
-            existing.dropped_at = None
-            existing.save()
-            log_security_event(
-                request,
-                "enrollment.created",
-                {"course_id": course.id, "student_id": student.id},
-            )
-            messages.success(request, f"Re-enrolled {student.email} in {course.code}.")
-            return redirect("kura:enrollment_list")
-
-        # Create new active enrollment record.
-        Enrollment.objects.create(
-            course=course,
-            student=student,
-            status=EnrollmentStatus.ACTIVE,
-            enrolled_by=request.user,
-        )
         log_security_event(request, "enrollment.created", {"course_id": course.id, "student_id": student.id})
         messages.success(request, f"Enrolled {student.email} in {course.code}.")
         return redirect("kura:enrollment_list")
@@ -3411,21 +3439,23 @@ def admin_course_edit_view(request, course_id):
 @login_required
 def course_create_view(request):
     """
-    Allows a Department Head to draft a new course in their department.
+    Allows a Department Head to draft a new course in one of their departments (P13).
     Who can use it: Department Heads.
-    Security: Checks Department Head role and restricts course to their department.
-"""
+    Security: Checks Department Head role and restricts course department choices to
+    departments headed by request.user.
+    """
     if not has_role(request.user, "Department head"):
         raise PermissionDenied
 
-    department = Department.objects.filter(head_user=request.user).first()
-    if not department:
+    head_departments = Department.objects.filter(head_user=request.user).order_by("name")
+    if not head_departments.exists():
         messages.error(request, "You are not assigned as head of any department.")
         return redirect("kura:course_list")
 
-    form = CourseCreateForm(request.POST or None)
+    form = CourseCreateForm(request.POST or None, head_departments=head_departments)
 
     if request.method == "POST" and form.is_valid():
+        department = form.cleaned_data["department"]
         course = Course.objects.create(
             department=department,
             code=form.cleaned_data["code"],
@@ -3443,7 +3473,7 @@ def course_create_view(request):
     return render(
         request,
         "kura/courses/course_create.html",
-        {"form": form, "department": department},
+        {"form": form, "department": head_departments.first(), "head_departments": head_departments},
         status=400 if request.method == "POST" else 200,
     )
 
@@ -4773,14 +4803,25 @@ def student_checkin_view(request, session_id):
             method = checkin_method
             client_ip = get_client_ip(request)
 
-            # Create attendance record.
-            AttendanceRecord.objects.create(
-                session=session,
-                student=request.user,
-                status=AttendanceStatus.PRESENT,
-                method=method,
-                ip_address=client_ip,
-            )
+            # Create attendance record; handle concurrent duplicate check-in without 500 (P8).
+            try:
+                with transaction.atomic():
+                    AttendanceRecord.objects.create(
+                        session=session,
+                        student=request.user,
+                        status=AttendanceStatus.PRESENT,
+                        method=method,
+                        ip_address=client_ip,
+                    )
+            except IntegrityError:
+                log_security_event(
+                    request,
+                    "attendance.checkin_failed",
+                    {"session_id": session.id, "method": method, "reason": "duplicate"},
+                    logging.WARNING,
+                )
+                messages.warning(request, "You have already checked in for this attendance session.")
+                return redirect("kura:attendance_history")
 
             log_security_event(
                 request,
@@ -4826,16 +4867,25 @@ def attendance_manual_record_view(request, session_id):
             messages.error(request, "Unable to record attendance for this student.")
             return redirect("kura:attendance_session_detail", session_id=session.id)
 
-        AttendanceRecord.objects.update_or_create(
-            session=session,
-            student=student,
-            defaults={
-                "status": status,
-                "method": AttendanceMethod.MANUAL,
-                "recorded_by": request.user,
-                "override_reason": override_reason,
-            },
-        )
+        try:
+            with transaction.atomic():
+                AttendanceRecord.objects.update_or_create(
+                    session=session,
+                    student=student,
+                    defaults={
+                        "status": status,
+                        "method": AttendanceMethod.MANUAL,
+                        "recorded_by": request.user,
+                        "override_reason": override_reason,
+                    },
+                )
+        except IntegrityError:
+            AttendanceRecord.objects.filter(session=session, student=student).update(
+                status=status,
+                method=AttendanceMethod.MANUAL,
+                recorded_by=request.user,
+                override_reason=override_reason,
+            )
         # Never log free-text justification; record only whether one was provided.
         log_security_event(
             request,
@@ -6831,16 +6881,8 @@ def grade_release_view(request, grade_id):
     if request.method == "POST" and form.is_valid():
         token = form.cleaned_data["otp_token"].strip()
 
-        # Step-up authentication: verify OTP token against user's TOTP or static device.
-        totp_device = TOTPDevice.objects.filter(user=request.user, confirmed=True).first()
-        is_verified = False
-        if totp_device and verify_totp_code(totp_device, request.user, token):
-            is_verified = True
-        else:
-            # Recovery codes are saved as keyed hashes, so compare the hash of the typed code.
-            static_device = StaticDevice.objects.filter(user=request.user, confirmed=True).first()
-            if static_device and static_device.verify_token(hash_recovery_code(token)):
-                is_verified = True
+        # Step-up authentication: verify OTP or recovery code across all confirmed devices (P14).
+        is_verified = verify_second_factor(request.user, token) is not None
 
         if not is_verified:
             log_security_event(

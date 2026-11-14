@@ -48,6 +48,12 @@ route:
       receiver: webhook-alerts
       continue: true
 
+    # Suspected breach-class alerts escalate to the breach-notification route (M4).
+    - matchers:
+        - alertname=~"AuditDiscrepancy|FileDecryptFailed|FileIntegrityFailed|RlsContextFailed|VaultErrors|DbAuthFailures"
+      receiver: breach-alerts
+      continue: true
+
     # EVERY alert (critical ones too) goes to email. This route is needed: the
     # top-level "receiver" above is only used for alerts that match NO child
     # route, so without it critical alerts reached Telegram but never email.
@@ -90,6 +96,23 @@ receivers:
   - name: "webhook-alerts"
     webhook_configs:
       - url: "http://127.0.0.1:9999/alertmanager-webhook"
+        send_resolved: true
+
+  # Breach-notification escalation receiver for 72-hour regulatory triage (M4).
+  - name: "breach-alerts"
+    email_configs:
+      - to: anaaakareem@gmail.com
+        from: noreply@kura.edu
+        smarthost: relay:25
+        require_tls: true
+        tls_config:
+          ca_file: /certs/ca.crt
+          server_name: relay
+        headers:
+          Subject: "[BREACH TRIAGE - 72H CLOCK] {{ .CommonLabels.alertname }}"
+        send_resolved: true
+    webhook_configs:
+      - url: "http://127.0.0.1:9999/alertmanager-breach"
         send_resolved: true
 
 # While Vault is sealed or down, mute the generic "ServiceDown" alert for the
