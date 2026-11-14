@@ -61,7 +61,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:17-alpine@sha256:d3244e8ce3f165ee3c93d9c4a4b1d0fe48b3a89e2287b717fdcbbde92d405065
         env:
           POSTGRES_DB: kura
           POSTGRES_USER: kura
@@ -135,7 +135,7 @@ jobs:
     name: Semgrep SAST Scan (OWASP Top 10 & Django)
     runs-on: ubuntu-latest
     container:
-      image: semgrep/semgrep
+      image: semgrep/semgrep@sha256:cc1b68266f267878b39739373ea9985b9a78e5d64497dd875c8de100b22695ed
 
     steps:
       - name: Checkout Source Code
@@ -151,6 +151,7 @@ jobs:
   docker-build-and-trivy:
     name: Docker Image Build & Trivy Vulnerability Scan
     runs-on: ubuntu-latest
+    needs: [semgrep-scan]
 
     steps:
       - name: Checkout Source Code
@@ -166,24 +167,14 @@ jobs:
           load: true
           tags: kura:${{ github.sha }}
 
-      - name: Scan Image with Trivy (Fail on CRITICAL)
+      - name: Scan Image with Trivy (Fail on HIGH,CRITICAL)
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: "kura:${{ github.sha }}"
           format: "table"
           exit-code: "1"
           ignore-unfixed: true
-          severity: "CRITICAL"
-
-      - name: Scan Image with Trivy (Informational Report on HIGH)
-        if: always()
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: "kura:${{ github.sha }}"
-          format: "table"
-          exit-code: "0"
-          ignore-unfixed: true
-          severity: "HIGH"
+          severity: "HIGH,CRITICAL"
 
       # Build the mail relay separately so its packages are scanned too.
       - name: Build mail relay image
@@ -197,7 +188,7 @@ jobs:
       - name: Check Postfix configuration
         run: docker run --rm --entrypoint postfix "kura-relay:${{ github.sha }}" check
 
-      # Apply the same critical vulnerability gate used for the web image.
+      # Apply the same vulnerability gate used for the web image.
       - name: Scan mail relay image with Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -205,7 +196,24 @@ jobs:
           format: "table"
           exit-code: "1"
           ignore-unfixed: true
-          severity: "CRITICAL"
+          severity: "HIGH,CRITICAL"
+
+      # Build and scan the breach-check proxy image as well.
+      - name: Build breach proxy image
+        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
+        with:
+          context: ./docker/breach-proxy
+          load: true
+          tags: kura-breach-proxy:${{ github.sha }}
+
+      - name: Scan breach proxy image with Trivy
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: "kura-breach-proxy:${{ github.sha }}"
+          format: "table"
+          exit-code: "1"
+          ignore-unfixed: true
+          severity: "HIGH,CRITICAL"
 
   # Validate infrastructure files without starting the real services.
   infrastructure-config:
@@ -268,7 +276,7 @@ jobs:
 
     services:
       postgres:
-        image: postgres:17-alpine
+        image: postgres:17-alpine@sha256:d3244e8ce3f165ee3c93d9c4a4b1d0fe48b3a89e2287b717fdcbbde92d405065
         env:
           POSTGRES_DB: kura
           POSTGRES_USER: kura
@@ -328,7 +336,7 @@ jobs:
           chmod 777 zap-reports
           docker run --rm --network host \
             -v "${GITHUB_WORKSPACE}/zap-reports:/zap/wrk:rw" \
-            ghcr.io/zaproxy/zaproxy:stable \
+            ghcr.io/zaproxy/zaproxy:stable@sha256:9624669db72f54d86c4b46a7064518bd9bf79d8c61a4c31befa9923489f328af \
             zap-baseline.py \
             -t http://127.0.0.1:8000/login/ \
             -r zap-report.html \
