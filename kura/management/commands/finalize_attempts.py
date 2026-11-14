@@ -4,7 +4,7 @@ from django.utils import timezone
 
 from kura.models import AssessmentAttempt, AttemptStatus
 from kura.permissions import service_rls_context
-from kura.views import compute_submission_hash, evaluate_attempt
+from kura.views import evaluate_attempt
 
 
 class Command(BaseCommand):
@@ -30,7 +30,6 @@ class Command(BaseCommand):
                     if attempt.status != AttemptStatus.IN_PROGRESS or attempt.expires_at >= timezone.now():
                         continue
                     attempt.submitted_at = attempt.expires_at
-                    attempt.submission_hash = compute_submission_hash(attempt)
                     evaluate_attempt(attempt)
                     finalized_count += 1
 
