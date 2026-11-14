@@ -54,6 +54,34 @@ loki.source.docker "containers" {
   forward_to = [loki.process.docker_envelope.receiver]
 }
 
+// Discover host cron log files mounted read-only at /var/log/kura/*.log.
+local.file_match "cron_logs" {
+  path_targets = [{ "__path__" = "/var/log/kura/*.log" }]
+}
+
+// Label cron logs with service="cron" and job=<filename without .log>.
+discovery.relabel "cron_logs" {
+  targets = local.file_match.cron_logs.targets
+
+  rule {
+    target_label = "service"
+    replacement  = "cron"
+  }
+
+  rule {
+    source_labels = ["__path__"]
+    regex         = ".*/([^/]+)\\.log$"
+    target_label  = "job"
+    replacement   = "$1"
+  }
+}
+
+// Read host cron log files and route them through the shared logfmt pipeline.
+loki.source.file "cron_logs" {
+  targets    = discovery.relabel.cron_logs.output
+  forward_to = [loki.process.pipeline.receiver]
+}
+
 // Extract the Docker log message, timestamp, and stdout/stderr stream label.
 loki.process "docker_envelope" {
   stage.docker {}
@@ -70,12 +98,12 @@ loki.process "docker_envelope" {
 // stage.labels copies an EXTRACTED field into a label (level = "" means "use
 // the extracted field named level"). Mixing them up silently sets nothing.
 loki.process "pipeline" {
-  // Read Django's logfmt fields and put event names in structured metadata.
+  // Read Django's logfmt fields (both web and cron jobs) and keep event names as metadata.
   stage.match {
-    selector = "{service=\"web\"}"
+    selector = "{service=~\"web|cron\"}"
 
     stage.logfmt {
-      mapping = { level = "", logger = "", event = "" }
+      mapping = { level = "", logger = "", event = "", request_id = "" }
     }
 
     stage.labels {
@@ -83,7 +111,7 @@ loki.process "pipeline" {
     }
 
     stage.structured_metadata {
-      values = { event = "" }
+      values = { event = "", request_id = "" }
     }
   }
 
@@ -295,9 +323,9 @@ loki.process "pipeline" {
     }
   }
 
-  // Keep only the three approved low-cardinality labels on every Loki stream.
+  // Keep only approved low-cardinality labels on every Loki stream.
   stage.label_keep {
-    values = ["service", "stream", "level"]
+    values = ["service", "stream", "level", "job"]
   }
 
   forward_to = [loki.write.local_loki.receiver]

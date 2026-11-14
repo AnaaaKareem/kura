@@ -151,3 +151,66 @@ groups:
         annotations:
           summary: "Breached-password check is not working"
           description: "At least one new password in the last 15 minutes could not be checked against HaveIBeenPwned, so it was accepted without the check. Check the breach-proxy container and its internet route."
+
+      # 15. Unhandled server error (500) logged by Kura's custom error handler.
+      - alert: ServerError
+        expr: sum(count_over_time({service="web"} | logfmt | event="server.error" [5m])) >= 1
+        labels:
+          severity: critical
+        annotations:
+          summary: "Kura returned an internal server error (500)"
+          description: "At least one request failed with server.error in the last 5 minutes. Inspect application and database logs using the correlation request_id."
+
+      # 16. File decryption failed (tampered ciphertext, wrong associated data, or Vault unwrap failure).
+      - alert: FileDecryptFailed
+        expr: sum(count_over_time({service="web"} | logfmt | event="file.decrypt_failed" [5m])) >= 1
+        labels:
+          severity: critical
+        annotations:
+          summary: "Encrypted file decryption failed"
+          description: "A stored file failed AES-GCM authentication or Vault unwrapping in the last 5 minutes. Investigate possible tampering or Vault issues."
+
+      # 17. Stored file SHA-256 integrity verification failed on download.
+      - alert: FileIntegrityFailed
+        expr: sum(count_over_time({service="web"} | logfmt | event="file.integrity_failed" [5m])) >= 1
+        labels:
+          severity: critical
+        annotations:
+          summary: "File integrity check failed"
+          description: "A file downloaded from Kura did not match its recorded SHA-256 digest."
+
+      # 18. Django failed to encrypt/decrypt or fetch credentials from Vault.
+      - alert: WebVaultError
+        expr: sum(count_over_time({service=~"web|cron"} | logfmt | event="vault.error" [5m])) >= 1
+        labels:
+          severity: critical
+        annotations:
+          summary: "Application Vault operation failed"
+          description: "Django logged vault.error within the last 5 minutes. Check Vault seal state, AppRole credentials, and TLS."
+
+      # 19. PostgreSQL Row-Level Security session context could not be set.
+      - alert: RlsContextFailed
+        expr: sum(count_over_time({service="web"} | logfmt | event="rls.context_failed" [5m])) >= 1
+        labels:
+          severity: critical
+        annotations:
+          summary: "Row-Level Security context failed"
+          description: "RowLevelSecurityMiddleware failed to set kura.current_user_id and returned 503."
+
+      # 20. Repeated login failures targeting one account (pseudonymous keyed hash).
+      - alert: RepeatedLoginFailedAccount
+        expr: sum by (login_identifier_hash) (count_over_time({service="web"} | logfmt | event="auth.login.failed" | login_identifier_hash != "" [5m])) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: "Repeated failed logins against one account"
+          description: "More than 5 failed logins targeted account hash {{ $labels.login_identifier_hash }} within 5 minutes."
+
+      # 21. Burst of 404 lookups from a single signed-in actor (possible IDOR probing).
+      - alert: AccessNotFoundBurst
+        expr: sum by (actor_user_id) (count_over_time({service="web"} | logfmt | event="access.not_found" | actor_user_id != "anonymous" [5m])) > 20
+        labels:
+          severity: warning
+        annotations:
+          summary: "Burst of 404 responses for one user"
+          description: "Actor {{ $labels.actor_user_id }} triggered more than 20 not-found responses in 5 minutes, which may indicate identifier probing."

@@ -10,10 +10,46 @@ import ipaddress
 import json
 import logging
 import re
+import secrets
 
 from django.conf import settings
+from django.utils.crypto import salted_hmac
 
 security_logger = logging.getLogger("kura.security")
+
+# Exact detail keys that must never appear in plaintext inside log lines.
+REDACTED_LOG_KEYS = frozenset(
+    {
+        "password",
+        "new_password",
+        "old_password",
+        "token",
+        "otp_token",
+        "otp_code",
+        "recovery_code",
+        "secret",
+        "mfa_secret",
+        "session_key",
+        "sessionid",
+        "csrftoken",
+        "encryption_key",
+        "data_key",
+        "wrapped_key",
+        "nonce",
+        "answer_key",
+        "score",
+        "proposed_score",
+        "justification",
+        "email",
+        "filename",
+    }
+)
+
+
+def hash_login_identifier(email):
+    """Return a short keyed hash of an email for login correlation without storing PII."""
+    normalized = (email or "").strip().lower()
+    return salted_hmac("kura.login_identifier", normalized, algorithm="sha256").hexdigest()[:16]
 
 
 def get_client_ip(request):
@@ -41,19 +77,26 @@ def get_client_ip(request):
         return remote_addr
 
 
-def log_security_event(request, event, details, level=logging.INFO):
+def log_security_event(request, event, details, level=logging.INFO, include_actor=True):
     """Write one escaped, searchable security event without logging secrets.
 
     The actor is named actor_user_id so event details can separately identify
     the affected user without creating duplicate logfmt keys. Pass request=None
-    from code that has no request, such as management commands.
+    from code that has no request, such as management commands. Pass
+    include_actor=False from error handlers that must not touch the database.
     """
-    # The proxy creates lowercase hexadecimal IDs; reject anything else before logging it.
+    # Use the proxy's 32-hex ID when valid; otherwise generate and cache one on the request.
     request_id = "-"
     if request is not None:
         received_request_id = request.META.get("HTTP_X_REQUEST_ID", "")
         if re.fullmatch(r"[0-9a-f]{32}", received_request_id):
             request_id = received_request_id
+        else:
+            cached_request_id = getattr(request, "_kura_request_id", None)
+            if not cached_request_id:
+                cached_request_id = secrets.token_hex(16)
+                request._kura_request_id = cached_request_id
+            request_id = cached_request_id
 
     # Password-reset URLs contain bearer tokens, so replace the token before writing the path.
     path = "-"
@@ -63,9 +106,11 @@ def log_security_event(request, event, details, level=logging.INFO):
     # Record the request context while distinguishing the actor from event subjects.
     parts = ["event=" + json.dumps(str(event))]
     if request is not None:
-        actor_user_id = "anonymous"
-        if hasattr(request, "user") and request.user.is_authenticated:
-            actor_user_id = str(request.user.id)
+        actor_user_id = "-"
+        if include_actor:
+            actor_user_id = "anonymous"
+            if hasattr(request, "user") and request.user.is_authenticated:
+                actor_user_id = str(request.user.id)
         parts.extend(
             [
                 "ip=" + json.dumps(get_client_ip(request)),
@@ -76,10 +121,12 @@ def log_security_event(request, event, details, level=logging.INFO):
             ]
         )
 
-    # Sort fields and encode after limiting their size, keeping every value valid JSON.
+    # Sort fields, redact sensitive exact-match keys, and encode valid JSON strings.
     for key in sorted(details):
-        value = json.dumps(str(details[key])[:500])
-        parts.append(str(key) + "=" + value)
+        key_name = str(key)
+        raw_value = "<redacted>" if key_name in REDACTED_LOG_KEYS else str(details[key])[:500]
+        value = json.dumps(raw_value)
+        parts.append(key_name + "=" + value)
 
     # Join first so untrusted values are never used as a logging format string.
     line = " ".join(parts)
