@@ -1,4 +1,4 @@
-from django.contrib.auth.decorators import login_required
+from django.contrib.auth.decorators import login_not_required, login_required
 from django.urls import include, path
 from mfa import FIDO2
 from mfa import views as mfa_views
@@ -22,13 +22,13 @@ passkey_urlpatterns = [
     # it already has @login_required.
     path("fido2/begin_reg", login_required(FIDO2.begin_registeration), name="fido2_begin_reg"),
     path("fido2/complete_reg", kura_views.passkey_register_complete_view, name="fido2_complete_reg"),
-    # Signing in with a passkey after the password step.
-    path("fido2/auth", FIDO2.auth, name="fido2_auth"),
-    path("fido2/begin_auth", FIDO2.authenticate_begin, name="fido2_begin_auth"),
+    # Signing in with a passkey after the password step (pre-MFA login flow -> login_not_required).
+    path("fido2/auth", login_not_required(FIDO2.auth), name="fido2_auth"),
+    path("fido2/begin_auth", login_not_required(FIDO2.authenticate_begin), name="fido2_begin_auth"),
     path("fido2/complete_auth", kura_views.passkey_auth_complete_view, name="fido2_complete_auth"),
     # The "Not me" link on the passkey sign-in page: forgets the remembered
     # user name and goes back to the login page.
-    path("reset", mfa_views.reset_cookie, name="mfa_reset_cookie"),
+    path("reset", login_not_required(mfa_views.reset_cookie), name="mfa_reset_cookie"),
 ]
 
 urlpatterns = [
