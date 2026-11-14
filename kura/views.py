@@ -1,5 +1,6 @@
 import csv
 import hashlib
+import hmac
 import html
 import io
 import ipaddress
@@ -440,6 +441,30 @@ def hash_recovery_code(code):
     # StaticToken.token holds at most 16 characters, so keep the first 16 hex
     # characters (64 bits): far more than enough to tell 10 codes apart.
     return full_hash[:16]
+
+
+def hash_attendance_passcode(code):
+    """Return a keyed HMAC-SHA256 digest for a short attendance check-in passcode."""
+    return salted_hmac(
+        "kura.attendance.passcode",
+        (code or "").strip().upper(),
+        algorithm="sha256",
+    ).hexdigest()
+
+
+def hash_proctor_code(code):
+    """Return a version-prefixed 64-character keyed HMAC-SHA256 digest for a proctor code."""
+    digest = salted_hmac(
+        "kura.assessment.proctor_code",
+        (code or "").strip(),
+        algorithm="sha256",
+    ).hexdigest()
+    return "v2:" + digest[:61]
+
+
+def is_legacy_proctor_code_hash(stored_hash):
+    """Return True if a stored proctor code hash uses the legacy unsalted SHA-256 format."""
+    return bool(stored_hash) and not str(stored_hash).startswith("v2:")
 
 
 PRE_MFA_WINDOW_SECONDS = 300
@@ -4191,9 +4216,9 @@ def attendance_session_start_view(request, module_id):
         title = form.cleaned_data["title"]
         duration = form.cleaned_data["duration_minutes"]
 
-        # Generate a random 6-character passcode.
+        # Generate a random 6-character passcode and store only its keyed HMAC-SHA256 digest.
         raw_passcode = secrets.token_hex(3).upper()
-        passcode_hash = hashlib.sha256(raw_passcode.encode("utf-8")).hexdigest()
+        passcode_hash = hash_attendance_passcode(raw_passcode)
         expires_at = timezone.now() + timezone.timedelta(minutes=duration)
 
         session = ModuleAttendanceSession.objects.create(
@@ -4376,10 +4401,10 @@ def student_checkin_view(request, session_id):
     if request.method == "POST":
         if form.is_valid():
             submitted_code = form.cleaned_data["passcode"].strip().upper()
-            submitted_hash = hashlib.sha256(submitted_code.encode("utf-8")).hexdigest()
+            submitted_hash = hash_attendance_passcode(submitted_code)
 
-            # Verify passcode matches.
-            if submitted_hash != session.passcode_hash:
+            # Verify passcode matches using constant-time comparison.
+            if not hmac.compare_digest(submitted_hash, session.passcode_hash):
                 log_security_event(
                     request,
                     "attendance.checkin_failed",
@@ -4789,6 +4814,7 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
     if not (is_course_instructor(request.user, course) or is_department_head(request.user, course.department)):
         raise PermissionDenied
 
+    legacy_proctor_code = bool(assessment and is_legacy_proctor_code_hash(assessment.proctor_code_hash))
     # Prepare ordinary form fields from the existing assessment and its separate key.
     initial = {}
     initial_questions = [{"type": "multiple_choice", "max_words": 500}]
@@ -5014,6 +5040,7 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
                             "assessment": assessment,
                             "questions_locked": questions_locked,
                             "builder_unavailable": builder_unavailable,
+                            "legacy_proctor_code": legacy_proctor_code,
                         },
                         status=400,
                     )
@@ -5040,7 +5067,7 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
                     assessment.questions_json = questions
                     assessment.lab_cidr_allowed = form.cleaned_data["lab_cidr_allowed"] or None
                     if raw_proctor:
-                        assessment.proctor_code_hash = hashlib.sha256(raw_proctor.encode("utf-8")).hexdigest()
+                        assessment.proctor_code_hash = hash_proctor_code(raw_proctor)
                 assessment.save()
                 if not question_editing_disabled:
                     ExamAnswerKey.objects.update_or_create(
@@ -5089,6 +5116,7 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
             "assessment": assessment,
             "questions_locked": questions_locked,
             "builder_unavailable": builder_unavailable,
+            "legacy_proctor_code": legacy_proctor_code,
         },
         status=400 if request.method == "POST" else 200,
     )
@@ -5592,7 +5620,10 @@ def assessment_attempt_start_view(request, assessment_id):
                 messages.error(request, "Proctor code is required.")
                 return redirect("kura:assessment_detail", assessment_id=assessment.id)
             submitted_code = form.cleaned_data.get("proctor_code", "").strip()
-            if hashlib.sha256(submitted_code.encode("utf-8")).hexdigest() != assessment.proctor_code_hash:
+            expected_hash = hash_proctor_code(submitted_code)
+            if is_legacy_proctor_code_hash(assessment.proctor_code_hash) or not hmac.compare_digest(
+                expected_hash, assessment.proctor_code_hash
+            ):
                 log_security_event(
                     request,
                     "attempt.start_blocked",
