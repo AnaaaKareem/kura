@@ -33,6 +33,9 @@ KURA_METRICS_DIR=/var/lib/kura-metrics
 # 30 days). Vault must be unsealed. Also writes certificate expiry metrics.
 30 3 * * 1 /bin/sh $KURA_DIR/docker/cron/run-job.sh cert-renewal sh certs/renew-certs-from-vault.sh >> /var/log/kura/cert-renewal.log 2>&1
 
+# Every day at 04:30: purge expired Django sessions from django_session.
+30 4 * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh clear-sessions docker compose exec -T web python manage.py clearsessions >> /var/log/kura/clear-sessions.log 2>&1
+
 # Monthly: delete expired sessions and old login records after 180 days.
 # Weekly (Sunday): anonymise IP addresses older than 180 days. (Approved by the owner, 6 November 2026.)
 0 5 1 * * /bin/sh $KURA_DIR/docker/cron/run-job.sh purge-retention docker compose exec -T web python manage.py purge_retention --days=180 >> /var/log/kura/purge-retention.log 2>&1
