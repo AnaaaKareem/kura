@@ -990,6 +990,9 @@ class FileContent(models.Model):
         StoredFile, on_delete=models.CASCADE, primary_key=True, related_name="content", db_column="file_id"
     )
     content = models.BinaryField()
+    wrapped_key = models.TextField(blank=True, default="")
+    nonce = models.BinaryField(max_length=12, blank=True, default=b"")
+    encryption_version = models.PositiveSmallIntegerField(default=0)
 
     class Meta:
         db_table = "file_contents"

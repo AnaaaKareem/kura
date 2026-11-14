@@ -11,4 +11,5 @@ python-magic>=0.4.27
 django-csp>=4.0
 gunicorn>=23.0.0
 hvac>=2.4.0
+cryptography>=44.0.0
 django-mfa2>=3.2.0

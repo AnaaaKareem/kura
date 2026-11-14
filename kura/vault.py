@@ -9,7 +9,10 @@ HashiCorp Vault helper functions for Kura LMS:
 import base64
 import json
 import logging
+import os
 import time
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from django.conf import settings
 from django.core.exceptions import ValidationError
 import hvac
@@ -173,6 +176,129 @@ def decrypt_answer_key(stored_json):
     except Exception as exc:
         log_security_event(None, "vault.error", {"operation": "decrypt_answer_key"}, level=logging.ERROR)
         raise ValidationError("Answer key decryption failed. The security vault is unreachable.") from exc
+
+
+def encrypt_file_content(content_bytes, stored_file_id):
+    """
+    Encrypts uploaded file bytes using hybrid encryption:
+    - Generates a fresh 256-bit AES-GCM data key and 96-bit nonce per file.
+    - Encrypts content_bytes with StoredFile.id as associated data so ciphertexts cannot be swapped.
+    - Wraps the data key through Vault Transit (RSA-4096 / RSA-OAEP, key 'kura-files').
+    When VAULT_ENABLED is False, falls back to unencrypted storage (encryption_version=0).
+    """
+    raw_bytes = bytes(content_bytes)
+    if not getattr(settings, "VAULT_ENABLED", False):
+        return {
+            "content": raw_bytes,
+            "wrapped_key": "",
+            "nonce": b"",
+            "encryption_version": 0,
+        }
+
+    data_key = AESGCM.generate_key(bit_length=256)
+    nonce = os.urandom(12)
+    aad = str(stored_file_id).encode("utf-8")
+    ciphertext = AESGCM(data_key).encrypt(nonce, raw_bytes, aad)
+
+    try:
+        client = get_vault_client()
+        encoded_data_key = base64.b64encode(data_key).decode("utf-8")
+        response = client.secrets.transit.encrypt_data(
+            name=settings.VAULT_FILES_KEY,
+            mount_point=settings.VAULT_TRANSIT_MOUNT,
+            plaintext=encoded_data_key,
+        )
+        wrapped_key = response["data"]["ciphertext"]
+    except Exception as exc:
+        log_security_event(None, "vault.error", {"operation": "encrypt_file_content"}, level=logging.ERROR)
+        raise ValidationError("File encryption failed. The security vault is unreachable.") from exc
+
+    return {
+        "content": ciphertext,
+        "wrapped_key": wrapped_key,
+        "nonce": nonce,
+        "encryption_version": 1,
+    }
+
+
+def decrypt_file_content(file_content):
+    """
+    Decrypts a FileContent row in memory after unwrapping its AES-256-GCM data key via Vault.
+    Logs file.decrypt_failed (never keys, nonces, or plaintext) and raises ValidationError on failure.
+    """
+    version = file_content.encryption_version
+    vault_enabled = getattr(settings, "VAULT_ENABLED", False)
+
+    if not vault_enabled:
+        if version == 0:
+            return bytes(file_content.content)
+        log_security_event(
+            None,
+            "file.decrypt_failed",
+            {"file_id": file_content.file_id, "reason": "vault_disabled"},
+            level=logging.ERROR,
+        )
+        raise ValidationError("Encrypted files cannot be read while Vault is disabled.")
+
+    if version == 0:
+        if getattr(settings, "ALLOW_LEGACY_UNENCRYPTED_FILE_READS", False):
+            return bytes(file_content.content)
+        log_security_event(
+            None,
+            "file.decrypt_failed",
+            {"file_id": file_content.file_id, "reason": "unencrypted_legacy_file"},
+            level=logging.ERROR,
+        )
+        raise ValidationError("File decryption failed.")
+
+    if version != 1:
+        log_security_event(
+            None,
+            "file.decrypt_failed",
+            {"file_id": file_content.file_id, "reason": "unsupported_version"},
+            level=logging.ERROR,
+        )
+        raise ValidationError("File decryption failed.")
+
+    wrapped_key = file_content.wrapped_key or ""
+    nonce = bytes(file_content.nonce)
+    if not wrapped_key.startswith("vault:") or len(nonce) != 12:
+        log_security_event(
+            None,
+            "file.decrypt_failed",
+            {"file_id": file_content.file_id, "reason": "invalid_envelope"},
+            level=logging.ERROR,
+        )
+        raise ValidationError("File decryption failed.")
+
+    try:
+        client = get_vault_client()
+        response = client.secrets.transit.decrypt_data(
+            name=settings.VAULT_FILES_KEY,
+            mount_point=settings.VAULT_TRANSIT_MOUNT,
+            ciphertext=wrapped_key,
+        )
+        data_key = base64.b64decode(response["data"]["plaintext"].encode("utf-8"))
+    except Exception as exc:
+        log_security_event(
+            None,
+            "file.decrypt_failed",
+            {"file_id": file_content.file_id, "reason": "vault_unwrap_failed"},
+            level=logging.ERROR,
+        )
+        raise ValidationError("File decryption failed.") from exc
+
+    try:
+        aad = str(file_content.file_id).encode("utf-8")
+        return AESGCM(data_key).decrypt(nonce, bytes(file_content.content), aad)
+    except (InvalidTag, ValueError, TypeError) as exc:
+        log_security_event(
+            None,
+            "file.decrypt_failed",
+            {"file_id": file_content.file_id, "reason": "gcm_auth_failed"},
+            level=logging.ERROR,
+        )
+        raise ValidationError("File decryption failed.") from exc
 
 
 # The current temporary database login for this worker process. Every new

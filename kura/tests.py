@@ -10284,9 +10284,11 @@ class WorkItem2ServerCodeTests(TestCase):
         reg_client = Client()
         login_with_session(reg_client, registrar)
         search_url = reverse("kura:enrollment_search")
-        for _ in range(60):
-            reg_client.get(search_url, {"kind": "student", "q": "a"})
-        limited_search = reg_client.get(search_url, {"kind": "student", "q": "a"})
+        fixed_now = timezone.now()
+        with patch("django.utils.timezone.now", return_value=fixed_now):
+            for _ in range(60):
+                reg_client.get(search_url, {"kind": "student", "q": "a"})
+            limited_search = reg_client.get(search_url, {"kind": "student", "q": "a"})
         self.assertEqual(limited_search.status_code, 429)
         self.assertEqual(limited_search.headers.get("Retry-After"), "60")
 
@@ -10749,3 +10751,148 @@ class WorkItem4bKeyedHashTests(TestCase):
         )
         self.assertEqual(ok.status_code, 302)
         self.assertTrue(AssessmentAttempt.objects.filter(assessment=assessment, student=student).exists())
+
+
+class WorkItem5FileEncryptionTests(TestCase):
+    """Tests for Work Item 5: hybrid AES-256-GCM + Vault RSA-4096 file encryption."""
+
+    def setUp(self):
+        self.user = make_user("Instructor")
+
+    def _mock_vault_client(self):
+        import base64
+
+        wrapped_store = {}
+
+        def encrypt_data(name, mount_point, plaintext):
+            token = f"vault:v1:{base64.b64encode(secrets.token_bytes(16)).decode('ascii')}"
+            wrapped_store[token] = plaintext
+            return {"data": {"ciphertext": token}}
+
+        def decrypt_data(name, mount_point, ciphertext):
+            return {"data": {"plaintext": wrapped_store[ciphertext]}}
+
+        mock_client = MagicMock()
+        mock_client.secrets.transit.encrypt_data.side_effect = encrypt_data
+        mock_client.secrets.transit.decrypt_data.side_effect = decrypt_data
+        return mock_client, wrapped_store
+
+    @override_settings(VAULT_ENABLED=True, CLAMAV_REQUIRED=False)
+    def test_hybrid_upload_download_distinct_nonces_and_no_secret_leaks(self):
+        payload = b"%PDF-1.4 secret student paper payload"
+        mock_client, wrapped_store = self._mock_vault_client()
+
+        with patch("kura.vault.get_vault_client", return_value=mock_client):
+            with self.assertLogs("kura.security", level="INFO") as cap_up:
+                up1 = SimpleUploadedFile("paper1.pdf", payload, content_type="application/pdf")
+                up2 = SimpleUploadedFile("paper2.pdf", payload, content_type="application/pdf")
+                sf1 = validate_and_save_upload(up1, self.user)
+                sf2 = validate_and_save_upload(up2, self.user)
+
+            fc1 = FileContent.objects.get(file=sf1)
+            fc2 = FileContent.objects.get(file=sf2)
+
+            self.assertEqual(fc1.encryption_version, 1)
+            self.assertNotEqual(bytes(fc1.content), payload)
+            self.assertTrue(fc1.wrapped_key.startswith("vault:"))
+            self.assertEqual(len(bytes(fc1.nonce)), 12)
+
+            # Identical plaintexts produce distinct nonces, wrapped keys, and ciphertexts.
+            self.assertNotEqual(bytes(fc1.nonce), bytes(fc2.nonce))
+            self.assertNotEqual(fc1.wrapped_key, fc2.wrapped_key)
+            self.assertNotEqual(bytes(fc1.content), bytes(fc2.content))
+
+            # Download restores original bytes and passes SHA-256 check.
+            dl1 = create_download_response(sf1)
+            self.assertEqual(dl1.status_code, 200)
+            self.assertEqual(dl1.content, payload)
+
+        all_logs = "\n".join(cap_up.output)
+        for wrapped_key, raw_b64 in wrapped_store.items():
+            self.assertNotIn(wrapped_key, all_logs)
+            self.assertNotIn(raw_b64, all_logs)
+            self.assertNotIn(wrapped_key.encode(), dl1.content)
+        self.assertNotIn(bytes(fc1.nonce).hex(), all_logs)
+
+    @override_settings(VAULT_ENABLED=True, CLAMAV_REQUIRED=False)
+    def test_tampering_or_row_swap_fails_and_logs_decrypt_failed(self):
+        payload = b"%PDF-1.4 tamper test content"
+        mock_client, _ = self._mock_vault_client()
+
+        with patch("kura.vault.get_vault_client", return_value=mock_client):
+            sf1 = validate_and_save_upload(SimpleUploadedFile("a.pdf", payload, content_type="application/pdf"), self.user)
+            sf2 = validate_and_save_upload(SimpleUploadedFile("b.pdf", payload, content_type="application/pdf"), self.user)
+
+            fc1 = FileContent.objects.get(file=sf1)
+            fc2 = FileContent.objects.get(file=sf2)
+
+            # Flip one byte of ciphertext -> GCM auth failure.
+            tampered = bytearray(bytes(fc1.content))
+            tampered[0] ^= 0xFF
+            fc1.content = bytes(tampered)
+            fc1.save(update_fields=["content"])
+            sf1 = StoredFile.objects.get(id=sf1.id)
+
+            with self.assertLogs("kura.security", level="ERROR") as cap_tamper:
+                resp_tamper = create_download_response(sf1)
+            self.assertEqual(resp_tamper.status_code, 500)
+            self.assertEqual(resp_tamper.content, b"File decryption failed.")
+            self.assertTrue(any('event="file.decrypt_failed"' in l for l in cap_tamper.output))
+
+            # Move valid ciphertext/envelope from sf2 onto sf1 -> AAD mismatch fails.
+            fc1.content = fc2.content
+            fc1.wrapped_key = fc2.wrapped_key
+            fc1.nonce = fc2.nonce
+            fc1.save(update_fields=["content", "wrapped_key", "nonce"])
+            sf1 = StoredFile.objects.get(id=sf1.id)
+
+            with self.assertLogs("kura.security", level="ERROR") as cap_swap:
+                resp_swap = create_download_response(sf1)
+            self.assertEqual(resp_swap.status_code, 500)
+            self.assertTrue(any('event="file.decrypt_failed"' in l for l in cap_swap.output))
+
+    @override_settings(CLAMAV_REQUIRED=False)
+    def test_encrypt_file_contents_command_migrates_legacy_rows_idempotently(self):
+        payload = b"%PDF-1.4 legacy plaintext file"
+        with override_settings(VAULT_ENABLED=False):
+            sf = validate_and_save_upload(SimpleUploadedFile("legacy.pdf", payload, content_type="application/pdf"), self.user)
+        fc = FileContent.objects.get(file=sf)
+        self.assertEqual(fc.encryption_version, 0)
+        self.assertEqual(bytes(fc.content), payload)
+
+        mock_client, _ = self._mock_vault_client()
+        with override_settings(VAULT_ENABLED=True):
+            # Legacy v0 is refused while VAULT_ENABLED=True and ALLOW_LEGACY_UNENCRYPTED_FILE_READS=False.
+            with self.assertLogs("kura.security", level="ERROR"):
+                self.assertEqual(create_download_response(sf).status_code, 500)
+
+            with patch("kura.vault.get_vault_client", return_value=mock_client):
+                out1 = StringIO()
+                call_command("encrypt_file_contents", stdout=out1)
+                self.assertIn("Encrypted 1 file(s)", out1.getvalue())
+
+                fc.refresh_from_db()
+                self.assertEqual(fc.encryption_version, 1)
+                self.assertNotEqual(bytes(fc.content), payload)
+                self.assertTrue(fc.wrapped_key.startswith("vault:"))
+                self.assertEqual(len(bytes(fc.nonce)), 12)
+
+                # Second run skips already encrypted rows.
+                prev_wrapped = fc.wrapped_key
+                out2 = StringIO()
+                call_command("encrypt_file_contents", stdout=out2)
+                self.assertIn("Encrypted 0 file(s); 1 were already encrypted.", out2.getvalue())
+                fc.refresh_from_db()
+                self.assertEqual(fc.wrapped_key, prev_wrapped)
+
+                # Download works after migration.
+                sf = StoredFile.objects.get(id=sf.id)
+                dl = create_download_response(sf)
+                self.assertEqual(dl.status_code, 200)
+                self.assertEqual(dl.content, payload)
+
+    def test_vault_policy_grants_only_update_on_kura_files(self):
+        policy_path = Path(settings.BASE_DIR) / "docker" / "vault" / "policies" / "kura-web.hcl"
+        policy_text = policy_path.read_text(encoding="utf-8")
+        self.assertIn('path "transit/encrypt/kura-files" {\n  capabilities = ["update"]\n}', policy_text)
+        self.assertIn('path "transit/decrypt/kura-files" {\n  capabilities = ["update"]\n}', policy_text)

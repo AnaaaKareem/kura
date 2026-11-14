@@ -108,15 +108,18 @@ vault_root audit enable file file_path=stdout > /dev/null
 
 # 4. Transit engine and the key that encrypts authenticator seeds. Vault keeps
 #    the key inside; Django can only ask Vault to use it.
-echo "[4/9] Creating the kura-mfa and kura-answer-keys encryption keys..."
+echo "[4/9] Creating the kura-mfa, kura-answer-keys, and kura-files encryption keys..."
 vault_root secrets enable transit > /dev/null
 vault_root write -f transit/keys/kura-mfa type=aes256-gcm96 > /dev/null
 #    A second key, used only for exam answer keys (ExamAnswerKey.answer_key_json).
 vault_root write -f transit/keys/kura-answer-keys type=aes256-gcm96 > /dev/null
-#    Rotate both Transit keys every 30 days (720h). Vault Transit keeps old
-#    key versions, so previously encrypted MFA seeds and answer keys still decrypt (LOG-05).
+#    An RSA-4096 key used to wrap per-file AES-256-GCM data keys (FileContent.wrapped_key).
+vault_root write -f transit/keys/kura-files type=rsa-4096 > /dev/null
+#    Rotate Transit keys every 30 days (720h). Vault Transit keeps old
+#    key versions, so previously encrypted seeds, answer keys, and file keys still decrypt (LOG-05).
 vault_root write transit/keys/kura-mfa/config auto_rotate_period=720h > /dev/null
 vault_root write transit/keys/kura-answer-keys/config auto_rotate_period=720h > /dev/null
+vault_root write transit/keys/kura-files/config auto_rotate_period=720h > /dev/null
 
 # 5. Temporary database users.
 echo "[5/9] Setting up temporary database users..."
