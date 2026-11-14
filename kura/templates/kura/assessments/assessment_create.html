@@ -65,7 +65,13 @@
                     {% include "kura/_field.html" with field=form.lab_cidr_allowed %}
                     <div>
                         {% include "kura/_field.html" with field=form.proctor_code %}
-                        {% if assessment %}<p class="text-xs k-muted mt-1">Leave blank to keep the existing code.</p>{% endif %}
+                        {% if legacy_proctor_code %}
+                        <div role="alert" class="alert alert-warning text-xs mt-2">
+                            <span>This proctor code uses an older hash format and will not be accepted until you re-enter and save it.</span>
+                        </div>
+                        {% elif assessment %}
+                        <p class="text-xs k-muted mt-1">Leave blank to keep the existing code.</p>
+                        {% endif %}
                     </div>
                 </div>
             </fieldset>

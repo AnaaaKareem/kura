@@ -50,6 +50,8 @@ from .vault import (
 )
 from .views import (
     evaluate_attempt,
+    hash_attendance_passcode,
+    hash_proctor_code,
     hash_recovery_code,
     log_security_event,
     mfa_login_callback,
@@ -2802,7 +2804,7 @@ class AttendanceSessionsAndCheckinTests(TestCase):
     def test_student_valid_passcode_checkin(self):
         # Student submits the correct passcode; record is created with method=PASSCODE.
         raw_passcode = "A1B2C3"
-        passcode_hash = hashlib.sha256(raw_passcode.encode("utf-8")).hexdigest()
+        passcode_hash = hash_attendance_passcode(raw_passcode)
         session = ModuleAttendanceSession.objects.create(
             module=self.module,
             created_by=self.instructor,
@@ -2827,7 +2829,7 @@ class AttendanceSessionsAndCheckinTests(TestCase):
     def test_student_qr_checkin(self):
         # A QR link shows the form; only its confirmed POST records attendance.
         raw_passcode = "F4E5D6"
-        passcode_hash = hashlib.sha256(raw_passcode.encode("utf-8")).hexdigest()
+        passcode_hash = hash_attendance_passcode(raw_passcode)
         session = ModuleAttendanceSession.objects.create(
             module=self.module,
             created_by=self.instructor,
@@ -2851,7 +2853,7 @@ class AttendanceSessionsAndCheckinTests(TestCase):
     def test_expired_session_rejects_checkin(self):
         # Check-in after expiration time is strictly rejected.
         raw_passcode = "EXPIRE"
-        passcode_hash = hashlib.sha256(raw_passcode.encode("utf-8")).hexdigest()
+        passcode_hash = hash_attendance_passcode(raw_passcode)
         session = ModuleAttendanceSession.objects.create(
             module=self.module,
             created_by=self.instructor,
@@ -2872,7 +2874,7 @@ class AttendanceSessionsAndCheckinTests(TestCase):
     def test_wrong_passcode_rejects_checkin(self):
         # Incorrect passcode does not register attendance.
         raw_passcode = "CORRECT"
-        passcode_hash = hashlib.sha256(raw_passcode.encode("utf-8")).hexdigest()
+        passcode_hash = hash_attendance_passcode(raw_passcode)
         session = ModuleAttendanceSession.objects.create(
             module=self.module,
             created_by=self.instructor,
@@ -2893,7 +2895,7 @@ class AttendanceSessionsAndCheckinTests(TestCase):
     def test_double_checkin_is_rejected(self):
         # A student cannot record attendance twice for the same session.
         raw_passcode = "DUPLIC"
-        passcode_hash = hashlib.sha256(raw_passcode.encode("utf-8")).hexdigest()
+        passcode_hash = hash_attendance_passcode(raw_passcode)
         session = ModuleAttendanceSession.objects.create(
             module=self.module,
             created_by=self.instructor,
@@ -3150,9 +3152,13 @@ class AssessmentAuthoringAndIsolationTests(TestCase):
         assessment = Assessment.objects.get(title="Database Midterm")
         self.assertRedirects(response, reverse("kura:assessment_detail", kwargs={"assessment_id": assessment.id}))
 
-        # Verify proctor code is stored as a SHA-256 hash.
-        expected_proctor_hash = hashlib.sha256("EXAM-2026".encode("utf-8")).hexdigest()
+        # Verify proctor code is stored as a keyed HMAC digest (not plain SHA-256).
+        expected_proctor_hash = hash_proctor_code("EXAM-2026")
         self.assertEqual(assessment.proctor_code_hash, expected_proctor_hash)
+        self.assertNotEqual(
+            assessment.proctor_code_hash,
+            hashlib.sha256("EXAM-2026".encode("utf-8")).hexdigest(),
+        )
 
         # Critical security check: questions_json must NEVER contain answer keys or rubrics.
         questions = assessment.questions_json
@@ -3699,7 +3705,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
         self.section = ModuleSection.objects.create(module=self.module, title="Exam Section", section_type="exam")
 
         now = timezone.now()
-        proctor_hash = hashlib.sha256("PROCTOR123".encode("utf-8")).hexdigest()
+        proctor_hash = hash_proctor_code("PROCTOR123")
         self.assessment = Assessment.objects.create(
             section=self.section,
             title="Engineering Exam",
@@ -10667,3 +10673,79 @@ class WorkItem4AccessControlTests(TestCase):
         with self.assertRaises(IntegrityError):
             with transaction.atomic():
                 GradeAppeal.objects.create(grade=self.grade, reason="Second pending appeal", status=AppealStatus.PENDING)
+
+
+class WorkItem4bKeyedHashTests(TestCase):
+    """Tests for Work Item 4b: keyed HMAC-SHA256 digests for attendance passcodes and proctor codes."""
+
+    def test_keyed_hashes_differ_from_plain_sha256_and_use_constant_time_compare(self):
+        import inspect
+        from . import views
+
+        self.assertNotEqual(hash_attendance_passcode("ABC123"), hashlib.sha256(b"ABC123").hexdigest())
+        self.assertEqual(len(hash_attendance_passcode("ABC123")), 64)
+        self.assertNotEqual(hash_proctor_code("EXAM-1"), hashlib.sha256(b"EXAM-1").hexdigest())
+        self.assertEqual(len(hash_proctor_code("EXAM-1")), 64)
+        self.assertIn("hmac.compare_digest", inspect.getsource(views.student_checkin_view))
+        self.assertIn("hmac.compare_digest", inspect.getsource(views.assessment_attempt_start_view))
+
+    def test_legacy_proctor_code_warns_on_edit_and_is_refused_until_reentered(self):
+        dept = Department.objects.create(code="CSKH", name="CS Keyed Hash")
+        head = make_user("Department head")
+        dept.head_user = head
+        dept.save()
+        instructor = make_user("Instructor")
+        StaffProfile.objects.create(user=instructor, department=dept, staff_title="Instructor")
+        student = make_user("Student")
+        StudentProfile.objects.create(user=student, department=dept, current_level="level_4", matriculation_year=2025)
+        now = timezone.now()
+        course = Course.objects.create(
+            department=dept, code="KH101", title="Keyed Hash", semester="1", academic_year=2026,
+            created_by=head, is_published=True, published_by=head, published_at=now,
+        )
+        CourseStaff.objects.create(course=course, user=instructor, staff_role="lead_instructor", can_release_grades=True, assigned_by=head)
+        Enrollment.objects.create(course=course, student=student, status=EnrollmentStatus.ACTIVE, enrolled_by=head)
+        mod = Module.objects.create(course=course, title="M", is_visible=True, created_by=instructor)
+        sec = ModuleSection.objects.create(module=mod, title="S", section_type="exam")
+        legacy_hash = hashlib.sha256(b"OLDPROCTOR").hexdigest()
+        assessment = Assessment.objects.create(
+            section=sec, title="Legacy Proctored Exam", component_type=GradeComponentType.EXAM,
+            max_score=Decimal("10.00"), opens_at=now - timezone.timedelta(hours=1),
+            due_date=now + timezone.timedelta(hours=2), duration_minutes=30,
+            proctor_code_hash=legacy_hash, created_by=instructor,
+        )
+
+        # Edit page warns instructor to re-enter the legacy proctor code.
+        login_with_session(self.client, instructor)
+        edit_page = self.client.get(reverse("kura:assessment_edit", args=[assessment.id]))
+        self.assertContains(edit_page, "older hash format")
+
+        # Student cannot start an attempt with the legacy SHA-256 hash.
+        stud_client = Client()
+        login_with_session(stud_client, student)
+        blocked = stud_client.post(
+            reverse("kura:assessment_attempt_start", args=[assessment.id]),
+            {"proctor_code": "OLDPROCTOR"},
+        )
+        self.assertEqual(blocked.status_code, 302)
+        self.assertFalse(AssessmentAttempt.objects.filter(assessment=assessment, student=student).exists())
+
+        # Re-entering a new proctor code updates to v2 keyed HMAC, clears the warning, and works.
+        assessment.proctor_code_hash = hash_proctor_code("NEWPROCTOR")
+        assessment.save(update_fields=["proctor_code_hash"])
+        edit_page_after = self.client.get(reverse("kura:assessment_edit", args=[assessment.id]))
+        self.assertNotContains(edit_page_after, "older hash format")
+
+        wrong = stud_client.post(
+            reverse("kura:assessment_attempt_start", args=[assessment.id]),
+            {"proctor_code": "WRONG"},
+        )
+        self.assertFalse(AssessmentAttempt.objects.filter(assessment=assessment, student=student).exists())
+        self.assertEqual(wrong.status_code, 302)
+
+        ok = stud_client.post(
+            reverse("kura:assessment_attempt_start", args=[assessment.id]),
+            {"proctor_code": "NEWPROCTOR"},
+        )
+        self.assertEqual(ok.status_code, 302)
+        self.assertTrue(AssessmentAttempt.objects.filter(assessment=assessment, student=student).exists())
