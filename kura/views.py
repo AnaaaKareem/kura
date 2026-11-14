@@ -4755,16 +4755,17 @@ def evaluate_attempt(attempt):
     validate_summary_score_json(attempt.summary_score_json)
     attempt.save()
 
-    # If fully auto-graded, create or update a draft grade record and append GradeHistory.
+    # If fully auto-graded, create or update the draft grade for this attempt only
+    # so retakes never overwrite an earlier attempt's finalized or released grade (W1).
     if is_fully_graded:
-        existing_grade = Grade.objects.filter(assessment=attempt.assessment, student=attempt.student).first()
+        existing_grade = Grade.objects.select_for_update().filter(attempt=attempt).first()
         old_score = existing_grade.score if existing_grade else None
         old_status = existing_grade.status if existing_grade else None
         grade, created = Grade.objects.update_or_create(
-            assessment=attempt.assessment,
-            student=attempt.student,
+            attempt=attempt,
             defaults={
-                "attempt": attempt,
+                "assessment": attempt.assessment,
+                "student": attempt.student,
                 "score": auto_graded_points,
                 "status": GradeStatus.DRAFT,
             },

@@ -46,8 +46,9 @@ docker run --rm --network none --read-only --tmpfs /tmp --tmpfs /var/run/postgre
     -v "$DRILL_VOLUME":/restore \
     -v kura_postgres_backups:/var/lib/pgbackrest:ro \
     -v "$PWD/docker/postgres/pgbackrest.conf":/etc/pgbackrest/pgbackrest.conf:ro \
+    -v "$PWD/docker/postgres/pgbackrest-wrapper.sh":/usr/local/bin/pgbackrest:ro \
     -v "$PWD/secrets/backup_encryption_key.txt":/run/secrets/backup_encryption_key:ro \
-    --entrypoint pgbackrest "$IMAGE" \
+    --entrypoint /usr/local/bin/pgbackrest "$IMAGE" \
     --stanza=kura --pg1-path=/restore --lock-path=/tmp "$@" restore > /dev/null
 
 # 3. Start PostgreSQL on the restored copy: no network, no archiving, and the
@@ -57,6 +58,7 @@ docker run -d --name "$DRILL_CONTAINER" --network none --tmpfs /tmp --tmpfs /var
     -v "$DRILL_VOLUME":/restore \
     -v kura_postgres_backups:/var/lib/pgbackrest:ro \
     -v "$PWD/docker/postgres/pgbackrest.conf":/etc/pgbackrest/pgbackrest.conf:ro \
+    -v "$PWD/docker/postgres/pgbackrest-wrapper.sh":/usr/local/bin/pgbackrest:ro \
     -v "$PWD/secrets/backup_encryption_key.txt":/run/secrets/backup_encryption_key:ro \
     --entrypoint postgres "$IMAGE" \
     -D /restore -c listen_addresses='' -c archive_mode=off -c shared_preload_libraries='' \

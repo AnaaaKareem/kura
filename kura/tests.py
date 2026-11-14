@@ -5625,15 +5625,23 @@ class PostgreSQLEncryptedBackupAndPITRTests(TestCase):
         self.assertGreaterEqual(entropy, 3.5, "Encryption key must exhibit high cryptographic entropy")
 
     def test_pgbackrest_config_security_attributes(self):
-        # pgbackrest.conf must enforce AES-256-CBC cipher and point to the secret key file.
+        # pgbackrest.conf must enforce AES-256-CBC cipher without broken file: syntax,
+        # and entrypoint/wrapper scripts must supply PGBACKREST_REPO1_CIPHER_PASS from the secret.
         conf_path = self.base_dir / "docker" / "postgres" / "pgbackrest.conf"
         self.assertTrue(conf_path.exists(), "pgbackrest.conf must exist")
 
         content = conf_path.read_text(encoding="utf-8")
         self.assertIn("repo1-cipher-type=aes-256-cbc", content)
-        self.assertIn("repo1-cipher-pass=file:/run/secrets/backup_encryption_key", content)
+        self.assertNotIn("repo1-cipher-pass=file:", content)
         self.assertIn("repo1-retention-full=", content)
         self.assertIn("[kura]", content)
+
+        wrapper_path = self.base_dir / "docker" / "postgres" / "pgbackrest-wrapper.sh"
+        entrypoint_path = self.base_dir / "docker" / "postgres" / "entrypoint.sh"
+        self.assertTrue(wrapper_path.exists())
+        self.assertTrue(entrypoint_path.exists())
+        self.assertIn("PGBACKREST_REPO1_CIPHER_PASS", wrapper_path.read_text(encoding="utf-8"))
+        self.assertIn("PGBACKREST_REPO1_CIPHER_PASS", entrypoint_path.read_text(encoding="utf-8"))
 
     def test_postgresql_wal_archiving_config(self):
         # postgresql.conf must configure continuous WAL archiving for point-in-time recovery.
@@ -10961,3 +10969,112 @@ class WorkItem6EmailRetentionTests(TestCase):
         self.assertIn('event="email.purged"', log_output)
         self.assertIn('count="1"', log_output)
         self.assertNotIn("student1@kura.edu", log_output)
+
+
+class AuditGroup1HighDefectsTests(TestCase):
+    """Tests for Audit Group 1: W1 (grade keyed per attempt), W2 (pgBackRest env secret), W3 (pgaudit parameters off)."""
+
+    def test_second_attempt_submission_does_not_overwrite_released_first_grade(self):
+        dept = Department.objects.create(code="CSG1", name="CS Group 1")
+        head = make_user("Department head")
+        dept.head_user = head
+        dept.save()
+        instructor = make_user("Instructor")
+        StaffProfile.objects.create(user=instructor, department=dept, staff_title="Instructor")
+        student = make_user("Student")
+        StudentProfile.objects.create(user=student, department=dept, current_level="level_4", matriculation_year=2025)
+        now = timezone.now()
+        course = Course.objects.create(
+            department=dept, code="G101", title="Multi Attempt", semester="1", academic_year=2026,
+            created_by=head, is_published=True, published_by=head, published_at=now,
+        )
+        CourseStaff.objects.create(course=course, user=instructor, staff_role="lead_instructor", can_release_grades=True, assigned_by=head)
+        Enrollment.objects.create(course=course, student=student, status=EnrollmentStatus.ACTIVE, enrolled_by=head)
+        mod = Module.objects.create(course=course, title="M", is_visible=True, created_by=instructor)
+        sec = ModuleSection.objects.create(module=mod, title="S", section_type="quiz")
+        assessment = Assessment.objects.create(
+            section=sec,
+            title="Two-Attempt Quiz",
+            component_type=GradeComponentType.QUIZ,
+            max_score=Decimal("10.00"),
+            max_attempts=2,
+            opens_at=now - timezone.timedelta(hours=1),
+            due_date=now + timezone.timedelta(hours=2),
+            duration_minutes=30,
+            questions_json=[
+                {
+                    "question_id": "q1",
+                    "type": "multiple_choice",
+                    "points": 10.0,
+                    "prompt": "2 + 2?",
+                    "options": [{"option_id": "a", "text": "4"}, {"option_id": "b", "text": "5"}],
+                }
+            ],
+            created_by=instructor,
+        )
+        ExamAnswerKey.objects.create(
+            assessment=assessment,
+            answer_key_json=encrypt_answer_key({"q1": {"correct_option_ids": ["a"]}}),
+            created_by=instructor,
+        )
+
+        # Submit attempt 1 (wrong answer -> 0.00) and release its grade.
+        attempt_1 = AssessmentAttempt.objects.create(
+            assessment=assessment,
+            student=student,
+            attempt_no=1,
+            status=AttemptStatus.IN_PROGRESS,
+            expires_at=now + timezone.timedelta(minutes=30),
+            answers_json=[{"question_id": "q1", "type": "multiple_choice", "selected_option_ids": ["b"]}],
+            ip_address="127.0.0.1",
+        )
+        login_with_session(self.client, student)
+        resp1 = self.client.post(reverse("kura:assessment_submit", args=[attempt_1.id]))
+        self.assertEqual(resp1.status_code, 302)
+
+        grade_1 = Grade.objects.get(attempt=attempt_1)
+        self.assertEqual(grade_1.score, Decimal("0.00"))
+        grade_1.status = GradeStatus.RELEASED
+        grade_1.finalized_by = instructor
+        grade_1.finalized_at = now
+        grade_1.released_by = instructor
+        grade_1.released_at = now
+        grade_1.save()
+
+        # Submit attempt 2 (correct answer -> 10.00); attempt 1's released grade stays untouched.
+        attempt_2 = AssessmentAttempt.objects.create(
+            assessment=assessment,
+            student=student,
+            attempt_no=2,
+            status=AttemptStatus.IN_PROGRESS,
+            expires_at=now + timezone.timedelta(minutes=30),
+            answers_json=[{"question_id": "q1", "type": "multiple_choice", "selected_option_ids": ["a"]}],
+            ip_address="127.0.0.1",
+        )
+        resp2 = self.client.post(reverse("kura:assessment_submit", args=[attempt_2.id]))
+        self.assertEqual(resp2.status_code, 302)
+
+        grade_1.refresh_from_db()
+        self.assertEqual(grade_1.status, GradeStatus.RELEASED)
+        self.assertEqual(grade_1.score, Decimal("0.00"))
+
+        grade_2 = Grade.objects.get(attempt=attempt_2)
+        self.assertEqual(grade_2.status, GradeStatus.DRAFT)
+        self.assertEqual(grade_2.score, Decimal("10.00"))
+        self.assertNotEqual(grade_1.id, grade_2.id)
+
+    def test_pgaudit_disables_parameter_logging_and_compose_wires_pgbackrest_wrappers(self):
+        import os
+
+        pgaudit_conf = (Path(settings.BASE_DIR) / "docker" / "postgres" / "pgaudit.conf").read_text(encoding="utf-8")
+        self.assertIn("pgaudit.log_parameter = off", pgaudit_conf)
+        self.assertNotIn("pgaudit.log_parameter = on", pgaudit_conf)
+
+        entrypoint_sh = Path(settings.BASE_DIR) / "docker" / "postgres" / "entrypoint.sh"
+        wrapper_sh = Path(settings.BASE_DIR) / "docker" / "postgres" / "pgbackrest-wrapper.sh"
+        self.assertTrue(os.access(entrypoint_sh, os.X_OK))
+        self.assertTrue(os.access(wrapper_sh, os.X_OK))
+
+        compose_text = (Path(settings.BASE_DIR) / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("kura-db-entrypoint.sh", compose_text)
+        self.assertIn("./docker/postgres/pgbackrest-wrapper.sh:/usr/local/bin/pgbackrest:ro", compose_text)
