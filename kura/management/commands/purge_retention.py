@@ -1,19 +1,26 @@
 from django.core.management.base import BaseCommand
 from django.utils import timezone
 
-from kura.models import LoginAttempt, UserSession
+from kura.logging_utils import log_security_event
+from kura.models import LoginAttempt, OutgoingEmail, OutgoingEmailStatus, UserSession
 from kura.permissions import service_rls_context
 
 
 class Command(BaseCommand):
-    help = "Purges expired sessions and obsolete login logs exceeding the retention threshold (Law 175/2018 & Law 151/2020)."
+    help = "Purges expired sessions, obsolete login logs, and old sent emails exceeding retention thresholds (Law 175/2018 & Law 151/2020)."
 
     def add_arguments(self, parser):
         parser.add_argument(
             "--days",
             type=int,
             default=180,
-            help="Retention threshold in days. Expired records older than this will be permanently purged (default: 180).",
+            help="Retention threshold in days for sessions and login logs (default: 180).",
+        )
+        parser.add_argument(
+            "--email-days",
+            type=int,
+            default=30,
+            help="Retention threshold in days for sent outgoing emails (default: 30).",
         )
         parser.add_argument(
             "--dry-run",
@@ -23,11 +30,14 @@ class Command(BaseCommand):
 
     def handle(self, *args, **options):
         """
-        Deletes expired sessions and old login records while preserving active lockouts.
+        Deletes expired sessions, old login records, and sent emails older than the retention thresholds while preserving active lockouts.
         """
         days = options["days"]
+        email_days = options["email_days"]
         dry_run = options["dry_run"]
-        cutoff = timezone.now() - timezone.timedelta(days=days)
+        now = timezone.now()
+        cutoff = now - timezone.timedelta(days=days)
+        email_cutoff = now - timezone.timedelta(days=email_days)
 
         self.stdout.write(
             f"[+] Starting retention purge for expired records older than {days} days (cutoff: {cutoff.isoformat()})..."
@@ -71,6 +81,20 @@ class Command(BaseCommand):
                 total_purged += axes_count
             except ImportError, Exception:
                 pass
+
+            # 4. Purge sent OutgoingEmail rows older than 30 days (Q10)
+            old_sent_emails = OutgoingEmail.objects.filter(
+                status=OutgoingEmailStatus.SENT,
+                sent_at__lt=email_cutoff,
+            )
+            email_count = old_sent_emails.count()
+            if not dry_run:
+                deleted_emails = 0
+                if email_count > 0:
+                    deleted_emails, _ = old_sent_emails.delete()
+                log_security_event(None, "email.purged", {"count": deleted_emails})
+            self.stdout.write(f"  - Sent emails purged (>{email_days}d): {email_count}")
+            total_purged += email_count
 
         msg = f"[✓] Retention purge complete. Total expired records deleted: {total_purged}."
         self.stdout.write(self.style.SUCCESS(msg))

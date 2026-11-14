@@ -1529,14 +1529,16 @@ class RegistrarStudentsAndEnrollmentTests(TestCase):
             StudentProfile.objects.create(user=user, department=self.department, current_level="level_4", matriculation_year=2026)
         login_with_session(self.client, self.registrar)
         url = reverse("kura:enrollment_search")
-        response = self.client.get(url, {"kind": "student", "q": "search"}, REMOTE_ADDR="192.0.2.1")
-        self.assertEqual(len(response.context["results"]), 10)
-        for unused in range(59):
-            self.client.get(url, {"kind": "student", "q": "search"}, REMOTE_ADDR="192.0.2.1")
-        self.assertEqual(self.client.get(url, {"kind": "student", "q": "search"}, REMOTE_ADDR="192.0.2.2").status_code, 429)
-        another = make_user("Registrar")
-        login_with_session(self.client, another)
-        self.assertEqual(self.client.get(url, {"kind": "student", "q": "search"}, REMOTE_ADDR="192.0.2.1").status_code, 429)
+        fixed_now = timezone.now()
+        with patch("django.utils.timezone.now", return_value=fixed_now):
+            response = self.client.get(url, {"kind": "student", "q": "search"}, REMOTE_ADDR="192.0.2.1")
+            self.assertEqual(len(response.context["results"]), 10)
+            for unused in range(59):
+                self.client.get(url, {"kind": "student", "q": "search"}, REMOTE_ADDR="192.0.2.1")
+            self.assertEqual(self.client.get(url, {"kind": "student", "q": "search"}, REMOTE_ADDR="192.0.2.2").status_code, 429)
+            another = make_user("Registrar")
+            login_with_session(self.client, another)
+            self.assertEqual(self.client.get(url, {"kind": "student", "q": "search"}, REMOTE_ADDR="192.0.2.1").status_code, 429)
         cache.clear()
 
     def test_enrollment_rejects_inactive_students_and_draft_courses(self):
@@ -10660,6 +10662,8 @@ class WorkItem4AccessControlTests(TestCase):
             ip_address="127.0.0.1",
         )
         with connection.cursor() as cursor:
+            # Mirror init-roles.sql default table privileges for outgoing_emails created after 0004.
+            cursor.execute("GRANT SELECT, DELETE ON outgoing_emails TO kura_app;")
             cursor.execute("SET ROLE kura_app;")
             try:
                 call_command("finalize_attempts", stdout=StringIO())
@@ -10896,3 +10900,64 @@ class WorkItem5FileEncryptionTests(TestCase):
         policy_text = policy_path.read_text(encoding="utf-8")
         self.assertIn('path "transit/encrypt/kura-files" {\n  capabilities = ["update"]\n}', policy_text)
         self.assertIn('path "transit/decrypt/kura-files" {\n  capabilities = ["update"]\n}', policy_text)
+
+
+class WorkItem6EmailRetentionTests(TestCase):
+    """Tests for Work Item 6: sent OutgoingEmail retention in purge_retention."""
+
+    def test_purge_retention_deletes_sent_emails_older_than_30_days_and_honours_dry_run(self):
+        now = timezone.now()
+
+        sent_31d = OutgoingEmail.objects.create(
+            event_key="wi6:sent-31d",
+            to_email="student1@kura.edu",
+            subject="Old notice",
+            body="",
+            status=OutgoingEmailStatus.SENT,
+            sent_at=now - timezone.timedelta(days=31),
+        )
+        sent_29d = OutgoingEmail.objects.create(
+            event_key="wi6:sent-29d",
+            to_email="student2@kura.edu",
+            subject="Recent notice",
+            body="",
+            status=OutgoingEmailStatus.SENT,
+            sent_at=now - timezone.timedelta(days=29),
+        )
+        pending_old = OutgoingEmail.objects.create(
+            event_key="wi6:pending-old",
+            to_email="student3@kura.edu",
+            subject="Pending notice",
+            body="Body",
+            status=OutgoingEmailStatus.PENDING,
+        )
+        failed_old = OutgoingEmail.objects.create(
+            event_key="wi6:failed-old",
+            to_email="student4@kura.edu",
+            subject="Failed notice",
+            body="",
+            status=OutgoingEmailStatus.FAILED,
+            sent_at=now - timezone.timedelta(days=45),
+        )
+        OutgoingEmail.objects.filter(id=pending_old.id).update(created_at=now - timezone.timedelta(days=45))
+        OutgoingEmail.objects.filter(id=failed_old.id).update(created_at=now - timezone.timedelta(days=45))
+
+        # Dry run leaves all rows untouched and emits no email.purged event.
+        dry_out = StringIO()
+        with self.assertNoLogs("kura.security", level="INFO"):
+            call_command("purge_retention", days=180, dry_run=True, stdout=dry_out)
+        self.assertIn("Sent emails purged (>30d): 1", dry_out.getvalue())
+        self.assertTrue(OutgoingEmail.objects.filter(id=sent_31d.id).exists())
+
+        # Real run deletes only the 31-day-old sent email and logs email.purged with count=1.
+        out = StringIO()
+        with self.assertLogs("kura.security", level="INFO") as cap:
+            call_command("purge_retention", days=180, stdout=out)
+        self.assertFalse(OutgoingEmail.objects.filter(id=sent_31d.id).exists())
+        self.assertTrue(OutgoingEmail.objects.filter(id=sent_29d.id).exists())
+        self.assertTrue(OutgoingEmail.objects.filter(id=pending_old.id).exists())
+        self.assertTrue(OutgoingEmail.objects.filter(id=failed_old.id).exists())
+        log_output = "\n".join(cap.output)
+        self.assertIn('event="email.purged"', log_output)
+        self.assertIn('count="1"', log_output)
+        self.assertNotIn("student1@kura.edu", log_output)
