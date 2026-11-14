@@ -9,10 +9,12 @@ from datetime import datetime, timedelta, timezone
 import magic
 from django.conf import settings
 from django.core.exceptions import ValidationError
+from django.db import transaction
 from django.http import HttpResponse
 from django.utils.http import content_disposition_header
 from .logging_utils import log_security_event
 from .models import ALLOWED_UPLOAD_MIME_TYPES, MAX_UPLOAD_BYTES, FileContent, QuarantinedFile, StoredFile
+from .vault import decrypt_file_content, encrypt_file_content
 
 # Filename extensions accepted for each MIME type that validate_and_save_upload
 # allows. A PDF renamed to .html would otherwise pass the MIME check and be
@@ -266,20 +268,24 @@ def validate_and_save_upload(uploaded_file, user, request=None, log_context=None
         log_security_event(request, "file.upload_rejected", {"reason": "extension_mismatch"}, level=logging.WARNING)
         raise ValidationError("The file extension does not match the detected file type.")
 
-    # Save metadata to StoredFile.
-    stored_file = StoredFile.objects.create(
-        uploaded_by=user,
-        original_filename=original_filename,
-        mime_type=detected_mime_type,
-        size_bytes=file_size,
-        sha256_hash=content_sha256,
-    )
+    # Save metadata and encrypted file content atomically so Vault failure leaves no orphan row.
+    with transaction.atomic():
+        stored_file = StoredFile.objects.create(
+            uploaded_by=user,
+            original_filename=original_filename,
+            mime_type=detected_mime_type,
+            size_bytes=file_size,
+            sha256_hash=content_sha256,
+        )
 
-    # Store binary data separately in FileContent.
-    FileContent.objects.create(
-        file=stored_file,
-        content=content_bytes,
-    )
+        encrypted = encrypt_file_content(content_bytes, stored_file.id)
+        FileContent.objects.create(
+            file=stored_file,
+            content=encrypted["content"],
+            wrapped_key=encrypted["wrapped_key"],
+            nonce=encrypted["nonce"],
+            encryption_version=encrypted["encryption_version"],
+        )
 
     # Record safe metadata after both the file record and its content are stored.
     upload_details = {
@@ -298,10 +304,14 @@ def validate_and_save_upload(uploaded_file, user, request=None, log_context=None
 def create_download_response(stored_file):
     """
     Builds an HTTP download response with forced attachment disposition,
-    MIME type, nosniff, and no-store caching headers after re-verifying SHA-256.
+    MIME type, nosniff, and no-store caching headers after decrypting and re-verifying SHA-256.
     """
-    # Load binary data from FileContent and re-verify its SHA-256 digest before serving.
-    binary_content = bytes(stored_file.content.content)
+    # Decrypt FileContent in memory and fail closed with a generic error on crypto failure.
+    try:
+        binary_content = decrypt_file_content(stored_file.content)
+    except ValidationError:
+        return HttpResponse("File decryption failed.", status=500)
+
     actual_sha256 = hashlib.sha256(binary_content).hexdigest()
     if not hmac.compare_digest(actual_sha256, stored_file.sha256_hash):
         log_security_event(

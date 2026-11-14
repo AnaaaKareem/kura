@@ -29,6 +29,16 @@ path "transit/decrypt/kura-answer-keys" {
   capabilities = ["update"]
 }
 
+# Wrap per-file AES-256-GCM data keys with RSA-OAEP when saving uploaded files.
+path "transit/encrypt/kura-files" {
+  capabilities = ["update"]
+}
+
+# Unwrap per-file data keys in memory when serving authorized file downloads.
+path "transit/decrypt/kura-files" {
+  capabilities = ["update"]
+}
+
 # Get a new temporary database login (username + password) for 15 minutes.
 path "database/creds/kura-app" {
   capabilities = ["read"]
