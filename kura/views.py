@@ -442,6 +442,21 @@ def hash_recovery_code(code):
     return full_hash[:16]
 
 
+PRE_MFA_WINDOW_SECONDS = 300
+
+
+def has_valid_pre_mfa_window(request):
+    """Return True if step-1 password authentication happened within the last 5 minutes."""
+    started_at = request.session.get("pre_mfa_started_at")
+    if started_at is None:
+        return False
+    try:
+        age = timezone.now().timestamp() - float(started_at)
+    except (ValueError, TypeError):
+        return False
+    return age <= PRE_MFA_WINDOW_SECONDS
+
+
 # ACL-06: concurrent sessions are allowed by owner decision; users can see and revoke them at account/sessions/
 def create_user_session(request, user, method="password"):
     """
@@ -539,9 +554,10 @@ def login_view(request):
 
             log_security_event(request, "auth.login.password_ok", {"user_id": user.id})
 
-            # If user has MFA enabled, require second factor verification.
+            # If user has MFA enabled, require second factor verification within 5 minutes.
             if user.mfa_enabled:
                 request.session["pre_mfa_user_id"] = str(user.id)
+                request.session["pre_mfa_started_at"] = timezone.now().timestamp()
                 return redirect("kura:mfa_verify")
 
             # Complete login for users without MFA configured yet.
@@ -574,9 +590,20 @@ def mfa_verify_view(request):
     Security: Validates one-time code or WebAuthn assertion challenge against enrolled credentials.
     Recovery codes are compared by keyed hash and deleted after one use.
 """
-    # Retrieve user ID stored during step 1 authentication.
+    # Retrieve user ID stored during step 1 authentication and verify 5-minute window.
     user_id = request.session.get("pre_mfa_user_id")
-    if not user_id:
+    if not user_id or not has_valid_pre_mfa_window(request):
+        if user_id:
+            log_security_event(
+                request,
+                "auth.mfa.failed",
+                {"method_tried": "totp_or_recovery_code", "reason": "expired"},
+                logging.WARNING,
+            )
+            messages.error(request, "Verification timed out. Please sign in again.")
+        request.session.pop("pre_mfa_user_id", None)
+        request.session.pop("pre_mfa_started_at", None)
+        request.session.pop("base_username", None)
         return redirect("kura:login")
 
     user = get_object_or_404(User, id=user_id)
@@ -631,6 +658,7 @@ def mfa_verify_view(request):
         # Complete login and clean up pre-mfa session marker.
         log_security_event(request, "auth.mfa.ok", {"method": verification_method})
         request.session.pop("pre_mfa_user_id", None)
+        request.session.pop("pre_mfa_started_at", None)
         request.session.pop("base_username", None)
         login(request, user, backend="kura.backends.KuraAuthBackend")
         user.last_login = timezone.now()
@@ -670,7 +698,7 @@ def mfa_login_callback(request, username):
     # who typed their password. The spec requires password plus second factor.
     pre_mfa_user_id = request.session.get("pre_mfa_user_id")
     locked = user.locked_until and user.locked_until > timezone.now()
-    if pre_mfa_user_id != str(user.id) or not user.is_active or locked:
+    if pre_mfa_user_id != str(user.id) or not has_valid_pre_mfa_window(request) or not user.is_active or locked:
         log_security_event(
             request,
             "auth.mfa.failed",
@@ -678,6 +706,7 @@ def mfa_login_callback(request, username):
             level=logging.WARNING,
         )
         request.session.pop("pre_mfa_user_id", None)
+        request.session.pop("pre_mfa_started_at", None)
         request.session.pop("base_username", None)
         messages.error(request, "Sign-in failed. Please start again.")
         return redirect("kura:login")
@@ -688,6 +717,7 @@ def mfa_login_callback(request, username):
     create_user_session(request, user, method="passkey")
 
     request.session.pop("pre_mfa_user_id", None)
+    request.session.pop("pre_mfa_started_at", None)
     request.session.pop("base_username", None)
 
     log_security_event(request, "auth.mfa.ok", {"method": "passkey"})
@@ -1415,8 +1445,19 @@ def password_change_view(request):
             request.user.password_changed_at = timezone.now()
             request.user.save()
 
-        # Keep current session logged in after password hash changes.
+        # Keep current session logged in after password hash changes, and revoke all other sessions.
         update_session_auth_hash(request, request.user)
+        current_session_id = request.session.get("user_session_id")
+        other_sessions = UserSession.objects.filter(user=request.user, revoked_at__isnull=True)
+        if current_session_id:
+            other_sessions = other_sessions.exclude(id=current_session_id)
+        revoked_count = other_sessions.update(revoked_at=timezone.now())
+        if revoked_count:
+            log_security_event(
+                request,
+                "session.revoked",
+                {"by": "password_change", "count": revoked_count},
+            )
         log_security_event(request, "auth.password.changed", {})
 
         # Notify the user by email that their password was changed.

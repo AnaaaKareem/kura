@@ -143,7 +143,7 @@ class EmailConfigurationTests(TestCase):
         second = Department.objects.create(name="Filter two", code="F2")
         Course.objects.create(department=first, code="F101", title="First course", semester="1", academic_year=2026)
         Course.objects.create(department=second, code="F201", title="Second course", semester="2", academic_year=2026)
-        self.client.force_login(admin)
+        login_with_session(self.client, admin)
         response = self.client.get(reverse("kura:course_list"), {"department": first.pk})
         self.assertContains(response, "First course")
         self.assertNotContains(response, "Second course")
@@ -172,6 +172,22 @@ def make_user(role_name, email=None, password="ValidPassword123!", **extra_field
         TOTPDevice.objects.get_or_create(user=user, name="default", defaults={"confirmed": True})
 
     return user
+
+
+def login_with_session(client, user):
+    """Log a test client in and create a matching tracked UserSession row."""
+    client.force_login(user)
+    user_session = UserSession.objects.create(
+        user=user,
+        session_token_hash=hashlib.sha256(secrets.token_hex(32).encode("utf-8")).hexdigest(),
+        ip_address="127.0.0.1",
+        user_agent="DjangoTestClient",
+        expires_at=timezone.now() + timezone.timedelta(hours=settings.SESSION_ABSOLUTE_HOURS),
+    )
+    session = client.session
+    session["user_session_id"] = str(user_session.id)
+    session.save()
+    return user_session
 
 
 def confirm_second_factor(client):
@@ -352,7 +368,7 @@ class BaseTemplateAndHomeTests(TestCase):
 
     def test_home_page_loads_for_authenticated_user(self):
         # Authenticated user with MFA enabled can open home page.
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.get(reverse("kura:home"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "Kura")
@@ -390,7 +406,7 @@ class BaseTemplateAndHomeTests(TestCase):
             code="CS",
             head_user=department_head,
         )
-        self.client.force_login(department_head)
+        login_with_session(self.client, department_head)
 
         response = self.client.get(reverse("kura:home"))
 
@@ -399,7 +415,7 @@ class BaseTemplateAndHomeTests(TestCase):
     def test_admin_dashboard_has_admin_area_cards_and_no_work_area_header_links(self):
         # Admin work areas belong on the dashboard rather than in the shared header.
         admin = make_user("Admin")
-        self.client.force_login(admin)
+        login_with_session(self.client, admin)
 
         response = self.client.get(reverse("kura:home"))
 
@@ -424,14 +440,14 @@ class BaseTemplateAndHomeTests(TestCase):
     def test_other_roles_receive_their_own_dashboard_areas(self):
         # Registrars and students should also use cards for their permitted areas.
         registrar = make_user("Registrar")
-        self.client.force_login(registrar)
+        login_with_session(self.client, registrar)
         registrar_response = self.client.get(reverse("kura:home"))
         registrar_card_titles = {card["title"] for card in registrar_response.context["dashboard_cards"]}
 
         self.assertEqual(registrar_card_titles, {"Students", "Enrollments"})
 
         student = make_user("Student")
-        self.client.force_login(student)
+        login_with_session(self.client, student)
         student_response = self.client.get(reverse("kura:home"))
         student_card_titles = {card["title"] for card in student_response.context["dashboard_cards"]}
 
@@ -442,7 +458,7 @@ class BaseTemplateAndHomeTests(TestCase):
 
     def test_dashboard_does_not_show_a_welcome_card(self):
         # The dashboard should begin with its page title and work-area cards, not a welcome panel.
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
 
         response = self.client.get(reverse("kura:home"))
 
@@ -582,7 +598,7 @@ class LoginAndLogoutTests(TestCase):
 
     def test_logout_get_request_is_not_allowed(self):
         # GET request to logout must return 405 Method Not Allowed.
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
         response = self.client.get(reverse("kura:logout"))
         self.assertEqual(response.status_code, 405)
 
@@ -599,13 +615,13 @@ class FirstLoginPasswordChangeTests(TestCase):
 
     def test_forced_redirect_to_password_change(self):
         # User with must_change_password=True is redirected on every page.
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
         response = self.client.get(reverse("kura:home"))
         self.assertRedirects(response, reverse("kura:password_change"))
 
     def test_password_change_succeeds(self):
         # Completing password change updates password_changed_at and removes flag.
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
         new_password = "NewSecurePassword456!"
 
         response = self.client.post(
@@ -637,7 +653,7 @@ class FirstLoginPasswordChangeTests(TestCase):
 
     def test_weak_password_error_is_shown_on_change_page(self):
         # A weak password should return to the form and show its validation error.
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
         response = self.client.post(
             reverse("kura:password_change"),
             {
@@ -656,7 +672,7 @@ class FirstLoginPasswordChangeTests(TestCase):
         # First-time users also need confirmation when they are redirected to MFA setup.
         self.user.mfa_enabled = False
         self.user.save(update_fields=["mfa_enabled"])
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
         response = self.client.post(
             reverse("kura:password_change"),
             {
@@ -704,6 +720,7 @@ class DemoDataSeedCommandTests(TestCase):
         # Simulate the second login step and confirm the old shared code is rejected.
         session = self.client.session
         session["pre_mfa_user_id"] = str(demo_user.id)
+        session["pre_mfa_started_at"] = timezone.now().timestamp()
         session.save()
         response = self.client.post(reverse("kura:mfa_verify"), {"code": "123456"})
 
@@ -874,13 +891,13 @@ class MFATests(TestCase):
 
     def test_user_without_mfa_cannot_open_protected_pages(self):
         # User who has not completed MFA enrollment is redirected to mfa_setup.
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
         response = self.client.get(reverse("kura:home"))
         self.assertRedirects(response, reverse("kura:mfa_setup"))
 
     def test_mfa_setup_renders_qr_code(self):
         # Setup page displays locally generated QR code.
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
         response = self.client.get(reverse("kura:mfa_setup"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "data:image/svg+xml;utf8,")
@@ -934,7 +951,7 @@ class MySessionsTests(TestCase):
 
     def test_student_can_view_own_sessions_only(self):
         # Students can view their own active sessions on My sessions, never another user's.
-        self.client.force_login(self.user_a)
+        login_with_session(self.client, self.user_a)
         response = self.client.get(reverse("kura:user_sessions"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "192.168.1.10")
@@ -942,7 +959,7 @@ class MySessionsTests(TestCase):
 
     def test_student_cannot_revoke_another_users_session_on_personal_page(self):
         # A non-admin cannot revoke another user's session via the personal revoke URL (IDOR -> 404).
-        self.client.force_login(self.user_a)
+        login_with_session(self.client, self.user_a)
         response = self.client.post(
             reverse("kura:user_session_revoke", args=[self.session_b.id]),
         )
@@ -954,7 +971,7 @@ class MySessionsTests(TestCase):
 
     def test_student_can_revoke_own_session_on_personal_page(self):
         # A user can revoke their own active session from the personal sessions endpoint.
-        self.client.force_login(self.user_a)
+        login_with_session(self.client, self.user_a)
         response = self.client.post(
             reverse("kura:user_session_revoke", args=[self.session_a.id]),
         )
@@ -968,7 +985,7 @@ class MySessionsTests(TestCase):
         admin = make_user("Admin", mfa_enabled=True)
         self.user_a.first_name = "Amira"
         self.user_a.save(update_fields=["first_name"])
-        self.client.force_login(admin)
+        login_with_session(self.client, admin)
         response = self.client.get(reverse("kura:admin_sessions"), {
             "q": "Amira", "role": "Student", "ip": "192.168", "state": "active",
         })
@@ -983,7 +1000,7 @@ class MySessionsTests(TestCase):
             user=admin, session_token_hash=secrets.token_hex(32),
             expires_at=timezone.now() + timezone.timedelta(days=1),
         )
-        self.client.force_login(admin)
+        login_with_session(self.client, admin)
         response = self.client.get(reverse("kura:admin_sessions"))
         self.assertContains(response, admin.email)
         self.assertContains(response, self.user_a.email)
@@ -997,7 +1014,7 @@ class MySessionsTests(TestCase):
     def test_invalid_session_filter_does_not_show_unfiltered_records(self):
         # Invalid choices must show an error instead of quietly exposing an unfiltered list.
         admin = make_user("Admin", mfa_enabled=True)
-        self.client.force_login(admin)
+        login_with_session(self.client, admin)
         response = self.client.get(reverse("kura:admin_sessions"), {"state": "unknown"})
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, self.user_a.email)
@@ -1005,7 +1022,7 @@ class MySessionsTests(TestCase):
 
     def test_non_admin_has_my_sessions_link_and_no_admin_sessions_navigation(self):
         # Non-admins see their personal sessions link, never the Admin sessions page.
-        self.client.force_login(self.user_a)
+        login_with_session(self.client, self.user_a)
         response = self.client.get(reverse("kura:home"))
         self.assertNotContains(response, reverse("kura:admin_sessions"))
         self.assertContains(response, reverse("kura:user_sessions"))
@@ -1018,7 +1035,7 @@ class MySessionsTests(TestCase):
         session = student_client.session
         session["user_session_id"] = str(self.session_a.id)
         session.save()
-        self.client.force_login(admin)
+        login_with_session(self.client, admin)
         with self.assertLogs("kura.security", level="INFO") as logs:
             response = self.client.post(reverse("kura:admin_sessions_revoke"), {
                 "action": "one", "session_id": str(self.session_a.id),
@@ -1034,7 +1051,7 @@ class MySessionsTests(TestCase):
     def test_admin_can_end_all_sessions_for_one_user(self):
         # Bulk revocation is limited to the explicitly selected user.
         admin = make_user("Admin", mfa_enabled=True)
-        self.client.force_login(admin)
+        login_with_session(self.client, admin)
         response = self.client.post(reverse("kura:admin_sessions_revoke"), {
             "action": "all", "user_id": str(self.user_a.id),
         })
@@ -1048,7 +1065,7 @@ class MySessionsTests(TestCase):
         # No non-admin role can use the administrator's direct URLs.
         for role_name in ("Student", "Instructor", "Teaching assistant", "Registrar", "Department head"):
             with self.subTest(role=role_name):
-                self.client.force_login(make_user(role_name, mfa_enabled=True))
+                login_with_session(self.client, make_user(role_name, mfa_enabled=True))
                 self.assertEqual(self.client.get(reverse("kura:admin_sessions")).status_code, 403)
                 response = self.client.post(reverse("kura:admin_sessions_revoke"), {
                     "action": "one", "session_id": str(self.session_b.id),
@@ -1061,7 +1078,7 @@ class MySessionsTests(TestCase):
         # A session-changing request must use POST and include the CSRF token.
         admin = make_user("Admin", mfa_enabled=True)
         self.client = Client(enforce_csrf_checks=True)
-        self.client.force_login(admin)
+        login_with_session(self.client, admin)
         url = reverse("kura:admin_sessions_revoke")
         self.assertEqual(self.client.get(url).status_code, 405)
         self.assertEqual(self.client.post(url, {"action": "one", "session_id": str(self.session_a.id)}).status_code, 403)
@@ -1131,7 +1148,7 @@ class AdminStaffAccountsTests(TestCase):
 
     def test_admin_can_create_staff_account(self):
         # Admin can successfully create staff account and profile.
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
         response = self.client.post(
             reverse("kura:staff_create"),
             {
@@ -1150,7 +1167,7 @@ class AdminStaffAccountsTests(TestCase):
 
     def test_new_staff_account_gets_the_role_named_by_its_title(self):
         # The chosen title becomes the first role, recorded with the Admin who assigned it.
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
         self.client.post(
             reverse("kura:staff_create"),
             {
@@ -1166,7 +1183,7 @@ class AdminStaffAccountsTests(TestCase):
 
     def test_staff_creation_fields_have_autocomplete_values(self):
         # Browser autofill should recognize common staff details without guessing field meanings.
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
 
         response = self.client.get(reverse("kura:staff_create"))
 
@@ -1181,7 +1198,7 @@ class AdminStaffAccountsTests(TestCase):
         self.assertContains(response, 'name="room"')
 
     def test_admin_can_add_departments_and_offices(self):
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
         url = reverse("kura:staff_settings")
         self.assertEqual(self.client.post(url, {"kind": "department", "code": "MATH", "name": "Mathematics"}).status_code, 302)
         self.assertEqual(self.client.post(url, {"kind": "building", "name": "Building B"}).status_code, 302)
@@ -1190,13 +1207,13 @@ class AdminStaffAccountsTests(TestCase):
         self.assertTrue(Room.objects.filter(building=building, name="Room 204").exists())
 
     def test_student_cannot_manage_offices(self):
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.post(reverse("kura:staff_settings"), {"kind": "building", "name": "Forbidden"})
         self.assertEqual(response.status_code, 403)
         self.assertFalse(Building.objects.filter(name="Forbidden").exists())
 
     def test_room_must_belong_to_selected_building(self):
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
         building = Building.objects.create(name="A")
         other = Building.objects.create(name="B")
         room = Room.objects.create(building=other, name="204")
@@ -1218,7 +1235,7 @@ class AdminStaffAccountsTests(TestCase):
             department=self.department,
             staff_title="Department Head",
         )
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
 
         response = self.client.get(reverse("kura:staff_list"))
 
@@ -1226,7 +1243,7 @@ class AdminStaffAccountsTests(TestCase):
 
     def test_non_admin_cannot_access_staff_creation(self):
         # Non-admin user receives 403 Forbidden.
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.get(reverse("kura:staff_create"))
         self.assertEqual(response.status_code, 403)
 
@@ -1244,7 +1261,7 @@ class AdminStaffAccountsTests(TestCase):
             expires_at=timezone.now() + timezone.timedelta(days=7),
         )
 
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
         confirm_second_factor(self.client)
         response = self.client.post(
             reverse("kura:user_deactivate", kwargs={"user_id": staff_user.id}),
@@ -1270,7 +1287,7 @@ class AdminStaffAccountsTests(TestCase):
             staff_title="Instructor",
             office_location="B204",
         )
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
 
         # Lock the account, then check the expiry message and updated list controls.
         response = self.client.post(
@@ -1312,7 +1329,7 @@ class AdminRolesTests(TestCase):
     def test_admin_can_assign_and_remove_role(self):
         # Admin assigns role, recording assigned_by, then removes it.
         target_user = User.objects.create_user(email="staff_test@example.com", password="Password12345!")
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
         confirm_second_factor(self.client)
 
         # Assign Instructor role
@@ -1334,7 +1351,7 @@ class AdminRolesTests(TestCase):
     def test_separation_of_duty_prevents_admin_and_instructor_on_same_user(self):
         # Separation of duty: cannot give Admin role to an Instructor or TA.
         instructor_user = make_user("Instructor", mfa_enabled=True)
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
 
         self.client.post(
             reverse("kura:user_roles", kwargs={"user_id": instructor_user.id}),
@@ -1373,7 +1390,7 @@ class RegistrarStudentsAndEnrollmentTests(TestCase):
 
     def test_registrar_can_create_student_account(self):
         # Registrar creates student account with StudentProfile and Student role.
-        self.client.force_login(self.registrar)
+        login_with_session(self.client, self.registrar)
         response = self.client.post(
             reverse("kura:student_create"),
             {
@@ -1394,7 +1411,7 @@ class RegistrarStudentsAndEnrollmentTests(TestCase):
 
     def test_duplicate_student_email_has_a_clear_validation_message(self):
         # A registrar should learn why an existing email cannot be used for a new student.
-        self.client.force_login(self.registrar)
+        login_with_session(self.client, self.registrar)
 
         response = self.client.post(
             reverse("kura:student_create"),
@@ -1413,7 +1430,7 @@ class RegistrarStudentsAndEnrollmentTests(TestCase):
 
     def test_registrar_can_enroll_and_drop_student(self):
         # Registrar enrolls student into course and drops them.
-        self.client.force_login(self.registrar)
+        login_with_session(self.client, self.registrar)
 
         # Enroll student
         response = self.client.post(
@@ -1439,20 +1456,20 @@ class RegistrarStudentsAndEnrollmentTests(TestCase):
 
     def test_non_registrar_cannot_access_enrollment(self):
         # Student cannot access registrar enrollment views.
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.get(reverse("kura:enrollment_list"))
         self.assertEqual(response.status_code, 403)
 
     def test_registrar_student_list_and_profile_are_private(self):
         # The registrar can search by student ID and see enrollments without marks.
         Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
-        self.client.force_login(self.registrar)
+        login_with_session(self.client, self.registrar)
         response = self.client.get(reverse("kura:student_list"), {"q": str(self.student.id)})
         self.assertContains(response, self.student.email)
         response = self.client.get(reverse("kura:student_profile", kwargs={"student_id": self.student.id}))
         self.assertContains(response, self.course.code)
         self.assertNotContains(response, "Grades")
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         self.assertEqual(self.client.get(reverse("kura:student_list")).status_code, 403)
         self.assertEqual(self.client.get(reverse("kura:student_profile", kwargs={"student_id": self.student.id})).status_code, 403)
 
@@ -1460,7 +1477,7 @@ class RegistrarStudentsAndEnrollmentTests(TestCase):
         # A locked student can be found without exposing unrelated accounts.
         self.student.locked_until = timezone.now() + timezone.timedelta(hours=1)
         self.student.save(update_fields=["locked_until"])
-        self.client.force_login(self.registrar)
+        login_with_session(self.client, self.registrar)
         url = reverse("kura:student_list")
         response = self.client.get(url, {"status": "locked", "department": self.department.id, "level": "level_4"})
         self.assertContains(response, self.student.email)
@@ -1471,7 +1488,7 @@ class RegistrarStudentsAndEnrollmentTests(TestCase):
     def test_enrollment_filter_does_not_list_unrelated_draft_courses(self):
         # The course filter should only offer courses represented in enrollment records.
         Course.objects.create(department=self.department, code="PRIVATE999", title="Unrelated draft", semester="1", academic_year=2026)
-        self.client.force_login(self.registrar)
+        login_with_session(self.client, self.registrar)
         response = self.client.get(reverse("kura:enrollment_list"))
         self.assertNotContains(response, "PRIVATE999")
 
@@ -1480,7 +1497,7 @@ class RegistrarStudentsAndEnrollmentTests(TestCase):
         Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
         other = Course.objects.create(department=self.department, code="BIO999", title="Other course", semester="2", academic_year=2027, is_published=True, published_by=self.registrar, published_at=timezone.now())
         Enrollment.objects.create(course=other, student=self.student, status=EnrollmentStatus.DROPPED, dropped_by=self.registrar, dropped_at=timezone.now())
-        self.client.force_login(self.registrar)
+        login_with_session(self.client, self.registrar)
         response = self.client.get(reverse("kura:enrollment_list"), {"course": str(self.course.id), "status": "active"})
         self.assertContains(response, "BIO101")
         self.assertEqual(list(response.context["enrollments"].values_list("course_id", flat=True)), [self.course.id])
@@ -1488,14 +1505,14 @@ class RegistrarStudentsAndEnrollmentTests(TestCase):
     def test_enrollment_search_is_restricted_and_returns_only_eligible_records(self):
         # Search is private and must never return draft courses or inactive students.
         draft = Course.objects.create(department=self.department, code="BIOSECRET", title="Hidden", semester="1", academic_year=2026)
-        self.client.force_login(self.registrar)
+        login_with_session(self.client, self.registrar)
         url = reverse("kura:enrollment_search")
         response = self.client.get(url, {"kind": "course", "q": "BIO"})
         self.assertContains(response, self.course.code)
         self.assertNotContains(response, draft.code)
         response = self.client.get(url, {"kind": "student", "q": self.student.email})
         self.assertContains(response, self.student.email)
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         self.assertEqual(self.client.get(url, {"kind": "student", "q": "test"}).status_code, 403)
 
     def test_enrollment_search_limits_results_and_rate(self):
@@ -1508,7 +1525,7 @@ class RegistrarStudentsAndEnrollmentTests(TestCase):
         for number in range(12):
             user = make_user("Student", email=f"search{number}@example.com")
             StudentProfile.objects.create(user=user, department=self.department, current_level="level_4", matriculation_year=2026)
-        self.client.force_login(self.registrar)
+        login_with_session(self.client, self.registrar)
         url = reverse("kura:enrollment_search")
         response = self.client.get(url, {"kind": "student", "q": "search"}, REMOTE_ADDR="192.0.2.1")
         self.assertEqual(len(response.context["results"]), 10)
@@ -1516,14 +1533,14 @@ class RegistrarStudentsAndEnrollmentTests(TestCase):
             self.client.get(url, {"kind": "student", "q": "search"}, REMOTE_ADDR="192.0.2.1")
         self.assertEqual(self.client.get(url, {"kind": "student", "q": "search"}, REMOTE_ADDR="192.0.2.2").status_code, 429)
         another = make_user("Registrar")
-        self.client.force_login(another)
+        login_with_session(self.client, another)
         self.assertEqual(self.client.get(url, {"kind": "student", "q": "search"}, REMOTE_ADDR="192.0.2.1").status_code, 429)
         cache.clear()
 
     def test_enrollment_rejects_inactive_students_and_draft_courses(self):
         # Search is only a convenience; final submission must validate both identifiers.
         draft = Course.objects.create(department=self.department, code="BIO998", title="Draft", semester="1", academic_year=2026)
-        self.client.force_login(self.registrar)
+        login_with_session(self.client, self.registrar)
         response = self.client.post(reverse("kura:enrollment_create"), {"student": self.student.id, "course": draft.id})
         self.assertEqual(response.status_code, 400)
         self.student.is_active = False
@@ -1562,7 +1579,7 @@ class DepartmentHeadCoursesAndStaffTests(TestCase):
         module = Module.objects.create(course=draft, title="Private module", is_visible=True)
         section = ModuleSection.objects.create(module=module, title="Private section", section_type="lecture")
         SectionItem.objects.create(section=section, title="Private material", content_body="Secret text", is_visible=True)
-        self.client.force_login(admin)
+        login_with_session(self.client, admin)
 
         # Draft courses from every department appear in the administrator's catalog.
         self.assertContains(self.client.get(reverse("kura:course_list")), "Draft Course")
@@ -1595,7 +1612,7 @@ class DepartmentHeadCoursesAndStaffTests(TestCase):
     def test_admin_course_description_textarea_is_responsive(self):
         # The course description must shrink to fit its card on narrow screens.
         admin = make_user("Admin", mfa_enabled=True)
-        self.client.force_login(admin)
+        login_with_session(self.client, admin)
 
         response = self.client.get(reverse("kura:admin_course_create"))
 
@@ -1606,7 +1623,7 @@ class DepartmentHeadCoursesAndStaffTests(TestCase):
 
     def test_non_admin_cannot_use_admin_course_management(self):
         # Knowing the management URLs does not grant a non-admin user extra access.
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         course = Course.objects.create(
             department=self.dept_a, code="CS902", title="Course", semester="1", academic_year=2026,
         )
@@ -1623,7 +1640,7 @@ class DepartmentHeadCoursesAndStaffTests(TestCase):
         module = Module.objects.create(course=course, title="Private module", is_visible=False)
         section = ModuleSection.objects.create(module=module, title="Private section", section_type="lecture")
         item = SectionItem.objects.create(section=section, title="Private item")
-        self.client.force_login(admin)
+        login_with_session(self.client, admin)
 
         self.assertNotContains(self.client.get(reverse("kura:course_detail", kwargs={"course_id": course.id})), "Private module")
         for url in (
@@ -1637,7 +1654,7 @@ class DepartmentHeadCoursesAndStaffTests(TestCase):
 
     def test_course_form_offers_the_three_numbered_semesters(self):
         # Department heads should see the new semester labels when creating a course.
-        self.client.force_login(self.head_a)
+        login_with_session(self.client, self.head_a)
         response = self.client.get(reverse("kura:course_create"))
 
         self.assertEqual(response.status_code, 200)
@@ -1647,7 +1664,7 @@ class DepartmentHeadCoursesAndStaffTests(TestCase):
 
     def test_head_can_create_and_publish_course(self):
         # Department Head creates a course and publishes it.
-        self.client.force_login(self.head_a)
+        login_with_session(self.client, self.head_a)
 
         # Create draft course
         response = self.client.post(
@@ -1685,7 +1702,7 @@ class DepartmentHeadCoursesAndStaffTests(TestCase):
             academic_year=2026,
             is_published=False,
         )
-        self.client.force_login(self.head_b)
+        login_with_session(self.client, self.head_b)
         response = self.client.post(reverse("kura:course_publish_toggle", kwargs={"course_id": course.id}))
         self.assertEqual(response.status_code, 403)
 
@@ -1698,7 +1715,7 @@ class DepartmentHeadCoursesAndStaffTests(TestCase):
             semester="1",
             academic_year=2026,
         )
-        self.client.force_login(self.head_a)
+        login_with_session(self.client, self.head_a)
 
         # Confirm the course page offers the department head the requested module action.
         course_response = self.client.get(
@@ -1740,7 +1757,7 @@ class DepartmentHeadCoursesAndStaffTests(TestCase):
             semester="1",
             academic_year=2026,
         )
-        self.client.force_login(self.head_a)
+        login_with_session(self.client, self.head_a)
 
         response = self.client.post(
             reverse("kura:module_create", kwargs={"course_id": course.id}),
@@ -1764,7 +1781,7 @@ class DepartmentHeadCoursesAndStaffTests(TestCase):
             academic_year=2026,
             is_published=False,
         )
-        self.client.force_login(self.head_a)
+        login_with_session(self.client, self.head_a)
 
         response = self.client.post(
             reverse("kura:course_staff_assign", kwargs={"course_id": course.id}),
@@ -1789,7 +1806,7 @@ class DepartmentHeadCoursesAndStaffTests(TestCase):
             semester="1",
             academic_year=2026,
         )
-        self.client.force_login(self.head_a)
+        login_with_session(self.client, self.head_a)
 
         form_response = self.client.get(
             reverse("kura:course_staff_assign", kwargs={"course_id": course.id})
@@ -1837,10 +1854,10 @@ class InstructorModulesAndContentTests(TestCase):
         section = ModuleSection.objects.create(module=module, title="Old section", section_type="lecture")
         module_url = reverse("kura:module_edit", kwargs={"module_id": module.id})
         section_url = reverse("kura:section_edit", kwargs={"section_id": section.id})
-        self.client.force_login(self.ta)
+        login_with_session(self.client, self.ta)
         self.assertEqual(self.client.get(module_url).status_code, 403)
         self.assertEqual(self.client.post(section_url, {"title": "Wrong", "section_type": "lecture"}).status_code, 403)
-        self.client.force_login(self.lead)
+        login_with_session(self.client, self.lead)
         self.assertEqual(self.client.post(module_url, {"title": "New module", "target_levels": ["level_4"]}).status_code, 302)
         self.assertEqual(self.client.post(section_url, {"title": "New section", "section_type": "lab"}).status_code, 302)
         module.refresh_from_db()
@@ -1858,7 +1875,7 @@ class InstructorModulesAndContentTests(TestCase):
         with patch("kura.files.scan_file_for_malware"):
             stored = validate_and_save_upload(SimpleUploadedFile("notes.txt", b"Plain course notes"), self.lead)
         SectionItemFile.objects.create(section_item=item, file=stored)
-        self.client.force_login(self.lead)
+        login_with_session(self.client, self.lead)
         edit_url = reverse("kura:item_edit", kwargs={"item_id": item.id})
         delete_url = reverse("kura:item_delete", kwargs={"item_id": item.id})
         self.assertEqual(self.client.post(edit_url, {"title": "Updated item", "content_body": ""}).status_code, 302)
@@ -1880,7 +1897,7 @@ class InstructorModulesAndContentTests(TestCase):
                                                opens_at=now, due_date=now + timezone.timedelta(days=1), duration_minutes=60, created_by=self.lead)
         student = make_user("Student")
         attempt = AssessmentAttempt.objects.create(assessment=assessment, student=student, expires_at=now + timezone.timedelta(hours=1), ip_address="127.0.0.1")
-        self.client.force_login(self.lead)
+        login_with_session(self.client, self.lead)
         url = reverse("kura:module_delete", kwargs={"module_id": module.id})
         self.assertEqual(self.client.get(url).status_code, 405)
         self.client.post(url, {"confirm": "on"})
@@ -1891,9 +1908,9 @@ class InstructorModulesAndContentTests(TestCase):
         # An empty module may be deleted only after an authorized confirmed POST.
         module = Module.objects.create(course=self.course, title="Empty")
         url = reverse("kura:module_delete", kwargs={"module_id": module.id})
-        self.client.force_login(self.ta)
+        login_with_session(self.client, self.ta)
         self.assertEqual(self.client.post(url, {"confirm": "on"}).status_code, 403)
-        self.client.force_login(self.lead)
+        login_with_session(self.client, self.lead)
         self.client.post(url)
         self.assertTrue(Module.objects.filter(id=module.id).exists())
         self.client.post(url, {"confirm": "on"})
@@ -1907,7 +1924,7 @@ class InstructorModulesAndContentTests(TestCase):
         student = make_user("Student")
         record = AttendanceRecord.objects.create(session=session, student=student, status=AttendanceStatus.PRESENT,
                                                  method=AttendanceMethod.QR_CODE)
-        self.client.force_login(self.lead)
+        login_with_session(self.client, self.lead)
         self.client.post(reverse("kura:module_delete", kwargs={"module_id": module.id}), {"confirm": "on"})
         self.assertTrue(Module.objects.filter(id=module.id).exists())
         self.assertTrue(AttendanceRecord.objects.filter(id=record.id).exists())
@@ -1939,13 +1956,13 @@ class InstructorModulesAndContentTests(TestCase):
         module = Module.objects.create(course=self.course, title="Materials", is_visible=True)
         section = ModuleSection.objects.create(module=module, title="Notes", section_type="lecture")
         url = reverse("kura:item_preview", kwargs={"section_id": section.id})
-        self.client.force_login(self.lead)
+        login_with_session(self.client, self.lead)
         self.assertEqual(self.client.get(url).status_code, 405)
         response = self.client.post(url, {"content_body": "**Bold** <script>alert(1)</script>"})
         self.assertContains(response, "<strong>Bold</strong>")
         self.assertContains(response, "&lt;script&gt;")
         self.assertNotContains(response, "<script>")
-        self.client.force_login(make_user("Student", mfa_enabled=True))
+        login_with_session(self.client, make_user("Student", mfa_enabled=True))
         self.assertEqual(self.client.post(url, {"content_body": "private"}).status_code, 403)
 
     def test_markdown_preview_matches_saved_content_with_entities(self):
@@ -1953,7 +1970,7 @@ class InstructorModulesAndContentTests(TestCase):
         module = Module.objects.create(course=self.course, title="Materials", is_visible=True)
         section = ModuleSection.objects.create(module=module, title="Notes", section_type="lecture")
         source = "Literal &amp;amp; and `a < b`"
-        self.client.force_login(self.lead)
+        login_with_session(self.client, self.lead)
         preview = self.client.post(reverse("kura:item_preview", kwargs={"section_id": section.id}), {"content_body": source})
         self.client.post(reverse("kura:item_create", kwargs={"section_id": section.id}), {
             "title": "Entity example", "content_body": source,
@@ -1966,7 +1983,7 @@ class InstructorModulesAndContentTests(TestCase):
         # Save Markdown as source, then render it safely on the course page.
         module = Module.objects.create(course=self.course, title="Materials", is_visible=True)
         section = ModuleSection.objects.create(module=module, title="Notes", section_type="lecture")
-        self.client.force_login(self.lead)
+        login_with_session(self.client, self.lead)
         response = self.client.post(reverse("kura:item_create", kwargs={"section_id": section.id}), {
             "title": "Markdown item", "content_body": "**Bold** <script>alert(1)</script>",
         })
@@ -1980,7 +1997,7 @@ class InstructorModulesAndContentTests(TestCase):
         # A valid attachment is enough even when the optional body is blank.
         module = Module.objects.create(course=self.course, title="Materials", is_visible=True)
         section = ModuleSection.objects.create(module=module, title="Notes", section_type="lecture")
-        self.client.force_login(self.lead)
+        login_with_session(self.client, self.lead)
         upload = SimpleUploadedFile("notes.pdf", b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF", content_type="application/pdf")
 
         response = self.client.post(reverse("kura:item_create", kwargs={"section_id": section.id}), {
@@ -1996,7 +2013,7 @@ class InstructorModulesAndContentTests(TestCase):
         # Empty or whitespace-only text cannot create an item without a file.
         module = Module.objects.create(course=self.course, title="Materials", is_visible=True)
         section = ModuleSection.objects.create(module=module, title="Notes", section_type="lecture")
-        self.client.force_login(self.lead)
+        login_with_session(self.client, self.lead)
 
         response = self.client.post(reverse("kura:item_create", kwargs={"section_id": section.id}), {
             "title": "Empty item", "content_body": "  ",
@@ -2010,7 +2027,7 @@ class InstructorModulesAndContentTests(TestCase):
         # A failed file check must roll back the item as well as its attachment.
         module = Module.objects.create(course=self.course, title="Materials", is_visible=True)
         section = ModuleSection.objects.create(module=module, title="Notes", section_type="lecture")
-        self.client.force_login(self.lead)
+        login_with_session(self.client, self.lead)
         upload = SimpleUploadedFile("bad.pdf", b"bad content", content_type="application/pdf")
 
         response = self.client.post(reverse("kura:item_create", kwargs={"section_id": section.id}), {
@@ -2023,7 +2040,7 @@ class InstructorModulesAndContentTests(TestCase):
 
     def test_instructor_can_create_module_and_section(self):
         # Instructor creates module with target level, then a section.
-        self.client.force_login(self.lead)
+        login_with_session(self.client, self.lead)
 
         # Create module
         response = self.client.post(
@@ -2051,7 +2068,7 @@ class InstructorModulesAndContentTests(TestCase):
 
     def test_module_form_renders_each_target_level_as_a_labelled_checkbox(self):
         # Each academic level should have its own accessible checkbox row.
-        self.client.force_login(self.lead)
+        login_with_session(self.client, self.lead)
 
         response = self.client.get(
             reverse("kura:module_create", kwargs={"course_id": self.course.id})
@@ -2066,7 +2083,7 @@ class InstructorModulesAndContentTests(TestCase):
 
     def test_instructor_cannot_assign_non_ta_as_teaching_assistant(self):
         # A user with an Instructor role must not appear as or be saved as a TA.
-        self.client.force_login(self.lead)
+        login_with_session(self.client, self.lead)
         form_response = self.client.get(
             reverse("kura:course_ta_assign", kwargs={"course_id": self.course.id})
         )
@@ -2087,7 +2104,7 @@ class InstructorModulesAndContentTests(TestCase):
         module = Module.objects.create(course=self.course, title="Optics", is_visible=True)
         section = ModuleSection.objects.create(module=module, title="Refraction", section_type="lecture")
 
-        self.client.force_login(self.lead)
+        login_with_session(self.client, self.lead)
         malicious_html = "<p>Intro to Optics</p><script>alert('xss');</script><img src=x onerror=alert(1)>"
 
         response = self.client.post(
@@ -2113,7 +2130,7 @@ class InstructorModulesAndContentTests(TestCase):
             timezone.now() + timezone.timedelta(days=1)
         ).replace(second=0, microsecond=0)
         release_input = scheduled_release.strftime("%Y-%m-%dT%H:%M")
-        self.client.force_login(self.lead)
+        login_with_session(self.client, self.lead)
 
         # Create the item with a release time; new items remain hidden by default.
         create_response = self.client.post(
@@ -2191,7 +2208,7 @@ class InstructorModulesAndContentTests(TestCase):
             staff_role="teaching_assistant",
             can_release_grades=False,
         )
-        self.client.force_login(self.ta)
+        login_with_session(self.client, self.ta)
 
         response = self.client.post(
             reverse("kura:item_visibility_toggle", kwargs={"item_id": item.id})
@@ -2209,7 +2226,7 @@ class InstructorModulesAndContentTests(TestCase):
         module = Module.objects.create(course=self.course, title="Student Material", is_visible=True)
         section = ModuleSection.objects.create(module=module, title="Lectures", section_type="lecture")
         item = SectionItem.objects.create(section=section, title="Hidden Notes")
-        self.client.force_login(make_user("Student", mfa_enabled=True))
+        login_with_session(self.client, make_user("Student", mfa_enabled=True))
 
         response = self.client.post(
             reverse("kura:item_visibility_toggle", kwargs={"item_id": item.id})
@@ -2223,14 +2240,14 @@ class InstructorModulesAndContentTests(TestCase):
         # A course assignment does not allow teaching assistants to assign staff.
         CourseStaff.objects.create(course=self.course, user=self.ta, staff_role="teaching_assistant")
         other_ta = make_user("Teaching assistant")
-        self.client.force_login(self.ta)
+        login_with_session(self.client, self.ta)
         response = self.client.post(reverse("kura:course_ta_assign", kwargs={"course_id": self.course.id}), {"user": str(other_ta.id)})
         self.assertEqual(response.status_code, 403)
         self.assertFalse(CourseStaff.objects.filter(course=self.course, user=other_ta).exists())
 
     def test_lead_instructor_can_assign_ta(self):
         # Lead instructor assigns TA to course with can_release_grades=False.
-        self.client.force_login(self.lead)
+        login_with_session(self.client, self.lead)
         response = self.client.post(
             reverse("kura:course_ta_assign", kwargs={"course_id": self.course.id}),
             {"user": str(self.ta.id)},
@@ -2367,7 +2384,7 @@ class FileUploadsAndDownloadsTests(TestCase):
         )
         SectionItemFile.objects.create(section_item=item, file=stored_file)
 
-        self.client.force_login(self.enrolled_student)
+        login_with_session(self.client, self.enrolled_student)
         response = self.client.get(
             reverse("kura:file_download", kwargs={"course_id": self.course.id, "file_id": stored_file.id})
         )
@@ -2386,7 +2403,7 @@ class FileUploadsAndDownloadsTests(TestCase):
         item = SectionItem.objects.create(section=self.section, title="Exam Prep", content_body="<p>Prep</p>")
         SectionItemFile.objects.create(section_item=item, file=stored_file)
 
-        self.client.force_login(self.outsider_student)
+        login_with_session(self.client, self.outsider_student)
         response = self.client.get(
             reverse("kura:file_download", kwargs={"course_id": self.course.id, "file_id": stored_file.id})
         )
@@ -2399,7 +2416,7 @@ class FileUploadsAndDownloadsTests(TestCase):
         stored_file = validate_and_save_upload(pdf_file, self.instructor)
         item = SectionItem.objects.create(section=self.section, title="Hidden Notes")
         SectionItemFile.objects.create(section_item=item, file=stored_file)
-        self.client.force_login(self.enrolled_student)
+        login_with_session(self.client, self.enrolled_student)
 
         response = self.client.get(
             reverse("kura:file_download", kwargs={"course_id": self.course.id, "file_id": stored_file.id})
@@ -2415,7 +2432,7 @@ class FileUploadsAndDownloadsTests(TestCase):
         SectionItemFile.objects.create(section_item=item, file=stored_file)
         self.section.is_visible = False
         self.section.save(update_fields=["is_visible"])
-        self.client.force_login(self.enrolled_student)
+        login_with_session(self.client, self.enrolled_student)
         response = self.client.get(reverse("kura:file_download", kwargs={"course_id": self.course.id, "file_id": stored_file.id}))
         self.assertEqual(response.status_code, 403)
 
@@ -2426,9 +2443,9 @@ class FileUploadsAndDownloadsTests(TestCase):
                                                opens_at=now, due_date=now + timezone.timedelta(days=1), duration_minutes=60,
                                                created_by=self.instructor)
         url = reverse("kura:assessment_delete", kwargs={"assessment_id": assessment.id})
-        self.client.force_login(self.outsider_student)
+        login_with_session(self.client, self.outsider_student)
         self.assertEqual(self.client.post(url, {"confirm": "on"}).status_code, 403)
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         self.client.post(url)
         self.assertTrue(Assessment.objects.filter(id=assessment.id).exists())
         self.client.post(url, {"confirm": "on"})
@@ -2446,7 +2463,7 @@ class FileUploadsAndDownloadsTests(TestCase):
             released_at=timezone.now() + timezone.timedelta(hours=1),
         )
         SectionItemFile.objects.create(section_item=item, file=stored_file)
-        self.client.force_login(self.enrolled_student)
+        login_with_session(self.client, self.enrolled_student)
 
         response = self.client.get(
             reverse("kura:file_download", kwargs={"course_id": self.course.id, "file_id": stored_file.id})
@@ -2492,7 +2509,7 @@ class StudentCourseMaterialsTests(TestCase):
 
     def test_student_sees_allowed_modules_and_not_hidden_or_wrong_level(self):
         # Year 1 student sees open module, but neither hidden module nor Year 2 module.
-        self.client.force_login(self.year1_student)
+        login_with_session(self.client, self.year1_student)
         response = self.client.get(reverse("kura:course_detail", kwargs={"course_id": self.course.id}))
         self.assertEqual(response.status_code, 200)
 
@@ -2532,7 +2549,7 @@ class StudentCourseMaterialsTests(TestCase):
             is_visible=True,
             released_at=timezone.now() + timezone.timedelta(hours=1),
         )
-        self.client.force_login(self.year1_student)
+        login_with_session(self.client, self.year1_student)
 
         response = self.client.get(
             reverse("kura:course_detail", kwargs={"course_id": self.course.id})
@@ -2595,13 +2612,13 @@ class SchedulesTests(TestCase):
         module = Module.objects.create(course=self.course, title="Private attendance")
         session = ModuleAttendanceSession.objects.create(module=module, created_by=self.instructor, title="Private roll", passcode_hash="x" * 64, expires_at=timezone.now() + timezone.timedelta(hours=1))
         AttendanceRecord.objects.create(session=session, student=self.student, status=AttendanceStatus.PRESENT, method=AttendanceMethod.QR_CODE)
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         self.assertNotContains(self.client.get(reverse("kura:course_list")), self.course.code)
         self.assertNotContains(self.client.get(reverse("kura:attendance_history")), "Private roll")
 
     def test_instructor_can_create_schedule(self):
         # Instructor creates a recurring class schedule with valid start and end times.
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         page = self.client.get(reverse("kura:course_detail", kwargs={"course_id": self.course.id}))
         self.assertContains(page, reverse("kura:schedule_create", kwargs={"course_id": self.course.id}))
         response = self.client.post(
@@ -2636,10 +2653,10 @@ class SchedulesTests(TestCase):
                                                  method=AttendanceMethod.QR_CODE)
         edit_url = reverse("kura:schedule_edit", kwargs={"schedule_id": schedule.id})
         delete_url = reverse("kura:schedule_delete", kwargs={"schedule_id": schedule.id})
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         self.assertEqual(self.client.get(edit_url).status_code, 403)
         self.assertEqual(self.client.post(delete_url, {"confirm": "on"}).status_code, 403)
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         response = self.client.post(edit_url, {"instructor": self.instructor.id, "session_type": "lecture", "day": "monday",
                                                "start_time": "09:00", "end_time": "10:30", "location": "New hall",
                                                "recurrence_start": "2026-09-01", "recurrence_end": "2026-12-01"})
@@ -2657,7 +2674,7 @@ class SchedulesTests(TestCase):
 
     def test_schedule_end_time_must_be_after_start_time(self):
         # Form rejects schedules where end time is earlier than or equal to start time.
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         response = self.client.post(
             reverse("kura:schedule_create", kwargs={"course_id": self.course.id}),
             {
@@ -2701,7 +2718,7 @@ class SchedulesTests(TestCase):
             recurrence_start="2026-09-01",
             recurrence_end="2026-12-15",
         )
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.get(reverse("kura:schedule_list"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "MATH201")
@@ -2768,7 +2785,7 @@ class AttendanceSessionsAndCheckinTests(TestCase):
 
     def test_staff_can_start_session_stores_hash_only(self):
         # Staff starts a session; database stores only the 64-character SHA-256 hash.
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         response = self.client.post(
             reverse("kura:attendance_session_start", kwargs={"module_id": self.module.id}),
             {"title": "Lecture 5 Roll", "duration_minutes": 15},
@@ -2794,7 +2811,7 @@ class AttendanceSessionsAndCheckinTests(TestCase):
             is_active=True,
         )
 
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.post(
             reverse("kura:student_checkin", kwargs={"session_id": session.id}),
             {"passcode": raw_passcode},
@@ -2819,7 +2836,7 @@ class AttendanceSessionsAndCheckinTests(TestCase):
             is_active=True,
         )
 
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         checkin_url = reverse("kura:student_checkin", kwargs={"session_id": session.id}) + f"?code={raw_passcode}"
         response = self.client.get(checkin_url)
         self.assertEqual(response.status_code, 200)
@@ -2843,7 +2860,7 @@ class AttendanceSessionsAndCheckinTests(TestCase):
             is_active=True,
         )
 
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.post(
             reverse("kura:student_checkin", kwargs={"session_id": session.id}),
             {"passcode": raw_passcode},
@@ -2864,7 +2881,7 @@ class AttendanceSessionsAndCheckinTests(TestCase):
             is_active=True,
         )
 
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.post(
             reverse("kura:student_checkin", kwargs={"session_id": session.id}),
             {"passcode": "WRONG1"},
@@ -2894,7 +2911,7 @@ class AttendanceSessionsAndCheckinTests(TestCase):
         )
 
         # Second check-in attempt is rejected.
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.post(
             reverse("kura:student_checkin", kwargs={"session_id": session.id}),
             {"passcode": raw_passcode},
@@ -2913,7 +2930,7 @@ class AttendanceSessionsAndCheckinTests(TestCase):
             is_active=True,
         )
 
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
 
         # Successful manual entry with justification.
         response = self.client.post(
@@ -3033,7 +3050,7 @@ class AttendanceHistoryTests(TestCase):
 
     def test_student_sees_only_own_attendance_records(self):
         # Student A sees only their own attendance record, preventing IDOR.
-        self.client.force_login(self.student_a)
+        login_with_session(self.client, self.student_a)
         response = self.client.get(reverse("kura:attendance_history"))
         self.assertEqual(response.status_code, 200)
 
@@ -3046,7 +3063,7 @@ class AttendanceHistoryTests(TestCase):
 
     def test_staff_sees_all_course_attendance_records(self):
         # Course staff sees attendance records for students in their course.
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         response = self.client.get(reverse("kura:attendance_history"))
         self.assertEqual(response.status_code, 200)
 
@@ -3095,7 +3112,7 @@ class AssessmentAuthoringAndIsolationTests(TestCase):
     def test_instructor_can_create_assessment_and_questions_json_never_contains_answers(self):
         # Author an assessment with multiple choice, matching, and essay questions.
         # Verify that questions_json strictly omits answers and rubrics.
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
 
         now = timezone.now()
         response = self.client.post(
@@ -3153,13 +3170,13 @@ class AssessmentAuthoringAndIsolationTests(TestCase):
 
     def test_unassigned_instructor_cannot_create_assessment(self):
         # An instructor not assigned to this course cannot author assessments (403 Forbidden).
-        self.client.force_login(self.outsider)
+        login_with_session(self.client, self.outsider)
         response = self.client.get(reverse("kura:assessment_create", kwargs={"section_id": self.section.id}))
         self.assertEqual(response.status_code, 403)
 
     def test_formset_creates_questions_and_keeps_keys_separate(self):
         # Staff use ordinary form fields rather than writing JSON by hand.
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         now = timezone.now()
         response = self.client.post(reverse("kura:assessment_create", kwargs={"section_id": self.section.id}), {
             "title": "Builder test", "component_type": GradeComponentType.EXAM,
@@ -3189,7 +3206,7 @@ class AssessmentAuthoringAndIsolationTests(TestCase):
 
     def test_question_formset_rejects_bad_answers_and_missing_management_data(self):
         # Empty or invalid answer definitions cannot produce an ungradable assessment.
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         now = timezone.now()
         data = {
             "title": "Invalid test", "component_type": GradeComponentType.EXAM,
@@ -3211,7 +3228,7 @@ class AssessmentAuthoringAndIsolationTests(TestCase):
 
     def test_question_points_cannot_exceed_assessment_maximum(self):
         # A correctly answered exam must never earn more than its configured maximum.
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         now = timezone.now()
         response = self.client.post(reverse("kura:assessment_create", kwargs={"section_id": self.section.id}), {
             "title": "Too many points", "component_type": GradeComponentType.EXAM, "delivery_mode": "online",
@@ -3229,17 +3246,17 @@ class AssessmentAuthoringAndIsolationTests(TestCase):
     def test_question_form_endpoint_checks_course_permission(self):
         # Fetching a blank question card still requires authorization for this section.
         url = reverse("kura:assessment_question_form", kwargs={"section_id": self.section.id})
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         response = self.client.get(url, {"type": "matching", "questions-TOTAL_FORMS": "2"})
         self.assertContains(response, 'name="questions-2-prompt"')
         self.assertContains(response, 'name="questions-TOTAL_FORMS"')
         self.assertEqual(self.client.get(url, {"type": "bad", "questions-TOTAL_FORMS": "9999"}).status_code, 400)
-        self.client.force_login(self.outsider)
+        login_with_session(self.client, self.outsider)
         self.assertEqual(self.client.get(url, {"type": "matching", "questions-TOTAL_FORMS": "0"}).status_code, 403)
 
     def test_question_builder_saves_requested_order(self):
         # Moving question cards changes their order without changing which answer belongs to each question.
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         now = timezone.now()
         response = self.client.post(reverse("kura:assessment_create", kwargs={"section_id": self.section.id}), {
             "title": "Ordered", "component_type": GradeComponentType.EXAM, "delivery_mode": "online",
@@ -3271,7 +3288,7 @@ class AssessmentAuthoringAndIsolationTests(TestCase):
         )
         ExamAnswerKey.objects.create(assessment=assessment, created_by=self.instructor,
                                      answer_key_json={"old": {"correct_option_ids": ["a"], "explanation": "Reason"}})
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         url = reverse("kura:assessment_edit", kwargs={"assessment_id": assessment.id})
         self.assertContains(self.client.get(url), "Old prompt")
         data = {
@@ -3315,7 +3332,7 @@ class AssessmentAuthoringAndIsolationTests(TestCase):
         )
         url = reverse("kura:assessment_edit", kwargs={"assessment_id": assessment.id})
         for user in (self.outsider, make_user("Admin", mfa_enabled=True)):
-            self.client.force_login(user)
+            login_with_session(self.client, user)
             self.assertEqual(self.client.get(url).status_code, 403)
 
     def test_edit_preserves_legacy_matching_choices_and_detailed_rubric(self):
@@ -3335,7 +3352,7 @@ class AssessmentAuthoringAndIsolationTests(TestCase):
         ExamAnswerKey.objects.create(assessment=assessment, created_by=self.instructor, answer_key_json={
             "m": {"correct_pairs": {"p": "First"}}, "e": {"tutor_rubric": rubric},
         })
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         response = self.client.post(reverse("kura:assessment_edit", kwargs={"assessment_id": assessment.id}), {
             "title": "Legacy edited", "component_type": GradeComponentType.EXAM, "delivery_mode": "online",
             "max_score": "20", "max_attempts": 1, "duration_minutes": 60, "autosave_interval_seconds": 15,
@@ -3365,7 +3382,7 @@ class AssessmentAuthoringAndIsolationTests(TestCase):
         )
         ExamAnswerKey.objects.create(assessment=assessment, created_by=self.instructor,
                                      answer_key_json={"legacy": {"correct_option_ids": ["0"]}})
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         url = reverse("kura:assessment_edit", kwargs={"assessment_id": assessment.id})
         self.assertContains(self.client.get(url), "exceed the builder")
         response = self.client.post(url, {
@@ -3381,7 +3398,7 @@ class AssessmentAuthoringAndIsolationTests(TestCase):
 
     def test_scanned_assessment_does_not_store_online_questions_or_keys(self):
         # Scanned-paper assessments do not need an online question builder or answer key.
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         now = timezone.now()
         response = self.client.post(reverse("kura:assessment_create", kwargs={"section_id": self.section.id}), {
             "title": "Paper assessment", "component_type": GradeComponentType.EXAM,
@@ -3430,7 +3447,7 @@ class AssessmentEditLockTests(TransactionTestCase):
         Enrollment.objects.create(course=course, student=student, status=EnrollmentStatus.ACTIVE)
         result = CourseResult.objects.create(course=course, student=student, final_score=Decimal("75.00"), status=GradeStatus.DRAFT)
         client = Client()
-        client.force_login(instructor)
+        login_with_session(client, instructor)
         reached_lock = threading.Event()
         original_lock = QuerySet.select_for_update
         responses = []
@@ -3458,7 +3475,7 @@ class AssessmentEditLockTests(TransactionTestCase):
                 self.assertTrue(reached_lock.wait(10), "Calculation did not request the course lock.")
                 # The release view uses this same locked transaction before calculation resumes.
                 release_client = Client()
-                release_client.force_login(instructor)
+                login_with_session(release_client, instructor)
                 confirm_second_factor(release_client)
                 response = release_client.post(reverse("kura:course_result_release", kwargs={"course_id": course.id}))
                 self.assertEqual(response.status_code, 302)
@@ -3489,7 +3506,7 @@ class AssessmentEditLockTests(TransactionTestCase):
         ExamAnswerKey.objects.create(assessment=assessment, created_by=instructor,
                                      answer_key_json={"old": {"correct_option_ids": ["a"]}})
         client = Client()
-        client.force_login(instructor)
+        login_with_session(client, instructor)
         data = {
             "title": "Changed", "component_type": GradeComponentType.EXAM, "delivery_mode": "online",
             "max_score": "100", "max_attempts": 1, "duration_minutes": 60, "autosave_interval_seconds": 15,
@@ -3558,7 +3575,7 @@ class AssessmentEditLockTests(TransactionTestCase):
                                                created_by=instructor, opens_at=now - timezone.timedelta(hours=1),
                                                due_date=now + timezone.timedelta(days=1), duration_minutes=60)
         client = Client()
-        client.force_login(student)
+        login_with_session(client, student)
         reached_lock = threading.Event()
         original_lock = QuerySet.select_for_update
         responses = []
@@ -3605,7 +3622,7 @@ class AssessmentEditLockTests(TransactionTestCase):
         assessment = Assessment.objects.create(section=section, title="Exam", component_type=GradeComponentType.EXAM,
                                                created_by=instructor, opens_at=now, due_date=now + timezone.timedelta(days=1), duration_minutes=60)
         client = Client()
-        client.force_login(instructor)
+        login_with_session(client, instructor)
         reached_lock = threading.Event()
         original_lock = QuerySet.select_for_update
         responses = []
@@ -3715,11 +3732,11 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
 
     def test_course_page_links_authorized_users_to_assessments(self):
         # Staff can create assessments and enrolled students can find visible ones.
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         page = self.client.get(reverse("kura:course_detail", kwargs={"course_id": self.course.id}))
         self.assertContains(page, reverse("kura:assessment_create", kwargs={"section_id": self.section.id}))
         self.assertContains(page, reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id}))
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         page = self.client.get(reverse("kura:course_detail", kwargs={"course_id": self.course.id}))
         self.assertContains(page, reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id}))
         self.assertNotContains(page, reverse("kura:assessment_create", kwargs={"section_id": self.section.id}))
@@ -3733,7 +3750,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
             status=AttemptStatus.IN_PROGRESS, expires_at=timezone.now() + timezone.timedelta(minutes=30),
             ip_address="127.0.0.1",
         )
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         # Scanned-paper delivery shows a deadline instead of an online countdown.
         page = self.client.get(reverse("kura:assessment_take", kwargs={"attempt_id": attempt.id}))
         self.assertContains(page, "Upload scanned paper")
@@ -3758,11 +3775,11 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
         # Hiding a section must protect its assessment even when a student knows the URL.
         self.section.is_visible = False
         self.section.save(update_fields=["is_visible"])
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         self.assertNotContains(self.client.get(reverse("kura:course_detail", kwargs={"course_id": self.course.id})), self.section.title)
         self.assertEqual(self.client.get(reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id})).status_code, 403)
         self.assertEqual(self.client.post(reverse("kura:assessment_attempt_start", kwargs={"assessment_id": self.assessment.id})).status_code, 403)
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         self.assertContains(self.client.get(reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id})), self.assessment.title)
 
     def test_hidden_section_blocks_existing_student_attempt(self):
@@ -3771,7 +3788,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
                                                    expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1")
         self.section.is_visible = False
         self.section.save(update_fields=["is_visible"])
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         self.assertEqual(self.client.get(reverse("kura:assessment_take", kwargs={"attempt_id": attempt.id})).status_code, 403)
         self.assertEqual(self.client.post(reverse("kura:assessment_autosave", kwargs={"attempt_id": attempt.id}), {"focus_lost": "1"}).status_code, 403)
 
@@ -3780,9 +3797,9 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
         attempt = AssessmentAttempt.objects.create(assessment=self.assessment, student=self.student, attempt_no=1,
                                                    expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1")
         url = reverse("kura:section_visibility_toggle", kwargs={"section_id": self.section.id})
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         self.assertEqual(self.client.post(url).status_code, 403)
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         self.assertEqual(self.client.get(url).status_code, 405)
         self.assertEqual(self.client.post(url).status_code, 302)
         self.section.refresh_from_db()
@@ -3793,7 +3810,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
         # Confirmed deletion must preserve both the section and a student's existing attempt.
         attempt = AssessmentAttempt.objects.create(assessment=self.assessment, student=self.student, attempt_no=1,
                                                    expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1")
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         url = reverse("kura:section_delete", kwargs={"section_id": self.section.id})
         self.assertEqual(self.client.get(url).status_code, 405)
         self.client.post(url, {"confirm": "on"})
@@ -3805,9 +3822,9 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
         # An unconfirmed or unrelated request must never delete a section.
         empty_section = ModuleSection.objects.create(module=self.module, title="Empty", section_type="lecture")
         url = reverse("kura:section_delete", kwargs={"section_id": empty_section.id})
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         self.assertEqual(self.client.post(url, {"confirm": "on"}).status_code, 403)
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         self.client.post(url)
         self.assertTrue(ModuleSection.objects.filter(id=empty_section.id).exists())
         self.client.post(url, {"confirm": "on"})
@@ -3817,7 +3834,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
         # Direct assessment deletion must not cascade into a student's attempt.
         attempt = AssessmentAttempt.objects.create(assessment=self.assessment, student=self.student, attempt_no=1,
                                                    expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1")
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         url = reverse("kura:assessment_delete", kwargs={"assessment_id": self.assessment.id})
         self.assertEqual(self.client.get(url).status_code, 405)
         self.client.post(url, {"confirm": "on"})
@@ -3833,7 +3850,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
             status=AttemptStatus.IN_PROGRESS, expires_at=timezone.now() - timezone.timedelta(minutes=1),
             ip_address="127.0.0.1",
         )
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.get(reverse("kura:assessment_take", kwargs={"attempt_id": attempt.id}))
         self.assertEqual(response.status_code, 302)
         attempt.refresh_from_db()
@@ -3852,7 +3869,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
             status=AttemptStatus.IN_PROGRESS, expires_at=timezone.now() + timezone.timedelta(minutes=30),
             ip_address="127.0.0.1",
         )
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         upload = SimpleUploadedFile("script.txt", b"This is plain text and not a scanned paper.")
         response = self.client.post(
             reverse("kura:assessment_attempt_file_upload", kwargs={"attempt_id": attempt.id}),
@@ -3866,7 +3883,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
         # Assigned staff may submit an enrolled student's scanned script for manual grading.
         self.assessment.delivery_mode = "paper_scanned"
         self.assessment.save(update_fields=["delivery_mode"])
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         upload = SimpleUploadedFile("scan.pdf", b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF", content_type="application/pdf")
         response = self.client.post(
             reverse("kura:scanned_paper_staff_upload", kwargs={"assessment_id": self.assessment.id}),
@@ -3901,7 +3918,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
 
         # A different student cannot retrieve the same script by guessing its URL.
         outsider = make_user("Student", mfa_enabled=True)
-        self.client.force_login(outsider)
+        login_with_session(self.client, outsider)
         denied = self.client.get(reverse("kura:attempt_file_download", kwargs={
             "attempt_id": attempt.id, "file_id": attempt_file.file.id,
         }))
@@ -3914,9 +3931,9 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
         outsider = make_user("Student", mfa_enabled=True)
         unrelated_staff = make_user("Instructor", mfa_enabled=True)
         url = reverse("kura:scanned_paper_staff_upload", kwargs={"assessment_id": self.assessment.id})
-        self.client.force_login(unrelated_staff)
+        login_with_session(self.client, unrelated_staff)
         self.assertEqual(self.client.post(url).status_code, 403)
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         self.assertEqual(self.client.get(url).status_code, 405)
         upload = SimpleUploadedFile("scan.pdf", b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF")
         response = self.client.post(url, {"student": str(outsider.id), "file": upload})
@@ -3931,7 +3948,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
             assessment=self.assessment, student=self.student, attempt_no=1,
             expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1",
         )
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         url = reverse("kura:grade_entry", kwargs={"attempt_id": attempt.id})
         self.assertEqual(self.client.post(url, {"score": "75"}).status_code, 403)
         attempt.status = AttemptStatus.REQUIRES_MANUAL_GRADING
@@ -3941,7 +3958,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
 
     def test_student_cannot_start_from_wrong_ip_range(self):
         # Starting an attempt from outside the lab CIDR subnet is rejected.
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.post(
             reverse("kura:assessment_attempt_start", kwargs={"assessment_id": self.assessment.id}),
             {"proctor_code": "PROCTOR123"},
@@ -3952,7 +3969,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
 
     def test_student_can_start_from_valid_ip_range_with_proctor_code(self):
         # Starting with authorized lab IP and correct proctor code creates an active attempt.
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.post(
             reverse("kura:assessment_attempt_start", kwargs={"assessment_id": self.assessment.id}),
             {"proctor_code": "PROCTOR123"},
@@ -3968,7 +3985,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
         # Behind the WAF, REMOTE_ADDR is the WAF's address (outside the lab
         # subnet) and X-Real-IP carries the student's lab PC address.
         # The lab check must use the student's address.
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.post(
             reverse("kura:assessment_attempt_start", kwargs={"assessment_id": self.assessment.id}),
             {"proctor_code": "PROCTOR123"},
@@ -3992,7 +4009,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
             ip_address="10.20.0.45",
         )
 
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.post(
             reverse("kura:assessment_autosave", kwargs={"attempt_id": attempt.id}),
             {"question_id": "q1", "response_type": "multiple_choice", "selected_options": ["o1"]},
@@ -4010,7 +4027,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
             assessment=self.assessment, student=self.student, attempt_no=1,
             expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1",
         )
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.post(reverse("kura:assessment_autosave", kwargs={"attempt_id": attempt.id}), {
             "question_id": "match", "response_type": "matching", "match_p1": "First", "match_match_p1": "First",
         })
@@ -4035,7 +4052,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
                 {"pair_id": "p1", "selected_match": "First"}, {"pair_id": "p1", "selected_match": "First"},
             ]}],
         )
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         self.client.post(reverse("kura:assessment_submit", kwargs={"attempt_id": attempt.id}))
         grade = Grade.objects.get(attempt=attempt)
         self.assertEqual(grade.score, Decimal("10"))
@@ -4046,7 +4063,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
             assessment=self.assessment, student=self.student, attempt_no=1,
             expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1",
         )
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         url = reverse("kura:assessment_autosave", kwargs={"attempt_id": attempt.id})
         for data in (
             {"question_id": "unknown", "response_type": "multiple_choice", "selected_options": ["o1"]},
@@ -4077,7 +4094,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
                 {"question_id": "q3", "response_text": "Saved written answer"},
             ],
         )
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.get(reverse("kura:assessment_take", kwargs={"attempt_id": attempt.id}))
         self.assertContains(response, 'value="o2" class="checkbox checkbox-primary checkbox-sm"\n                            checked')
         self.assertContains(response, '<option value="Second" selected>Second</option>')
@@ -4095,7 +4112,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
             ip_address="10.20.0.45",
         )
 
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         fake_file = SimpleUploadedFile("report.pdf", b"%PDF-1.4\ntest", content_type="application/pdf")
         self.client.post(
             reverse("kura:assessment_attempt_file_upload", kwargs={"attempt_id": attempt.id}),
@@ -4122,7 +4139,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
             assessment=self.assessment, student=self.student, attempt=attempt,
             score=73, status=GradeStatus.DRAFT,
         )
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         url = reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id})
 
         for status in (GradeStatus.DRAFT, GradeStatus.FINALIZED):
@@ -4145,7 +4162,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
             assessment=self.assessment, student=self.student, attempt=attempt,
             score=81, status=GradeStatus.RELEASED,
         )
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.get(reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id}))
         self.assertContains(response, "81.00")
         self.assertNotContains(response, "Evaluation Summary")
@@ -4158,7 +4175,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
             status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1",
             summary_score_json={"total_score": 73, "max_possible_points": 100},
         )
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         response = self.client.get(reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id}))
         self.assertContains(response, "Evaluation Summary")
         self.assertContains(response, "73 / 100")
@@ -4171,7 +4188,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
             status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1",
             summary_score_json={"total_score": 73, "max_possible_points": 100},
         )
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.get(reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id}))
         self.assertNotContains(response, "Evaluation Summary")
         self.assertNotContains(response, "73 / 100")
@@ -4188,7 +4205,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
             assessment=self.assessment, student=self.student, attempt=attempt,
             score=73, status=GradeStatus.DRAFT,
         )
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.get(reverse("kura:course_grades", kwargs={"course_id": self.course.id}))
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, "73.00")
@@ -4202,7 +4219,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
     def test_registrar_instructor_cannot_access_instructional_content_or_grades(self):
         # The Registrar restriction still applies if the same account is an assigned instructor.
         UserRole.objects.create(user=self.instructor, role=Role.objects.get(name="Registrar"))
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         urls = [
             reverse("kura:course_detail", kwargs={"course_id": self.course.id}),
             reverse("kura:module_create", kwargs={"course_id": self.course.id}),
@@ -4227,7 +4244,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
             status=AttemptStatus.IN_PROGRESS, expires_at=timezone.now() + timezone.timedelta(minutes=30),
             ip_address="127.0.0.1",
         )
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         for url in (reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id}),
                     reverse("kura:student_grades"), reverse("kura:student_transcript")):
             with self.subTest(url=url):
@@ -4242,7 +4259,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
             status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1",
             summary_score_json={"total_score": 73},
         )
-        self.client.force_login(admin)
+        login_with_session(self.client, admin)
         for url in (
             reverse("kura:assessment_create", kwargs={"section_id": self.section.id}),
             reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id}),
@@ -4258,7 +4275,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
         UserRole.objects.create(user=admin, role=Role.objects.get(name="Department head"))
         self.dept.head_user = admin
         self.dept.save(update_fields=["head_user"])
-        self.client.force_login(admin)
+        login_with_session(self.client, admin)
 
         for url in (
             reverse("kura:student_grades"),
@@ -4287,7 +4304,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
             grade=grade, requested_by=self.instructor, current_score=73,
             proposed_score=75, reason="Please review",
         )
-        self.client.force_login(admin)
+        login_with_session(self.client, admin)
 
         # Exercise both pages and actions with identifiers that belong to this course.
         get_urls = (
@@ -4484,7 +4501,7 @@ class AutoGradingTests(TestCase):
             ip_address="127.0.0.1",
         )
 
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.post(reverse("kura:assessment_submit", kwargs={"attempt_id": attempt.id}))
         self.assertRedirects(response, reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id}))
 
@@ -4563,7 +4580,7 @@ class InstructorAndTAGradingTests(TestCase):
 
     def test_ta_can_enter_draft_grade_creates_history_row(self):
         # TA enters manual draft score; grade is created and GradeHistory row is logged.
-        self.client.force_login(self.ta)
+        login_with_session(self.client, self.ta)
         response = self.client.post(
             reverse("kura:grade_entry", kwargs={"attempt_id": self.attempt.id}),
             {"score": "85.00", "feedback": "Insightful visual analysis."},
@@ -4591,7 +4608,7 @@ class InstructorAndTAGradingTests(TestCase):
             status=GradeStatus.DRAFT,
         )
 
-        self.client.force_login(self.ta)
+        login_with_session(self.client, self.ta)
 
         # Finalize attempt by TA
         finalize_resp = self.client.post(reverse("kura:grade_finalize", kwargs={"grade_id": grade.id}))
@@ -4609,7 +4626,7 @@ class InstructorAndTAGradingTests(TestCase):
         head = make_user("Department head")
         self.department.head_user = head
         self.department.save(update_fields=["head_user"])
-        self.client.force_login(head)
+        login_with_session(self.client, head)
         response = self.client.post(reverse("kura:grade_entry", kwargs={"attempt_id": self.attempt.id}), {"score": "80"})
         self.assertEqual(response.status_code, 403)
         self.assertFalse(Grade.objects.filter(attempt=self.attempt).exists())
@@ -4618,7 +4635,7 @@ class InstructorAndTAGradingTests(TestCase):
         # Editing a finalized score must not silently return it to draft.
         grade = Grade.objects.create(assessment=self.assessment, student=self.student, attempt=self.attempt,
                                      grader=self.ta, score=Decimal("80.00"), status=GradeStatus.FINALIZED)
-        self.client.force_login(self.ta)
+        login_with_session(self.client, self.ta)
         self.client.post(reverse("kura:grade_entry", kwargs={"attempt_id": self.attempt.id}), {"score": "90"})
         grade.refresh_from_db()
         self.assertEqual(grade.status, GradeStatus.FINALIZED)
@@ -4631,7 +4648,7 @@ class InstructorAndTAGradingTests(TestCase):
         self.department.save(update_fields=["head_user"])
         grade = Grade.objects.create(assessment=self.assessment, student=self.student, attempt=self.attempt,
                                      grader=self.ta, score=Decimal("80.00"), status=GradeStatus.DRAFT)
-        self.client.force_login(head)
+        login_with_session(self.client, head)
         response = self.client.post(reverse("kura:grade_finalize", kwargs={"grade_id": grade.id}))
         self.assertEqual(response.status_code, 403)
         grade.refresh_from_db()
@@ -4641,7 +4658,7 @@ class InstructorAndTAGradingTests(TestCase):
         # A repeated finalize request must not change an already released grade.
         grade = Grade.objects.create(assessment=self.assessment, student=self.student, attempt=self.attempt,
                                      grader=self.ta, score=Decimal("80.00"), status=GradeStatus.RELEASED)
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         self.client.post(reverse("kura:grade_finalize", kwargs={"grade_id": grade.id}))
         grade.refresh_from_db()
         self.assertEqual(grade.status, GradeStatus.RELEASED)
@@ -4658,7 +4675,7 @@ class InstructorAndTAGradingTests(TestCase):
             status=GradeStatus.DRAFT,
         )
 
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
 
         # 1. Finalize grade
         fin_resp = self.client.post(reverse("kura:grade_finalize", kwargs={"grade_id": grade.id}))
@@ -4758,7 +4775,7 @@ class StudentViewGradesTests(TestCase):
 
     def test_student_sees_only_own_released_grades_draft_and_finalized_hidden(self):
         # Student A views grades: only sees their own RELEASED grade.
-        self.client.force_login(self.student_a)
+        login_with_session(self.client, self.student_a)
         response = self.client.get(reverse("kura:student_grades"))
         self.assertEqual(response.status_code, 200)
 
@@ -4819,7 +4836,7 @@ class GradeAppealsTests(TestCase):
 
     def test_student_can_appeal_own_released_grade(self):
         # Student submits an appeal on their released grade.
-        self.client.force_login(self.student_a)
+        login_with_session(self.client, self.student_a)
         response = self.client.post(
             reverse("kura:grade_appeal_create", kwargs={"grade_id": self.grade_a.id}),
             {"reason": "Question 3 rubric criteria were omitted in the mark scheme."},
@@ -4832,7 +4849,7 @@ class GradeAppealsTests(TestCase):
 
     def test_student_cannot_appeal_someone_elses_grade(self):
         # Student A attempts to appeal Student B's grade; receives 404 Not Found (IDOR defense).
-        self.client.force_login(self.student_a)
+        login_with_session(self.client, self.student_a)
         response = self.client.post(
             reverse("kura:grade_appeal_create", kwargs={"grade_id": self.grade_b.id}),
             {"reason": "Unauthorized appeal attempt."},
@@ -4888,7 +4905,7 @@ class GradeChangeRequestsTests(TestCase):
             status=ChangeRequestStatus.PENDING,
         )
 
-        self.client.force_login(self.head)
+        login_with_session(self.client, self.head)
         response = self.client.post(
             reverse("kura:grade_change_request_review", kwargs={"request_id": change_request.id}),
             {"decision": ChangeRequestStatus.APPROVED, "review_note": "Approved based on submitted rubric evidence."},
@@ -4920,7 +4937,7 @@ class GradeChangeRequestsTests(TestCase):
             status=ChangeRequestStatus.PENDING,
         )
 
-        self.client.force_login(self.head)
+        login_with_session(self.client, self.head)
         response = self.client.post(
             reverse("kura:grade_change_request_review", kwargs={"request_id": change_request.id}),
             {"decision": ChangeRequestStatus.REJECTED, "review_note": "Insufficient justification."},
@@ -4941,7 +4958,7 @@ class GradeChangeRequestsTests(TestCase):
             status=ChangeRequestStatus.PENDING,
         )
 
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         response = self.client.post(
             reverse("kura:grade_change_request_review", kwargs={"request_id": change_request.id}),
             {"decision": ChangeRequestStatus.APPROVED},
@@ -4993,7 +5010,7 @@ class CourseResultsAndTranscriptsTests(TestCase):
 
     def test_result_calculation_get_does_not_change_data(self):
         # Viewing a URL must never create or alter a course result.
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         response = self.client.get(reverse("kura:course_result_calculate", kwargs={"course_id": self.course.id}))
         self.assertEqual(response.status_code, 405)
         self.assertFalse(CourseResult.objects.filter(course=self.course).exists())
@@ -5001,7 +5018,7 @@ class CourseResultsAndTranscriptsTests(TestCase):
     def test_recalculation_preserves_released_result(self):
         # A released transcript result must not be overwritten or hidden by recalculation.
         result = CourseResult.objects.create(course=self.course, student=self.student, final_score=Decimal("75.00"), status=GradeStatus.RELEASED)
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         self.client.post(reverse("kura:course_result_calculate", kwargs={"course_id": self.course.id}))
         result.refresh_from_db()
         self.assertEqual(result.status, GradeStatus.RELEASED)
@@ -5009,7 +5026,7 @@ class CourseResultsAndTranscriptsTests(TestCase):
 
     def test_weighted_course_result_calculation(self):
         # Weighted calculation: (90% * 0.60) + (80% * 0.40) = 54 + 32 = 86.00%
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         confirm_second_factor(self.client)
         response = self.client.post(reverse("kura:course_result_calculate", kwargs={"course_id": self.course.id}))
         self.assertRedirects(response, reverse("kura:course_grades", kwargs={"course_id": self.course.id}))
@@ -5026,7 +5043,7 @@ class CourseResultsAndTranscriptsTests(TestCase):
         self.assertEqual(result.status, GradeStatus.RELEASED)
 
         # Verify student can view released result on transcript
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         transcript_resp = self.client.get(reverse("kura:student_transcript"))
         self.assertEqual(transcript_resp.status_code, 200)
         self.assertContains(transcript_resp, "PHYS201")
@@ -5047,14 +5064,14 @@ class DepartmentReportsTests(TestCase):
 
     def test_head_can_view_own_department_report(self):
         # Head of Dept A views their department report.
-        self.client.force_login(self.head_a)
+        login_with_session(self.client, self.head_a)
         response = self.client.get(reverse("kura:department_reports", kwargs={"department_id": self.dept_a.id}))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, f"{self.dept_a.name} report")
 
     def test_head_cannot_view_other_department_report(self):
         # Head of Dept A tries to view Dept B's report; receives 403 Forbidden.
-        self.client.force_login(self.head_a)
+        login_with_session(self.client, self.head_a)
         response = self.client.get(reverse("kura:department_reports", kwargs={"department_id": self.dept_b.id}))
         self.assertEqual(response.status_code, 403)
 
@@ -5092,7 +5109,7 @@ class SecuritySettingsAndHeadersTests(TestCase):
 
     def test_authenticated_requests_receive_no_store_cache_headers(self):
         # Authenticated user requests receive Cache-Control: no-store to protect sensitive data.
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
         response = self.client.get(reverse("kura:home"))
         self.assertEqual(response.status_code, 200)
 
@@ -5126,7 +5143,7 @@ class SecurityLoggingTests(TestCase):
 
     def test_user_logout_logs_security_info(self):
         # User logout action produces a security information log record.
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
         with self.assertLogs("kura.security", level="INFO") as log_capture:
             self.client.post(reverse("kura:logout"))
             self.assertTrue(any('event="auth.logout"' in record.getMessage() for record in log_capture.records))
@@ -5146,7 +5163,7 @@ class RateLimitingTests(TestCase):
         from django.core.cache import caches
         caches["ratelimit"].clear()
 
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
         dummy_uuid = "00000000-0000-0000-0000-000000000001"
         upload_url = f"/attempts/{dummy_uuid}/files/upload/"
 
@@ -5663,10 +5680,10 @@ class PasskeyWebAuthnIntegrationTests(TestCase):
         self.user_a = make_user("Student", mfa_enabled=True)
         self.user_b = make_user("Student", mfa_enabled=True)
         self.client_a = Client()
-        self.client_a.force_login(self.user_a)
+        login_with_session(self.client_a, self.user_a)
         confirm_second_factor(self.client_a)
         self.client_b = Client()
-        self.client_b.force_login(self.user_b)
+        login_with_session(self.client_b, self.user_b)
         confirm_second_factor(self.client_b)
 
     def test_fido2_enrollment_page_renders(self):
@@ -5745,6 +5762,7 @@ class PasskeyWebAuthnIntegrationTests(TestCase):
         message_middleware = MessageMiddleware(lambda r: None)
         message_middleware.process_request(request)
         request.session["pre_mfa_user_id"] = str(self.user_a.id)
+        request.session["pre_mfa_started_at"] = timezone.now().timestamp()
         request.session["base_username"] = self.user_a.email
 
         response = mfa_login_callback(request, username=self.user_a.email)
@@ -5759,6 +5777,7 @@ class PasskeyWebAuthnIntegrationTests(TestCase):
         client = Client()
         session = client.session
         session["pre_mfa_user_id"] = str(self.user_a.id)
+        session["pre_mfa_started_at"] = timezone.now().timestamp()
         session.save()
 
         # Before adding passkey: has_passkeys is False
@@ -6448,7 +6467,7 @@ class SecurityEventLogTests(TestCase):
         # A denied real route must create one event with the student's ID and requested path.
         student = make_user("Student")
         client = Client(raise_request_exception=False)
-        client.force_login(student)
+        login_with_session(client, student)
 
         with self.assertLogs("kura.security", level="WARNING") as captured:
             response = client.get(reverse("kura:staff_list"))
@@ -6776,7 +6795,7 @@ class AnswerKeyEncryptionTests(TestCase):
         self.assertFalse(Grade.objects.filter(attempt=attempt).exists())
 
     def test_assessment_builder_saves_only_ciphertext(self):
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         now = timezone.now()
         response = self.client.post(reverse("kura:assessment_create", kwargs={"section_id": self.section.id}), {
             "title": "Quiz 2", "component_type": GradeComponentType.QUIZ, "delivery_mode": "online",
@@ -6795,7 +6814,7 @@ class AnswerKeyEncryptionTests(TestCase):
         self.assertEqual(decrypt_answer_key(stored)[question_id]["correct_option_ids"], ["opt_2"])
 
     def test_builder_saves_nothing_when_vault_is_down(self):
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         self.fake_vault.secrets.transit.encrypt_data.side_effect = ConnectionError("Vault down")
         now = timezone.now()
         response = self.client.post(reverse("kura:assessment_create", kwargs={"section_id": self.section.id}), {
@@ -6812,7 +6831,7 @@ class AnswerKeyEncryptionTests(TestCase):
         self.assertFalse(Assessment.objects.filter(title="Quiz 3").exists())
 
     def test_edit_page_is_not_shown_when_vault_is_down(self):
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         self.fake_vault.secrets.transit.decrypt_data.side_effect = ConnectionError("Vault down")
         response = self.client.get(reverse("kura:assessment_edit", kwargs={"assessment_id": self.assessment.id}))
         self.assertRedirects(
@@ -6916,7 +6935,7 @@ class RecoveryCodeHashingTests(TestCase):
 
     def test_setup_saves_only_hashes_of_the_codes_it_shows(self):
         new_user = make_user("Student", mfa_enabled=False)
-        self.client.force_login(new_user)
+        login_with_session(self.client, new_user)
         self.client.get(reverse("kura:mfa_setup"))
         new_user.refresh_from_db()
         device = TOTPDevice.objects.get(user=new_user, name="default")
@@ -7033,7 +7052,7 @@ class VaultTOTPSeedTests(TestCase):
 
     def test_setup_saves_only_vault_ciphertext(self):
         new_user = make_user("Student", mfa_enabled=False)
-        self.client.force_login(new_user)
+        login_with_session(self.client, new_user)
         seeds_given_to_vault = []
 
         def fake_encrypt(seed_hex):
@@ -7055,7 +7074,7 @@ class VaultTOTPSeedTests(TestCase):
 
     def test_setup_confirms_with_a_code_from_the_new_seed(self):
         new_user = make_user("Student", mfa_enabled=False)
-        self.client.force_login(new_user)
+        login_with_session(self.client, new_user)
         self.client.get(reverse("kura:mfa_setup"))
         new_user.refresh_from_db()
         response = self.client.post(reverse("kura:mfa_setup"), {"code": self.current_code(new_user.mfa_secret)})
@@ -7064,7 +7083,7 @@ class VaultTOTPSeedTests(TestCase):
 
     def test_setup_shows_503_when_vault_is_down(self):
         new_user = make_user("Student", mfa_enabled=False)
-        self.client.force_login(new_user)
+        login_with_session(self.client, new_user)
         with patch("kura.views.encrypt_mfa_secret", side_effect=ValidationError("Vault down")):
             response = self.client.get(reverse("kura:mfa_setup"))
         self.assertEqual(response.status_code, 503)
@@ -7358,7 +7377,7 @@ class ClamAVQuarantineTests(TransactionTestCase):
     def test_admin_sees_details_but_never_the_file(self):
         self.upload_rejected_as("Eicar-Test-Signature")
         admin = make_user("Admin")
-        self.client.force_login(admin)
+        login_with_session(self.client, admin)
         response = self.client.get(reverse("kura:quarantine_list"))
         self.assertContains(response, "Eicar-Test-Signature")
         self.assertContains(response, hashlib.sha256(self.eicar_bytes).hexdigest())
@@ -7371,7 +7390,7 @@ class ClamAVQuarantineTests(TransactionTestCase):
         quarantined = QuarantinedFile.objects.get()
         for role_name in ["Student", "Instructor", "Registrar", "Department head"]:
             with self.subTest(role=role_name):
-                self.client.force_login(make_user(role_name))
+                login_with_session(self.client, make_user(role_name))
                 self.assertEqual(self.client.get(reverse("kura:quarantine_list")).status_code, 403)
                 delete_url = reverse("kura:quarantine_delete", kwargs={"quarantined_file_id": quarantined.id})
                 self.assertEqual(self.client.post(delete_url, {"confirm": "on"}).status_code, 403)
@@ -7380,7 +7399,7 @@ class ClamAVQuarantineTests(TransactionTestCase):
     def test_admin_delete_needs_post_and_confirmation(self):
         self.upload_rejected_as("Eicar-Test-Signature")
         quarantined = QuarantinedFile.objects.get()
-        self.client.force_login(make_user("Admin"))
+        login_with_session(self.client, make_user("Admin"))
         delete_url = reverse("kura:quarantine_delete", kwargs={"quarantined_file_id": quarantined.id})
 
         self.assertEqual(self.client.get(delete_url).status_code, 405)
@@ -7479,7 +7498,7 @@ class EmailNotificationTests(TestCase):
     def test_making_a_module_visible_announces_its_assessments(self):
         self.module.is_visible = False
         self.module.save()
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         self.client.post(
             reverse("kura:module_edit", kwargs={"module_id": self.module.id}),
             {"title": "Renaissance", "description": "", "is_visible": "on", "target_levels": ["level_4"]},
@@ -7526,7 +7545,7 @@ class EmailNotificationTests(TestCase):
             status=GradeStatus.RELEASED,
         )
         appeal = GradeAppeal.objects.create(grade=grade, reason="Please review")
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         self.client.post(
             reverse("kura:grade_appeal_review", kwargs={"appeal_id": appeal.id}),
             {"status": "approved", "response": "Marks added."},
@@ -7581,7 +7600,7 @@ class PasskeyAddedAuditTests(TestCase):
 
     def setUp(self):
         self.user = make_user("Student")
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
         confirm_second_factor(self.client)
 
     def test_successful_registration_is_logged(self):
@@ -7614,7 +7633,7 @@ class PasskeyOnlyMfaUrlsTests(TestCase):
 
     def setUp(self):
         self.user = make_user("Student")
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
 
     def test_unused_mfa_pages_are_not_reachable(self):
         # Each of these was published by include("mfa.urls") before.
@@ -7760,7 +7779,7 @@ class AssessmentVisibilityRulesTests(TestCase):
     def test_student_blocked_when_module_hidden(self):
         self.module.is_visible = False
         self.module.save()
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
 
         detail_url = reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id})
         response = self.client.get(detail_url)
@@ -7774,7 +7793,7 @@ class AssessmentVisibilityRulesTests(TestCase):
 
     def test_student_blocked_when_target_level_mismatch(self):
         ModuleTargetLevel.objects.create(module=self.module, target_level="level_5")
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
 
         detail_url = reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id})
         response = self.client.get(detail_url)
@@ -7789,7 +7808,7 @@ class AssessmentVisibilityRulesTests(TestCase):
     def test_student_blocked_when_course_unpublished(self):
         self.course.is_published = False
         self.course.save()
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
 
         detail_url = reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id})
         response = self.client.get(detail_url)
@@ -7802,7 +7821,7 @@ class AssessmentVisibilityRulesTests(TestCase):
         self.assertEqual(AssessmentAttempt.objects.count(), initial_count)
 
     def test_eligible_student_can_view_assessment(self):
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         detail_url = reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id})
         response = self.client.get(detail_url)
         self.assertEqual(response.status_code, 200)
@@ -7810,7 +7829,7 @@ class AssessmentVisibilityRulesTests(TestCase):
     def test_course_staff_can_view_hidden_module_assessment(self):
         self.module.is_visible = False
         self.module.save()
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         detail_url = reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id})
         response = self.client.get(detail_url)
         self.assertEqual(response.status_code, 200)
@@ -7842,7 +7861,7 @@ class MfaSetupReauthTests(TestCase):
         return str(totp.token()).zfill(self.device.digits)
 
     def test_enrolled_user_get_does_not_reveal_seed_or_qr(self):
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
         response = self.client.get(reverse("kura:mfa_setup"))
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, "otpauth")
@@ -7850,7 +7869,7 @@ class MfaSetupReauthTests(TestCase):
         self.assertContains(response, "Confirm it's you")
 
     def test_wrong_code_keeps_seed_hidden(self):
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
         with self.assertLogs("kura.security", level="WARNING") as captured:
             response = self.client.post(reverse("kura:mfa_setup"), {"code": "000000"})
         self.assertEqual(response.status_code, 400)
@@ -7860,7 +7879,7 @@ class MfaSetupReauthTests(TestCase):
         self.assertTrue(any('event="auth.mfa.reauth_failed"' in line for line in captured.output))
 
     def test_correct_totp_renders_setup_and_confirming_post_regenerates_codes(self):
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
         t0 = time.time()
         with patch("time.time", return_value=t0):
             code = self.current_code(self.seed_hex, at_time=t0)
@@ -7887,7 +7906,7 @@ class MfaSetupReauthTests(TestCase):
 
     def test_unenrolled_user_sees_qr_code_on_first_get(self):
         unenrolled_user = make_user("Student", mfa_enabled=False)
-        self.client.force_login(unenrolled_user)
+        login_with_session(self.client, unenrolled_user)
         response = self.client.get(reverse("kura:mfa_setup"))
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "data:image/svg+xml;utf8,")
@@ -7908,7 +7927,7 @@ class RowLevelSecurityFailClosedTests(TestCase):
     def test_rls_set_failure_fails_closed_and_logs_error(self):
         from django.db.utils import OperationalError
 
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         real_cursor = connection.cursor
 
         def failing_cursor(*args, **kwargs):
@@ -7930,14 +7949,14 @@ class RowLevelSecurityFailClosedTests(TestCase):
             self.assertTrue(any('event="rls.context_failed"' in line for line in captured.output))
 
     def test_normal_request_returns_200(self):
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.get(reverse("kura:student_grades"))
         self.assertEqual(response.status_code, 200)
 
     def test_rls_reset_failure_logs_warning_and_closes_connection(self):
         from django.db.utils import OperationalError
 
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         real_cursor = connection.cursor
 
         def failing_reset_cursor(*args, **kwargs):
@@ -8042,7 +8061,7 @@ class PasswordChangeNotificationTests(TestCase):
         self.user = make_user("Student", password="OriginalPassword123!")
 
     def test_password_change_queues_notification_email(self):
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
         response = self.client.post(
             reverse("kura:password_change"),
             {
@@ -8087,7 +8106,7 @@ class PasswordChangeNotificationTests(TestCase):
         self.assertNotIn("NewResetPassword789!", email.body)
 
     def test_failed_attempts_queue_no_email(self):
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
         # Failed password change (wrong old password)
         self.client.post(
             reverse("kura:password_change"),
@@ -8183,7 +8202,7 @@ class GradeFinalizeInstructorOnlyTests(TestCase):
 
     def test_dual_role_ta_cannot_finalize_grade(self):
         # Instructor+TA with only a teaching_assistant assignment is refused.
-        self.client.force_login(self.dual_role_user)
+        login_with_session(self.client, self.dual_role_user)
         response = self.client.post(reverse("kura:grade_finalize", kwargs={"grade_id": self.grade.id}))
         self.assertEqual(response.status_code, 403)
 
@@ -8193,7 +8212,7 @@ class GradeFinalizeInstructorOnlyTests(TestCase):
 
     def test_co_instructor_can_finalize_grade(self):
         # A co-instructor on the course still finalizes successfully.
-        self.client.force_login(self.co_instructor)
+        login_with_session(self.client, self.co_instructor)
         response = self.client.post(reverse("kura:grade_finalize", kwargs={"grade_id": self.grade.id}))
         self.assertRedirects(response, reverse("kura:course_grades", kwargs={"course_id": self.course.id}))
 
@@ -8217,7 +8236,7 @@ class UserRolesInputValidationTests(TestCase):
 
     def test_non_numeric_role_id_is_rejected(self):
         # A malformed role_id used to raise ValueError and return HTTP 500.
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
         confirm_second_factor(self.client)
         before = UserRole.objects.filter(user=self.target_user).count()
 
@@ -8229,7 +8248,7 @@ class UserRolesInputValidationTests(TestCase):
 
     def test_unknown_action_is_rejected(self):
         # An action outside assign/remove must not change roles.
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
         confirm_second_factor(self.client)
         before = UserRole.objects.filter(user=self.target_user).count()
 
@@ -8303,7 +8322,7 @@ class NoStoreAndAutocompleteTests(TestCase):
         # The early-return path used to skip the Cache-Control header.
         self.user.must_change_password = True
         self.user.save(update_fields=["must_change_password"])
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
 
         response = self.client.get(reverse("kura:password_change"))
 
@@ -8333,7 +8352,7 @@ class PasswordReuseTests(TestCase):
         self.user = make_user("Student", password=self.password, mfa_enabled=True)
 
     def test_change_form_rejects_current_password(self):
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
         response = self.client.post(
             reverse("kura:password_change"),
             {
@@ -8391,7 +8410,7 @@ class OldPasswordThrottleTests(TestCase):
         self.url = reverse("kura:password_change")
 
     def test_wrong_current_password_is_throttled(self):
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
 
         # Five wrong current passwords reach the axes limit.
         for _attempt in range(5):
@@ -8423,7 +8442,7 @@ class OldPasswordThrottleTests(TestCase):
 
     def test_correct_current_password_still_changes(self):
         # A fresh account with the right current password is not affected.
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
         new_password = "NewSecurePassword456!"
 
         response = self.client.post(
@@ -8533,7 +8552,7 @@ class FreeTextLengthLimitTests(TestCase):
         )
 
     def test_overlong_appeal_reason_is_rejected(self):
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
 
         response = self.client.post(
             reverse("kura:grade_appeal_create", kwargs={"grade_id": self.grade.id}),
@@ -8570,7 +8589,7 @@ class AdminSettingsAuditLogTests(TestCase):
         self.admin = make_user("Admin", mfa_enabled=True)
 
     def test_department_save_is_logged(self):
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
 
         with self.assertLogs("kura.security", level="INFO") as captured:
             response = self.client.post(
@@ -8598,7 +8617,7 @@ class InvalidInputLoggingTests(TestCase):
         self.admin = make_user("Admin", mfa_enabled=True)
 
     def test_invalid_department_is_logged_without_values(self):
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
         marker = "ZZ-unique-marker"
 
         with self.assertLogs("kura.security", level="WARNING") as captured:
@@ -8634,6 +8653,8 @@ class PasskeyLoginCallbackTests(TestCase):
         MessageMiddleware(lambda r: None).process_request(request)
         for key, value in session_values.items():
             request.session[key] = value
+        if "pre_mfa_user_id" in session_values and "pre_mfa_started_at" not in session_values:
+            request.session["pre_mfa_started_at"] = timezone.now().timestamp()
         request.user = AnonymousUser()
         response = mfa_login_callback(request, self.user.email)
         return request, response
@@ -8677,7 +8698,7 @@ class FreshSecondFactorTests(TestCase):
     def setUp(self):
         self.admin = make_user("Admin")
         self.target_user = make_user("Instructor")
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
 
     def test_role_change_without_fresh_factor_asks_for_code(self):
         # A logged-in admin without a recent code is sent to the confirm page.
@@ -8910,7 +8931,7 @@ class SharedRateLimitCacheTests(TestCase):
     def test_rate_limit_counter_uses_shared_ratelimit_cache(self):
         from django.core.cache import caches
 
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
         dummy_uuid = "00000000-0000-0000-0000-000000000001"
         self.client.post(f"/attempts/{dummy_uuid}/files/upload/")
 
@@ -8948,7 +8969,7 @@ class PasswordHistoryTests(TestCase):
 
     @patch("kura.validators.BreachedPasswordValidator.validate", return_value=None)
     def test_password_history_enforces_five_previous_passwords_and_prunes_older(self, _mock_breach):
-        self.client.force_login(self.user)
+        login_with_session(self.client, self.user)
 
         # Rotate P0 -> P1 -> P2 -> P3 -> P4 -> P5 (5 changes: P0..P4 in history, P5 current).
         with self.assertLogs("kura.security", level="INFO") as logs:
@@ -9105,13 +9126,13 @@ class CoursePageLinksTests(TestCase):
         self.module = Module.objects.create(course=self.course, title="Week 1", is_visible=True)
 
     def test_staff_see_gradebook_and_attendance_links(self):
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         response = self.client.get(reverse("kura:course_detail", args=[self.course.id]))
         self.assertContains(response, reverse("kura:course_grades", args=[self.course.id]))
         self.assertContains(response, reverse("kura:attendance_session_start", args=[self.module.id]))
 
     def test_students_do_not_see_staff_links(self):
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         response = self.client.get(reverse("kura:course_detail", args=[self.course.id]))
         self.assertEqual(response.status_code, 200)
         self.assertNotContains(response, reverse("kura:course_grades", args=[self.course.id]))
@@ -9199,13 +9220,13 @@ class GradebookPendingReviewsTests(TestCase):
         )
 
     def test_instructor_sees_pending_appeal_but_not_change_requests(self):
-        self.client.force_login(self.data["instructor"])
+        login_with_session(self.client, self.data["instructor"])
         response = self.client.get(self.grades_url)
         self.assertContains(response, reverse("kura:grade_appeal_review", args=[self.appeal.id]))
         self.assertNotContains(response, reverse("kura:grade_change_request_review", args=[self.change_request.id]))
 
     def test_department_head_sees_pending_change_request(self):
-        self.client.force_login(self.data["head"])
+        login_with_session(self.client, self.data["head"])
         response = self.client.get(self.grades_url)
         self.assertContains(response, reverse("kura:grade_change_request_review", args=[self.change_request.id]))
         self.assertContains(response, reverse("kura:grade_appeal_review", args=[self.appeal.id]))
@@ -9217,7 +9238,7 @@ class GradebookPendingReviewsTests(TestCase):
         self.change_request.reviewed_by = self.data["head"]
         self.change_request.reviewed_at = timezone.now()
         self.change_request.save()
-        self.client.force_login(self.data["head"])
+        login_with_session(self.client, self.data["head"])
         response = self.client.get(self.grades_url)
         self.assertNotContains(response, reverse("kura:grade_appeal_review", args=[self.appeal.id]))
         self.assertNotContains(response, reverse("kura:grade_change_request_review", args=[self.change_request.id]))
@@ -9236,7 +9257,7 @@ class CourseGradeSchemeTests(TestCase):
         self.valid_weights = {"weight_coursework": "40", "weight_exam": "60"}
 
     def test_instructor_saves_scheme_that_adds_up_to_100(self):
-        self.client.force_login(self.data["instructor"])
+        login_with_session(self.client, self.data["instructor"])
         response = self.client.post(self.url, self.valid_weights)
         self.assertRedirects(response, reverse("kura:course_grades", args=[self.data["course"].id]))
         saved = dict(
@@ -9247,7 +9268,7 @@ class CourseGradeSchemeTests(TestCase):
         self.assertEqual(saved, {"coursework": Decimal("40.00"), "exam": Decimal("60.00")})
 
     def test_weights_that_do_not_add_up_to_100_are_refused(self):
-        self.client.force_login(self.data["instructor"])
+        login_with_session(self.client, self.data["instructor"])
         response = self.client.post(self.url, {"weight_exam": "70"})
         self.assertEqual(response.status_code, 400)
         self.assertContains(response, "must add up to 100%", status_code=400)
@@ -9255,23 +9276,23 @@ class CourseGradeSchemeTests(TestCase):
 
     def test_cleared_component_is_removed(self):
         CourseGradeScheme.objects.create(course=self.data["course"], component_type="quiz", weight_percentage=50)
-        self.client.force_login(self.data["head"])
+        login_with_session(self.client, self.data["head"])
         self.client.post(self.url, self.valid_weights)
         self.assertFalse(CourseGradeScheme.objects.filter(course=self.data["course"], component_type="quiz").exists())
 
     def test_teaching_assistant_and_admin_cannot_change_scheme(self):
         admin = make_user("Admin")
         for user in (self.data["assistant"], admin):
-            self.client.force_login(user)
+            login_with_session(self.client, user)
             self.assertEqual(self.client.get(self.url).status_code, 403)
             self.assertEqual(self.client.post(self.url, self.valid_weights).status_code, 403)
         self.assertFalse(CourseGradeScheme.objects.filter(course=self.data["course"]).exists())
 
     def test_gradebook_shows_edit_link_only_to_allowed_users(self):
         grades_url = reverse("kura:course_grades", args=[self.data["course"].id])
-        self.client.force_login(self.data["instructor"])
+        login_with_session(self.client, self.data["instructor"])
         self.assertContains(self.client.get(grades_url), self.url)
-        self.client.force_login(self.data["assistant"])
+        login_with_session(self.client, self.data["assistant"])
         self.assertNotContains(self.client.get(grades_url), self.url)
 
 
@@ -9291,7 +9312,7 @@ class GradeFeedbackTests(TestCase):
         self.feedback = "Good structure, but question 2 needed a worked example."
 
     def test_assistant_feedback_is_saved_and_not_logged(self):
-        self.client.force_login(self.data["assistant"])
+        login_with_session(self.client, self.data["assistant"])
         with self.assertLogs("kura.security", level="INFO") as logs:
             self.client.post(self.entry_url, {"score": "72", "feedback": self.feedback})
         self.data["grade"].refresh_from_db()
@@ -9301,13 +9322,13 @@ class GradeFeedbackTests(TestCase):
     def test_entry_page_shows_saved_feedback(self):
         self.data["grade"].feedback = self.feedback
         self.data["grade"].save()
-        self.client.force_login(self.data["instructor"])
+        login_with_session(self.client, self.data["instructor"])
         self.assertContains(self.client.get(self.entry_url), "worked example")
 
     def test_student_sees_feedback_only_after_release(self):
         self.data["grade"].feedback = self.feedback
         self.data["grade"].save()
-        self.client.force_login(self.data["student"])
+        login_with_session(self.client, self.data["student"])
         self.assertNotContains(self.client.get(reverse("kura:student_grades")), "worked example")
 
         self.data["grade"].status = GradeStatus.RELEASED
@@ -9329,7 +9350,7 @@ class SecurityPolicyPageTests(TestCase):
         self.url = reverse("kura:security_policy")
 
     def test_admin_sees_current_rules(self):
-        self.client.force_login(make_user("Admin"))
+        login_with_session(self.client, make_user("Admin"))
         response = self.client.get(self.url)
         self.assertEqual(response.status_code, 200)
         self.assertContains(response, "12 characters")
@@ -9337,16 +9358,16 @@ class SecurityPolicyPageTests(TestCase):
         self.assertContains(response, "25 MiB")
 
     def test_admin_dashboard_links_to_the_page(self):
-        self.client.force_login(make_user("Admin"))
+        login_with_session(self.client, make_user("Admin"))
         self.assertContains(self.client.get(reverse("kura:home")), self.url)
 
     def test_other_roles_are_refused(self):
         for role_name in ("Registrar", "Department head", "Instructor", "Teaching assistant", "Student"):
-            self.client.force_login(make_user(role_name))
+            login_with_session(self.client, make_user(role_name))
             self.assertEqual(self.client.get(self.url).status_code, 403)
 
     def test_page_is_read_only(self):
-        self.client.force_login(make_user("Admin"))
+        login_with_session(self.client, make_user("Admin"))
         self.assertEqual(self.client.post(self.url).status_code, 405)
 
 
@@ -9416,7 +9437,7 @@ class RemainingLedgerCompletionTests(TestCase):
         )
 
     def test_field_accessibility_ids_and_numeric_mfa_inputmode(self):
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
         resp = self.client.post(reverse("kura:admin_course_create"), {"code": ""})
         self.assertContains(resp, 'id="id_code_error"', status_code=400)
         self.assertContains(resp, 'aria-describedby="id_code_error"', status_code=400)
@@ -9425,6 +9446,7 @@ class RemainingLedgerCompletionTests(TestCase):
         self.client.logout()
         session = self.client.session
         session["pre_mfa_user_id"] = str(self.admin.id)
+        session["pre_mfa_started_at"] = timezone.now().timestamp()
         session.save()
         mfa_resp = self.client.get(reverse("kura:mfa_verify"))
         self.assertContains(mfa_resp, 'inputmode="numeric"')
@@ -9432,18 +9454,18 @@ class RemainingLedgerCompletionTests(TestCase):
     def test_mfa_setup_manual_key_hidden_during_reauth_and_shown_after(self):
         # Unenrolled user gets manual_key in collapse section.
         unenrolled = make_user("Student", mfa_enabled=False)
-        self.client.force_login(unenrolled)
+        login_with_session(self.client, unenrolled)
         resp = self.client.get(reverse("kura:mfa_setup"))
         self.assertContains(resp, "Can't scan? Enter the key instead")
         self.assertTrue(resp.context["manual_key"])
 
         # Already-enrolled user does not receive manual_key until step-up completes.
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
         reauth_resp = self.client.get(reverse("kura:mfa_setup"))
         self.assertNotIn("manual_key", reauth_resp.context)
 
     def test_temp_password_shown_once_via_session_not_flash_messages(self):
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
         post_resp = self.client.post(
             reverse("kura:staff_create"),
             {
@@ -9462,7 +9484,7 @@ class RemainingLedgerCompletionTests(TestCase):
         second_list = self.client.get(reverse("kura:staff_list"))
         self.assertNotContains(second_list, "Temporary password for new.staff@example.com")
 
-        self.client.force_login(self.registrar)
+        login_with_session(self.client, self.registrar)
         student_post = self.client.post(
             reverse("kura:student_create"),
             {
@@ -9481,14 +9503,14 @@ class RemainingLedgerCompletionTests(TestCase):
         self.assertNotContains(second_enroll, "Temporary password for new.stud@example.com")
 
     def test_dashboard_greeting_attention_and_role_isolation(self):
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         student_home = self.client.get(reverse("kura:home"))
         self.assertContains(student_home, "Sam")
         self.assertContains(student_home, "Needs your attention")
         self.assertContains(student_home, "Midterm Quiz in CS301 closes")
 
         # Admin never sees assessment attention items.
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
         admin_home = self.client.get(reverse("kura:home"))
         self.assertContains(admin_home, "Ada")
         self.assertNotContains(admin_home, "Midterm Quiz")
@@ -9497,7 +9519,7 @@ class RemainingLedgerCompletionTests(TestCase):
         for i in range(28):
             user = make_user("Instructor", email=f"paged{i:02d}@example.com", first_name="Paged")
             StaffProfile.objects.create(user=user, department=self.dept, staff_title="Instructor")
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
         page1 = self.client.get(reverse("kura:staff_list"), {"q": "Paged"})
         self.assertEqual(page1.context["page_obj"].number, 1)
         self.assertEqual(page1.context["page_obj"].paginator.count, 28)
@@ -9519,19 +9541,19 @@ class RemainingLedgerCompletionTests(TestCase):
             recurrence_end=timezone.localdate() + timezone.timedelta(days=30),
         )
         # Admin gets people by default, schedule allowed, content/grades return 403.
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
         self.assertEqual(self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=content").status_code, 403)
         self.assertEqual(self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=grades").status_code, 403)
         self.assertContains(self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=schedule"), "Hall 1")
 
         # Student cannot open people or grades tabs.
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         self.assertEqual(self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=people").status_code, 403)
         self.assertEqual(self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=grades").status_code, 403)
         self.assertContains(self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=schedule"), "Hall 1")
 
         # TA sees people tab count only, never student email.
-        self.client.force_login(self.ta)
+        login_with_session(self.client, self.ta)
         ta_people = self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=people")
         self.assertEqual(ta_people.status_code, 200)
         self.assertNotContains(ta_people, self.student.email)
@@ -9551,7 +9573,7 @@ class RemainingLedgerCompletionTests(TestCase):
             status=AttendanceStatus.PRESENT,
             method=AttendanceMethod.PASSCODE,
         )
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         frag = self.client.get(reverse("kura:attendance_session_detail", args=[session.id]) + "?fragment=1")
         self.assertEqual(frag.status_code, 200)
         self.assertContains(frag, "Attendance roll")
@@ -9573,7 +9595,7 @@ class RemainingLedgerCompletionTests(TestCase):
                 {"question_id": "q2", "response_text": "Saving registers and loading next PCB."},
             ],
         )
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         take_resp = self.client.get(reverse("kura:assessment_take", args=[attempt.id]))
         self.assertContains(take_resp, 'data-allow-backtracking="false"')
         self.assertContains(take_resp, "data-word-counter-input")
@@ -9583,7 +9605,7 @@ class RemainingLedgerCompletionTests(TestCase):
         attempt.save(update_fields=["status", "submitted_at"])
 
         # Staff see read-only student responses on attempt_detail and grade_entry.
-        self.client.force_login(self.instructor)
+        login_with_session(self.client, self.instructor)
         detail_resp = self.client.get(reverse("kura:attempt_detail", args=[attempt.id]))
         self.assertContains(detail_resp, "Student responses")
         self.assertContains(detail_resp, "Saving registers and loading next PCB.")
@@ -9675,10 +9697,10 @@ class SpecificationGapCompletionTests(TestCase):
         )
 
     def test_admin_users_directory_lock_and_deactivate_student_without_grades(self):
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         self.assertEqual(self.client.get(reverse("kura:admin_users")).status_code, 403)
 
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
         confirm_second_factor(self.client)
         page = self.client.get(reverse("kura:admin_users"), {"role": "Student"})
         self.assertEqual(page.status_code, 200)
@@ -9711,7 +9733,7 @@ class SpecificationGapCompletionTests(TestCase):
             finalized_at=timezone.now(),
             released_at=timezone.now(),
         )
-        self.client.force_login(self.head)
+        login_with_session(self.client, self.head)
         html_resp = self.client.get(reverse("kura:department_reports", args=[self.dept.id]))
         self.assertContains(html_resp, "Download CSV")
         self.assertContains(html_resp, "88.5")
@@ -9733,31 +9755,31 @@ class SpecificationGapCompletionTests(TestCase):
             expires_at=timezone.now() + timezone.timedelta(minutes=30),
             is_active=True,
         )
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         checkin_url = reverse("kura:student_checkin", args=[session.id])
         self.assertContains(self.client.get(reverse("kura:home")), checkin_url)
         self.assertContains(self.client.get(reverse("kura:course_detail", args=[self.course.id])), checkin_url)
         self.assertContains(self.client.get(reverse("kura:attendance_history")), checkin_url)
 
-        self.client.force_login(self.ta)
+        login_with_session(self.client, self.ta)
         ta_home = self.client.get(reverse("kura:home"))
         self.assertContains(ta_home, reverse("kura:schedule_list"))
         session_url = reverse("kura:attendance_session_detail", args=[session.id])
         self.assertContains(self.client.get(reverse("kura:attendance_history")), session_url)
         self.assertContains(self.client.get(reverse("kura:course_detail", args=[self.course.id])), session_url)
 
-        self.client.force_login(self.co_instructor)
+        login_with_session(self.client, self.co_instructor)
         self.assertContains(
             self.client.get(reverse("kura:course_detail", args=[self.course.id])),
             reverse("kura:course_ta_assign", args=[self.course.id]),
         )
 
     def test_role_boundaries_registrar_lists_ta_change_request_and_single_assign_log(self):
-        self.client.force_login(self.registrar)
+        login_with_session(self.client, self.registrar)
         self.assertEqual(self.client.get(reverse("kura:course_list")).status_code, 403)
         self.assertEqual(self.client.get(reverse("kura:schedule_list")).status_code, 403)
 
-        self.client.force_login(self.admin)
+        login_with_session(self.client, self.admin)
         self.assertEqual(self.client.get(reverse("kura:schedule_list")).status_code, 403)
 
         att = AssessmentAttempt.objects.create(
@@ -9775,13 +9797,13 @@ class SpecificationGapCompletionTests(TestCase):
             score=Decimal("8.00"),
             status=GradeStatus.RELEASED,
         )
-        self.client.force_login(self.ta)
+        login_with_session(self.client, self.ta)
         change_url = reverse("kura:grade_change_request_create", args=[grade.id])
         self.assertNotContains(self.client.get(reverse("kura:course_grades", args=[self.course.id])), change_url)
         self.assertEqual(self.client.get(change_url).status_code, 403)
 
         # course_staff_assign_view should log the real staff_role once, not a duplicate TA record.
-        self.client.force_login(self.head)
+        login_with_session(self.client, self.head)
         new_inst = make_user("Instructor")
         StaffProfile.objects.create(user=new_inst, department=self.dept, staff_title="Instructor")
         with self.assertLogs("kura.security", level="INFO") as logs:
@@ -9805,7 +9827,7 @@ class SpecificationGapCompletionTests(TestCase):
             ip_address="127.0.0.1",
             answers_json=[{"question_id": "q1", "type": "multiple_choice", "selected_option_ids": ["opt_1"]}],
         )
-        self.client.force_login(self.student)
+        login_with_session(self.client, self.student)
         pdf_a = SimpleUploadedFile("draft1.pdf", b"%PDF-1.4 file one", content_type="application/pdf")
         self.client.post(reverse("kura:assessment_attempt_file_upload", args=[attempt.id]), {"file": pdf_a})
         att_file = AttemptFile.objects.get(attempt=attempt)
@@ -9909,7 +9931,7 @@ class WorkItem1LoggingTests(TestCase):
 
     def test_handler404_logs_access_not_found(self):
         student = make_user("Student")
-        self.client.force_login(student)
+        login_with_session(self.client, student)
         with self.assertLogs("kura.security", level="INFO") as captured:
             resp = self.client.get(f"/courses/{uuid.uuid4()}/")
 
@@ -9973,7 +9995,7 @@ class WorkItem1LoggingTests(TestCase):
         head.save(update_fields=["mfa_enabled"])
 
         # Department head creates course, publishes it, assigns TA, creates module/section/item/schedule.
-        self.client.force_login(head)
+        login_with_session(self.client, head)
         with self.assertLogs("kura.security", level="INFO") as cap_course:
             self.client.post(
                 reverse("kura:course_create"),
@@ -10076,7 +10098,7 @@ class WorkItem1LoggingTests(TestCase):
 
         AttendanceRecord.objects.filter(session=att_sess, student=student).delete()
         stud_client = Client()
-        stud_client.force_login(student)
+        login_with_session(stud_client, student)
         with self.assertLogs("kura.security", level="WARNING") as cap_ci_bad:
             stud_client.post(reverse("kura:student_checkin", args=[att_sess.id]), {"passcode": "000000"})
         self.assertTrue(any('event="attendance.checkin_failed"' in l and 'reason="bad_passcode"' in l for l in cap_ci_bad.output))
@@ -10091,7 +10113,7 @@ class WorkItem1LoggingTests(TestCase):
 
         # Registrar viewing student profile logs record.viewed; invalid enrollment logs input.invalid.
         reg_client = Client()
-        reg_client.force_login(registrar)
+        login_with_session(reg_client, registrar)
         with self.assertLogs("kura.security", level="INFO") as cap_prof:
             reg_client.get(reverse("kura:student_profile", args=[student.id]))
         self.assertTrue(any('event="record.viewed"' in l and 'record_type="student_profile"' in l for l in cap_prof.output))
@@ -10102,7 +10124,7 @@ class WorkItem1LoggingTests(TestCase):
         # Result calculate, release, and CSV report export.
         CourseStaff.objects.create(course=course, user=instructor, staff_role="lead_instructor", can_release_grades=True, assigned_by=head)
         inst_client = Client()
-        inst_client.force_login(instructor)
+        login_with_session(inst_client, instructor)
         sess = inst_client.session
         sess["mfa_reauth_at"] = timezone.now().timestamp()
         sess.save()
@@ -10181,14 +10203,14 @@ class WorkItem1LoggingTests(TestCase):
             ip_address="127.0.0.1",
         )
 
-        self.client.force_login(instructor)
+        login_with_session(self.client, instructor)
         pdf = SimpleUploadedFile("spec.pdf", b"%PDF-1.4 spec", content_type="application/pdf")
         with self.assertLogs("kura.security", level="INFO") as cap_ass:
             self.client.post(reverse("kura:assessment_file_upload", args=[assessment.id]), {"file": pdf})
         self.assertTrue(any('event="file.uploaded"' in l and 'context="assessment"' in l and f'assessment_id="{assessment.id}"' in l for l in cap_ass.output))
 
         stud_client = Client()
-        stud_client.force_login(student)
+        login_with_session(stud_client, student)
         pdf2 = SimpleUploadedFile("sub.pdf", b"%PDF-1.4 sub", content_type="application/pdf")
         with self.assertLogs("kura.security", level="INFO") as cap_sub:
             stud_client.post(reverse("kura:assessment_attempt_file_upload", args=[attempt.id]), {"file": pdf2})
@@ -10243,7 +10265,7 @@ class WorkItem2ServerCodeTests(TestCase):
         caches["ratelimit"].clear()
         caches["search_limits"].clear()
         student = make_user("Student")
-        self.client.force_login(student)
+        login_with_session(self.client, student)
         url = reverse("kura:assessment_attempt_file_upload", args=[uuid.uuid4()])
         for _ in range(20):
             self.client.post(url)
@@ -10253,7 +10275,7 @@ class WorkItem2ServerCodeTests(TestCase):
 
         registrar = make_user("Registrar")
         reg_client = Client()
-        reg_client.force_login(registrar)
+        login_with_session(reg_client, registrar)
         search_url = reverse("kura:enrollment_search")
         for _ in range(60):
             reg_client.get(search_url, {"kind": "student", "q": "a"})
@@ -10289,7 +10311,7 @@ class WorkItem2ServerCodeTests(TestCase):
             attempt=attempt, assessment=assessment, student=student, grader=instructor,
             score=Decimal("70.00"), status=GradeStatus.RELEASED, released_by=instructor, released_at=now,
         )
-        self.client.force_login(student)
+        login_with_session(self.client, student)
         url = reverse("kura:grade_appeal_create", args=[grade.id])
         first = self.client.post(url, {"reason": "First pending appeal."})
         self.assertEqual(first.status_code, 302)
@@ -10301,7 +10323,7 @@ class WorkItem2ServerCodeTests(TestCase):
         from django.http import JsonResponse
 
         user = make_user("Student")
-        self.client.force_login(user)
+        login_with_session(self.client, user)
         sess = self.client.session
         sess["mfa_reauth_at"] = timezone.now().timestamp()
         sess.save()
@@ -10337,7 +10359,7 @@ class WorkItem2ServerCodeTests(TestCase):
         r404 = client.get(f"/courses/{uuid.uuid4()}/")
         self.assertIn(r404.status_code, (302, 404))
         student = make_user("Student")
-        client.force_login(student)
+        login_with_session(client, student)
         r404_auth = client.get(f"/courses/{uuid.uuid4()}/")
         self.assertEqual(r404_auth.status_code, 404)
         self.assertNotIn(b"Traceback", r404_auth.content)
@@ -10352,3 +10374,117 @@ class WorkItem2ServerCodeTests(TestCase):
         self.assertEqual(r500.status_code, 500)
         self.assertNotIn(b"Traceback", r500.content)
         self.assertNotIn(b"boom-secret", r500.content)
+
+
+class WorkItem3SessionTests(TestCase):
+    """Tests for Work Item 3: sliding idle timeout, untracked rejection, password-change revocation, and pre-MFA expiry."""
+
+    def test_sliding_idle_timeout_and_absolute_12h_limit(self):
+        password = "ValidPassword123!"
+        user = make_user("Student", password=password, mfa_enabled=False)
+        t0 = timezone.now()
+
+        with patch("django.utils.timezone.now", return_value=t0):
+            resp = self.client.post(reverse("kura:login"), {"email": user.email, "password": password})
+            self.assertRedirects(resp, reverse("kura:mfa_setup"))
+
+        # +20m: still valid, and sliding window refreshes expiry to +50m.
+        with patch("django.utils.timezone.now", return_value=t0 + timezone.timedelta(minutes=20)):
+            r1 = self.client.get(reverse("kura:mfa_setup"))
+            self.assertEqual(r1.status_code, 200)
+
+        # +40m total (20m since last request): still valid because window slid.
+        with patch("django.utils.timezone.now", return_value=t0 + timezone.timedelta(minutes=40)):
+            r2 = self.client.get(reverse("kura:mfa_setup"))
+            self.assertEqual(r2.status_code, 200)
+
+        # +71m total (31m idle since +40m): idle timeout expired.
+        with patch("django.utils.timezone.now", return_value=t0 + timezone.timedelta(minutes=71)):
+            r3 = self.client.get(reverse("kura:mfa_setup"))
+            self.assertEqual(r3.status_code, 302)
+            self.assertIn(reverse("kura:login"), r3.url)
+
+        # Fresh login: keep active every 20m, still rejected after 12h absolute cap.
+        client2 = Client()
+        with patch("django.utils.timezone.now", return_value=t0):
+            client2.post(reverse("kura:login"), {"email": user.email, "password": password})
+        for step_minutes in range(20, 12 * 60, 20):
+            with patch("django.utils.timezone.now", return_value=t0 + timezone.timedelta(minutes=step_minutes)):
+                self.assertEqual(client2.get(reverse("kura:mfa_setup")).status_code, 200)
+        with patch("django.utils.timezone.now", return_value=t0 + timezone.timedelta(hours=12, minutes=1)):
+            r_abs = client2.get(reverse("kura:mfa_setup"))
+            self.assertRedirects(r_abs, reverse("kura:login"))
+
+    def test_password_change_revokes_other_tracked_sessions(self):
+        old_pw = "ValidPassword123!"
+        new_pw = "NewValidPassword456!"
+        user = make_user("Student", password=old_pw, mfa_enabled=True)
+        current_session = login_with_session(self.client, user)
+        other_session = UserSession.objects.create(
+            user=user,
+            session_token_hash=secrets.token_hex(32),
+            ip_address="198.51.100.5",
+            user_agent="OtherDevice",
+            expires_at=timezone.now() + timezone.timedelta(hours=12),
+        )
+
+        with patch("kura.validators.BreachedPasswordValidator.validate", return_value=None):
+            with self.assertLogs("kura.security", level="INFO") as captured:
+                resp = self.client.post(
+                    reverse("kura:password_change"),
+                    {"old_password": old_pw, "new_password": new_pw, "confirm_password": new_pw},
+                )
+        self.assertRedirects(resp, reverse("kura:home"))
+        current_session.refresh_from_db()
+        other_session.refresh_from_db()
+        self.assertIsNone(current_session.revoked_at)
+        self.assertIsNotNone(other_session.revoked_at)
+        self.assertTrue(any('event="session.revoked"' in l and 'by="password_change"' in l for l in captured.output))
+
+    def test_untracked_authenticated_session_is_rejected(self):
+        user = make_user("Student", mfa_enabled=True)
+        self.client.force_login(user)
+        with self.assertLogs("kura.security", level="WARNING") as captured:
+            resp = self.client.get(reverse("kura:home"))
+        self.assertRedirects(resp, reverse("kura:login"))
+        self.assertTrue(any('event="session.invalid"' in l and 'reason="untracked"' in l for l in captured.output))
+
+    def test_pre_mfa_step_expires_after_five_minutes(self):
+        password = "ValidPassword123!"
+        user = make_user("Student", password=password, mfa_enabled=True)
+        t0 = timezone.now()
+        with patch("django.utils.timezone.now", return_value=t0):
+            resp = self.client.post(reverse("kura:login"), {"email": user.email, "password": password})
+            self.assertRedirects(resp, reverse("kura:mfa_verify"))
+
+        # 6 minutes later, mfa_verify redirects back to login and clears markers.
+        with patch("django.utils.timezone.now", return_value=t0 + timezone.timedelta(minutes=6)):
+            expired_resp = self.client.post(reverse("kura:mfa_verify"), {"code": "123456"})
+            self.assertRedirects(expired_resp, reverse("kura:login"))
+            self.assertNotIn("pre_mfa_user_id", self.client.session)
+
+        # Passkey callback 6 minutes after password step also refuses and redirects to login.
+        request = RequestFactory().post("/mfa/fido2/complete_auth")
+        SessionMiddleware(lambda r: None).process_request(request)
+        MessageMiddleware(lambda r: None).process_request(request)
+        request.session["pre_mfa_user_id"] = str(user.id)
+        request.session["pre_mfa_started_at"] = t0.timestamp()
+        request.user = AnonymousUser()
+        with patch("django.utils.timezone.now", return_value=t0 + timezone.timedelta(minutes=6)):
+            cb_resp = mfa_login_callback(request, user.email)
+        self.assertEqual(cb_resp.url, reverse("kura:login"))
+        self.assertNotIn("_auth_user_id", request.session)
+
+    def test_login_rotates_session_key(self):
+        password = "ValidPassword123!"
+        user = make_user("Student", password=password, mfa_enabled=False)
+        self.client.get(reverse("kura:login"))
+        session_before = self.client.session
+        session_before["anon_marker"] = "1"
+        session_before.save()
+        key_before = self.client.session.session_key
+        self.client.post(reverse("kura:login"), {"email": user.email, "password": password})
+        key_after = self.client.session.session_key
+        self.assertIsNotNone(key_before)
+        self.assertIsNotNone(key_after)
+        self.assertNotEqual(key_before, key_after)

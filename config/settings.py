@@ -340,10 +340,11 @@ TRUST_PROXY_IP_HEADER = os.environ.get("TRUST_PROXY_IP_HEADER", "False").lower()
 SESSION_COOKIE_SECURE = not DEBUG
 SESSION_COOKIE_HTTPONLY = True
 SESSION_COOKIE_SAMESITE = "Lax"
-SESSION_COOKIE_AGE = 1800  # 30-minute idle session timeout (cookie lifetime)
+SESSION_COOKIE_AGE = 1800  # 30-minute sliding idle session timeout (refreshed on each request)
+SESSION_SAVE_EVERY_REQUEST = True
 # Hard cap on total session length regardless of activity (ACL-07):
-# SESSION_COOKIE_AGE bounds cookie age/idle window, while SESSION_ABSOLUTE_HOURS
-# enforces an absolute deadline in UserSession.expires_at.
+# SESSION_COOKIE_AGE + SESSION_SAVE_EVERY_REQUEST enforces sliding idle expiry,
+# while SESSION_ABSOLUTE_HOURS enforces an absolute deadline in UserSession.expires_at.
 SESSION_ABSOLUTE_HOURS = 12
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True
 
