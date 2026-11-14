@@ -313,9 +313,9 @@ LOGIN_URL = "kura:login"
 LOGIN_REDIRECT_URL = "kura:home"
 
 
-# Brute-force protection via django-axes
-AXES_FAILURE_LIMIT = 5
-AXES_COOLOFF_TIME = 1
+# Brute-force protection via django-axes (callables read the live SecurityPolicy row)
+AXES_FAILURE_LIMIT = "kura.views.get_axes_failure_limit"
+AXES_COOLOFF_TIME = "kura.views.get_axes_cooloff_timedelta"
 AXES_RESET_ON_SUCCESS = True
 AXES_LOCKOUT_PARAMETERS = ["ip_address", ["username", "ip_address"]]
 AXES_LOCKOUT_CALLABLE = "kura.views.axes_lockout_callable"

@@ -81,10 +81,12 @@ from .forms import (
     PasswordChangeForm,
     PasswordResetConfirmForm,
     PasswordResetRequestForm,
+    PrivacyErasureForm,
     ScheduleFilterForm,
     ScheduleForm,
     ScannedPaperStaffUploadForm,
     SectionItemForm,
+    SecurityPolicyForm,
     StaffCreateForm,
     DepartmentForm,
     BuildingForm,
@@ -145,12 +147,14 @@ from .models import (
     Schedule,
     SectionItem,
     SectionItemFile,
+    SecurityPolicy,
     StaffProfile,
     StoredFile,
     StudentProfile,
     User,
     UserRole,
     UserSession,
+    get_security_policy,
 )
 from .permissions import (
     FRESH_SECOND_FACTOR_SECONDS,
@@ -234,6 +238,16 @@ DASHBOARD_CARDS_BY_ROLE = {
 }
 
 
+def get_axes_failure_limit(request=None, credentials=None):
+    """Return the live failed-login limit from SecurityPolicy for django-axes (O6)."""
+    return get_security_policy()["axes_failure_limit"]
+
+
+def get_axes_cooloff_timedelta(request=None):
+    """Return the live lockout cool-off duration from SecurityPolicy for django-axes (O6)."""
+    return timezone.timedelta(hours=get_security_policy()["axes_cooloff_hours"])
+
+
 def axes_lockout_callable(request, credentials=None):
     """
     Called by django-axes when an IP or account exceeds failure limits.
@@ -241,11 +255,8 @@ def axes_lockout_callable(request, credentials=None):
     """
     # Axes returns this lockout response directly, so log it here instead of relying on handler403.
     log_security_event(request, "access.denied", {"reason": "axes_lockout"}, logging.WARNING)
-    cooloff = getattr(settings, "AXES_COOLOFF_TIME", 1)
-    if hasattr(cooloff, "total_seconds"):
-        retry_after = int(cooloff.total_seconds())
-    else:
-        retry_after = int(float(cooloff) * 3600)
+    cooloff_hours = get_security_policy()["axes_cooloff_hours"]
+    retry_after = int(cooloff_hours * 3600)
     response = HttpResponse(
         "Account temporarily locked due to repeated failures. Please try again later.",
         status=429,
@@ -510,8 +521,8 @@ def create_user_session(request, user, method="password"):
     # Read the client browser user agent string.
     user_agent = request.META.get("HTTP_USER_AGENT", "")[:255]
 
-    # Set absolute session expiry from SESSION_ABSOLUTE_HOURS (ACL-07).
-    expires_at = timezone.now() + timezone.timedelta(hours=settings.SESSION_ABSOLUTE_HOURS)
+    # Set absolute session expiry from active SecurityPolicy (ACL-07, O6).
+    expires_at = timezone.now() + timezone.timedelta(hours=get_security_policy()["session_absolute_hours"])
 
     # Save session record to the database.
     user_session = UserSession.objects.create(
@@ -1475,10 +1486,11 @@ def password_change_view(request):
         with transaction.atomic():
             if request.user.password:
                 PasswordHistory.objects.create(user=request.user, password_hash=request.user.password)
+                history_limit = get_security_policy()["password_history_count"]
                 keep_ids = list(
                     PasswordHistory.objects.filter(user=request.user)
                     .order_by("-created_at", "-id")
-                    .values_list("id", flat=True)[: settings.PASSWORD_HISTORY_COUNT]
+                    .values_list("id", flat=True)[:history_limit]
                 )
                 PasswordHistory.objects.filter(user=request.user).exclude(id__in=keep_ids).delete()
 
@@ -1711,10 +1723,11 @@ def password_reset_confirm_view(request, token):
             # Record the previous password hash and keep only the newest PASSWORD_HISTORY_COUNT rows (AUTH-06).
             if user.password:
                 PasswordHistory.objects.create(user=user, password_hash=user.password)
+                history_limit = get_security_policy()["password_history_count"]
                 keep_ids = list(
                     PasswordHistory.objects.filter(user=user)
                     .order_by("-created_at", "-id")
-                    .values_list("id", flat=True)[: settings.PASSWORD_HISTORY_COUNT]
+                    .values_list("id", flat=True)[:history_limit]
                 )
                 PasswordHistory.objects.filter(user=user).exclude(id__in=keep_ids).delete()
 
@@ -1981,6 +1994,257 @@ def user_session_revoke_view(request, session_id):
 
     messages.success(request, "Session ended.")
     return redirect("kura:user_sessions")
+
+
+@login_not_required
+def privacy_notice_view(request):
+    """
+    Displays Kura's GDPR / PDPL / FERPA privacy notice and data-subject rights summary.
+    Who can use it: Anyone (publicly accessible without signing in).
+    Security: Read-only GET page; contains no user-specific or sensitive data.
+    """
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+    return render(request, "kura/accounts/privacy_notice.html")
+
+
+@login_required
+def privacy_dashboard_view(request):
+    """
+    Shows the signed-in user's personal data summary and GDPR self-service controls.
+    Who can use it: Any authenticated user, for their own account only.
+    Security: Strictly scoped to request.user; shows no secrets or unreleased grades.
+    """
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+    user = request.user
+    erasure_form = PrivacyErasureForm()
+    counts = {
+        "sessions": UserSession.objects.filter(user=user).count(),
+        "enrollments": Enrollment.objects.filter(student=user).count(),
+        "released_grades": (
+            Grade.objects.filter(student=user, status=GradeStatus.RELEASED).count()
+            if can_access_learning_records(user)
+            else 0
+        ),
+        "attempts": (
+            AssessmentAttempt.objects.filter(student=user).count() if can_access_learning_records(user) else 0
+        ),
+        "attendance": AttendanceRecord.objects.filter(student=user).count(),
+    }
+    return render(
+        request,
+        "kura/accounts/privacy_dashboard.html",
+        {"erasure_form": erasure_form, "counts": counts},
+    )
+
+
+@login_required
+def privacy_export_view(request):
+    """
+    Exports the signed-in user's own personal and released academic data as JSON.
+    Who can use it: Any authenticated user (own data only).
+    Security: Strictly scoped to request.user; excludes password hashes, MFA secrets,
+    session token hashes, exam answer keys, and unreleased draft/finalized grades.
+    """
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+
+    user = request.user
+    student_profile = StudentProfile.objects.filter(user=user).select_related("department").first()
+    staff_profile = StaffProfile.objects.filter(user=user).select_related("department").first()
+
+    payload = {
+        "exported_at": timezone.now().isoformat(),
+        "account": {
+            "id": str(user.id),
+            "email": user.email,
+            "first_name": user.first_name,
+            "last_name": user.last_name,
+            "mfa_enabled": user.mfa_enabled,
+            "is_processing_restricted": user.is_processing_restricted,
+            "erasure_requested_at": user.erasure_requested_at.isoformat() if user.erasure_requested_at else None,
+            "created_at": user.created_at.isoformat(),
+            "roles": list(UserRole.objects.filter(user=user).values_list("role__name", flat=True)),
+        },
+        "student_profile": (
+            {
+                "department": student_profile.department.code,
+                "current_level": student_profile.current_level,
+                "matriculation_year": student_profile.matriculation_year,
+            }
+            if student_profile
+            else None
+        ),
+        "staff_profile": (
+            {
+                "department": staff_profile.department.code if staff_profile.department else None,
+                "staff_title": staff_profile.staff_title,
+                "office_location": staff_profile.office_location,
+            }
+            if staff_profile
+            else None
+        ),
+        "enrollments": [
+            {
+                "course_code": enr.course.code,
+                "course_title": enr.course.title,
+                "status": enr.status,
+                "enrolled_at": enr.enrolled_at.isoformat(),
+            }
+            for enr in Enrollment.objects.filter(student=user).select_related("course")
+        ],
+        "attendance_records": [
+            {
+                "course_code": rec.session.module.course.code,
+                "session_title": rec.session.title,
+                "status": rec.status,
+                "method": rec.method,
+                "verified_at": rec.verified_at.isoformat(),
+            }
+            for rec in AttendanceRecord.objects.filter(student=user).select_related("session__module__course")
+        ],
+        "sessions": [
+            {
+                "id": str(sess.id),
+                "ip_address": sess.ip_address,
+                "user_agent": sess.user_agent,
+                "created_at": sess.created_at.isoformat(),
+                "expires_at": sess.expires_at.isoformat(),
+                "revoked_at": sess.revoked_at.isoformat() if sess.revoked_at else None,
+            }
+            for sess in UserSession.objects.filter(user=user).order_by("-created_at")
+        ],
+    }
+
+    if can_access_learning_records(user):
+        payload["released_grades"] = [
+            {
+                "assessment": g.assessment.title,
+                "score": str(g.score),
+                "feedback": g.feedback,
+                "released_at": g.released_at.isoformat() if g.released_at else None,
+            }
+            for g in Grade.objects.filter(student=user, status=GradeStatus.RELEASED).select_related("assessment")
+        ]
+        payload["released_course_results"] = [
+            {
+                "course_code": r.course.code,
+                "final_score": str(r.final_score),
+                "released_at": r.released_at.isoformat() if r.released_at else None,
+            }
+            for r in CourseResult.objects.filter(student=user, status=GradeStatus.RELEASED).select_related("course")
+        ]
+        payload["assessment_attempts"] = [
+            {
+                "assessment": att.assessment.title,
+                "attempt_no": att.attempt_no,
+                "status": att.status,
+                "started_at": att.started_at.isoformat(),
+                "submitted_at": att.submitted_at.isoformat() if att.submitted_at else None,
+                "submission_hash": att.submission_hash,
+            }
+            for att in AssessmentAttempt.objects.filter(student=user).select_related("assessment")
+        ]
+        payload["grade_appeals"] = [
+            {
+                "assessment": ap.grade.assessment.title,
+                "status": ap.status,
+                "reason": ap.reason,
+                "response": ap.response,
+                "created_at": ap.created_at.isoformat(),
+            }
+            for ap in GradeAppeal.objects.filter(grade__student=user).select_related("grade__assessment")
+        ]
+
+    log_security_event(request, "privacy.data_exported", {})
+    response = HttpResponse(json.dumps(payload, indent=2), content_type="application/json")
+    response["Content-Disposition"] = 'attachment; filename="kura-my-data.json"'
+    response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
+    response["X-Content-Type-Options"] = "nosniff"
+    return response
+
+
+@login_required
+def privacy_restrict_view(request):
+    """
+    Toggles the GDPR Art. 18 processing restriction flag on the signed-in user.
+    Who can use it: Any authenticated user, for their own account only.
+    Security: POST only with CSRF protection; logs privacy.restriction_updated.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+    user = request.user
+    user.is_processing_restricted = not user.is_processing_restricted
+    user.save(update_fields=["is_processing_restricted"])
+    log_security_event(
+        request,
+        "privacy.restriction_updated",
+        {"restricted": user.is_processing_restricted},
+    )
+    if user.is_processing_restricted:
+        messages.success(request, "Optional processing (such as reminder emails) is now restricted for your account.")
+    else:
+        messages.success(request, "Processing restriction lifted for your account.")
+    return redirect("kura:privacy_dashboard")
+
+
+@login_required
+def privacy_erasure_view(request):
+    """
+    Processes a GDPR Art. 17 erasure request with academic and legal retention exceptions.
+    Who can use it: Any authenticated user, for their own account only.
+    Security: POST only with CSRF and explicit confirmation; clears non-exempt auxiliary
+    session/reset/directory metadata while retaining academic records and audit trails.
+    """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    form = PrivacyErasureForm(request.POST)
+    if not form.is_valid():
+        log_invalid_form(request, form)
+        messages.error(request, "Confirm the erasure notice before submitting your request.")
+        return redirect("kura:privacy_dashboard")
+
+    user = request.user
+    now = timezone.now()
+    current_session_id = request.session.get("user_session_id")
+    with transaction.atomic():
+        # Clear optional non-exempt metadata: other session history, pending reset tokens, optional office room.
+        other_sessions = UserSession.objects.filter(user=user)
+        if current_session_id:
+            other_sessions = other_sessions.exclude(id=current_session_id)
+        other_sessions.update(ip_address=None, user_agent="", revoked_at=now)
+        PasswordResetToken.objects.filter(user=user, used_at__isnull=True).delete()
+        StaffProfile.objects.filter(user=user).update(office_location="")
+
+        user.is_processing_restricted = True
+        user.erasure_requested_at = now
+        user.save(update_fields=["is_processing_restricted", "erasure_requested_at"])
+
+    has_academic_records = (
+        Enrollment.objects.filter(student=user).exists()
+        or AttendanceRecord.objects.filter(student=user).exists()
+        or (
+            can_access_learning_records(user)
+            and (
+                Grade.objects.filter(student=user).exists()
+                or AssessmentAttempt.objects.filter(student=user).exists()
+                or CourseResult.objects.filter(student=user).exists()
+            )
+        )
+    )
+    log_security_event(
+        request,
+        "privacy.erasure_requested",
+        {"retained_academic_records": has_academic_records},
+        logging.WARNING,
+    )
+    messages.success(
+        request,
+        "Erasure request recorded: auxiliary session metadata and optional details were cleared, and optional processing is restricted. Academic, grading, and audit records remain retained under institutional and statutory obligations.",
+    )
+    return redirect("kura:privacy_dashboard")
 
 
 @login_required
@@ -2340,43 +2604,70 @@ def staff_create_view(request):
 @login_required
 def security_policy_view(request):
     """
-    Shows the security rules Kura enforces right now, read from the settings.
+    Shows and lets Administrators update the configurable SecurityPolicy rules.
     Who can use it: Admins only.
-    Security: read-only (GET only). It shows rule values such as lengths and
-    time limits, never keys, passwords or other secrets. Changing a rule means
-    changing config/settings.py and redeploying, which keeps every change in
-    version control.
+    Security: Enforces Admin role, safe bounded form validation, CSRF protection,
+    and a fresh second factor (step-up MFA) before saving changes; logs
+    admin.security_policy.changed with old and new numeric bounds (no secrets).
     """
-    # Only the Admin role sets and reviews system security policy.
     if not has_role(request.user, "Admin"):
         raise PermissionDenied
-    if request.method != "GET":
-        return HttpResponseNotAllowed(["GET"])
 
-    # The minimum length lives in the options of Django's length validator.
-    minimum_password_length = None
-    for validator in settings.AUTH_PASSWORD_VALIDATORS:
-        if validator["NAME"].endswith("MinimumLengthValidator"):
-            minimum_password_length = validator.get("OPTIONS", {}).get("min_length")
+    current = get_security_policy()
+    policy_instance = SecurityPolicy.objects.filter(pk=1).first() or SecurityPolicy(id=1, **current)
 
-    # Each entry is (area, rule, value) so the template can group the rows.
+    if request.method == "POST":
+        if not has_fresh_second_factor(request):
+            return redirect_to_reauth(request, reverse("kura:security_policy"))
+
+        form = SecurityPolicyForm(request.POST, instance=policy_instance)
+        if form.is_valid():
+            old_values = dict(current)
+            with transaction.atomic():
+                saved_policy = form.save(commit=False)
+                saved_policy.id = 1
+                saved_policy.updated_by = request.user
+                saved_policy.save()
+            changes = {}
+            for field in form.fields:
+                new_val = getattr(saved_policy, field)
+                if old_values.get(field) != new_val:
+                    changes[field] = {"old": old_values.get(field), "new": new_val}
+            if changes:
+                log_security_event(
+                    request,
+                    "admin.security_policy.changed",
+                    {"changes": changes},
+                    logging.WARNING,
+                )
+            messages.success(request, "Security policy updated.")
+            return redirect("kura:security_policy")
+        log_invalid_form(request, form)
+    else:
+        form = SecurityPolicyForm(instance=policy_instance)
+
     policies = [
-        ("Passwords", "Minimum length", f"{minimum_password_length} characters"),
+        ("Passwords", "Minimum length", f"{current['min_password_length']} characters"),
         ("Passwords", "Checked against known data breaches", "Yes (HaveIBeenPwned)"),
-        ("Passwords", "Recent passwords that cannot be reused", settings.PASSWORD_HISTORY_COUNT),
+        ("Passwords", "Recent passwords that cannot be reused", current["password_history_count"]),
         ("Passwords", "Hashing algorithm", "Argon2id"),
-        ("Sign-in", "Failed attempts before a temporary lockout", settings.AXES_FAILURE_LIMIT),
-        ("Sign-in", "Temporary lockout length", f"{settings.AXES_COOLOFF_TIME} hour(s)"),
+        ("Sign-in", "Failed attempts before a temporary lockout", current["axes_failure_limit"]),
+        ("Sign-in", "Temporary lockout length", f"{current['axes_cooloff_hours']} hour(s)"),
         ("Sign-in", "Second factor", "Required for every account (authenticator app)"),
         ("Sign-in", "Fresh second factor for sensitive actions", f"{FRESH_SECOND_FACTOR_SECONDS // 60} minutes"),
-        ("Sessions", "Idle timeout", f"{settings.SESSION_COOKIE_AGE // 60} minutes"),
-        ("Sessions", "Absolute limit", f"{settings.SESSION_ABSOLUTE_HOURS} hours"),
+        ("Sessions", "Idle timeout", f"{current['session_idle_minutes']} minutes"),
+        ("Sessions", "Absolute limit", f"{current['session_absolute_hours']} hours"),
         ("Sessions", "Ends when the browser closes", "Yes" if settings.SESSION_EXPIRE_AT_BROWSER_CLOSE else "No"),
         ("Uploads", "Maximum file size", f"{MAX_UPLOAD_BYTES // (1024 * 1024)} MiB"),
         ("Uploads", "Allowed file types", f"{len(ALLOWED_UPLOAD_MIME_TYPES)} types, checked by content"),
         ("Uploads", "Virus scan required", "Yes" if settings.CLAMAV_REQUIRED else "No (development only)"),
     ]
-    return render(request, "kura/accounts/security_policy.html", {"policies": policies})
+    return render(
+        request,
+        "kura/accounts/security_policy.html",
+        {"policies": policies, "form": form},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required

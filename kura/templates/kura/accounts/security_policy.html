@@ -16,9 +16,29 @@
         <p class="k-eyebrow">Administration</p>
         <h1 class="text-2xl font-bold">Security policy</h1>
         <p class="text-sm k-muted max-w-prose">
-            Active security rules read from server configuration. Changes go through code review and redeployment.
+            Active security rules in force. Configurable thresholds below apply immediately and require a fresh second-factor check to save.
         </p>
     </header>
+
+    <section class="k-card space-y-4">
+        <div class="border-b border-base-300 pb-2">
+            <h2 class="text-base font-semibold">Edit configurable thresholds</h2>
+            <p class="text-xs k-muted mt-0.5">Every change is bounded to safe minimums and logged with old and new values.</p>
+        </div>
+        <form method="post" action="{% url 'kura:security_policy' %}" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            {% csrf_token %}
+            {% include "kura/_form_errors.html" %}
+            {% include "kura/_field.html" with field=form.min_password_length %}
+            {% include "kura/_field.html" with field=form.password_history_count %}
+            {% include "kura/_field.html" with field=form.axes_failure_limit %}
+            {% include "kura/_field.html" with field=form.axes_cooloff_hours %}
+            {% include "kura/_field.html" with field=form.session_idle_minutes %}
+            {% include "kura/_field.html" with field=form.session_absolute_hours %}
+            <div class="md:col-span-2 pt-2 flex justify-end">
+                <button type="submit" class="btn btn-primary btn-sm">Save policy</button>
+            </div>
+        </form>
+    </section>
 
     <div class="k-card p-0 overflow-x-auto">
         <table class="k-table">

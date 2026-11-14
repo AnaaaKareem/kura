@@ -22,7 +22,12 @@ urlpatterns = [
     # Passkey (WebAuthn / FIDO2) management routes
     path("passkeys/", views.passkey_manage_view, name="passkey_manage"),
     path("passkeys/<int:key_id>/delete/", views.passkey_delete_view, name="passkey_delete"),
-    # User sessions management
+    # User sessions & privacy management
+    path("privacy/", views.privacy_notice_view, name="privacy_notice"),
+    path("account/privacy/", views.privacy_dashboard_view, name="privacy_dashboard"),
+    path("account/privacy/export/", views.privacy_export_view, name="privacy_export"),
+    path("account/privacy/restrict/", views.privacy_restrict_view, name="privacy_restrict"),
+    path("account/privacy/erasure/", views.privacy_erasure_view, name="privacy_erasure"),
     path("account/sessions/", views.user_sessions_view, name="user_sessions"),
     path("account/sessions/<uuid:session_id>/revoke/", views.user_session_revoke_view, name="user_session_revoke"),
     path("admin/sessions/", views.admin_sessions_view, name="admin_sessions"),
