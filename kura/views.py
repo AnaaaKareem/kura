@@ -29,6 +29,7 @@ from django.http import HttpResponse, HttpResponseForbidden, HttpResponseNotAllo
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template import loader
 from django.urls import reverse
+from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 from django.utils.crypto import salted_hmac
 from django.utils.http import url_has_allowed_host_and_scheme
@@ -233,11 +234,21 @@ DASHBOARD_CARDS_BY_ROLE = {
 def axes_lockout_callable(request, credentials=None):
     """
     Called by django-axes when an IP or account exceeds failure limits.
-    Security: Returns a 403 response with generic messaging to prevent enumeration.
+    Security: Returns a 429 response with Retry-After and generic messaging to prevent enumeration.
     """
-    # Axes returns this 403 directly, so log it here instead of relying on handler403.
+    # Axes returns this lockout response directly, so log it here instead of relying on handler403.
     log_security_event(request, "access.denied", {"reason": "axes_lockout"}, logging.WARNING)
-    return HttpResponseForbidden("Account temporarily locked due to repeated failures. Please try again later.")
+    cooloff = getattr(settings, "AXES_COOLOFF_TIME", 1)
+    if hasattr(cooloff, "total_seconds"):
+        retry_after = int(cooloff.total_seconds())
+    else:
+        retry_after = int(float(cooloff) * 3600)
+    response = HttpResponse(
+        "Account temporarily locked due to repeated failures. Please try again later.",
+        status=429,
+    )
+    response["Retry-After"] = str(max(1, retry_after))
+    return response
 
 
 def permission_denied_view(request, exception):
@@ -511,7 +522,7 @@ def login_view(request):
                     logging.WARNING,
                 )
                 messages.error(request, "Invalid email or password.")
-                return render(request, "kura/accounts/login.html", {"form": form})
+                return render(request, "kura/accounts/login.html", {"form": form}, status=400)
 
             # Catch an account status change that happened just after
             # authentication. Same generic message as above.
@@ -524,7 +535,7 @@ def login_view(request):
                     logging.WARNING,
                 )
                 messages.error(request, "Invalid email or password.")
-                return render(request, "kura/accounts/login.html", {"form": form})
+                return render(request, "kura/accounts/login.html", {"form": form}, status=400)
 
             log_security_event(request, "auth.login.password_ok", {"user_id": user.id})
 
@@ -548,7 +559,12 @@ def login_view(request):
 
         log_invalid_form(request, form)
 
-    return render(request, "kura/accounts/login.html", {"form": form})
+    return render(
+        request,
+        "kura/accounts/login.html",
+        {"form": form},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 def mfa_verify_view(request):
@@ -605,7 +621,12 @@ def mfa_verify_view(request):
                 logging.WARNING,
             )
             messages.error(request, "Invalid security code.")
-            return render(request, "kura/accounts/mfa_verify.html", {"form": form, "has_passkeys": has_passkeys})
+            return render(
+                request,
+                "kura/accounts/mfa_verify.html",
+                {"form": form, "has_passkeys": has_passkeys},
+                status=400,
+            )
 
         # Complete login and clean up pre-mfa session marker.
         log_security_event(request, "auth.mfa.ok", {"method": verification_method})
@@ -625,7 +646,12 @@ def mfa_verify_view(request):
     if request.method == "POST":
         log_invalid_form(request, form)
 
-    return render(request, "kura/accounts/mfa_verify.html", {"form": form, "has_passkeys": has_passkeys})
+    return render(
+        request,
+        "kura/accounts/mfa_verify.html",
+        {"form": form, "has_passkeys": has_passkeys},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 def mfa_login_callback(request, username):
@@ -706,7 +732,12 @@ def mfa_reauth_view(request):
         log_security_event(request, "auth.mfa.reauth_failed", {}, level=logging.WARNING)
         messages.error(request, "Invalid security code. Please try again.")
 
-    return render(request, "kura/accounts/mfa_reauth.html", {"form": form, "next_url": next_url})
+    return render(
+        request,
+        "kura/accounts/mfa_reauth.html",
+        {"form": form, "next_url": next_url},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -726,6 +757,30 @@ def passkey_manage_view(request):
     return render(request, "kura/accounts/passkeys.html", {"keys": keys})
 
 
+def normalize_fido2_response(response, generic_error_message):
+    """Normalize django-mfa2 JSON error status codes and strip raw exception text."""
+    if response is None:
+        return JsonResponse({"status": "ERR", "message": generic_error_message}, status=500)
+
+    content_type = response.get("Content-Type", "")
+    if "application/json" not in content_type.lower():
+        return response
+
+    try:
+        result = json.loads(response.content)
+    except (ValueError, TypeError):
+        return JsonResponse({"status": "ERR", "message": generic_error_message}, status=500)
+
+    if not isinstance(result, dict):
+        return response
+
+    if result.get("status") == "ERR":
+        status_code = 400 if response.status_code in (200, 400) else 500
+        return JsonResponse({"status": "ERR", "message": generic_error_message}, status=status_code)
+
+    return response
+
+
 @login_required
 def passkey_register_complete_view(request):
     """
@@ -733,9 +788,8 @@ def passkey_register_complete_view(request):
     Who can use it: Any authenticated user adding a passkey to their own account.
     Security: all the real checks (the FIDO2 challenge kept in the session and
     the authenticator's signature) are done by django-mfa2's own
-    FIDO2.complete_reg, which this view simply calls. The library has no hook
-    for "a key was added", so this wrapper sits on the same URL to add the
-    auth.passkey.added audit event when the library reports success.
+    FIDO2.complete_reg, which this view simply calls. Returns 400/500 on ERR
+    without leaking raw exception details.
     """
     from mfa import FIDO2
     from mfa.models import User_Keys
@@ -745,20 +799,36 @@ def passkey_register_complete_view(request):
     if not has_fresh_second_factor(request):
         return JsonResponse({"status": "ERR", "message": "Confirm your identity first."}, status=403)
 
-    # Let django-mfa2 verify and save the new key exactly as before.
+    # Let django-mfa2 verify and save the new key, then normalize status codes and errors.
     response = FIDO2.complete_reg(request)
+    normalized = normalize_fido2_response(response, "Passkey registration failed. Please try again.")
 
-    # The library answers with JSON: "OK" (or "RECOVERY") means the key was saved.
-    result = json.loads(response.content)
-    if result.get("status") in ("OK", "RECOVERY"):
-        newest_key = (
-            User_Keys.objects.filter(username=request.user.username, key_type="FIDO2").order_by("-id").first()
-        )
-        key_id = "-"
-        if newest_key:
-            key_id = newest_key.id
-        log_security_event(request, "auth.passkey.added", {"key_id": key_id})
-    return response
+    if "application/json" in normalized.get("Content-Type", "").lower():
+        try:
+            result = json.loads(normalized.content)
+        except (ValueError, TypeError):
+            result = {}
+        if isinstance(result, dict) and result.get("status") in ("OK", "RECOVERY"):
+            newest_key = (
+                User_Keys.objects.filter(username=request.user.username, key_type="FIDO2").order_by("-id").first()
+            )
+            key_id = newest_key.id if newest_key else "-"
+            log_security_event(request, "auth.passkey.added", {"key_id": key_id})
+    return normalized
+
+
+@csrf_exempt
+def passkey_auth_complete_view(request):
+    """
+    Completes FIDO2 / WebAuthn passkey authentication through django-mfa2.
+    Who can use it: Users completing step 2 passkey login.
+    Security: Kept csrf_exempt to match django-mfa2's JS; normalizes None/ERR
+    responses to 400 or 500 JSON without exposing exception text.
+    """
+    from mfa import FIDO2
+
+    response = FIDO2.authenticate_complete(request)
+    return normalize_fido2_response(response, "Sign-in failed. Please start again.")
 
 
 @login_required
@@ -1375,7 +1445,12 @@ def password_change_view(request):
     if request.method == "POST" and "old_password" in form.errors:
         log_security_event(request, "auth.password_change.old_password_failed", {}, logging.WARNING)
 
-    return render(request, "kura/accounts/password_change.html", {"form": form})
+    return render(
+        request,
+        "kura/accounts/password_change.html",
+        {"form": form},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 def verify_second_factor(user, code):
@@ -1471,7 +1546,12 @@ def password_reset_request_view(request):
     if request.method == "POST":
         log_invalid_form(request, form)
 
-    return render(request, "kura/accounts/password_reset_request.html", {"form": form})
+    return render(
+        request,
+        "kura/accounts/password_reset_request.html",
+        {"form": form},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 def password_reset_confirm_view(request, token):
@@ -1566,7 +1646,12 @@ def password_reset_confirm_view(request, token):
         log_invalid_form(request, form)
 
     context = {"form": form, "needs_code": reset_record.user.mfa_enabled}
-    return render(request, "kura/accounts/password_reset_confirm.html", context)
+    return render(
+        request,
+        "kura/accounts/password_reset_confirm.html",
+        context,
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -1603,6 +1688,7 @@ def mfa_setup_view(request):
                 "form": step_up_form,
                 "needs_reauth": True,
             },
+            status=400 if request.method == "POST" else 200,
         )
 
     form = MFAVerifyForm(request.POST or None)
@@ -1696,6 +1782,7 @@ def mfa_setup_view(request):
             "qr_code_url": qr_code_data_uri,
             "manual_key": manual_key,
         },
+        status=400 if request.method == "POST" else 200,
     )
 
 
@@ -2132,7 +2219,12 @@ def staff_create_view(request):
         log_invalid_form(request, form)
 
     rooms = list(Room.objects.order_by("building__name", "name").values("id", "building_id", "name"))
-    return render(request, "kura/accounts/staff_create.html", {"form": form, "office_rooms": rooms})
+    return render(
+        request,
+        "kura/accounts/staff_create.html",
+        {"form": form, "office_rooms": rooms},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -2205,7 +2297,7 @@ def staff_settings_view(request):
         "departments": Department.objects.order_by("name"),
         "buildings": Building.objects.order_by("name"),
         "rooms": Room.objects.select_related("building").order_by("building__name", "name"),
-    })
+    }, status=400 if request.method == "POST" else 200)
 
 
 def safe_admin_return_url(request):
@@ -2471,7 +2563,12 @@ def student_create_view(request):
     if request.method == "POST":
         log_invalid_form(request, form)
 
-    return render(request, "kura/accounts/student_create.html", {"form": form})
+    return render(
+        request,
+        "kura/accounts/student_create.html",
+        {"form": form},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -2577,7 +2674,9 @@ def enrollment_search_view(request):
         if not cache.add(lock, 1, timeout=120):
             # Log only the kind of limit; do not include the search term.
             log_security_event(request, "ratelimit.hit", {"bucket": "enrollment_search"}, logging.WARNING)
-            return HttpResponse("Too many searches. Please try again later.", status=429)
+            response = HttpResponse("Too many searches. Please try again later.", status=429)
+            response["Retry-After"] = "60"
+            return response
         try:
             count = cache.get(key, 0) + 1
             cache.set(key, count, timeout=120)
@@ -2589,7 +2688,9 @@ def enrollment_search_view(request):
         if count > 60:
             # Keep the query out of logs because it may contain personal information.
             log_security_event(request, "ratelimit.hit", {"bucket": "enrollment_search"}, logging.WARNING)
-            return HttpResponse("Too many searches. Please try again later.", status=429)
+            response = HttpResponse("Too many searches. Please try again later.", status=429)
+            response["Retry-After"] = "60"
+            return response
     query = form.cleaned_data["q"]
     kind = form.cleaned_data["kind"]
     results = []
@@ -2678,7 +2779,7 @@ def enrollment_create_view(request):
         existing = Enrollment.objects.filter(course=course, student=student).first()
         if existing and existing.status == EnrollmentStatus.ACTIVE:
             messages.error(request, "This student is already actively enrolled in this course.")
-            return render(request, "kura/accounts/enrollment_create.html", {"form": form})
+            return render(request, "kura/accounts/enrollment_create.html", {"form": form}, status=400)
 
         if existing:
             # Re-activate previously dropped enrollment.
@@ -2709,7 +2810,12 @@ def enrollment_create_view(request):
     if request.method == "POST":
         log_invalid_form(request, form)
 
-    return render(request, "kura/accounts/enrollment_create.html", {"form": form})
+    return render(
+        request,
+        "kura/accounts/enrollment_create.html",
+        {"form": form},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -2846,7 +2952,12 @@ def admin_course_create_view(request):
         log_security_event(request, "admin.course.created", {"course_id": course.id})
         messages.success(request, "Course draft created.")
         return redirect("kura:course_detail", course_id=course.id)
-    return render(request, "kura/courses/admin_course_form.html", {"form": form, "editing": False})
+    return render(
+        request,
+        "kura/courses/admin_course_form.html",
+        {"form": form, "editing": False},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -2868,7 +2979,12 @@ def admin_course_edit_view(request, course_id):
         log_security_event(request, "admin.course.edited", {"course_id": course.id})
         messages.success(request, "Course updated.")
         return redirect("kura:course_detail", course_id=course.id)
-    return render(request, "kura/courses/admin_course_form.html", {"form": form, "editing": True, "course": course})
+    return render(
+        request,
+        "kura/courses/admin_course_form.html",
+        {"form": form, "editing": True, "course": course},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -2903,7 +3019,12 @@ def course_create_view(request):
         messages.success(request, f"Course {form.cleaned_data['code']} created as draft.")
         return redirect("kura:course_list")
 
-    return render(request, "kura/courses/course_create.html", {"form": form, "department": department})
+    return render(
+        request,
+        "kura/courses/course_create.html",
+        {"form": form, "department": department},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -3142,7 +3263,12 @@ def course_staff_assign_view(request, course_id):
         messages.success(request, f"Assigned {user.email} as {staff_role} in {course.code}.")
         return redirect("kura:course_detail", course_id=course.id)
 
-    return render(request, "kura/courses/staff_assign.html", {"form": form, "course": course})
+    return render(
+        request,
+        "kura/courses/staff_assign.html",
+        {"form": form, "course": course},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -3182,7 +3308,12 @@ def course_ta_assign_view(request, course_id):
         messages.success(request, f"Assigned {user.email} as Teaching Assistant.")
         return redirect("kura:course_detail", course_id=course.id)
 
-    return render(request, "kura/courses/ta_assign.html", {"form": form, "course": course})
+    return render(
+        request,
+        "kura/courses/ta_assign.html",
+        {"form": form, "course": course},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -3229,7 +3360,12 @@ def module_create_view(request, course_id):
         messages.success(request, f"Module '{title}' created successfully.")
         return redirect("kura:course_detail", course_id=course.id)
 
-    return render(request, "kura/courses/module_create.html", {"form": form, "course": course})
+    return render(
+        request,
+        "kura/courses/module_create.html",
+        {"form": form, "course": course},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -3320,7 +3456,12 @@ def module_edit_view(request, module_id):
         log_security_event(request, "course.module.edited", {"module_id": module.id, "course_id": course.id})
         messages.success(request, "Module updated.")
         return redirect("kura:course_detail", course_id=course.id)
-    return render(request, "kura/courses/module_create.html", {"form": form, "course": course, "editing": True})
+    return render(
+        request,
+        "kura/courses/module_create.html",
+        {"form": form, "course": course, "editing": True},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -3356,7 +3497,10 @@ def section_edit_view(request, section_id):
         messages.success(request, "Section updated.")
         return redirect("kura:course_detail", course_id=course.id)
     return render(
-        request, "kura/courses/section_create.html", {"form": form, "module": section.module, "editing": True}
+        request,
+        "kura/courses/section_create.html",
+        {"form": form, "module": section.module, "editing": True},
+        status=400 if request.method == "POST" else 200,
     )
 
 
@@ -3396,7 +3540,12 @@ def section_create_view(request, module_id):
         messages.success(request, f"Section '{form.cleaned_data['title']}' created.")
         return redirect("kura:course_detail", course_id=course.id)
 
-    return render(request, "kura/courses/section_create.html", {"form": form, "module": module})
+    return render(
+        request,
+        "kura/courses/section_create.html",
+        {"form": form, "module": module},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -3521,7 +3670,12 @@ def item_edit_view(request, item_id):
             )
             messages.success(request, "Item updated.")
             return redirect("kura:course_detail", course_id=course.id)
-    return render(request, "kura/courses/item_create.html", {"form": form, "section": section, "editing": True})
+    return render(
+        request,
+        "kura/courses/item_create.html",
+        {"form": form, "section": section, "editing": True},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -3616,7 +3770,7 @@ def item_create_view(request, section_id):
         # Show the error after leaving the rolled-back transaction.
         if upload_error:
             messages.error(request, upload_error)
-            return render(request, "kura/courses/item_create.html", {"form": form, "section": section})
+            return render(request, "kura/courses/item_create.html", {"form": form, "section": section}, status=400)
 
         log_security_event(
             request,
@@ -3626,7 +3780,12 @@ def item_create_view(request, section_id):
         messages.success(request, f"Item '{title}' created hidden. Release it when ready.")
         return redirect("kura:course_detail", course_id=course.id)
 
-    return render(request, "kura/courses/item_create.html", {"form": form, "section": section})
+    return render(
+        request,
+        "kura/courses/item_create.html",
+        {"form": form, "section": section},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -3879,7 +4038,12 @@ def schedule_create_view(request, course_id):
         messages.success(request, f"Class schedule created for {course.code}.")
         return redirect("kura:course_detail", course_id=course.id)
 
-    return render(request, "kura/attendance/schedule_create.html", {"form": form, "course": course})
+    return render(
+        request,
+        "kura/attendance/schedule_create.html",
+        {"form": form, "course": course},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -3925,7 +4089,12 @@ def schedule_edit_view(request, schedule_id):
         )
         messages.success(request, "Schedule updated.")
         return redirect("kura:schedule_list")
-    return render(request, "kura/attendance/schedule_create.html", {"form": form, "course": course, "editing": True})
+    return render(
+        request,
+        "kura/attendance/schedule_create.html",
+        {"form": form, "course": course, "editing": True},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -3998,7 +4167,12 @@ def attendance_session_start_view(request, module_id):
         messages.success(request, f"Attendance roll started for {title}.")
         return redirect("kura:attendance_session_detail", session_id=session.id)
 
-    return render(request, "kura/attendance/session_start.html", {"form": form, "module": module})
+    return render(
+        request,
+        "kura/attendance/session_start.html",
+        {"form": form, "module": module},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -4162,7 +4336,7 @@ def student_checkin_view(request, session_id):
                     logging.WARNING,
                 )
                 messages.error(request, "Invalid attendance passcode.")
-                return render(request, "kura/attendance/checkin.html", {"form": form, "session": session})
+                return render(request, "kura/attendance/checkin.html", {"form": form, "session": session}, status=400)
 
             # Server sets check-in method: QR_CODE if scanned via query param, otherwise PASSCODE.
             method = checkin_method
@@ -4185,7 +4359,12 @@ def student_checkin_view(request, session_id):
             messages.success(request, f"Attendance verified for {session.title}!")
             return redirect("kura:attendance_history")
 
-    return render(request, "kura/attendance/checkin.html", {"form": form, "session": session})
+    return render(
+        request,
+        "kura/attendance/checkin.html",
+        {"form": form, "session": session},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -4785,6 +4964,7 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
                             "questions_locked": questions_locked,
                             "builder_unavailable": builder_unavailable,
                         },
+                        status=400,
                     )
             with transaction.atomic():
                 if assessment:
@@ -4859,6 +5039,7 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
             "questions_locked": questions_locked,
             "builder_unavailable": builder_unavailable,
         },
+        status=400 if request.method == "POST" else 200,
     )
 
 
@@ -5490,14 +5671,13 @@ def assessment_autosave_view(request, attempt_id):
         if not attempt.assessment.section.is_visible:
             raise PermissionDenied
         if attempt.status != AttemptStatus.IN_PROGRESS or timezone.now() >= attempt.expires_at:
-            # This direct 403 bypasses Django's permission-exception handler.
             log_security_event(
                 request,
                 "access.denied",
                 {"reason": "assessment_deadline_expired"},
                 logging.WARNING,
             )
-            return HttpResponseForbidden("Assessment deadline has expired.")
+            return HttpResponse("Assessment deadline has expired.", status=409)
         if lookup.cleaned_data["focus_lost"]:
             attempt.tab_focus_lost_count += 1
             attempt.save(update_fields=["tab_focus_lost_count"])
@@ -5974,7 +6154,12 @@ def course_grade_scheme_view(request, course_id):
         messages.success(request, "Grade scheme saved. Recalculate final results to apply it.")
         return redirect("kura:course_grades", course_id=course.id)
 
-    return render(request, "kura/grades/grade_scheme.html", {"form": form, "course": course})
+    return render(
+        request,
+        "kura/grades/grade_scheme.html",
+        {"form": form, "course": course},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -6091,6 +6276,7 @@ def grade_entry_view(request, attempt_id):
             "question_reviews": question_reviews,
             "attempt_files": attempt_files,
         },
+        status=400 if request.method == "POST" else 200,
     )
 
 
@@ -6216,7 +6402,7 @@ def grade_release_view(request, grade_id):
                 logging.WARNING,
             )
             messages.error(request, "Invalid MFA security token for grade release authorization.")
-            return render(request, "kura/grades/grade_release.html", {"form": form, "grade": grade})
+            return render(request, "kura/grades/grade_release.html", {"form": form, "grade": grade}, status=400)
 
         old_status = grade.status
         with transaction.atomic():
@@ -6261,7 +6447,12 @@ def grade_release_view(request, grade_id):
     if request.method == "POST":
         log_invalid_form(request, form)
 
-    return render(request, "kura/grades/grade_release.html", {"form": form, "grade": grade})
+    return render(
+        request,
+        "kura/grades/grade_release.html",
+        {"form": form, "grade": grade},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -6326,6 +6517,11 @@ def grade_appeal_create_view(request, grade_id):
     if grade.status != GradeStatus.RELEASED:
         raise PermissionDenied
 
+    # Refuse a second pending appeal for the same grade with Post/Redirect/Get.
+    if GradeAppeal.objects.filter(grade=grade, status=AppealStatus.PENDING).exists():
+        messages.warning(request, "A pending appeal already exists for this grade.")
+        return redirect("kura:student_grades")
+
     form = GradeAppealForm(request.POST or None)
 
     if request.method == "POST" and form.is_valid():
@@ -6343,7 +6539,12 @@ def grade_appeal_create_view(request, grade_id):
     if request.method == "POST":
         log_invalid_form(request, form)
 
-    return render(request, "kura/grades/appeal_create.html", {"form": form, "grade": grade})
+    return render(
+        request,
+        "kura/grades/appeal_create.html",
+        {"form": form, "grade": grade},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -6400,7 +6601,12 @@ def grade_appeal_review_view(request, appeal_id):
         messages.success(request, f"Appeal verdict recorded for {appeal.grade.student.email}.")
         return redirect("kura:course_grades", course_id=course.id)
 
-    return render(request, "kura/grades/appeal_review.html", {"form": form, "appeal": appeal})
+    return render(
+        request,
+        "kura/grades/appeal_review.html",
+        {"form": form, "appeal": appeal},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -6466,7 +6672,12 @@ def grade_change_request_create_view(request, grade_id):
     if request.method == "POST":
         log_invalid_form(request, form)
 
-    return render(request, "kura/grades/change_request_create.html", {"form": form, "grade": grade})
+    return render(
+        request,
+        "kura/grades/change_request_create.html",
+        {"form": form, "grade": grade},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required
@@ -6549,7 +6760,12 @@ def grade_change_request_review_view(request, request_id):
     if request.method == "POST":
         log_invalid_form(request, form)
 
-    return render(request, "kura/grades/change_request_review.html", {"form": form, "change_request": change_request})
+    return render(
+        request,
+        "kura/grades/change_request_review.html",
+        {"form": form, "change_request": change_request},
+        status=400 if request.method == "POST" else 200,
+    )
 
 
 @login_required

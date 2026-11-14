@@ -189,7 +189,9 @@ class RateLimitMiddleware:
                 # Record only the rate-limit bucket, never a submitted filename or file data.
                 bucket = "upload" if "upload" in path else "autosave"
                 log_security_event(request, "ratelimit.hit", {"bucket": bucket}, logging.WARNING)
-                return HttpResponse("Rate limit exceeded. Please wait before retrying.", status=429)
+                response = HttpResponse("Rate limit exceeded. Please wait before retrying.", status=429)
+                response["Retry-After"] = str(window)
+                return response
             ratelimit_cache.set(cache_key, count + 1, timeout=window)
 
         return self.get_response(request)
