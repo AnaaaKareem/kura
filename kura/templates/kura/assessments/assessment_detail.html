@@ -28,7 +28,7 @@
             </p>
         </div>
         <div class="flex flex-wrap items-center gap-2">
-            {% if is_staff %}
+            {% if can_author_assessments %}
             <a href="{% url 'kura:assessment_edit' assessment.id %}" class="btn btn-outline btn-sm">Edit assessment</a>
             <form method="post" action="{% url 'kura:assessment_delete' assessment.id %}" data-confirm-action="Delete assessment {{ assessment.title }}? This cannot be undone.">
                 {% csrf_token %}
@@ -80,7 +80,7 @@
                     {% endfor %}
                 </div>
 
-                {% if is_staff %}
+                {% if can_author_assessments %}
                 <form method="post" action="{% url 'kura:assessment_file_upload' assessment.id %}" enctype="multipart/form-data" class="pt-4 border-t border-base-300 flex flex-col sm:flex-row gap-3 sm:items-end">
                     {% csrf_token %}
                     <div class="flex-1">

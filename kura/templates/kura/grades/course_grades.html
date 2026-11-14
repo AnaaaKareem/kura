@@ -29,10 +29,12 @@
             {% if can_edit_scheme %}
             <a href="{% url 'kura:course_grade_scheme' course.id %}" class="btn btn-outline btn-sm">Grade scheme</a>
             {% endif %}
+            {% if can_calculate_results %}
             <form method="post" action="{% url 'kura:course_result_calculate' course.id %}">
                 {% csrf_token %}
                 <button type="submit" class="btn {% if course_results and can_release %}btn-outline{% else %}btn-primary{% endif %} btn-sm">Calculate final results</button>
             </form>
+            {% endif %}
         </div>
     </header>
 

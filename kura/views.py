@@ -2503,6 +2503,9 @@ def user_roles_view(request, user_id):
             messages.success(request, f"Assigned role {target_role.name} to {target_user.email}.")
 
         elif action == "remove":
+            if target_user.id == request.user.id and target_role.name == "Admin":
+                messages.error(request, "You cannot remove the Admin role from yourself.")
+                return redirect("kura:user_roles", user_id=target_user.id)
             deleted_count, _ = UserRole.objects.filter(user=target_user, role=target_role).delete()
             if deleted_count:
                 removed_roles.append(target_role.name)
@@ -3160,9 +3163,12 @@ def course_detail_view(request, course_id):
     # Load course staff assignments.
     staff_assignments = CourseStaff.objects.filter(course=course).select_related("user")
 
-    # Check instructor authority to assign TAs (lead and co-instructors).
+    # Check instructor authority to assign TAs (lead and co-instructors) and manage schedules/assessments.
     is_lead = is_lead_instructor(request.user, course)
-    can_assign_ta = is_course_instructor(request.user, course)
+    is_instructor = is_course_instructor(request.user, course)
+    can_assign_ta = is_instructor
+    can_manage_schedules = is_instructor or is_head
+    can_author_assessments = is_instructor or is_head
     course_schedules = Schedule.objects.filter(course=course).select_related("instructor").order_by("day", "start_time")
     enrolled_count = Enrollment.objects.filter(course=course, status=EnrollmentStatus.ACTIVE).count()
     grade_summary = None
@@ -3218,6 +3224,8 @@ def course_detail_view(request, course_id):
         "is_staff": is_staff,
         "is_lead": is_lead,
         "can_assign_ta": can_assign_ta,
+        "can_manage_schedules": can_manage_schedules,
+        "can_author_assessments": can_author_assessments,
     }
     return render(request, "kura/courses/course_detail.html", context)
 
@@ -3270,7 +3278,7 @@ def course_staff_assign_view(request, course_id):
     if not is_department_head(request.user, course.department):
         raise PermissionDenied
 
-    form = CourseStaffAssignForm(request.POST or None)
+    form = CourseStaffAssignForm(request.POST or None, department=course.department)
 
     if request.method == "POST" and form.is_valid():
         user = form.cleaned_data["user"]
@@ -3326,7 +3334,7 @@ def course_ta_assign_view(request, course_id):
     if is_admin_course_manager(request.user) or not (instructor or is_department_head(request.user, course.department)):
         raise PermissionDenied
 
-    form = TAAssignForm(request.POST or None)
+    form = TAAssignForm(request.POST or None, department=course.department)
 
     if request.method == "POST" and form.is_valid():
         user = form.cleaned_data["user"]
@@ -4019,7 +4027,7 @@ def schedule_list_view(request):
     schedule_list = list(schedules)
     for schedule in schedule_list:
         schedule.can_manage = not is_admin and (
-            is_course_staff(request.user, schedule.course)
+            is_course_instructor(request.user, schedule.course)
             or (is_head and schedule.course.department_id in headed_department_ids)
         )
         if schedule.day in day_groups:
@@ -4049,11 +4057,11 @@ def schedule_create_view(request, course_id):
     """
     Creates a recurring meeting schedule for a course.
     Who can use it: Course instructors and Department Heads.
-    Security: Enforces course staff assignment; validates end_time > start_time.
+    Security: Enforces instructor or department head authority; validates end_time > start_time.
 """
     course = get_object_or_404(Course, id=course_id)
 
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+    if not (is_course_instructor(request.user, course) or is_department_head(request.user, course.department)):
         raise PermissionDenied
 
     form = ScheduleForm(request.POST or None)
@@ -4091,15 +4099,15 @@ def schedule_create_view(request, course_id):
 def schedule_edit_view(request, schedule_id):
     """
     Edits a recurring course schedule.
-    Who can use it: Assigned staff and the department head, except Admins.
-    Security: Checks the exact course and validates every field before saving.
+    Who can use it: Course instructors and the department head, except Admins.
+    Security: Checks instructor/head authority on the exact course and validates every field before saving.
 """
-    # Only authorized staff may edit this course's schedule.
+    # Only course instructors or the department head may edit this course's schedule.
     if is_admin_course_manager(request.user):
         raise PermissionDenied
     schedule = get_object_or_404(Schedule.objects.select_related("course__department"), id=schedule_id)
     course = schedule.course
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+    if not (is_course_instructor(request.user, course) or is_department_head(request.user, course.department)):
         raise PermissionDenied
     initial = {
         "instructor": schedule.instructor_id,
@@ -4142,8 +4150,8 @@ def schedule_edit_view(request, schedule_id):
 def schedule_delete_view(request, schedule_id):
     """
     Deletes a schedule without deleting attendance sessions.
-    Who can use it: Assigned staff and the department head, except Admins.
-    Security: Requires POST, confirmation, course permission, and deletion logging.
+    Who can use it: Course instructors and the department head, except Admins.
+    Security: Requires POST, confirmation, instructor/head permission, and deletion logging.
 """
     # Verify permission and require confirmation before changing the schedule.
     if is_admin_course_manager(request.user):
@@ -4152,7 +4160,7 @@ def schedule_delete_view(request, schedule_id):
         return HttpResponseNotAllowed(["POST"])
     schedule = get_object_or_404(Schedule.objects.select_related("course__department"), id=schedule_id)
     course = schedule.course
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+    if not (is_course_instructor(request.user, course) or is_department_head(request.user, course.department)):
         raise PermissionDenied
     if not DeleteConfirmationForm(request.POST).is_valid():
         messages.error(request, "Confirm schedule deletion first.")
@@ -4326,8 +4334,10 @@ def student_checkin_view(request, session_id):
     )
     course = session.module.course
 
-    # Verify student is actively enrolled in the course.
+    # Verify student is actively enrolled and permitted to see this module.
     if not is_enrolled(request.user, course):
+        raise PermissionDenied
+    if not student_can_see_module(request.user, course, session.module):
         raise PermissionDenied
 
     # Check if passcode was provided in QR code URL query parameter.
@@ -4776,7 +4786,7 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
         )
     course = section.module.course
 
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+    if not (is_course_instructor(request.user, course) or is_department_head(request.user, course.department)):
         raise PermissionDenied
 
     # Prepare ordinary form fields from the existing assessment and its separate key.
@@ -5100,7 +5110,7 @@ def assessment_question_form_view(request, section_id):
         raise PermissionDenied
     section = get_object_or_404(ModuleSection.objects.select_related("module__course__department"), id=section_id)
     course = section.module.course
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+    if not (is_course_instructor(request.user, course) or is_department_head(request.user, course.department)):
         raise PermissionDenied
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
@@ -5145,7 +5155,7 @@ def assessment_delete_view(request, assessment_id):
         Assessment.objects.select_related("section__module__course__department"), id=assessment_id
     )
     course = assessment.section.module.course
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+    if not (is_course_instructor(request.user, course) or is_department_head(request.user, course.department)):
         raise PermissionDenied
     if not DeleteConfirmationForm(request.POST).is_valid():
         messages.error(request, "Confirm assessment deletion first.")
@@ -5238,6 +5248,7 @@ def assessment_detail_view(request, assessment_id):
     context = {
         "assessment": assessment,
         "is_staff": is_head or is_staff,
+        "can_author_assessments": is_head or is_course_instructor(request.user, course),
         "is_open": is_open,
         "attempts": attempts,
         "attached_files": attached_files,
@@ -5408,7 +5419,7 @@ def assessment_file_upload_view(request, assessment_id):
     )
     course = assessment.section.module.course
 
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+    if not (is_course_instructor(request.user, course) or is_department_head(request.user, course.department)):
         raise PermissionDenied
 
     form = AssessmentFileUploadForm(request.POST, request.FILES)
@@ -6101,18 +6112,22 @@ def course_grades_view(request, course_id):
         if filter_form.cleaned_data["status"]:
             grades = grades.filter(status=filter_form.cleaned_data["status"])
 
-    # Appeals waiting for a verdict on this course. The review page accepts any
-    # assigned staff member or the department head, the two groups that reach
-    # this view, so the list needs no extra check. Own grades are left out.
-    pending_appeals = (
-        GradeAppeal.objects.filter(
-            grade__assessment__section__module__course=course,
-            status=AppealStatus.PENDING,
-        )
-        .exclude(grade__student=request.user)
-        .select_related("grade__assessment", "grade__student")
-        .order_by("created_at")
+    # Appeals waiting for a verdict on this course. Only instructors and the
+    # department head may inspect appeals (teaching assistants are excluded).
+    can_view_appeals = is_course_instructor(request.user, course) or is_department_head(
+        request.user, course.department
     )
+    pending_appeals = GradeAppeal.objects.none()
+    if can_view_appeals:
+        pending_appeals = (
+            GradeAppeal.objects.filter(
+                grade__assessment__section__module__course=course,
+                status=AppealStatus.PENDING,
+            )
+            .exclude(grade__student=request.user)
+            .select_related("grade__assessment", "grade__student")
+            .order_by("created_at")
+        )
 
     # Post-release change requests are decided only by this department's head,
     # and never by the person who raised them (specification: no self-approval).
@@ -6146,6 +6161,7 @@ def course_grades_view(request, course_id):
         "pending_change_requests": pending_change_requests,
         "can_edit_scheme": is_course_instructor(request.user, course)
         or is_department_head(request.user, course.department),
+        "can_calculate_results": is_course_instructor(request.user, course),
     }
     return render(request, "kura/grades/course_grades.html", context)
 
@@ -6592,9 +6608,10 @@ def grade_appeal_create_view(request, grade_id):
 def grade_appeal_review_view(request, appeal_id):
     """
     Reviews a student grade appeal and writes a formal verdict.
-    Who can use it: Course instructors and Department Heads.
-    Security: Restricts access to assigned course staff; records reviewer notes and timestamp.
-"""
+    Who can use it: Course instructors (read and decide) and Department Heads (read-only).
+    Security: Enforces specification appeal authority (Instructors decide; Teaching
+    assistants denied; Department Heads may inspect read-only on GET but cannot decide on POST).
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -6613,7 +6630,11 @@ def grade_appeal_review_view(request, appeal_id):
     if appeal.grade.student_id == request.user.id:
         raise PermissionDenied
 
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+    can_decide = is_course_instructor(request.user, course)
+    can_view = can_decide or is_department_head(request.user, course.department)
+    if not can_view:
+        raise PermissionDenied
+    if request.method == "POST" and not can_decide:
         raise PermissionDenied
 
     form = GradeAppealReviewForm(request.POST or None, initial={"status": appeal.status, "response": appeal.response})
@@ -6645,7 +6666,7 @@ def grade_appeal_review_view(request, appeal_id):
     return render(
         request,
         "kura/grades/appeal_review.html",
-        {"form": form, "appeal": appeal},
+        {"form": form, "appeal": appeal, "can_decide": can_decide},
         status=400 if request.method == "POST" else 200,
     )
 
@@ -6830,7 +6851,7 @@ def course_result_calculate_view(request, course_id):
 
     course = get_object_or_404(Course.objects.select_related("department"), id=course_id)
 
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+    if not is_course_instructor(request.user, course):
         raise PermissionDenied
 
     schemes = CourseGradeScheme.objects.filter(course=course)

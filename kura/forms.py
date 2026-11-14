@@ -695,7 +695,7 @@ class CourseStaffAssignForm(forms.Form):
     Form for Department Heads to assign lead or co-instructors to a departmental course.
     """
 
-    # Restrict both displayed choices and submitted IDs to active instructors.
+    # Restrict both displayed choices and submitted IDs to active instructors in the course department.
     user = forms.ModelChoiceField(
         label="Instructor",
         queryset=User.objects.filter(
@@ -721,21 +721,36 @@ class CourseStaffAssignForm(forms.Form):
         widget=forms.CheckboxInput(attrs={"class": "checkbox checkbox-primary"}),
     )
 
+    def __init__(self, *args, department=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if department is not None:
+            self.fields["user"].queryset = self.fields["user"].queryset.filter(
+                staff_profile__department=department
+            )
+
 
 class TAAssignForm(forms.Form):
     """
     Form for Instructors to assign Teaching Assistants to their course.
     """
 
-    # Restrict both displayed choices and submitted IDs to active teaching assistants.
+    # Restrict both displayed choices and submitted IDs to active teaching assistants in the course department.
     user = forms.ModelChoiceField(
         label="Teaching Assistant",
         queryset=User.objects.filter(
+            staff_profile__isnull=False,
             is_active=True,
             user_roles__role__name="Teaching assistant",
         ).distinct(),
         widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
     )
+
+    def __init__(self, *args, department=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if department is not None:
+            self.fields["user"].queryset = self.fields["user"].queryset.filter(
+                staff_profile__department=department
+            )
 
 
 class ModuleForm(forms.Form):

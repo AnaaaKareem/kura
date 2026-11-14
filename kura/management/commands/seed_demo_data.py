@@ -33,13 +33,13 @@ from kura.models import (
     DayOfWeek,
     SectionType,
 )
+from kura.permissions import service_rls_context
 from kura.vault import encrypt_answer_key
 
 
 class Command(BaseCommand):
     help = "Seeds demo accounts and a sample course for testing all six Kura user roles."
 
-    @transaction.atomic
     def handle(self, *args, **options):
         """
         Creates or updates local demo accounts, roles, and sample course content.
@@ -47,6 +47,12 @@ class Command(BaseCommand):
         # Prevent demo accounts and credentials from being created in production.
         if not settings.DEBUG:
             raise CommandError("This command can only run when DEBUG=True.")
+
+        with service_rls_context():
+            with transaction.atomic():
+                self._seed()
+
+    def _seed(self):
 
         password = "KuraPass2026!"
 
