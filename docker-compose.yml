@@ -19,8 +19,9 @@ services:
       # pgEdge layout: the cluster lives in /var/lib/pgsql/17/data (the image
       # pre-creates this path with the correct postgres ownership).
       - postgres_data:/var/lib/pgsql/17/data
-      # pgBackRest WAL archive and backup repository storage.
+      # pgBackRest WAL archive and backup repository storage (repo1 primary, repo2 off-site mount).
       - postgres_backups:/var/lib/pgbackrest
+      - "${KURA_OFFSITE_BACKUP_DIR:-postgres_backups_offsite}:/var/lib/pgbackrest-offsite"
       # Mutual TLS: PostgreSQL's own certificate and key, plus the CA certificate
       # used to check client certificates. Only these three files are mounted, so
       # this container never sees another service's key or the CA private key.
@@ -361,6 +362,15 @@ services:
     image: netbirdio/dashboard:v2.96.0-rootless@sha256:0f0097965c36bd4702eae6cdb007d6398ea7783f3d395942c909c7fb55a827d4
     container_name: kura-netbird-dashboard
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16M,mode=1777
+      - /var/lib/nginx:size=16M,mode=1777
+      - /var/log/nginx:size=8M,mode=1777
+    volumes:
+      # Named volumes hold the runtime-templated nginx config and static HTML rewritten by init_react_envs.sh.
+      - netbird_dashboard_conf:/etc/nginx/http.d
+      - netbird_dashboard_html:/usr/share/nginx/html
     environment:
       # Where the dashboard (running in the admin's browser) finds the server.
       NETBIRD_MGMT_API_ENDPOINT: "https://netbird.kura.lan"
@@ -1086,6 +1096,9 @@ services:
     image: grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
     container_name: kura-grafana
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M,mode=1777
     ports:
       # Published on loopback only, so it cannot be reached from any network
       # interface. The host-layer step re-binds it to the NetBird (wt0) address.
@@ -1114,6 +1127,8 @@ services:
       - grafana_admin_password
     networks:
       - observability
+    cap_drop:
+      - ALL
     security_opt:
       - no-new-privileges:true
     mem_limit: 512m
@@ -1149,6 +1164,11 @@ services:
     image: netbirdio/netbird:0.82.0@sha256:eca5b274c635bfbb04ec6724a0712d1146190dd450eea199eeb83916fdd94965
     container_name: kura-netbird
     restart: unless-stopped
+    read_only: true
+    tmpfs:
+      - /tmp:size=16M,mode=1777
+      - /var/run:size=8M,mode=1777
+      - /var/log/netbird:size=8M,mode=1777
     network_mode: host
     # The self-hosted server's name, reached through netbird-proxy on this host.
     extra_hosts:
@@ -1346,12 +1366,18 @@ volumes:
     name: kura_vault_data
   postgres_backups:
     name: kura_postgres_backups
+  postgres_backups_offsite:
+    name: kura_postgres_backups_offsite
   relay_queue:
     name: kura_relay_queue
   netbird_server_data:
     name: kura_netbird_server_data
   netbird_server_tmp:
     name: kura_netbird_server_tmp
+  netbird_dashboard_conf:
+    name: kura_netbird_dashboard_conf
+  netbird_dashboard_html:
+    name: kura_netbird_dashboard_html
 
 # ==============================================================================
 # Docker Secrets

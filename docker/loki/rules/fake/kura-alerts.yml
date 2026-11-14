@@ -214,3 +214,12 @@ groups:
         annotations:
           summary: "Burst of 404 responses for one user"
           description: "Actor {{ $labels.actor_user_id }} triggered more than 20 not-found responses in 5 minutes, which may indicate identifier probing."
+
+      # 22. Audit discrepancy: unexpected destructive/DDL/role mutation on protected audit or grade tables in pgAudit.
+      - alert: AuditDiscrepancy
+        expr: sum(count_over_time({service="db"} |~ "AUDIT:.*(DROP|TRUNCATE|ALTER TABLE|ALTER ROLE|CREATE ROLE|DELETE FROM (grade_history|grades|course_results))" [5m])) >= 1
+        labels:
+          severity: critical
+        annotations:
+          summary: "Unexpected database audit or DDL discrepancy"
+          description: "pgAudit recorded a destructive, schema, or role change against protected grade or audit tables within 5 minutes. Verify whether an authorized maintenance window is active."

@@ -34,13 +34,19 @@ route:
   repeat_interval: 4h
   routes:
     # Critical alerts go to Telegram. `continue: true` makes Alertmanager also
-    # try the next route below, which sends everything to email.
+    # try the next routes below (webhook + email).
     - matchers:
         - severity="critical"
       receiver: telegram-alerts
       continue: true
       # Wake up the phone at night: repeat critical alerts every hour.
       repeat_interval: 1h
+
+    # Critical alerts also trigger the internal incident-webhook receiver.
+    - matchers:
+        - severity="critical"
+      receiver: webhook-alerts
+      continue: true
 
     # EVERY alert (critical ones too) goes to email. This route is needed: the
     # top-level "receiver" above is only used for alerts that match NO child
@@ -79,6 +85,12 @@ receivers:
           {{ .CommonLabels.alertname }} (severity {{ .CommonLabels.severity }}):
           {{ .CommonAnnotations.summary }}
           {{ .CommonAnnotations.description }}
+
+  # Webhook receiver for critical alerts (replace URL with institutional SOAR/webhook endpoint).
+  - name: "webhook-alerts"
+    webhook_configs:
+      - url: "http://127.0.0.1:9999/alertmanager-webhook"
+        send_resolved: true
 
 # While Vault is sealed or down, mute the generic "ServiceDown" alert for the
 # web service: VaultSealed is the more useful alert here, and the paired

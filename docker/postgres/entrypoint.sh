@@ -8,7 +8,8 @@ set -eu
 KEY_FILE="/run/secrets/backup_encryption_key"
 if [ -r "$KEY_FILE" ]; then
     PGBACKREST_REPO1_CIPHER_PASS="$(tr -d '\r\n' < "$KEY_FILE")"
-    export PGBACKREST_REPO1_CIPHER_PASS
+    PGBACKREST_REPO2_CIPHER_PASS="$PGBACKREST_REPO1_CIPHER_PASS"
+    export PGBACKREST_REPO1_CIPHER_PASS PGBACKREST_REPO2_CIPHER_PASS
 fi
 
 exec /usr/local/bin/docker-entrypoint.sh "$@"
