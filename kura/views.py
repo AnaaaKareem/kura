@@ -164,6 +164,7 @@ from .permissions import (
     is_department_head,
     is_enrolled,
     is_lead_instructor,
+    service_rls_context,
     student_can_see_module,
 )
 from .templatetags.markdown import render_markdown
@@ -2525,14 +2526,20 @@ def user_roles_view(request, user_id):
         removed_roles = []
 
         if action == "assign":
-            # Rule: Block assigning Admin to an Instructor or Teaching Assistant.
-            if target_role.name == "Admin" and any(r in ("Instructor", "Teaching assistant") for r in existing_roles):
-                messages.error(request, "Separation of duty: Administrators cannot hold grading roles.")
+            # Separation of duty: Admin cannot be combined with academic/grading/student roles (W9).
+            admin_incompatible_roles = ("Instructor", "Teaching assistant", "Department head", "Student")
+            if target_role.name == "Admin" and any(r in admin_incompatible_roles for r in existing_roles):
+                messages.error(
+                    request,
+                    "Separation of duty: Administrators cannot hold academic, grading, or student roles.",
+                )
                 return redirect("kura:user_roles", user_id=target_user.id)
 
-            # Rule: Block assigning Instructor or TA to an Administrator.
-            if target_role.name in ("Instructor", "Teaching assistant") and "Admin" in existing_roles:
-                messages.error(request, "Separation of duty: Administrators cannot hold grading roles.")
+            if target_role.name in admin_incompatible_roles and "Admin" in existing_roles:
+                messages.error(
+                    request,
+                    "Separation of duty: Administrators cannot hold academic, grading, or student roles.",
+                )
                 return redirect("kura:user_roles", user_id=target_user.id)
 
             _, created = UserRole.objects.get_or_create(
@@ -4669,10 +4676,10 @@ def evaluate_attempt(attempt):
         attempt.save(update_fields=["status", "summary_score_json", "submitted_at", "submission_hash"])
         return
 
-    # Load the answer key; Vault decrypts it in memory only. If Vault cannot be
-    # reached, the submission is still kept and goes to manual grading instead of
-    # failing or being marked as zero.
-    answer_key_obj = ExamAnswerKey.objects.filter(assessment=attempt.assessment).first()
+    # Load the answer key inside service_rls_context so student submits can grade
+    # without granting students direct RLS access to exam_answer_keys (W5).
+    with service_rls_context():
+        answer_key_obj = ExamAnswerKey.objects.filter(assessment=attempt.assessment).first()
     answer_key_dict = {}
     if answer_key_obj:
         try:

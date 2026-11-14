@@ -8,14 +8,19 @@ from .models import CourseStaff, Enrollment, EnrollmentStatus, RolePermission, S
 
 @contextmanager
 def service_rls_context():
-    """Set the PostgreSQL service RLS context for authorized background commands."""
+    """Set the PostgreSQL service RLS context for authorized background commands (nest-safe)."""
     with connection.cursor() as cursor:
+        cursor.execute("SELECT current_setting('kura.service_role', true);")
+        previous_role = cursor.fetchone()[0]
         cursor.execute("SET kura.service_role = 'management_command';")
     try:
         yield
     finally:
         with connection.cursor() as cursor:
-            cursor.execute("RESET kura.service_role;")
+            if previous_role:
+                cursor.execute("SET kura.service_role = %s;", [previous_role])
+            else:
+                cursor.execute("RESET kura.service_role;")
 
 
 def has_role(user, role_name):

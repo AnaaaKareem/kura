@@ -12,6 +12,7 @@ from django.conf import settings
 from django.core.management.base import BaseCommand, CommandError
 
 from kura.models import ExamAnswerKey
+from kura.permissions import service_rls_context
 from kura.vault import encrypt_answer_key
 
 
@@ -25,19 +26,20 @@ class Command(BaseCommand):
 
         encrypted_count = 0
         skipped_count = 0
-        for answer_key in ExamAnswerKey.objects.all():
-            # An encrypted key looks like {"ciphertext": "vault:v1:..."}: leave it alone.
-            ciphertext = answer_key.answer_key_json.get("ciphertext", "")
-            if isinstance(ciphertext, str) and ciphertext.startswith("vault:"):
-                skipped_count += 1
-                continue
+        with service_rls_context():
+            for answer_key in ExamAnswerKey.objects.all():
+                # An encrypted key looks like {"ciphertext": "vault:v1:..."}: leave it alone.
+                ciphertext = answer_key.answer_key_json.get("ciphertext", "")
+                if isinstance(ciphertext, str) and ciphertext.startswith("vault:"):
+                    skipped_count += 1
+                    continue
 
-            # Encrypt the plain key and save only that one field. If Vault is
-            # down, encrypt_answer_key raises an error and the command stops;
-            # keys saved before the error stay encrypted.
-            answer_key.answer_key_json = encrypt_answer_key(answer_key.answer_key_json)
-            answer_key.save(update_fields=["answer_key_json"])
-            encrypted_count += 1
+                # Encrypt the plain key and save only that one field. If Vault is
+                # down, encrypt_answer_key raises an error and the command stops;
+                # keys saved before the error stay encrypted.
+                answer_key.answer_key_json = encrypt_answer_key(answer_key.answer_key_json)
+                answer_key.save(update_fields=["answer_key_json"])
+                encrypted_count += 1
 
         self.stdout.write(
             self.style.SUCCESS(f"Encrypted {encrypted_count} answer key(s); {skipped_count} were already encrypted.")

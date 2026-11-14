@@ -43,6 +43,8 @@ GRANT SELECT, INSERT, UPDATE, DELETE ON ALL TABLES IN SCHEMA public TO kura_app;
 GRANT USAGE, SELECT, UPDATE ON ALL SEQUENCES IN SCHEMA public TO kura_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO kura_app;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO kura_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE kura_migrator IN SCHEMA public GRANT SELECT, INSERT, UPDATE, DELETE ON TABLES TO kura_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE kura_migrator IN SCHEMA public GRANT USAGE, SELECT, UPDATE ON SEQUENCES TO kura_app;
 
 -- 5. Grant DDL permissions to kura_migrator
 GRANT ALL PRIVILEGES ON DATABASE kura TO kura_migrator;
@@ -51,10 +53,13 @@ GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO kura_migrator;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO kura_migrator;
 
 -- 6. Grant read-only reporting permissions to kura_readonly
+-- Sensitive tables (file_contents, exam_answer_keys, password_reset_tokens)
+-- and users.mfa_secret are revoked in migration 0026 once tables exist (W4).
 GRANT CONNECT ON DATABASE kura TO kura_readonly;
 GRANT USAGE ON SCHEMA public TO kura_readonly;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO kura_readonly;
 ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT SELECT ON TABLES TO kura_readonly;
+ALTER DEFAULT PRIVILEGES FOR ROLE kura_migrator IN SCHEMA public GRANT SELECT ON TABLES TO kura_readonly;
 
 -- 7. Read-only monitoring login for the metrics collector (Alloy).
 CREATE ROLE alloy WITH LOGIN NOINHERIT;

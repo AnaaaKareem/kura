@@ -6887,6 +6887,9 @@ class GradeHistoryInsertOnlyTests(TestCase):
         department = Department.objects.create(name="History", code="HIS", head_user=head)
         course = Course.objects.create(department=department, code="HIS101", title="History", semester="1",
                                        academic_year=2026)
+        CourseStaff.objects.create(
+            course=course, user=instructor, staff_role="lead_instructor", assigned_by=head
+        )
         module = Module.objects.create(course=course, title="Week 1")
         section = ModuleSection.objects.create(module=module, title="Exam", section_type="exam")
         now = timezone.now()
@@ -6902,14 +6905,16 @@ class GradeHistoryInsertOnlyTests(TestCase):
         self.instructor = instructor
 
     def run_as_app_role(self, sql, parameters):
-        # Run one statement as kura_app (inside a savepoint, so a refused
-        # statement does not break the rest of the test), then switch back.
+        # Run one statement as kura_app with the instructor's RLS context (inside a savepoint,
+        # so a refused statement does not break the rest of the test), then switch back.
         with connection.cursor() as cursor:
             cursor.execute("SET ROLE kura_app;")
+            cursor.execute("SET kura.current_user_id = %s;", [str(self.instructor.id)])
             try:
                 with transaction.atomic():
                     cursor.execute(sql, parameters)
             finally:
+                cursor.execute("RESET kura.current_user_id;")
                 cursor.execute("RESET ROLE;")
 
     def test_app_role_cannot_update_history(self):
@@ -11356,3 +11361,251 @@ class AuditGroup2DataIntegrityTests(TestCase):
                     approved_by=self.head,
                     reason="",
                 )
+
+
+class AuditGroup3DatabaseAndRolesTests(TestCase):
+    """Tests for Audit Group 3: W4, W5, O2, P5, P9, W9."""
+
+    def setUp(self):
+        self.dept = Department.objects.create(code="CSG3", name="CS Group 3")
+        self.head = make_user("Department head", mfa_enabled=True)
+        self.dept.head_user = self.head
+        self.dept.save()
+        self.admin = make_user("Admin", mfa_enabled=True)
+        self.instructor = make_user("Instructor", mfa_enabled=True)
+        self.ta = make_user("Teaching assistant", mfa_enabled=True)
+        self.student_a = make_user("Student", mfa_enabled=True)
+        self.student_b = make_user("Student", mfa_enabled=True)
+        now = timezone.now()
+        self.course = Course.objects.create(
+            department=self.dept,
+            code="G301",
+            title="DB RLS",
+            semester="1",
+            academic_year=2026,
+            created_by=self.head,
+            is_published=True,
+            published_by=self.head,
+            published_at=now,
+        )
+        CourseStaff.objects.create(
+            course=self.course,
+            user=self.instructor,
+            staff_role="lead_instructor",
+            can_release_grades=True,
+            assigned_by=self.head,
+        )
+        CourseStaff.objects.create(
+            course=self.course,
+            user=self.ta,
+            staff_role="teaching_assistant",
+            can_release_grades=False,
+            assigned_by=self.instructor,
+        )
+        mod = Module.objects.create(course=self.course, title="M", is_visible=True, created_by=self.instructor)
+        sec = ModuleSection.objects.create(module=mod, title="S", section_type="exam")
+        self.assessment = Assessment.objects.create(
+            section=sec,
+            title="RLS Exam",
+            component_type=GradeComponentType.EXAM,
+            max_score=Decimal("100.00"),
+            opens_at=now - timezone.timedelta(hours=1),
+            due_date=now + timezone.timedelta(hours=2),
+            duration_minutes=30,
+            created_by=self.instructor,
+        )
+        self.answer_key = ExamAnswerKey.objects.create(
+            assessment=self.assessment,
+            answer_key_json={"ciphertext": "vault:v1:stub"},
+            created_by=self.instructor,
+        )
+        self.attempt_a = AssessmentAttempt.objects.create(
+            assessment=self.assessment,
+            student=self.student_a,
+            attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED,
+            expires_at=now + timezone.timedelta(minutes=30),
+            submitted_at=now,
+            ip_address="192.0.2.10",
+        )
+        self.attempt_b = AssessmentAttempt.objects.create(
+            assessment=self.assessment,
+            student=self.student_b,
+            attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED,
+            expires_at=now + timezone.timedelta(minutes=30),
+            submitted_at=now,
+            ip_address="192.0.2.11",
+        )
+        self.grade_a = Grade.objects.create(
+            assessment=self.assessment,
+            student=self.student_a,
+            attempt=self.attempt_a,
+            score=Decimal("80.00"),
+            status=GradeStatus.DRAFT,
+        )
+        self.grade_b = Grade.objects.create(
+            assessment=self.assessment,
+            student=self.student_b,
+            attempt=self.attempt_b,
+            score=Decimal("90.00"),
+            status=GradeStatus.RELEASED,
+        )
+        GradeHistory.objects.create(
+            grade=self.grade_a,
+            old_score=None,
+            new_score=Decimal("80.00"),
+            old_status=None,
+            new_status=GradeStatus.DRAFT,
+            changed_by=self.ta,
+            reason="Initial draft.",
+        )
+        self.result_a_draft = CourseResult.objects.create(
+            course=self.course, student=self.student_a, final_score=Decimal("80.00"), status=GradeStatus.DRAFT
+        )
+        self.result_b_released = CourseResult.objects.create(
+            course=self.course, student=self.student_b, final_score=Decimal("90.00"), status=GradeStatus.RELEASED
+        )
+
+    def test_rls_covers_all_five_sensitive_tables_and_excludes_ta_promotion_and_admin(self):
+        # Give admin a stale CourseStaff link to prove DB RLS still blocks Admin.
+        CourseStaff.objects.create(
+            course=self.course,
+            user=self.admin,
+            staff_role="lead_instructor",
+            can_release_grades=True,
+            assigned_by=self.head,
+        )
+
+        with connection.cursor() as cursor:
+            cursor.execute("SET ROLE kura_app;")
+            try:
+                # Unset user sees 0 rows across all 5 RLS-protected tables.
+                self.assertEqual(Grade.objects.count(), 0)
+                self.assertEqual(CourseResult.objects.count(), 0)
+                self.assertEqual(GradeHistory.objects.count(), 0)
+                self.assertEqual(AssessmentAttempt.objects.count(), 0)
+                self.assertEqual(ExamAnswerKey.objects.count(), 0)
+
+                # Student A sees own attempt & grade, 0 unreleased CourseResult, 0 GradeHistory, 0 ExamAnswerKey.
+                cursor.execute("SET kura.current_user_id = %s;", [str(self.student_a.id)])
+                self.assertEqual(list(AssessmentAttempt.objects.values_list("id", flat=True)), [self.attempt_a.id])
+                self.assertEqual(list(Grade.objects.values_list("id", flat=True)), [self.grade_a.id])
+                self.assertEqual(CourseResult.objects.count(), 0)
+                self.assertEqual(GradeHistory.objects.count(), 0)
+                self.assertEqual(ExamAnswerKey.objects.count(), 0)
+
+                # Student B sees own released CourseResult.
+                cursor.execute("SET kura.current_user_id = %s;", [str(self.student_b.id)])
+                self.assertEqual(list(CourseResult.objects.values_list("id", flat=True)), [self.result_b_released.id])
+
+                # TA sees course grades/results/history/attempts, 0 ExamAnswerKeys, and cannot promote Grade to FINALIZED.
+                cursor.execute("SET kura.current_user_id = %s;", [str(self.ta.id)])
+                self.assertEqual(ExamAnswerKey.objects.count(), 0)
+                self.assertEqual(Grade.objects.count(), 2)
+                with self.assertRaises(DatabaseError):
+                    with transaction.atomic():
+                        Grade.objects.filter(id=self.grade_a.id).update(status=GradeStatus.FINALIZED)
+
+                # Admin sees 0 rows on all 5 tables even with a stale CourseStaff link.
+                cursor.execute("SET kura.current_user_id = %s;", [str(self.admin.id)])
+                self.assertEqual(Grade.objects.count(), 0)
+                self.assertEqual(CourseResult.objects.count(), 0)
+                self.assertEqual(GradeHistory.objects.count(), 0)
+                self.assertEqual(AssessmentAttempt.objects.count(), 0)
+                self.assertEqual(ExamAnswerKey.objects.count(), 0)
+
+                # Instructor sees ExamAnswerKey and course records.
+                cursor.execute("SET kura.current_user_id = %s;", [str(self.instructor.id)])
+                self.assertEqual(ExamAnswerKey.objects.count(), 1)
+                self.assertEqual(CourseResult.objects.count(), 2)
+                self.assertEqual(GradeHistory.objects.count(), 1)
+            finally:
+                cursor.execute("RESET kura.current_user_id;")
+                cursor.execute("RESET ROLE;")
+
+        # Management commands anonymize_ips and queue_due_reminders succeed under kura_app via service_rls_context.
+        with connection.cursor() as cursor:
+            cursor.execute("GRANT SELECT, UPDATE ON outgoing_emails TO kura_app;")
+            cursor.execute("GRANT INSERT ON outgoing_emails TO kura_app;")
+            cursor.execute("SET ROLE kura_app;")
+            try:
+                call_command("anonymize_ips", "--days=180", "--dry-run", stdout=StringIO())
+                call_command("queue_due_reminders", stdout=StringIO())
+            finally:
+                cursor.execute("RESET ROLE;")
+
+    def test_readonly_role_cannot_select_sensitive_tables_or_mfa_secret(self):
+        with connection.cursor() as cursor:
+            cursor.execute(
+                """
+                DO $$
+                BEGIN
+                    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'kura_readonly') THEN
+                        CREATE ROLE kura_readonly NOLOGIN NOINHERIT;
+                    END IF;
+                END $$;
+                GRANT USAGE ON SCHEMA public TO kura_readonly;
+                GRANT SELECT ON ALL TABLES IN SCHEMA public TO kura_readonly;
+                REVOKE SELECT ON file_contents, exam_answer_keys, password_reset_tokens FROM kura_readonly;
+                REVOKE SELECT ON users FROM kura_readonly;
+                GRANT SELECT (
+                    id, email, password_hash, first_name, last_name, mfa_enabled, is_active,
+                    must_change_password, locked_until, last_login_at, password_changed_at,
+                    deactivated_at, created_by_id, created_at, updated_at
+                ) ON users TO kura_readonly;
+                """
+            )
+            cursor.execute("SET ROLE kura_readonly;")
+            try:
+                for table in ("file_contents", "exam_answer_keys", "password_reset_tokens"):
+                    with self.assertRaises(DatabaseError):
+                        with transaction.atomic():
+                            cursor.execute(f"SELECT count(*) FROM {table};")
+                with self.assertRaises(DatabaseError):
+                    with transaction.atomic():
+                        cursor.execute("SELECT mfa_secret FROM users;")
+                cursor.execute("SELECT id, email FROM users LIMIT 1;")
+                self.assertEqual(len(cursor.fetchall()), 1)
+            finally:
+                cursor.execute("RESET ROLE;")
+
+    def test_separation_of_duty_blocks_admin_with_department_head_or_student(self):
+        login_with_session(self.client, self.admin)
+        session = self.client.session
+        session["mfa_reauth_at"] = timezone.now().timestamp()
+        session.save()
+
+        admin_role = Role.objects.get(name="Admin")
+        head_role = Role.objects.get(name="Department head")
+        student_role = Role.objects.get(name="Student")
+
+        # Cannot assign Admin to Department head or Student.
+        for target in (self.head, self.student_a):
+            self.client.post(
+                reverse("kura:user_roles", args=[target.id]),
+                {"action": "assign", "role_id": admin_role.id},
+            )
+            self.assertFalse(UserRole.objects.filter(user=target, role=admin_role).exists())
+
+        # Cannot assign Department head or Student to an Admin.
+        for blocked_role in (head_role, student_role):
+            self.client.post(
+                reverse("kura:user_roles", args=[self.admin.id]),
+                {"action": "assign", "role_id": blocked_role.id},
+            )
+            self.assertFalse(UserRole.objects.filter(user=self.admin, role=blocked_role).exists())
+
+    def test_pg_hba_and_compose_migrate_use_least_privilege_auth(self):
+        pg_hba = (Path(settings.BASE_DIR) / "docker" / "postgres" / "pg_hba.conf").read_text(encoding="utf-8")
+        self.assertNotIn("trust", pg_hba)
+        self.assertIn("scram-sha-256", pg_hba)
+        self.assertIn("hostssl kura           kura_migrator   all                     cert clientcert=verify-full", pg_hba)
+
+        init_roles = (Path(settings.BASE_DIR) / "docker" / "postgres" / "init-roles.sql").read_text(encoding="utf-8")
+        self.assertIn("ALTER DEFAULT PRIVILEGES FOR ROLE kura_migrator IN SCHEMA public", init_roles)
+
+        compose_text = (Path(settings.BASE_DIR) / "docker-compose.yml").read_text(encoding="utf-8")
+        self.assertIn("DATABASE_USER: kura_migrator", compose_text)
+        self.assertIn("DB_SSL_CERT: \"/certs/internal/migrator.crt\"", compose_text)
+        self.assertIn("DB_SSL_KEY: \"/certs/internal/migrator.key\"", compose_text)

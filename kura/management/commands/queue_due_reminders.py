@@ -18,6 +18,7 @@ from django.urls import reverse
 from django.utils import timezone
 
 from kura.models import Assessment, AssessmentAttempt, Enrollment, EnrollmentStatus
+from kura.permissions import service_rls_context
 from kura.views import queue_email
 
 
@@ -28,43 +29,44 @@ class Command(BaseCommand):
         now = timezone.now()
         queued_count = 0
 
-        # Open, visible assessments that are due within the next 24 hours.
-        assessments = Assessment.objects.filter(
-            opens_at__lte=now,
-            due_date__gt=now,
-            due_date__lte=now + timezone.timedelta(hours=24),
-            section__is_visible=True,
-            section__module__is_visible=True,
-        ).select_related("section__module__course")
+        with service_rls_context():
+            # Open, visible assessments that are due within the next 24 hours.
+            assessments = Assessment.objects.filter(
+                opens_at__lte=now,
+                due_date__gt=now,
+                due_date__lte=now + timezone.timedelta(hours=24),
+                section__is_visible=True,
+                section__module__is_visible=True,
+            ).select_related("section__module__course")
 
-        for assessment in assessments:
-            course = assessment.section.module.course
-            link = settings.SITE_URL + reverse("kura:assessment_detail", kwargs={"assessment_id": assessment.id})
-            due_text = timezone.localtime(assessment.due_date).strftime("%d %b %Y, %H:%M")
+            for assessment in assessments:
+                course = assessment.section.module.course
+                link = settings.SITE_URL + reverse("kura:assessment_detail", kwargs={"assessment_id": assessment.id})
+                due_text = timezone.localtime(assessment.due_date).strftime("%d %b %Y, %H:%M")
 
-            # Students who already submitted an attempt do not need a reminder.
-            submitted_student_ids = set(
-                AssessmentAttempt.objects.filter(assessment=assessment, submitted_at__isnull=False).values_list(
-                    "student_id", flat=True
+                # Students who already submitted an attempt do not need a reminder.
+                submitted_student_ids = set(
+                    AssessmentAttempt.objects.filter(assessment=assessment, submitted_at__isnull=False).values_list(
+                        "student_id", flat=True
+                    )
                 )
-            )
 
-            enrollments = Enrollment.objects.filter(
-                course=course, status=EnrollmentStatus.ACTIVE, student__is_active=True
-            ).select_related("student")
-            for enrollment in enrollments:
-                if enrollment.student_id in submitted_student_ids:
-                    continue
-                queue_email(
-                    f"reminder-24h:{assessment.id}:{enrollment.student_id}",
-                    enrollment.student.email,
-                    f"Due soon: {assessment.title}",
-                    f"Hello,\n\nThis is a reminder that {assessment.title} ({course.code}) is due on {due_text}, "
-                    "and you have not submitted it yet.\n\n"
-                    f"Log in to Kura to complete it:\n{link}\n\n"
-                    "This is an automatic message from Kura. Please do not reply.",
-                )
-                queued_count += 1
+                enrollments = Enrollment.objects.filter(
+                    course=course, status=EnrollmentStatus.ACTIVE, student__is_active=True
+                ).select_related("student")
+                for enrollment in enrollments:
+                    if enrollment.student_id in submitted_student_ids:
+                        continue
+                    queue_email(
+                        f"reminder-24h:{assessment.id}:{enrollment.student_id}",
+                        enrollment.student.email,
+                        f"Due soon: {assessment.title}",
+                        f"Hello,\n\nThis is a reminder that {assessment.title} ({course.code}) is due on {due_text}, "
+                        "and you have not submitted it yet.\n\n"
+                        f"Log in to Kura to complete it:\n{link}\n\n"
+                        "This is an automatic message from Kura. Please do not reply.",
+                    )
+                    queued_count += 1
 
         # Print only a count, never addresses.
         self.stdout.write(f"Checked {len(assessments)} assessment(s); {queued_count} reminder(s) considered.")

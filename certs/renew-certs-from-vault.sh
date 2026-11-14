@@ -79,6 +79,7 @@ issue_certificate db "db,localhost" 720h
 issue_certificate vault "vault,localhost" 8760h
 issue_certificate relay "relay" 720h
 issue_certificate alloy "alloy" 720h
+issue_certificate migrator "kura_migrator" 720h
 # The NetBird VPN server's public name on the LAN (file: netbird.crt / netbird.key).
 issue_certificate netbird "netbird.kura.lan" 720h
 # The root CA certificate becomes ca.crt: the one thing every service trusts.
@@ -86,17 +87,17 @@ issue_certificate netbird "netbird.kura.lan" 720h
 docker compose exec -T vault vault read -field=certificate pki/cert/ca > "$WORK_DIR/ca.crt"
 
 # Stop here, before touching anything, unless every file looks right.
-for FILE in ca.crt nginx.crt waf.crt web.crt db.crt vault.crt relay.crt alloy.crt netbird.crt; do
+for FILE in ca.crt nginx.crt waf.crt web.crt db.crt vault.crt relay.crt alloy.crt migrator.crt netbird.crt; do
     grep -q "BEGIN CERTIFICATE" "$WORK_DIR/$FILE" || { echo "Vault returned a bad $FILE" >&2; exit 1; }
 done
-for FILE in nginx.key waf.key web.key db.key vault.key relay.key alloy.key netbird.key; do
+for FILE in nginx.key waf.key web.key db.key vault.key relay.key alloy.key migrator.key netbird.key; do
     grep -q "PRIVATE KEY" "$WORK_DIR/$FILE" || { echo "Vault returned a bad $FILE" >&2; exit 1; }
 done
 
 # 3. Write the new files over the old ones IN PLACE ("cat new > old" keeps the
 #    same file, so the containers' single-file mounts see the new content).
 echo "[3/5] Installing the new certificates..."
-for FILE in ca.crt nginx.crt waf.crt web.crt db.crt vault.crt relay.crt alloy.crt netbird.crt nginx.key waf.key web.key db.key vault.key relay.key alloy.key netbird.key; do
+for FILE in ca.crt nginx.crt waf.crt web.crt db.crt vault.crt relay.crt alloy.crt migrator.crt netbird.crt nginx.key waf.key web.key db.key vault.key relay.key alloy.key migrator.key netbird.key; do
     if [ ! -f "$CERT_DIR/$FILE" ]; then
         touch "$CERT_DIR/$FILE"
     fi
@@ -110,6 +111,7 @@ chmod 0600 "$CERT_DIR"/*.key
 if [ "$(uname -s)" = "Linux" ]; then
     chown 26 "$CERT_DIR/db.key"       # "postgres" in the pgEdge image
     chown 10001 "$CERT_DIR/web.key"   # "kura" in our Dockerfile
+    chown 10001 "$CERT_DIR/migrator.key" # "kura" in our Dockerfile (migrate job)
     chown 101 "$CERT_DIR/waf.key"     # "nginx" in the Coraza WAF image
     chown 0 "$CERT_DIR/nginx.key"     # Nginx reads its keys as root
     chown 100 "$CERT_DIR/vault.key"   # "vault" in the HashiCorp Vault image
@@ -125,7 +127,7 @@ is_running() {
     docker compose ps --status running --services | grep -qx "$1"
 }
 if is_running db; then
-    docker compose exec -T db psql -q -U kura-admin -d kura -c "SELECT pg_reload_conf();" > /dev/null
+    docker compose exec -T db sh -c 'PGPASSWORD="$(tr -d "\r\n" < /run/secrets/db_password)" psql -q -U kura-admin -d kura -c "SELECT pg_reload_conf();"' > /dev/null
     echo "      db: configuration reloaded"
 fi
 if is_running vault; then

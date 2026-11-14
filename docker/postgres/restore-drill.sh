@@ -60,13 +60,14 @@ docker run -d --name "$DRILL_CONTAINER" --network none --tmpfs /tmp --tmpfs /var
     -v "$PWD/docker/postgres/pgbackrest.conf":/etc/pgbackrest/pgbackrest.conf:ro \
     -v "$PWD/docker/postgres/pgbackrest-wrapper.sh":/usr/local/bin/pgbackrest:ro \
     -v "$PWD/secrets/backup_encryption_key.txt":/run/secrets/backup_encryption_key:ro \
+    -v "$PWD/secrets/db_password.txt":/run/secrets/db_password:ro \
     --entrypoint postgres "$IMAGE" \
     -D /restore -c listen_addresses='' -c archive_mode=off -c shared_preload_libraries='' \
     -c unix_socket_directories=/var/run/postgresql > /dev/null
 
 # Wait until recovery is finished and the copy accepts queries (at most 2 minutes).
 for attempt in $(seq 1 60); do
-    if docker exec "$DRILL_CONTAINER" psql -h /var/run/postgresql -U kura-admin -d kura -X -q -t -A -c "SELECT pg_is_in_recovery();" 2>/dev/null | grep -q '^f$'; then
+    if docker exec "$DRILL_CONTAINER" sh -c 'PGPASSWORD="$(tr -d "\r\n" < /run/secrets/db_password)" psql -h /var/run/postgresql -U kura-admin -d kura -X -q -t -A -c "SELECT pg_is_in_recovery();"' 2>/dev/null | grep -q '^f$'; then
         break
     fi
     sleep 2
@@ -76,8 +77,8 @@ END_SECONDS=$(date +%s)
 # 4. Compare row counts, live vs restored.
 echo "[3/3] Comparing row counts (live -> restored):"
 for TABLE in $TABLES; do
-    LIVE=$(docker compose exec -T db psql -U kura-admin -d kura -X -q -t -A -c "SELECT count(*) FROM $TABLE;" 2>/dev/null || echo "?")
-    RESTORED=$(docker exec "$DRILL_CONTAINER" psql -h /var/run/postgresql -U kura-admin -d kura -X -q -t -A -c "SELECT count(*) FROM $TABLE;" 2>/dev/null || echo "?")
+    LIVE=$(docker compose exec -T db sh -c 'PGPASSWORD="$(tr -d "\r\n" < /run/secrets/db_password)" psql -U kura-admin -d kura -X -q -t -A -c "SELECT count(*) FROM '"$TABLE"';"' 2>/dev/null || echo "?")
+    RESTORED=$(docker exec "$DRILL_CONTAINER" sh -c 'PGPASSWORD="$(tr -d "\r\n" < /run/secrets/db_password)" psql -h /var/run/postgresql -U kura-admin -d kura -X -q -t -A -c "SELECT count(*) FROM '"$TABLE"';"' 2>/dev/null || echo "?")
     printf '  %-16s %6s -> %s\n' "$TABLE" "$LIVE" "$RESTORED"
 done
 echo "Restore + recovery took $((END_SECONDS - START_SECONDS)) seconds (RTO for this database size)."
