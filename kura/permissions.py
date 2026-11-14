@@ -1,6 +1,21 @@
+from contextlib import contextmanager
+
+from django.db import connection
 from django.utils import timezone
 
 from .models import CourseStaff, Enrollment, EnrollmentStatus, RolePermission, StudentProfile, UserRole
+
+
+@contextmanager
+def service_rls_context():
+    """Set the PostgreSQL service RLS context for authorized background commands."""
+    with connection.cursor() as cursor:
+        cursor.execute("SET kura.service_role = 'management_command';")
+    try:
+        yield
+    finally:
+        with connection.cursor() as cursor:
+            cursor.execute("RESET kura.service_role;")
 
 
 def has_role(user, role_name):

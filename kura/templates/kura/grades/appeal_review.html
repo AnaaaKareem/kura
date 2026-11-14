@@ -31,6 +31,7 @@
         <p class="text-sm k-muted italic whitespace-pre-line">{{ appeal.reason }}</p>
     </div>
 
+    {% if can_decide %}
     <div class="k-card">
         <form method="post" class="space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
             {% csrf_token %}
@@ -44,5 +45,17 @@
             </div>
         </form>
     </div>
+    {% else %}
+    <div class="k-card space-y-2">
+        <h2 class="text-base font-semibold">Decision (read-only)</h2>
+        <p class="text-sm">Status: <span class="badge badge-outline">{{ appeal.get_status_display }}</span></p>
+        {% if appeal.response %}
+        <p class="text-sm k-muted whitespace-pre-line">{{ appeal.response }}</p>
+        {% endif %}
+        <div class="pt-2">
+            <a href="{% url 'kura:course_grades' appeal.grade.assessment.section.module.course.id %}" class="btn btn-ghost btn-sm">Back to gradebook</a>
+        </div>
+    </div>
+    {% endif %}
 </div>
 {% endblock %}
