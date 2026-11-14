@@ -479,8 +479,8 @@ class LoginAndLogoutTests(TestCase):
             reverse("kura:login"),
             {"email": self.user.email, "password": "WrongPassword999!"},
         )
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Invalid email or password.")
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "Invalid email or password.", status_code=400)
 
     def test_deactivated_account_cannot_login(self):
         # AUTH-01: even a correct password gets the generic message, so the
@@ -492,9 +492,9 @@ class LoginAndLogoutTests(TestCase):
             reverse("kura:login"),
             {"email": self.user.email, "password": self.password},
         )
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Invalid email or password.")
-        self.assertNotContains(response, "deactivated")
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "Invalid email or password.", status_code=400)
+        self.assertNotContains(response, "deactivated", status_code=400)
 
     def test_wrong_password_for_deactivated_account_stays_generic(self):
         # A wrong password never reveals whether the matching account is deactivated.
@@ -506,8 +506,8 @@ class LoginAndLogoutTests(TestCase):
             {"email": self.user.email, "password": "WrongPassword999!"},
         )
 
-        self.assertContains(response, "Invalid email or password.")
-        self.assertNotContains(response, "This account has been deactivated.")
+        self.assertContains(response, "Invalid email or password.", status_code=400)
+        self.assertNotContains(response, "This account has been deactivated.", status_code=400)
 
     def test_locked_account_with_correct_password_shows_generic_message(self):
         # AUTH-01: a correct password on a locked account gets the same
@@ -520,9 +520,9 @@ class LoginAndLogoutTests(TestCase):
                 reverse("kura:login"),
                 {"email": self.user.email, "password": self.password},
             )
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Invalid email or password.")
-        self.assertNotContains(response, "locked")
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "Invalid email or password.", status_code=400)
+        self.assertNotContains(response, "locked", status_code=400)
         self.assertIn('reason="locked"', "\n".join(captured.output))
 
     def test_locked_account_with_wrong_password_shows_generic_message(self):
@@ -535,9 +535,9 @@ class LoginAndLogoutTests(TestCase):
             {"email": self.user.email, "password": "WrongPassword999!"},
         )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Invalid email or password.")
-        self.assertNotContains(response, "This account is currently locked.")
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "Invalid email or password.", status_code=400)
+        self.assertNotContains(response, "This account is currently locked.", status_code=400)
 
     @patch("kura.views.authenticate", return_value=None)
     @patch("kura.views.AxesProxyHandler.is_locked", return_value=True)
@@ -548,8 +548,8 @@ class LoginAndLogoutTests(TestCase):
             {"email": self.user.email, "password": self.password},
         )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Invalid email or password.")
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "Invalid email or password.", status_code=400)
 
     def test_failed_login_checks_the_password_only_once(self):
         # AUTH-04: a known email with a wrong password must cost one password
@@ -647,10 +647,10 @@ class FirstLoginPasswordChangeTests(TestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
         password_error = response.context["form"].errors["new_password"][0]
-        self.assertContains(response, password_error)
-        self.assertNotContains(response, "data-password-change-confirmation")
+        self.assertContains(response, password_error, status_code=400)
+        self.assertNotContains(response, "data-password-change-confirmation", status_code=400)
 
     def test_password_confirmation_is_shown_before_mfa_setup(self):
         # First-time users also need confirmation when they are redirected to MFA setup.
@@ -707,8 +707,8 @@ class DemoDataSeedCommandTests(TestCase):
         session.save()
         response = self.client.post(reverse("kura:mfa_verify"), {"code": "123456"})
 
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Invalid security code.")
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "Invalid security code.", status_code=400)
         # Preserve existing MFA settings while removing the known insecure token.
         self.assertTrue(demo_user.mfa_enabled)
         self.assertTrue(TOTPDevice.objects.filter(user=demo_user).exists())
@@ -1204,7 +1204,7 @@ class AdminStaffAccountsTests(TestCase):
             "email": "test-office@example.com", "department": self.department.pk,
             "staff_title": "Instructor", "building": building.pk, "room": room.pk,
         })
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
         self.assertFalse(User.objects.filter(email="test-office@example.com").exists())
 
 
@@ -1408,8 +1408,8 @@ class RegistrarStudentsAndEnrollmentTests(TestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "An account with this email already exists.")
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "An account with this email already exists.", status_code=400)
 
     def test_registrar_can_enroll_and_drop_student(self):
         # Registrar enrolls student into course and drops them.
@@ -1525,11 +1525,11 @@ class RegistrarStudentsAndEnrollmentTests(TestCase):
         draft = Course.objects.create(department=self.department, code="BIO998", title="Draft", semester="1", academic_year=2026)
         self.client.force_login(self.registrar)
         response = self.client.post(reverse("kura:enrollment_create"), {"student": self.student.id, "course": draft.id})
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
         self.student.is_active = False
         self.student.save(update_fields=["is_active"])
         response = self.client.post(reverse("kura:enrollment_create"), {"student": self.student.id, "course": self.course.id})
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
         self.assertFalse(Enrollment.objects.filter(student=self.student).exists())
 
 
@@ -1803,7 +1803,7 @@ class DepartmentHeadCoursesAndStaffTests(TestCase):
             {"user": str(self.teaching_assistant.id), "staff_role": "lead_instructor"},
         )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
         self.assertFalse(CourseStaff.objects.filter(course=course, user=self.teaching_assistant).exists())
 
 
@@ -2002,7 +2002,7 @@ class InstructorModulesAndContentTests(TestCase):
             "title": "Empty item", "content_body": "  ",
         })
 
-        self.assertContains(response, "Add some content or attach a file.")
+        self.assertContains(response, "Add some content or attach a file.", status_code=400)
         self.assertFalse(SectionItem.objects.filter(section=section, title="Empty item").exists())
 
     @patch("kura.views.validate_and_save_upload", side_effect=ValidationError("Upload rejected."))
@@ -2017,7 +2017,7 @@ class InstructorModulesAndContentTests(TestCase):
             "title": "Rejected item", "content_body": "Body", "file": upload,
         })
 
-        self.assertContains(response, "Upload rejected.")
+        self.assertContains(response, "Upload rejected.", status_code=400)
         self.assertFalse(SectionItem.objects.filter(section=section, title="Rejected item").exists())
         mock_upload.assert_called_once()
 
@@ -2078,7 +2078,7 @@ class InstructorModulesAndContentTests(TestCase):
             {"user": str(self.lead.id)},
         )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
         lead_assignment = CourseStaff.objects.get(course=self.course, user=self.lead)
         self.assertEqual(lead_assignment.staff_role, "lead_instructor")
 
@@ -2671,7 +2671,7 @@ class SchedulesTests(TestCase):
                 "recurrence_end": "2026-12-15",
             },
         )
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
         self.assertFalse(Schedule.objects.filter(course=self.course).exists())
 
         # Also verify database check constraint 'schedule_end_time_after_start' directly.
@@ -2869,7 +2869,7 @@ class AttendanceSessionsAndCheckinTests(TestCase):
             reverse("kura:student_checkin", kwargs={"session_id": session.id}),
             {"passcode": "WRONG1"},
         )
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
         self.assertFalse(AttendanceRecord.objects.filter(session=session, student=self.student).exists())
 
     def test_double_checkin_is_rejected(self):
@@ -3202,11 +3202,11 @@ class AssessmentAuthoringAndIsolationTests(TestCase):
             "questions-0-option_1": "Only option",
         }
         response = self.client.post(reverse("kura:assessment_create", kwargs={"section_id": self.section.id}), data)
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
         self.assertFalse(Assessment.objects.filter(title="Invalid test").exists())
         data.pop("questions-TOTAL_FORMS")
         response = self.client.post(reverse("kura:assessment_create", kwargs={"section_id": self.section.id}), data)
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
         self.assertFalse(Assessment.objects.filter(title="Invalid test").exists())
 
     def test_question_points_cannot_exceed_assessment_maximum(self):
@@ -3222,8 +3222,8 @@ class AssessmentAuthoringAndIsolationTests(TestCase):
             "questions-0-prompt": "Question", "questions-0-points": "20", "questions-0-option_1": "A",
             "questions-0-option_2": "B", "questions-0-correct_1": "on",
         })
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Maximum score cannot be less than the total question points.")
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "Maximum score cannot be less than the total question points.", status_code=400)
         self.assertFalse(Assessment.objects.filter(title="Too many points").exists())
 
     def test_question_form_endpoint_checks_course_permission(self):
@@ -3889,7 +3889,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
         invalid_grade = self.client.post(reverse("kura:grade_entry", kwargs={"attempt_id": attempt.id}), {
             "score": "101.00", "feedback": "Above the maximum.",
         })
-        self.assertContains(invalid_grade, "Score cannot exceed the assessment maximum.")
+        self.assertContains(invalid_grade, "Score cannot exceed the assessment maximum.", status_code=400)
         self.assertFalse(Grade.objects.filter(attempt=attempt).exists())
         grade_response = self.client.post(reverse("kura:grade_entry", kwargs={"attempt_id": attempt.id}), {
             "score": "75.00", "feedback": "Reviewed scanned script.",
@@ -3981,7 +3981,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
         self.assertEqual(attempt.ip_address, "10.20.0.45")
 
     def test_autosave_rejected_after_deadline(self):
-        # Responses submitted after expires_at are rejected with 403 Forbidden.
+        # Responses submitted after expires_at are rejected with 409 Conflict.
         now = timezone.now()
         attempt = AssessmentAttempt.objects.create(
             assessment=self.assessment,
@@ -3997,7 +3997,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
             reverse("kura:assessment_autosave", kwargs={"attempt_id": attempt.id}),
             {"question_id": "q1", "response_type": "multiple_choice", "selected_options": ["o1"]},
         )
-        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.status_code, 409)
 
     def test_matching_autosave_ignores_forged_duplicate_pair_names(self):
         # Extra POST keys must not duplicate a correct pair and inflate automatic marks.
@@ -6807,8 +6807,8 @@ class AnswerKeyEncryptionTests(TestCase):
             "questions-0-type": "multiple_choice", "questions-0-prompt": "Pick B", "questions-0-points": "10",
             "questions-0-option_1": "A", "questions-0-option_2": "B", "questions-0-correct_2": "on",
         })
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "could not be saved securely right now")
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "could not be saved securely right now", status_code=400)
         self.assertFalse(Assessment.objects.filter(title="Quiz 3").exists())
 
     def test_edit_page_is_not_shown_when_vault_is_down(self):
@@ -6955,8 +6955,8 @@ class RecoveryCodeHashingTests(TestCase):
         # Using the same code again fails.
         self.client.logout()
         response = self.log_in_with_code("ABCD1234")
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Invalid security code.")
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "Invalid security code.", status_code=400)
 
     def test_code_ignores_spaces_and_letter_case(self):
         response = self.log_in_with_code("abcd 1234")
@@ -6967,8 +6967,8 @@ class RecoveryCodeHashingTests(TestCase):
         StaticToken.objects.filter(device=self.static_device).delete()
         StaticToken.objects.create(device=self.static_device, token="ABCD1234")
         response = self.log_in_with_code("ABCD1234")
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Invalid security code.")
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "Invalid security code.", status_code=400)
 
 
 @override_settings(VAULT_ENABLED=False)
@@ -7853,10 +7853,10 @@ class MfaSetupReauthTests(TestCase):
         self.client.force_login(self.user)
         with self.assertLogs("kura.security", level="WARNING") as captured:
             response = self.client.post(reverse("kura:mfa_setup"), {"code": "000000"})
-        self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, "otpauth")
-        self.assertNotContains(response, "data:image/svg+xml;utf8,")
-        self.assertContains(response, "Invalid security code.")
+        self.assertEqual(response.status_code, 400)
+        self.assertNotContains(response, "otpauth", status_code=400)
+        self.assertNotContains(response, "data:image/svg+xml;utf8,", status_code=400)
+        self.assertContains(response, "Invalid security code.", status_code=400)
         self.assertTrue(any('event="auth.mfa.reauth_failed"' in line for line in captured.output))
 
     def test_correct_totp_renders_setup_and_confirming_post_regenerates_codes(self):
@@ -8343,7 +8343,7 @@ class PasswordReuseTests(TestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
         self.assertIn(
             "Choose a password you have not used recently.",
             response.context["form"].errors["new_password"],
@@ -8368,7 +8368,7 @@ class PasswordReuseTests(TestCase):
             },
         )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
         self.assertIn(
             "Choose a password you have not used recently.",
             response.context["form"].errors["new_password"],
@@ -8540,7 +8540,7 @@ class FreeTextLengthLimitTests(TestCase):
             {"reason": "a" * 5001},
         )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
         self.assertIn("reason", response.context["form"].errors)
         self.assertFalse(GradeAppeal.objects.filter(grade=self.grade).exists())
 
@@ -8607,7 +8607,7 @@ class InvalidInputLoggingTests(TestCase):
                 {"kind": "department", "code": "", "name": marker},
             )
 
-        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.status_code, 400)
         output = "\n".join(captured.output)
         self.assertIn("input.invalid", output)
         self.assertIn("DepartmentForm", output)
@@ -8728,8 +8728,8 @@ class FreshSecondFactorTests(TestCase):
 
     def test_wrong_code_is_rejected(self):
         response = self.client.post(reverse("kura:mfa_reauth"), {"code": "000000", "next": "/"})
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Invalid security code")
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "Invalid security code", status_code=400)
         self.assertNotIn("mfa_reauth_at", self.client.session)
 
     def test_next_to_another_site_is_ignored(self):
@@ -8959,7 +8959,7 @@ class PasswordHistoryTests(TestCase):
 
         # Current password (P5) fails.
         resp = self._change_password(self.passwords[5], self.passwords[5])
-        self.assertEqual(resp.status_code, 200)
+        self.assertEqual(resp.status_code, 400)
         self.assertIn("Choose a password you have not used recently.", resp.context["form"].errors["new_password"])
 
         # 6th change: P5 -> P6. Now history holds P5 (1st prev), P4 (2nd), P3 (3rd), P2 (4th), P1 (5th);
@@ -8971,7 +8971,7 @@ class PasswordHistoryTests(TestCase):
         # 2nd previous (P4) and 5th previous (P1) fail on both change and reset confirm forms.
         for old_candidate in (self.passwords[4], self.passwords[1]):
             resp = self._change_password(self.passwords[6], old_candidate)
-            self.assertEqual(resp.status_code, 200)
+            self.assertEqual(resp.status_code, 400)
             self.assertIn("Choose a password you have not used recently.", resp.context["form"].errors["new_password"])
 
             raw_token = secrets.token_urlsafe(32)
@@ -8984,7 +8984,7 @@ class PasswordHistoryTests(TestCase):
                 reverse("kura:password_reset_confirm", kwargs={"token": raw_token}),
                 {"new_password": old_candidate, "confirm_password": old_candidate},
             )
-            self.assertEqual(reset_resp.status_code, 200)
+            self.assertEqual(reset_resp.status_code, 400)
             self.assertIn("Choose a password you have not used recently.", reset_resp.context["form"].errors["new_password"])
 
         # 6th previous (P0) was pruned and now succeeds.
@@ -9249,8 +9249,8 @@ class CourseGradeSchemeTests(TestCase):
     def test_weights_that_do_not_add_up_to_100_are_refused(self):
         self.client.force_login(self.data["instructor"])
         response = self.client.post(self.url, {"weight_exam": "70"})
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "must add up to 100%")
+        self.assertEqual(response.status_code, 400)
+        self.assertContains(response, "must add up to 100%", status_code=400)
         self.assertFalse(CourseGradeScheme.objects.filter(course=self.data["course"]).exists())
 
     def test_cleared_component_is_removed(self):
@@ -9418,8 +9418,8 @@ class RemainingLedgerCompletionTests(TestCase):
     def test_field_accessibility_ids_and_numeric_mfa_inputmode(self):
         self.client.force_login(self.admin)
         resp = self.client.post(reverse("kura:admin_course_create"), {"code": ""})
-        self.assertContains(resp, 'id="id_code_error"')
-        self.assertContains(resp, 'aria-describedby="id_code_error"')
+        self.assertContains(resp, 'id="id_code_error"', status_code=400)
+        self.assertContains(resp, 'aria-describedby="id_code_error"', status_code=400)
 
         # MFA verify form renders numeric inputmode for mobile keyboards.
         self.client.logout()
@@ -10222,3 +10222,133 @@ class WorkItem1LoggingTests(TestCase):
                     if "log_security_event(" not in seg and "validate_and_save_upload(" not in seg:
                         missing.append(node.name)
         self.assertEqual(missing, [])
+
+
+class WorkItem2ServerCodeTests(TestCase):
+    """Tests for Work Item 2: HTTP status codes, Retry-After headers, duplicate appeals, and FIDO2 wrappers."""
+
+    def test_axes_lockout_returns_429_with_retry_after(self):
+        password = "ValidPassword123!"
+        user = make_user("Student", password=password)
+        login_url = reverse("kura:login")
+        for _ in range(5):
+            self.client.post(login_url, {"email": user.email, "password": "WrongPassword999!"})
+        locked = self.client.post(login_url, {"email": user.email, "password": password})
+        self.assertEqual(locked.status_code, 429)
+        self.assertEqual(locked.headers.get("Retry-After"), "3600")
+
+    def test_rate_limit_middleware_and_search_return_429_with_retry_after(self):
+        from django.core.cache import caches
+
+        caches["ratelimit"].clear()
+        caches["search_limits"].clear()
+        student = make_user("Student")
+        self.client.force_login(student)
+        url = reverse("kura:assessment_attempt_file_upload", args=[uuid.uuid4()])
+        for _ in range(20):
+            self.client.post(url)
+        limited = self.client.post(url)
+        self.assertEqual(limited.status_code, 429)
+        self.assertEqual(limited.headers.get("Retry-After"), "60")
+
+        registrar = make_user("Registrar")
+        reg_client = Client()
+        reg_client.force_login(registrar)
+        search_url = reverse("kura:enrollment_search")
+        for _ in range(60):
+            reg_client.get(search_url, {"kind": "student", "q": "a"})
+        limited_search = reg_client.get(search_url, {"kind": "student", "q": "a"})
+        self.assertEqual(limited_search.status_code, 429)
+        self.assertEqual(limited_search.headers.get("Retry-After"), "60")
+
+    def test_duplicate_pending_appeal_is_refused(self):
+        dept = Department.objects.create(code="CSAP", name="CS Appeals")
+        head = make_user("Department head")
+        dept.head_user = head
+        dept.save()
+        instructor = make_user("Instructor")
+        course = Course.objects.create(
+            department=dept, code="AP101", title="Appeals", semester="1", academic_year=2026,
+            created_by=head, is_published=True, published_by=head, published_at=timezone.now(),
+        )
+        student = make_user("Student")
+        mod = Module.objects.create(course=course, title="M", is_visible=True, created_by=head)
+        sec = ModuleSection.objects.create(module=mod, title="S", section_type="coursework")
+        now = timezone.now()
+        assessment = Assessment.objects.create(
+            section=sec, title="A1", component_type=GradeComponentType.ASSIGNMENT,
+            max_score=Decimal("100.00"), opens_at=now - timezone.timedelta(hours=1),
+            due_date=now + timezone.timedelta(hours=1), duration_minutes=30, created_by=instructor,
+        )
+        attempt = AssessmentAttempt.objects.create(
+            assessment=assessment, student=student, attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED, expires_at=now + timezone.timedelta(minutes=30),
+            ip_address="127.0.0.1",
+        )
+        grade = Grade.objects.create(
+            attempt=attempt, assessment=assessment, student=student, grader=instructor,
+            score=Decimal("70.00"), status=GradeStatus.RELEASED, released_by=instructor, released_at=now,
+        )
+        self.client.force_login(student)
+        url = reverse("kura:grade_appeal_create", args=[grade.id])
+        first = self.client.post(url, {"reason": "First pending appeal."})
+        self.assertEqual(first.status_code, 302)
+        second = self.client.post(url, {"reason": "Duplicate pending appeal."})
+        self.assertEqual(second.status_code, 302)
+        self.assertEqual(GradeAppeal.objects.filter(grade=grade, status=AppealStatus.PENDING).count(), 1)
+
+    def test_passkey_wrappers_normalize_status_and_hide_exception_text(self):
+        from django.http import JsonResponse
+
+        user = make_user("Student")
+        self.client.force_login(user)
+        sess = self.client.session
+        sess["mfa_reauth_at"] = timezone.now().timestamp()
+        sess.save()
+
+        # No fido2_state in session -> library returns 200 ERR, wrapper turns it into 400 ERR.
+        reg_resp = self.client.post(reverse("fido2_complete_reg"), data="{}", content_type="application/json")
+        self.assertEqual(reg_resp.status_code, 400)
+        self.assertEqual(reg_resp.json()["status"], "ERR")
+
+        auth_url = reverse("fido2_complete_auth")
+        with patch("mfa.FIDO2.authenticate_complete", return_value=JsonResponse({"status": "ERR", "message": "raw internal traceback detail"}, status=500)):
+            err_500 = self.client.post(auth_url, data="{}", content_type="application/json")
+        self.assertEqual(err_500.status_code, 500)
+        self.assertNotIn(b"raw internal traceback detail", err_500.content)
+
+        with patch("mfa.FIDO2.authenticate_complete", return_value=JsonResponse({"status": "ERR", "message": "Wrong challenge"}, status=400)):
+            err_400 = self.client.post(auth_url, data="{}", content_type="application/json")
+        self.assertEqual(err_400.status_code, 400)
+
+        with patch("mfa.FIDO2.authenticate_complete", return_value=None):
+            none_resp = self.client.post(auth_url, data="{}", content_type="application/json")
+        self.assertEqual(none_resp.status_code, 500)
+        self.assertEqual(none_resp.json()["status"], "ERR")
+
+        with patch("mfa.FIDO2.authenticate_complete", return_value=JsonResponse({"status": "OK", "redirect": "/"})):
+            ok_resp = self.client.post(auth_url, data="{}", content_type="application/json")
+        self.assertEqual(ok_resp.status_code, 200)
+        self.assertEqual(ok_resp.json(), {"status": "OK", "redirect": "/"})
+
+    @override_settings(DEBUG=False)
+    def test_error_responses_omit_tracebacks_with_debug_false(self):
+        client = Client(raise_request_exception=False)
+        r404 = client.get(f"/courses/{uuid.uuid4()}/")
+        self.assertIn(r404.status_code, (302, 404))
+        student = make_user("Student")
+        client.force_login(student)
+        r404_auth = client.get(f"/courses/{uuid.uuid4()}/")
+        self.assertEqual(r404_auth.status_code, 404)
+        self.assertNotIn(b"Traceback", r404_auth.content)
+
+        r405 = client.get(reverse("kura:logout"))
+        self.assertEqual(r405.status_code, 405)
+        self.assertNotIn(b"Traceback", r405.content)
+
+        with patch("kura.views.LoginForm", side_effect=RuntimeError("boom-secret")):
+            anon = Client(raise_request_exception=False)
+            r500 = anon.get(reverse("kura:login"))
+        self.assertEqual(r500.status_code, 500)
+        self.assertNotIn(b"Traceback", r500.content)
+        self.assertNotIn(b"boom-secret", r500.content)
