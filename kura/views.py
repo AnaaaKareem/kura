@@ -26,7 +26,7 @@ from django.core.paginator import Paginator
 from django.db import transaction
 from django.db.models import Avg, Count, Prefetch, Q, Value
 from django.db.models.functions import Concat
-from django.http import HttpResponse, HttpResponseForbidden, HttpResponseNotAllowed, JsonResponse
+from django.http import Http404, HttpResponse, HttpResponseForbidden, HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template import loader
 from django.urls import reverse
@@ -1649,22 +1649,39 @@ def password_reset_confirm_view(request, token):
 
     if request.method == "POST" and form.is_valid():
         new_password = form.cleaned_data["new_password"]
-        user = reset_record.user
 
-        # Second factor: required for accounts with MFA. A wrong code spends
-        # the link so nobody can keep guessing codes with it.
-        if user.mfa_enabled:
-            method_used = verify_second_factor(user, form.cleaned_data["code"].strip())
-            if not method_used:
-                reset_record.used_at = timezone.now()
-                reset_record.save(update_fields=["used_at"])
-                log_security_event(request, "auth.password.reset_2fa_failed", {}, logging.WARNING)
-                messages.error(request, "Invalid security code. Please request a new reset link.")
-                return redirect("kura:password_reset_request")
-            log_security_event(request, "auth.password.reset_2fa_ok", {"method": method_used})
-
-        # Record the previous password hash and keep only the newest PASSWORD_HISTORY_COUNT rows (AUTH-06).
+        # Lock the reset token row inside atomic() and re-verify unused + unexpired (P1).
         with transaction.atomic():
+            reset_record = (
+                PasswordResetToken.objects.select_for_update()
+                .select_related("user")
+                .filter(
+                    id=reset_record.id,
+                    used_at__isnull=True,
+                    expires_at__gt=timezone.now(),
+                )
+                .first()
+            )
+            if not reset_record:
+                log_security_event(request, "auth.password.reset_invalid_token", {}, logging.WARNING)
+                messages.error(request, "This password reset link is invalid or has expired.")
+                return redirect("kura:password_reset_request")
+
+            user = reset_record.user
+
+            # Second factor: required for accounts with MFA. A wrong code spends
+            # the link inside the locked transaction so concurrent guesses cannot race.
+            if user.mfa_enabled:
+                method_used = verify_second_factor(user, form.cleaned_data["code"].strip())
+                if not method_used:
+                    reset_record.used_at = timezone.now()
+                    reset_record.save(update_fields=["used_at"])
+                    log_security_event(request, "auth.password.reset_2fa_failed", {}, logging.WARNING)
+                    messages.error(request, "Invalid security code. Please request a new reset link.")
+                    return redirect("kura:password_reset_request")
+                log_security_event(request, "auth.password.reset_2fa_ok", {"method": method_used})
+
+            # Record the previous password hash and keep only the newest PASSWORD_HISTORY_COUNT rows (AUTH-06).
             if user.password:
                 PasswordHistory.objects.create(user=user, password_hash=user.password)
                 keep_ids = list(
@@ -1682,12 +1699,12 @@ def password_reset_confirm_view(request, token):
 
             # Mark token as consumed.
             reset_record.used_at = timezone.now()
-            reset_record.save()
+            reset_record.save(update_fields=["used_at"])
 
-        # Revoke all existing sessions for this user.
-        sessions_revoked = UserSession.objects.filter(user=user, revoked_at__isnull=True).update(
-            revoked_at=timezone.now()
-        )
+            # Revoke all existing sessions for this user.
+            sessions_revoked = UserSession.objects.filter(user=user, revoked_at__isnull=True).update(
+                revoked_at=timezone.now()
+            )
 
         # Record the account whose password changed and how many sessions were ended.
         log_security_event(
@@ -4647,13 +4664,14 @@ def evaluate_attempt(attempt):
     if attempt.assessment.delivery_mode == AssessmentDeliveryMode.PAPER_SCANNED:
         attempt.status = AttemptStatus.REQUIRES_MANUAL_GRADING
         attempt.summary_score_json = None
+        if not attempt.submission_hash:
+            attempt.submission_hash = compute_submission_hash(attempt)
         attempt.save(update_fields=["status", "summary_score_json", "submitted_at", "submission_hash"])
         return
 
     # Load the answer key; Vault decrypts it in memory only. If Vault cannot be
-    # reached, the submission is still kept (its time and hash are already set)
-    # and goes to the instructor for manual grading, instead of failing or
-    # being marked as zero.
+    # reached, the submission is still kept and goes to manual grading instead of
+    # failing or being marked as zero.
     answer_key_obj = ExamAnswerKey.objects.filter(assessment=attempt.assessment).first()
     answer_key_dict = {}
     if answer_key_obj:
@@ -4663,6 +4681,8 @@ def evaluate_attempt(attempt):
             log_security_event(None, "assessment.answer_key_unavailable", {"attempt_id": attempt.id}, logging.ERROR)
             attempt.status = AttemptStatus.REQUIRES_MANUAL_GRADING
             attempt.summary_score_json = None
+            if not attempt.submission_hash:
+                attempt.submission_hash = compute_submission_hash(attempt)
             attempt.save(update_fields=["status", "summary_score_json", "submitted_at", "submission_hash"])
             return
 
@@ -4753,6 +4773,9 @@ def evaluate_attempt(attempt):
     }
     validate_attempt_answers_json(attempt.answers_json)
     validate_summary_score_json(attempt.summary_score_json)
+    # Compute submission_hash after answers_json is finalized so stored data verifies cleanly (W6).
+    if not attempt.submission_hash:
+        attempt.submission_hash = compute_submission_hash(attempt)
     attempt.save()
 
     # If fully auto-graded, create or update the draft grade for this attempt only
@@ -5362,7 +5385,6 @@ def scanned_paper_staff_upload_view(request, assessment_id):
                 raise ValidationError("Upload a PDF or image of the scanned paper.")
             AttemptFile.objects.create(attempt=attempt, file=stored_file)
             attempt.submitted_at = timezone.now()
-            attempt.submission_hash = compute_submission_hash(attempt)
             evaluate_attempt(attempt)
     except ValidationError as error:
         if hasattr(error, "message"):
@@ -5947,7 +5969,6 @@ def assessment_submit_view(request, attempt_id):
 
         # Seal the attempt and its grade together, capping the time at the deadline.
         attempt.submitted_at = min(timezone.now(), attempt.expires_at)
-        attempt.submission_hash = compute_submission_hash(attempt)
         evaluate_attempt(attempt)
 
         # Email a receipt: when it was submitted, its integrity hash and the
@@ -6493,8 +6514,16 @@ def grade_release_view(request, grade_id):
             messages.error(request, "Invalid MFA security token for grade release authorization.")
             return render(request, "kura/grades/grade_release.html", {"form": form, "grade": grade}, status=400)
 
-        old_status = grade.status
+        # Lock the grade row inside atomic() and re-verify FINALIZED before releasing (P2).
         with transaction.atomic():
+            grade = Grade.objects.select_for_update().select_related(
+                "assessment__section__module__course__department", "student"
+            ).get(id=grade.id)
+            if grade.status != GradeStatus.FINALIZED:
+                messages.error(request, "Only finalized grades can be released.")
+                return redirect("kura:course_grades", course_id=course.id)
+
+            old_status = grade.status
             grade.status = GradeStatus.RELEASED
             grade.released_by = request.user
             grade.released_at = timezone.now()
@@ -6668,29 +6697,41 @@ def grade_appeal_review_view(request, appeal_id):
         raise PermissionDenied
     if request.method == "POST" and not can_decide:
         raise PermissionDenied
+    # Already-decided appeals return 404 to deciders; department heads keep read-only GET (M1).
+    if appeal.status != AppealStatus.PENDING and (request.method == "POST" or can_decide):
+        raise Http404
 
     form = GradeAppealReviewForm(request.POST or None, initial={"status": appeal.status, "response": appeal.response})
 
     if request.method == "POST" and form.is_valid():
-        appeal.status = form.cleaned_data["status"]
-        appeal.response = form.cleaned_data["response"].strip()
-        appeal.reviewed_by = request.user
-        appeal.resolved_at = timezone.now()
-        appeal.save(update_fields=["status", "response", "reviewed_by", "resolved_at"])
-        # Record the decision status without logging the private response text.
-        log_security_event(request, "appeal.decided", {"appeal_id": appeal.id, "status": appeal.status})
+        with transaction.atomic():
+            # Lock the pending row inside atomic() so concurrent POSTs cannot re-decide it (M1).
+            appeal = get_object_or_404(
+                GradeAppeal.objects.select_for_update().select_related(
+                    "grade__assessment__section__module__course__department", "grade__student"
+                ),
+                id=appeal_id,
+                status=AppealStatus.PENDING,
+            )
+            appeal.status = form.cleaned_data["status"]
+            appeal.response = form.cleaned_data["response"].strip()
+            appeal.reviewed_by = request.user
+            appeal.resolved_at = timezone.now()
+            appeal.save(update_fields=["status", "response", "reviewed_by", "resolved_at"])
+            # Record the decision status without logging the private response text.
+            log_security_event(request, "appeal.decided", {"appeal_id": appeal.id, "status": appeal.status})
 
-        # Tell the student their appeal was decided (each decision once).
-        grades_link = settings.SITE_URL + reverse("kura:student_grades")
-        queue_email(
-            f"appeal-decided:{appeal.id}:{int(appeal.resolved_at.timestamp())}",
-            appeal.grade.student.email,
-            f"Grade appeal decided: {appeal.grade.assessment.title}",
-            f"Hello,\n\nYour grade appeal for {appeal.grade.assessment.title} has been reviewed "
-            f"(status: {appeal.get_status_display()}).\n\n"
-            f"Log in to Kura to read the response:\n{grades_link}\n\n"
-            "This is an automatic message from Kura. Please do not reply.",
-        )
+            # Tell the student their appeal was decided (each decision once).
+            grades_link = settings.SITE_URL + reverse("kura:student_grades")
+            queue_email(
+                f"appeal-decided:{appeal.id}:{int(appeal.resolved_at.timestamp())}",
+                appeal.grade.student.email,
+                f"Grade appeal decided: {appeal.grade.assessment.title}",
+                f"Hello,\n\nYour grade appeal for {appeal.grade.assessment.title} has been reviewed "
+                f"(status: {appeal.get_status_display()}).\n\n"
+                f"Log in to Kura to read the response:\n{grades_link}\n\n"
+                "This is an automatic message from Kura. Please do not reply.",
+            )
 
         messages.success(request, f"Appeal verdict recorded for {appeal.grade.student.email}.")
         return redirect("kura:course_grades", course_id=course.id)
@@ -6809,6 +6850,10 @@ def grade_change_request_review_view(request, request_id):
     if change_request.requested_by_id == request.user.id:
         raise PermissionDenied
 
+    # Only pending change requests can be reviewed or decided (M1).
+    if change_request.status != ChangeRequestStatus.PENDING:
+        raise Http404
+
     form = GradeChangeRequestReviewForm(request.POST or None)
 
     if request.method == "POST" and form.is_valid():
@@ -6816,6 +6861,12 @@ def grade_change_request_review_view(request, request_id):
         review_note = form.cleaned_data["review_note"].strip()
 
         with transaction.atomic():
+            # Lock and require status=PENDING inside atomic() so a decided request cannot be re-decided (M1).
+            change_request = get_object_or_404(
+                GradeChangeRequest.objects.select_for_update().select_related("grade", "requested_by"),
+                id=request_id,
+                status=ChangeRequestStatus.PENDING,
+            )
             change_request.status = decision
             change_request.reviewed_by = request.user
             change_request.review_note = review_note
@@ -6830,7 +6881,7 @@ def grade_change_request_review_view(request, request_id):
             )
 
             if decision == ChangeRequestStatus.APPROVED:
-                grade = change_request.grade
+                grade = Grade.objects.select_for_update().get(id=change_request.grade_id)
                 old_score = grade.score
                 grade.score = change_request.proposed_score
                 grade.save(update_fields=["score"])
@@ -6848,6 +6899,25 @@ def grade_change_request_review_view(request, request_id):
                     change_request=change_request,
                 )
 
+                # Keep any existing CourseResult (including RELEASED) in sync with the approved grade change (M2).
+                course_result = CourseResult.objects.select_for_update().filter(
+                    course=course, student_id=grade.student_id
+                ).first()
+                if course_result is not None:
+                    new_final_score = calculate_student_course_score(course, grade.student)
+                    if new_final_score != course_result.final_score:
+                        course_result.final_score = new_final_score
+                        course_result.save(update_fields=["final_score"])
+                        log_security_event(
+                            request,
+                            "course.result.recalculated",
+                            {
+                                "course_id": course.id,
+                                "result_id": course_result.id,
+                                "change_request_id": change_request.id,
+                            },
+                        )
+
         messages.success(request, f"Grade change request {decision.lower()} successfully.")
         return redirect("kura:course_grades", course_id=course.id)
 
@@ -6860,6 +6930,28 @@ def grade_change_request_review_view(request, request_id):
         {"form": form, "change_request": change_request},
         status=400 if request.method == "POST" else 200,
     )
+
+
+def calculate_student_course_score(course, student):
+    """Computes a student's weighted percentage score from released grades in a course."""
+    schemes = CourseGradeScheme.objects.filter(course=course)
+    cumulative_score = Decimal("0.00")
+
+    for scheme in schemes:
+        comp_grades = Grade.objects.filter(
+            assessment__section__module__course=course,
+            assessment__component_type=scheme.component_type,
+            student=student,
+            status=GradeStatus.RELEASED,
+        ).select_related("assessment")
+
+        if comp_grades.exists():
+            # Calculate average percentage for this component.
+            total_pct = sum((g.score / g.assessment.max_score * 100) for g in comp_grades)
+            avg_pct = total_pct / comp_grades.count()
+            cumulative_score += avg_pct * (scheme.weight_percentage / 100)
+
+    return min(Decimal("100.00"), max(Decimal("0.00"), cumulative_score.quantize(Decimal("0.01"))))
 
 
 @login_required
@@ -6886,7 +6978,6 @@ def course_result_calculate_view(request, course_id):
     if not is_course_instructor(request.user, course):
         raise PermissionDenied
 
-    schemes = CourseGradeScheme.objects.filter(course=course)
     enrollments = Enrollment.objects.filter(course=course, status=EnrollmentStatus.ACTIVE).select_related("student")
 
     calculated_count = 0
@@ -6898,27 +6989,7 @@ def course_result_calculate_view(request, course_id):
             # Released results are already on transcripts and must never be overwritten.
             if CourseResult.objects.filter(course=course, student=student, status=GradeStatus.RELEASED).exists():
                 continue
-            cumulative_score = Decimal("0.00")
-
-            for scheme in schemes:
-                comp_type = scheme.component_type
-                weight = scheme.weight_percentage
-
-                # Find all released grades for assessments of this component type.
-                comp_grades = Grade.objects.filter(
-                    assessment__section__module__course=course,
-                    assessment__component_type=comp_type,
-                    student=student,
-                    status=GradeStatus.RELEASED,
-                ).select_related("assessment")
-
-                if comp_grades.exists():
-                    # Calculate average percentage for this component.
-                    total_pct = sum((g.score / g.assessment.max_score * 100) for g in comp_grades)
-                    avg_pct = total_pct / comp_grades.count()
-                    cumulative_score += avg_pct * (weight / 100)
-
-            final_val = min(Decimal("100.00"), max(Decimal("0.00"), cumulative_score.quantize(Decimal("0.01"))))
+            final_val = calculate_student_course_score(course, student)
 
             CourseResult.objects.update_or_create(
                 course=course,

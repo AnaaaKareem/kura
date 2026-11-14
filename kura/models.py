@@ -1212,7 +1212,11 @@ class AttendanceRecord(models.Model):
         constraints = [
             models.CheckConstraint(
                 condition=~models.Q(method=AttendanceMethod.MANUAL)
-                | (models.Q(recorded_by__isnull=False) & models.Q(override_reason__isnull=False)),
+                | (
+                    models.Q(recorded_by__isnull=False)
+                    & models.Q(override_reason__isnull=False)
+                    & ~models.Q(override_reason="")
+                ),
                 name="manual_attendance_requires_staff_and_reason",
             ),
         ]
@@ -1469,7 +1473,11 @@ class GradeHistory(models.Model):
         constraints = [
             models.CheckConstraint(
                 condition=~models.Q(old_status=GradeStatus.RELEASED)
-                | (models.Q(approved_by__isnull=False) & models.Q(reason__isnull=False)),
+                | (
+                    models.Q(approved_by__isnull=False)
+                    & models.Q(reason__isnull=False)
+                    & ~models.Q(reason="")
+                ),
                 name="released_grade_change_requires_approval_and_reason",
             ),
         ]
