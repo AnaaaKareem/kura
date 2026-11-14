@@ -454,6 +454,12 @@ VAULT_TRANSIT_KEY = os.environ.get("VAULT_TRANSIT_KEY", "kura-mfa")
 # A separate Transit key encrypts exam answer keys (ExamAnswerKey.answer_key_json),
 # so the MFA key and the answer-key key can be managed and audited separately.
 VAULT_ANSWER_KEYS_KEY = os.environ.get("VAULT_ANSWER_KEYS_KEY", "kura-answer-keys")
+# RSA-4096 Transit key used to wrap per-file AES-256-GCM data keys (FileContent.wrapped_key).
+VAULT_FILES_KEY = os.environ.get("VAULT_FILES_KEY", "kura-files")
+ALLOW_LEGACY_UNENCRYPTED_FILE_READS = os.environ.get("ALLOW_LEGACY_UNENCRYPTED_FILE_READS", "False").lower() in (
+    "true",
+    "1",
+)
 VAULT_TRANSIT_MOUNT = os.environ.get("VAULT_TRANSIT_MOUNT", "transit")
 VAULT_DB_MOUNT = os.environ.get("VAULT_DB_MOUNT", "database")
 VAULT_DB_ROLE = os.environ.get("VAULT_DB_ROLE", "kura-app")
