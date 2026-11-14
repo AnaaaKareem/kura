@@ -393,11 +393,57 @@ class MFAVerifyForm(forms.Form):
 
 
 class DepartmentForm(forms.ModelForm):
-    """Validate the department code and name."""
+    """Validate the department code, name, and optional Department Head (M11)."""
 
     class Meta:
         model = Department
-        fields = ["code", "name"]
+        fields = ["code", "name", "head_user"]
+        labels = {
+            "head_user": "Department Head (Optional)",
+        }
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        # Only active Department Head accounts without Admin/Registrar roles may head a department.
+        self.fields["head_user"].required = False
+        self.fields["head_user"].empty_label = "No head assigned"
+        self.fields["head_user"].queryset = (
+            User.objects.filter(
+                is_active=True,
+                user_roles__role__name="Department head",
+            )
+            .exclude(user_roles__role__name__in=["Admin", "Registrar"])
+            .distinct()
+            .order_by("email")
+        )
+
+
+class DepartmentHeadAssignForm(forms.Form):
+    """Appoint or update the Department Head for an existing department (M11)."""
+
+    department = forms.ModelChoiceField(
+        queryset=Department.objects.order_by("name"),
+        widget=forms.Select(attrs={"class": "select select-bordered select-sm w-full"}),
+    )
+    head_user = forms.ModelChoiceField(
+        label="Department Head",
+        required=False,
+        empty_label="No head assigned",
+        queryset=User.objects.none(),
+        widget=forms.Select(attrs={"class": "select select-bordered select-sm w-full"}),
+    )
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.fields["head_user"].queryset = (
+            User.objects.filter(
+                is_active=True,
+                user_roles__role__name="Department head",
+            )
+            .exclude(user_roles__role__name__in=["Admin", "Registrar"])
+            .distinct()
+            .order_by("email")
+        )
 
 
 class BuildingForm(forms.ModelForm):
@@ -636,8 +682,16 @@ class AdminCourseForm(forms.ModelForm):
 
 class CourseCreateForm(forms.Form):
     """
-    Form for Department Heads to create a new course within their department.
+    Form for Department Heads to create a new course within one of their departments (P13).
     """
+
+    department = forms.ModelChoiceField(
+        label="Department",
+        queryset=Department.objects.none(),
+        required=False,
+        empty_label=None,
+        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+    )
 
     code = forms.CharField(
         label="Course Code",
@@ -691,6 +745,27 @@ class CourseCreateForm(forms.Form):
             }
         ),
     )
+
+    def __init__(self, *args, head_departments=None, **kwargs):
+        super().__init__(*args, **kwargs)
+        if head_departments is not None:
+            self._head_departments = head_departments
+            self.fields["department"].queryset = head_departments
+            first_dept = head_departments.first()
+            if first_dept:
+                self.fields["department"].initial = first_dept
+            self.fields["department"].required = head_departments.count() > 1
+        else:
+            self._head_departments = Department.objects.none()
+
+    def clean_department(self):
+        """Ensure the selected department is headed by the requesting Department Head."""
+        dept = self.cleaned_data.get("department")
+        if dept is None and self._head_departments.count() == 1:
+            return self._head_departments.first()
+        if dept is None:
+            raise forms.ValidationError("Select a department for this course.")
+        return dept
 
     def clean_code(self):
         """
@@ -1517,17 +1592,24 @@ class GradeChangeRequestReviewForm(forms.Form):
     )
 
     review_note = forms.CharField(
-        label="Head of Department Review Note (Optional)",
-        required=False,
+        label="Head of Department Review Note",
+        required=True,
         max_length=5000,
         widget=forms.Textarea(
             attrs={
                 "class": "textarea textarea-bordered w-full",
                 "rows": 2,
-                "placeholder": "Comments on approval or grounds for rejection...",
+                "placeholder": "Required explanation for approval or rejection...",
             }
         ),
     )
+
+    def clean_review_note(self):
+        """Require a non-empty review note on every grade change decision (P13)."""
+        note = (self.cleaned_data.get("review_note") or "").strip()
+        if not note:
+            raise forms.ValidationError("A review note is required.")
+        return note
 
 
 class CourseGradeSchemeForm(forms.Form):
@@ -1653,9 +1735,14 @@ def validate_assessment_questions_json(questions):
     if not isinstance(questions, list):
         raise ValidationError("Assessment questions must be a JSON array.")
     seen_ids = set()
+    forbidden_answer_fields = ("correct_option_ids", "correct_pairs", "tutor_rubric", "answer_key", "answer_key_json")
     for item in questions:
         if not isinstance(item, dict):
             raise ValidationError("Each question must be a JSON object.")
+        # Reject every answer-key or rubric field regardless of question type (P6).
+        for forbidden in forbidden_answer_fields:
+            if forbidden in item:
+                raise ValidationError("Question definitions must not contain answer keys or grading rubrics.")
         q_id = item.get("question_id")
         q_type = item.get("type")
         prompt = item.get("prompt")
@@ -1674,8 +1761,8 @@ def validate_assessment_questions_json(questions):
             for opt in options:
                 if not isinstance(opt, dict) or not isinstance(opt.get("option_id"), str) or not isinstance(opt.get("text"), str):
                     raise ValidationError("Each option must contain string option_id and text.")
-            if "correct_option_ids" in item:
-                raise ValidationError("Question definitions must not contain answer keys.")
+                if "is_correct" in opt or "correct" in opt:
+                    raise ValidationError("Question options must not contain answer keys.")
         elif q_type == "matching":
             pairs = item.get("left_prompts")
             matches = item.get("available_matches")
@@ -1684,14 +1771,10 @@ def validate_assessment_questions_json(questions):
             for pair in pairs:
                 if not isinstance(pair, dict) or not isinstance(pair.get("pair_id"), str) or not isinstance(pair.get("text"), str):
                     raise ValidationError("Each matching prompt must contain string pair_id and text.")
-            if "correct_pairs" in item:
-                raise ValidationError("Question definitions must not contain answer keys.")
         elif q_type in ("long_text", "essay"):
             max_words = item.get("max_words")
             if max_words is not None and (isinstance(max_words, bool) or not isinstance(max_words, int) or max_words < 1):
                 raise ValidationError("Long-text question max_words must be a positive integer.")
-            if "tutor_rubric" in item:
-                raise ValidationError("Question definitions must not contain grading rubrics.")
         else:
             raise ValidationError(f"Unsupported question type: {q_type}.")
     return questions

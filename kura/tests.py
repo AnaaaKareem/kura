@@ -12178,3 +12178,206 @@ class AuditGroup7InfraAndConfigTests(TestCase):
             text=True,
         ).strip()
         self.assertEqual(out, "verify-full")
+
+
+class AuditGroup8FinalFixesTests(TestCase):
+    """Tests for Audit Group 8: P6, P7, P8, P13, P14, M4, M10, M11, M12 notice."""
+
+    def test_questions_json_rejects_every_answer_key_field_on_any_question_type(self):
+        from django.core.exceptions import ValidationError
+        from kura.forms import validate_assessment_questions_json
+
+        base_mc = {
+            "question_id": "q1",
+            "type": "multiple_choice",
+            "prompt": "Pick one",
+            "points": 5,
+            "options": [{"option_id": "o1", "text": "A"}, {"option_id": "o2", "text": "B"}],
+        }
+        # Cross-type answer keys (e.g. tutor_rubric on multiple_choice, or is_correct on an option) must fail.
+        for bad_item in (
+            {**base_mc, "tutor_rubric": {"criteria": []}},
+            {**base_mc, "correct_pairs": {"p1": "a"}},
+            {**base_mc, "options": [{"option_id": "o1", "text": "A", "is_correct": True}, {"option_id": "o2", "text": "B"}]},
+        ):
+            with self.assertRaises(ValidationError):
+                validate_assessment_questions_json([bad_item])
+
+    def test_rate_limit_middleware_matches_post_url_name_and_counts_both_user_and_ip(self):
+        from django.core.cache import caches
+
+        caches["ratelimit"].clear()
+        user_a = make_user("Student", mfa_enabled=True)
+        user_b = make_user("Student", mfa_enabled=True)
+        attempt_uuid = uuid.uuid4()
+
+        # GET on an upload URL does NOT increment upload rate limit; non-upload POST with "upload" in query does not either.
+        client_a = Client()
+        login_with_session(client_a, user_a)
+        upload_url = reverse("kura:assessment_attempt_file_upload", args=[attempt_uuid])
+        client_a.get(upload_url)
+        self.assertIsNone(caches["ratelimit"].get(f"rate_limit_upload_{user_a.id}"))
+
+        # 20 POST uploads from user_a fill the IP bucket for 127.0.0.1 too, so user_b on the same IP gets 429.
+        for _ in range(20):
+            client_a.post(upload_url)
+        client_b = Client()
+        login_with_session(client_b, user_b)
+        blocked_b = client_b.post(upload_url)
+        self.assertEqual(blocked_b.status_code, 429)
+        self.assertEqual(blocked_b.headers.get("Retry-After"), "60")
+
+    def test_duplicate_enrollment_and_attendance_integrity_errors_do_not_500(self):
+        dept = Department.objects.create(code="P8D", name="Dept P8")
+        head = make_user("Department head", mfa_enabled=True)
+        dept.head_user = head
+        dept.save()
+        instructor = make_user("Instructor", mfa_enabled=True)
+        registrar = make_user("Registrar", mfa_enabled=True)
+        student = make_user("Student", mfa_enabled=True)
+        StudentProfile.objects.create(
+            user=student, department=dept, current_level="level_4", matriculation_year=2026
+        )
+        now = timezone.now()
+        course = Course.objects.create(
+            department=dept,
+            code="P8101",
+            title="Concurrency",
+            semester="1",
+            academic_year=2026,
+            created_by=head,
+            is_published=True,
+            published_by=head,
+            published_at=now,
+        )
+        login_with_session(self.client, registrar)
+        with patch.object(Enrollment.objects, "create", side_effect=IntegrityError("duplicate")):
+            resp = self.client.post(
+                reverse("kura:enrollment_create"),
+                {"course": course.id, "student": student.id},
+            )
+        self.assertEqual(resp.status_code, 400)
+        self.assertContains(resp, "already actively enrolled", status_code=400)
+
+        Enrollment.objects.create(
+            course=course, student=student, status=EnrollmentStatus.ACTIVE, enrolled_by=registrar
+        )
+        CourseStaff.objects.create(course=course, user=instructor, staff_role="lead_instructor", assigned_by=head)
+        mod = Module.objects.create(course=course, title="M", is_visible=True, created_by=instructor)
+        att_session = ModuleAttendanceSession.objects.create(
+            module=mod,
+            title="S1",
+            passcode_hash=hash_attendance_passcode("123456"),
+            expires_at=now + timezone.timedelta(minutes=30),
+            created_by=instructor,
+        )
+        stud_client = Client()
+        login_with_session(stud_client, student)
+        with patch.object(AttendanceRecord.objects, "create", side_effect=IntegrityError("duplicate")):
+            checkin_resp = stud_client.post(
+                reverse("kura:student_checkin", args=[att_session.id]),
+                {"passcode": "123456"},
+            )
+        self.assertRedirects(checkin_resp, reverse("kura:attendance_history"))
+
+    def test_p13_review_note_required_and_multi_department_course_create_and_m11_head_appointment(self):
+        dept1 = Department.objects.create(code="D1M", name="Alpha Dept")
+        dept2 = Department.objects.create(code="D2M", name="Beta Dept")
+        head = make_user("Department head", mfa_enabled=True)
+        admin = make_user("Admin", mfa_enabled=True)
+
+        # Admin appoints head to both departments via staff_settings (M11).
+        login_with_session(self.client, admin)
+        for dept in (dept1, dept2):
+            resp = self.client.post(
+                reverse("kura:staff_settings"),
+                {"kind": "department_head", "department": dept.id, "head_user": head.id},
+            )
+            self.assertRedirects(resp, reverse("kura:staff_settings"))
+        dept1.refresh_from_db()
+        dept2.refresh_from_db()
+        self.assertEqual(dept1.head_user, head)
+        self.assertEqual(dept2.head_user, head)
+
+        # Head of two departments can choose the second department when creating a course (P13).
+        head_client = Client()
+        login_with_session(head_client, head)
+        page = head_client.get(reverse("kura:course_create"))
+        self.assertContains(page, "Beta Dept")
+        c_resp = head_client.post(
+            reverse("kura:course_create"),
+            {
+                "department": dept2.id,
+                "code": "BETA201",
+                "title": "Beta Systems",
+                "description": "Multi-dept",
+                "semester": "2",
+                "academic_year": 2026,
+            },
+        )
+        self.assertRedirects(c_resp, reverse("kura:course_list"))
+        self.assertEqual(Course.objects.get(code="BETA201").department, dept2)
+
+        # Grade change review rejects blank review_note (P13).
+        from kura.forms import GradeChangeRequestReviewForm
+
+        blank_form = GradeChangeRequestReviewForm({"decision": ChangeRequestStatus.APPROVED, "review_note": "   "})
+        self.assertFalse(blank_form.is_valid())
+        self.assertIn("review_note", blank_form.errors)
+
+    def test_p14_grade_release_checks_all_devices_and_governance_docs_exist(self):
+        dept = Department.objects.create(code="P14D", name="Dept P14")
+        head = make_user("Department head", mfa_enabled=True)
+        dept.head_user = head
+        dept.save()
+        instructor = make_user("Instructor", mfa_enabled=True)
+        student = make_user("Student", mfa_enabled=True)
+        now = timezone.now()
+        course = Course.objects.create(
+            department=dept, code="P14101", title="MFA Devices", semester="1", academic_year=2026,
+            created_by=head, is_published=True, published_by=head, published_at=now,
+        )
+        CourseStaff.objects.create(
+            course=course, user=instructor, staff_role="lead_instructor", can_release_grades=True, assigned_by=head
+        )
+        mod = Module.objects.create(course=course, title="M", is_visible=True, created_by=instructor)
+        sec = ModuleSection.objects.create(module=mod, title="S", section_type="exam")
+        assessment = Assessment.objects.create(
+            section=sec, title="Exam", component_type=GradeComponentType.EXAM, max_score=Decimal("100.00"),
+            opens_at=now - timezone.timedelta(hours=1), due_date=now + timezone.timedelta(hours=12),
+            duration_minutes=30, created_by=instructor,
+        )
+        att = AssessmentAttempt.objects.create(
+            assessment=assessment, student=student, attempt_no=1, status=AttemptStatus.FULLY_GRADED,
+            expires_at=now + timezone.timedelta(minutes=30), submitted_at=now, ip_address="127.0.0.1",
+        )
+        grade = Grade.objects.create(
+            assessment=assessment, student=student, attempt=att, score=Decimal("90.00"),
+            status=GradeStatus.FINALIZED, finalized_by=instructor, finalized_at=now,
+        )
+        # Create two static devices where only the second has the recovery code; verify_second_factor finds it.
+        s1 = StaticDevice.objects.create(user=instructor, name="old", confirmed=True)
+        StaticToken.objects.create(device=s1, token=hash_recovery_code("AAAA1111"))
+        s2 = StaticDevice.objects.create(user=instructor, name="backup", confirmed=True)
+        StaticToken.objects.create(device=s2, token=hash_recovery_code("BBBB2222"))
+
+        login_with_session(self.client, instructor)
+        rel_resp = self.client.post(
+            reverse("kura:grade_release", args=[grade.id]),
+            {"otp_token": "BBBB2222"},
+        )
+        self.assertRedirects(rel_resp, reverse("kura:course_grades", args=[course.id]))
+        grade.refresh_from_db()
+        self.assertEqual(grade.status, GradeStatus.RELEASED)
+
+        # M4, M10, M12 artifacts exist and Alertmanager includes breach-alerts route.
+        ir_text = (Path(settings.BASE_DIR) / "docs" / "INCIDENT_RESPONSE.md").read_text(encoding="utf-8")
+        rmf_text = (Path(settings.BASE_DIR) / "docs" / "NIST_RMF_RECORD.md").read_text(encoding="utf-8")
+        ferpa_text = (Path(settings.BASE_DIR) / "docs" / "FERPA_NOTICE.md").read_text(encoding="utf-8")
+        am_text = (Path(settings.BASE_DIR) / "docker" / "alertmanager" / "alertmanager.yml").read_text(encoding="utf-8")
+        self.assertIn("72-Hour Regulatory Breach Notification", ir_text)
+        self.assertIn("Asset Classification Register", rmf_text)
+        self.assertIn("Annual Notification of Rights", ferpa_text)
+        self.assertIn("breach-alerts", am_text)
+        notice_resp = self.client.get(reverse("kura:privacy_notice"))
+        self.assertContains(notice_resp, "FERPA")

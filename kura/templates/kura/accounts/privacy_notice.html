@@ -48,5 +48,10 @@
             <li><strong>Erasure with academic-record exceptions:</strong> Request erasure of non-exempt auxiliary metadata (session history, pending reset tokens, optional office room). Statutory security logs and academic/grading records remain retained as required by law and institutional policy.</li>
         </ul>
     </section>
+
+    <section class="k-card space-y-3 text-sm">
+        <h2 class="text-base font-semibold">4. Annual FERPA notice of rights (34 C.F.R. &sect; 99.7)</h2>
+        <p class="k-muted">Eligible students have the right to inspect and review their education records (via <a href="{% url 'kura:student_grades' %}" class="link link-primary">My grades</a>, <a href="{% url 'kura:student_transcript' %}" class="link link-primary">Transcript</a>, <a href="{% url 'kura:attendance_history' %}" class="link link-primary">Attendance</a>, and <a href="{% url 'kura:privacy_export' %}" class="link link-primary">Data export</a>), request amendments of inaccurate records (including grade appeals), consent to disclosures outside legitimate educational interest under 34 C.F.R. &sect; 99.31(a)(1), and file a complaint with the Student Privacy Policy Office.</p>
+    </section>
 </div>
 {% endblock %}

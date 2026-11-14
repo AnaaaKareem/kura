@@ -31,14 +31,32 @@
         <h2 class="text-lg font-semibold border-b border-base-300 pb-2">Departments</h2>
         <ul class="divide-y divide-base-200 text-sm">
             {% for department in departments %}
-            <li class="py-2.5 font-medium">{{ department }}</li>
+            <li class="py-2.5 flex items-center justify-between gap-2">
+                <span class="font-medium">{{ department }}</span>
+                <span class="text-xs k-muted">
+                    Head: {% if department.head_user %}{{ department.head_user.email }}{% else %}Unassigned{% endif %}
+                </span>
+            </li>
             {% empty %}
             <li class="py-2.5 text-sm k-muted">No departments added yet.</li>
             {% endfor %}
         </ul>
         <form method="post" class="space-y-3 pt-3 border-t border-base-300">
             {% csrf_token %}
+            <input type="hidden" name="kind" value="department_head">
+            <h3 class="text-sm font-semibold">Appoint or update department head</h3>
+            {% include "kura/_form_errors.html" with form=department_head_form %}
+            {% for field in department_head_form %}
+            {% include "kura/_field.html" with field=field %}
+            {% endfor %}
+            <div class="flex justify-end">
+                <button class="btn btn-outline btn-sm" type="submit">Update department head</button>
+            </div>
+        </form>
+        <form method="post" class="space-y-3 pt-3 border-t border-base-300">
+            {% csrf_token %}
             <input type="hidden" name="kind" value="department">
+            <h3 class="text-sm font-semibold">Add department</h3>
             {% include "kura/_form_errors.html" with form=department_form %}
             {% for field in department_form %}
             {% include "kura/_field.html" with field=field %}

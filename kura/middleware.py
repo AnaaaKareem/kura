@@ -6,7 +6,7 @@ from django.contrib import messages
 from django.contrib.auth import get_user_model, logout
 from django.http import HttpResponse
 from django.shortcuts import redirect
-from django.urls import reverse
+from django.urls import Resolver404, resolve, reverse
 from django.utils.crypto import constant_time_compare
 from django.utils import timezone
 from .models import UserSession, get_security_policy
@@ -172,42 +172,52 @@ class RateLimitMiddleware:
     to protect server capacity against bursts.
     """
 
+    UPLOAD_URL_NAMES = {
+        "assessment_attempt_file_upload",
+        "assessment_file_upload",
+        "scanned_paper_staff_upload",
+    }
+    AUTOSAVE_URL_NAMES = {"assessment_autosave"}
+
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
-        path = request.path_info
-        # The real visitor's IP, not the WAF's (see get_client_ip in views.py).
-        client_ip = get_client_ip(request)
-        user_key = client_ip
-        if request.user.is_authenticated:
-            user_key = f"{request.user.id}"
-
+        # Match resolved URL names on POST requests only so substring URLs or GETs are not miscounted (P7).
         limit = None
+        bucket = None
         window = 60
+        if request.method == "POST":
+            try:
+                match = resolve(request.path_info)
+            except Resolver404:
+                match = None
+            if match is not None:
+                if match.url_name in self.UPLOAD_URL_NAMES:
+                    limit = 20
+                    bucket = "upload"
+                elif match.url_name in self.AUTOSAVE_URL_NAMES:
+                    limit = 120
+                    bucket = "autosave"
 
-        if "upload" in path:
-            limit = 20
-            cache_key = f"rate_limit_upload_{user_key}"
-        elif "autosave" in path:
-            limit = 120
-            cache_key = f"rate_limit_autosave_{user_key}"
-
-        if limit:
+        if limit and bucket:
             from django.core.cache import caches
             from django.http import HttpResponse
 
-            # Use the shared DatabaseCache so all Gunicorn workers enforce one counter (AUTH-08).
+            client_ip = get_client_ip(request)
+            cache_keys = [f"rate_limit_{bucket}_ip_{client_ip}"]
+            if request.user.is_authenticated:
+                cache_keys.insert(0, f"rate_limit_{bucket}_{request.user.id}")
+
+            # Use the shared DatabaseCache so all Gunicorn workers enforce both per-user and per-IP counters (AUTH-08, P7).
             ratelimit_cache = caches["ratelimit"]
-            count = ratelimit_cache.get(cache_key, 0)
-            if count >= limit:
-                # Record only the rate-limit bucket, never a submitted filename or file data.
-                bucket = "upload" if "upload" in path else "autosave"
+            if any(ratelimit_cache.get(key, 0) >= limit for key in cache_keys):
                 log_security_event(request, "ratelimit.hit", {"bucket": bucket}, logging.WARNING)
                 response = HttpResponse("Rate limit exceeded. Please wait before retrying.", status=429)
                 response["Retry-After"] = str(window)
                 return response
-            ratelimit_cache.set(cache_key, count + 1, timeout=window)
+            for key in cache_keys:
+                ratelimit_cache.set(key, ratelimit_cache.get(key, 0) + 1, timeout=window)
 
         return self.get_response(request)
 
