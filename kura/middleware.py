@@ -1,3 +1,4 @@
+import hmac
 import logging
 
 from django.conf import settings
@@ -9,7 +10,7 @@ from django.urls import reverse
 from django.utils.crypto import constant_time_compare
 from django.utils import timezone
 from .models import UserSession
-from .views import get_client_ip, log_security_event
+from .views import get_client_ip, hash_session_token, log_security_event
 
 User = get_user_model()
 
@@ -72,10 +73,16 @@ class SessionValidationMiddleware:
                     user=request.user,
                 ).first()
 
+                session_key = request.session.session_key
                 if not user_session or user_session.revoked_at is not None:
                     reason = "revoked"
                 elif user_session.expires_at <= timezone.now():
                     reason = "expired"
+                elif not session_key or not hmac.compare_digest(
+                    user_session.session_token_hash,
+                    hash_session_token(session_key),
+                ):
+                    reason = "token_mismatch"
                 else:
                     reason = None
 

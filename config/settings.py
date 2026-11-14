@@ -109,6 +109,8 @@ MIDDLEWARE = [
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",
     "django.contrib.auth.middleware.AuthenticationMiddleware",
+    # Fail-closed global login gate: every view requires login unless @login_not_required (O8).
+    "django.contrib.auth.middleware.LoginRequiredMiddleware",
     # Enforces database Row-Level Security (RLS) context based on authenticated user
     "kura.middleware.RowLevelSecurityMiddleware",
     # Attaches verified OTP device state to request.user

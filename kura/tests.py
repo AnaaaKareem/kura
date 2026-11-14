@@ -54,6 +54,7 @@ from .views import (
     hash_attendance_passcode,
     hash_proctor_code,
     hash_recovery_code,
+    hash_session_token,
     log_security_event,
     mfa_login_callback,
     queue_assessment_notification,
@@ -179,15 +180,18 @@ def make_user(role_name, email=None, password="ValidPassword123!", **extra_field
 
 def login_with_session(client, user):
     """Log a test client in and create a matching tracked UserSession row."""
+    client.logout()
     client.force_login(user)
+    session = client.session
+    if not session.session_key:
+        session.save()
     user_session = UserSession.objects.create(
         user=user,
-        session_token_hash=hashlib.sha256(secrets.token_hex(32).encode("utf-8")).hexdigest(),
+        session_token_hash=hash_session_token(session.session_key),
         ip_address="127.0.0.1",
         user_agent="DjangoTestClient",
         expires_at=timezone.now() + timezone.timedelta(hours=settings.SESSION_ABSOLUTE_HOURS),
     )
-    session = client.session
     session["user_session_id"] = str(user_session.id)
     session.save()
     return user_session
@@ -584,12 +588,14 @@ class LoginAndLogoutTests(TestCase):
     def test_logout_by_post(self):
         # Logout must be a POST request and revoke active session.
         self.client.force_login(self.user)
+        session = self.client.session
+        if not session.session_key:
+            session.save()
         session_record = UserSession.objects.create(
             user=self.user,
-            session_token_hash=secrets.token_hex(32),
+            session_token_hash=hash_session_token(session.session_key),
             expires_at=timezone.now() + timezone.timedelta(days=1),
         )
-        session = self.client.session
         session["user_session_id"] = str(session_record.id)
         session.save()
 
@@ -8024,6 +8030,10 @@ class SessionInvalidLoggingTests(TestCase):
     def attach_tracked_session(self):
         self.client.force_login(self.user)
         session = self.client.session
+        if not session.session_key:
+            session.save()
+        self.user_session.session_token_hash = hash_session_token(session.session_key)
+        self.user_session.save(update_fields=["session_token_hash"])
         session["user_session_id"] = str(self.user_session.id)
         session.save()
 
@@ -8829,6 +8839,10 @@ class OwnSessionsTests(TestCase):
     def _login_student_with_current(self):
         self.client.force_login(self.student)
         s = self.client.session
+        if not s.session_key:
+            s.save()
+        self.own_current.session_token_hash = hash_session_token(s.session_key)
+        self.own_current.save(update_fields=["session_token_hash"])
         s["user_session_id"] = str(self.own_current.id)
         s.save()
 
@@ -8915,14 +8929,16 @@ class AbsoluteSessionLimitTests(TestCase):
         self.user.mfa_enabled = True
         self.user.save(update_fields=["mfa_enabled"])
         self.client.force_login(self.user)
+        session = self.client.session
+        if not session.session_key:
+            session.save()
         user_session = UserSession.objects.create(
             user=self.user,
-            session_token_hash=secrets.token_hex(32),
+            session_token_hash=hash_session_token(session.session_key),
             ip_address="127.0.0.1",
             user_agent="TestAgent",
             expires_at=timezone.now() - timezone.timedelta(minutes=1),
         )
-        session = self.client.session
         session["user_session_id"] = str(user_session.id)
         session.save()
 
@@ -10100,19 +10116,22 @@ class WorkItem1LoggingTests(TestCase):
             )
         self.assertTrue(any('event="course.schedule.edited"' in l for l in cap_sched_ed.output))
 
-        # Attendance start, check-in failure & success, manual record, close.
+        # Attendance start, check-in failure & success, manual record, close (course staff only per O1).
+        CourseStaff.objects.create(course=course, user=instructor, staff_role="lead_instructor", can_release_grades=True, assigned_by=head)
+        inst_client = Client()
+        login_with_session(inst_client, instructor)
         Enrollment.objects.create(course=course, student=student, status=EnrollmentStatus.ACTIVE, enrolled_by=registrar)
         with self.assertLogs("kura.security", level="INFO") as cap_att_start:
-            self.client.post(reverse("kura:attendance_session_start", args=[module.id]), {"title": "Roll 1", "duration_minutes": 15})
+            inst_client.post(reverse("kura:attendance_session_start", args=[module.id]), {"title": "Roll 1", "duration_minutes": 15})
         self.assertTrue(any('event="attendance.session_started"' in l for l in cap_att_start.output))
         att_sess = ModuleAttendanceSession.objects.get(module=module)
-        raw_passcode = self.client.session[f"session_passcode_{att_sess.id}"]
+        raw_passcode = inst_client.session[f"session_passcode_{att_sess.id}"]
 
         with self.assertLogs("kura.security", level="WARNING") as cap_man_inv:
-            self.client.post(reverse("kura:attendance_manual_record", args=[att_sess.id]), {"student": student.id, "status": AttendanceStatus.PRESENT, "override_reason": ""})
+            inst_client.post(reverse("kura:attendance_manual_record", args=[att_sess.id]), {"student": student.id, "status": AttendanceStatus.PRESENT, "override_reason": ""})
         self.assertTrue(any('event="input.invalid"' in l for l in cap_man_inv.output))
         with self.assertLogs("kura.security", level="INFO") as cap_man:
-            self.client.post(
+            inst_client.post(
                 reverse("kura:attendance_manual_record", args=[att_sess.id]),
                 {"student": student.id, "status": AttendanceStatus.LATE, "override_reason": "Bus delay"},
             )
@@ -10131,7 +10150,7 @@ class WorkItem1LoggingTests(TestCase):
         self.assertTrue(any('event="attendance.checked_in"' in l for l in cap_ci_ok.output))
 
         with self.assertLogs("kura.security", level="INFO") as cap_att_close:
-            self.client.post(reverse("kura:attendance_session_close", args=[att_sess.id]))
+            inst_client.post(reverse("kura:attendance_session_close", args=[att_sess.id]))
         self.assertTrue(any('event="attendance.session_closed"' in l for l in cap_att_close.output))
 
         # Registrar viewing student profile logs record.viewed; invalid enrollment logs input.invalid.
@@ -10145,9 +10164,6 @@ class WorkItem1LoggingTests(TestCase):
         self.assertTrue(any('event="input.invalid"' in l for l in cap_enr_inv.output))
 
         # Result calculate, release, and CSV report export.
-        CourseStaff.objects.create(course=course, user=instructor, staff_role="lead_instructor", can_release_grades=True, assigned_by=head)
-        inst_client = Client()
-        login_with_session(inst_client, instructor)
         sess = inst_client.session
         sess["mfa_reauth_at"] = timezone.now().timestamp()
         sess.save()
@@ -11609,3 +11625,173 @@ class AuditGroup3DatabaseAndRolesTests(TestCase):
         self.assertIn("DATABASE_USER: kura_migrator", compose_text)
         self.assertIn("DB_SSL_CERT: \"/certs/internal/migrator.crt\"", compose_text)
         self.assertIn("DB_SSL_KEY: \"/certs/internal/migrator.key\"", compose_text)
+
+
+class AuditGroup4AccessAndSessionsTests(TestCase):
+    """Tests for Audit Group 4: O1, O8, M6, M7, W7."""
+
+    def setUp(self):
+        self.dept = Department.objects.create(code="CSG4", name="CS Group 4")
+        self.head = make_user("Department head", mfa_enabled=True)
+        self.dept.head_user = self.head
+        self.dept.save()
+        self.admin = make_user("Admin", mfa_enabled=True)
+        self.instructor = make_user("Instructor", mfa_enabled=True)
+        self.student = make_user("Student", mfa_enabled=True)
+        self.course = Course.objects.create(
+            department=self.dept,
+            code="G401",
+            title="Access & Sessions",
+            semester="1",
+            academic_year=2026,
+            created_by=self.head,
+            is_published=True,
+            published_by=self.head,
+            published_at=timezone.now(),
+        )
+        CourseStaff.objects.create(
+            course=self.course,
+            user=self.instructor,
+            staff_role="lead_instructor",
+            can_release_grades=True,
+            assigned_by=self.head,
+        )
+        Enrollment.objects.create(
+            course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE, enrolled_by=self.head
+        )
+        self.module = Module.objects.create(course=self.course, title="M", is_visible=True, created_by=self.instructor)
+
+    def test_department_head_cannot_run_or_manually_record_attendance(self):
+        att_session = ModuleAttendanceSession.objects.create(
+            module=self.module,
+            created_by=self.instructor,
+            title="Roll 1",
+            passcode_hash=hash_attendance_passcode("ABC123"),
+            expires_at=timezone.now() + timezone.timedelta(minutes=20),
+            is_active=True,
+        )
+
+        # Department head gets 403 on start, close, and manual attendance entry,
+        # and does not see Start/End/Manual controls in templates.
+        login_with_session(self.client, self.head)
+        self.assertEqual(self.client.get(reverse("kura:attendance_session_start", args=[self.module.id])).status_code, 403)
+        self.assertEqual(
+            self.client.post(
+                reverse("kura:attendance_session_start", args=[self.module.id]),
+                {"title": "Illegal Roll", "duration_minutes": 10},
+            ).status_code,
+            403,
+        )
+        self.assertEqual(self.client.post(reverse("kura:attendance_session_close", args=[att_session.id])).status_code, 403)
+        self.assertEqual(
+            self.client.post(
+                reverse("kura:attendance_manual_record", args=[att_session.id]),
+                {"student": self.student.id, "status": AttendanceStatus.PRESENT, "override_reason": "Test"},
+            ).status_code,
+            403,
+        )
+
+        course_page = self.client.get(reverse("kura:course_detail", args=[self.course.id]))
+        self.assertNotContains(course_page, reverse("kura:attendance_session_start", args=[self.module.id]))
+        detail_page = self.client.get(reverse("kura:attendance_session_detail", args=[att_session.id]))
+        self.assertEqual(detail_page.status_code, 200)
+        self.assertNotContains(detail_page, reverse("kura:attendance_session_close", args=[att_session.id]))
+        self.assertNotContains(detail_page, reverse("kura:attendance_manual_record", args=[att_session.id]))
+
+    def test_login_required_middleware_blocks_undecorated_view_and_keeps_public_auth_open(self):
+        from django.contrib.auth.middleware import LoginRequiredMiddleware
+        from django.http import HttpResponse as DjangoHttpResponse
+
+        def undecorated_view(request):
+            return DjangoHttpResponse("secret")
+
+        factory = RequestFactory()
+        req = factory.get("/undecorated/")
+        req.user = AnonymousUser()
+        middleware = LoginRequiredMiddleware(lambda r: DjangoHttpResponse("ok"))
+        resp = middleware.process_view(req, undecorated_view, (), {})
+        self.assertEqual(resp.status_code, 302)
+        self.assertIn(reverse("kura:login"), resp.url)
+
+        # Public auth pages remain reachable without login.
+        self.assertEqual(self.client.get(reverse("kura:login")).status_code, 200)
+        self.assertEqual(self.client.get(reverse("kura:password_reset_request")).status_code, 200)
+        session = self.client.session
+        session["pre_mfa_user_id"] = str(self.student.id)
+        session["pre_mfa_started_at"] = timezone.now().timestamp()
+        session.save()
+        self.assertEqual(self.client.get(reverse("kura:mfa_verify")).status_code, 200)
+
+    def test_role_change_revokes_target_user_sessions(self):
+        target = make_user("Instructor", mfa_enabled=True)
+        target_client = Client()
+        target_session = login_with_session(target_client, target)
+
+        login_with_session(self.client, self.admin)
+        confirm_second_factor(self.client)
+        ta_role = Role.objects.get(name="Teaching assistant")
+        with self.assertLogs("kura.security", level="WARNING") as cap:
+            resp = self.client.post(
+                reverse("kura:user_roles", args=[target.id]),
+                {"action": "assign", "role_id": ta_role.id},
+            )
+        self.assertEqual(resp.status_code, 302)
+        target_session.refresh_from_db()
+        self.assertIsNotNone(target_session.revoked_at)
+        self.assertTrue(any('event="session.revoked"' in line and 'by="role_change"' in line for line in cap.output))
+
+        # Target's next request is forced back to login.
+        self.assertRedirects(target_client.get(reverse("kura:home")), reverse("kura:login"))
+
+    def test_anonymous_auth_pages_set_no_store_headers(self):
+        raw_token = "wi-m7-reset-token"
+        PasswordResetToken.objects.create(
+            user=self.student,
+            token_hash=hashlib.sha256(raw_token.encode("utf-8")).hexdigest(),
+            expires_at=timezone.now() + timezone.timedelta(minutes=30),
+        )
+        for url in (
+            reverse("kura:login"),
+            reverse("kura:password_reset_request"),
+            reverse("kura:password_reset_confirm", args=[raw_token]),
+        ):
+            resp = self.client.get(url)
+            self.assertEqual(resp.status_code, 200)
+            self.assertIn("no-store", resp.headers.get("Cache-Control", ""))
+
+        session = self.client.session
+        session["pre_mfa_user_id"] = str(self.student.id)
+        session["pre_mfa_started_at"] = timezone.now().timestamp()
+        session.save()
+        mfa_resp = self.client.get(reverse("kura:mfa_verify"))
+        self.assertEqual(mfa_resp.status_code, 200)
+        self.assertIn("no-store", mfa_resp.headers.get("Cache-Control", ""))
+
+    def test_session_token_hash_is_bound_to_django_session_key_and_survives_password_change(self):
+        old_pw = "ValidSessionPw123!"
+        new_pw = "NewSessionPw456!"
+        user = make_user("Student", password=old_pw, mfa_enabled=False)
+
+        # Password login binds session_token_hash to the live Django session key.
+        resp = self.client.post(reverse("kura:login"), {"email": user.email, "password": old_pw})
+        self.assertEqual(resp.status_code, 302)
+        user_session = UserSession.objects.get(user=user)
+        self.assertEqual(user_session.session_token_hash, hash_session_token(self.client.session.session_key))
+
+        # Password change updates session_token_hash after update_session_auth_hash cycles the key.
+        with patch("kura.validators.BreachedPasswordValidator.validate", return_value=None):
+            pw_resp = self.client.post(
+                reverse("kura:password_change"),
+                {"old_password": old_pw, "new_password": new_pw, "confirm_password": new_pw},
+            )
+        self.assertEqual(pw_resp.status_code, 302)
+        user_session.refresh_from_db()
+        self.assertEqual(user_session.session_token_hash, hash_session_token(self.client.session.session_key))
+
+        # Copying user_session_id onto a mismatched session key fails closed with token_mismatch.
+        user_session.session_token_hash = hash_session_token("wrong-session-key")
+        user_session.save(update_fields=["session_token_hash"])
+        with self.assertLogs("kura.security", level="WARNING") as cap:
+            bad_resp = self.client.get(reverse("kura:mfa_setup"))
+        self.assertRedirects(bad_resp, reverse("kura:login"))
+        self.assertTrue(any('event="session.invalid"' in line and 'reason="token_mismatch"' in line for line in cap.output))

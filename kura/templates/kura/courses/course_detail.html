@@ -273,9 +273,11 @@
                             <a href="{% url 'kura:section_create' module.id %}" class="btn btn-outline btn-xs">
                                 + Add section
                             </a>
+                            {% if is_staff %}
                             <a href="{% url 'kura:attendance_session_start' module.id %}" class="btn btn-outline btn-xs">
                                 Start attendance
                             </a>
+                            {% endif %}
                             <a href="{% url 'kura:module_edit' module.id %}" class="btn btn-ghost btn-xs">Edit module</a>
                             <form method="post" action="{% url 'kura:module_delete' module.id %}" class="inline" data-confirm-action="Delete module {{ module.title }} and its contents?">
                                 {% csrf_token %}
