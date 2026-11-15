@@ -59,9 +59,18 @@ issue_certificate() {
     NAME=$1
     DNS_NAMES=$2
     LIFETIME=$3
+    # kura_migrator is a PostgreSQL user name, not a DNS name ("_" is not allowed
+    # in DNS names), so Vault refuses it as a DNS name. PostgreSQL only checks the
+    # common name, so the migrator certificate gets the common name and no DNS names.
+    if [ "$NAME" = "migrator" ]; then
+        NAME_ARGS="common_name=$DNS_NAMES exclude_cn_from_sans=true"
+    else
+        NAME_ARGS="common_name=${DNS_NAMES%%,*} alt_names=$DNS_NAMES"
+    fi
+    # NAME_ARGS is left unquoted on purpose, so it splits into separate settings.
     docker compose exec -T -e VAULT_TOKEN="$ISSUER_TOKEN" vault vault write -format=json \
         pki_int/issue/kura-service \
-        common_name="${DNS_NAMES%%,*}" alt_names="$DNS_NAMES" ip_sans=127.0.0.1 ttl="$LIFETIME" > "$WORK_DIR/$NAME.json"
+        $NAME_ARGS ip_sans=127.0.0.1 ttl="$LIFETIME" > "$WORK_DIR/$NAME.json"
     python3 -c 'import json, sys; data = json.load(open(sys.argv[1]))["data"]; print(data["certificate"]); print(data["issuing_ca"])' \
         "$WORK_DIR/$NAME.json" > "$WORK_DIR/$NAME.crt"
     python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["data"]["private_key"])' \
