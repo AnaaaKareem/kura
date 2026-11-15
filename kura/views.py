@@ -7200,7 +7200,8 @@ def grade_change_request_review_view(request, request_id):
     """
     Department Head decision on a post-release grade change request.
     Who can use it: Department Head of the course's department.
-    Security: Enforces no self-approval; on approval, updates grade and logs GradeHistory.
+    Security: Enforces no self-approval; a decision needs a fresh second factor
+    (ACL-05); on approval, updates grade and logs GradeHistory.
 """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
@@ -7233,6 +7234,13 @@ def grade_change_request_review_view(request, request_id):
     # Only pending change requests can be reviewed or decided (M1).
     if change_request.status != ChangeRequestStatus.PENDING:
         raise Http404
+
+    # ACL-05: changing a released grade needs a fresh second factor, the same
+    # as releasing it, so a stolen session cookie alone cannot change it.
+    if request.method == "POST" and not has_fresh_second_factor(request):
+        return redirect_to_reauth(
+            request, reverse("kura:grade_change_request_review", kwargs={"request_id": change_request.id})
+        )
 
     form = GradeChangeRequestReviewForm(request.POST or None)
 
