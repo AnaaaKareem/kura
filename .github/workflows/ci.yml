@@ -102,6 +102,16 @@ jobs:
           sh secrets/generate_secrets.sh
           sh certs/generate_internal_mtls_certs.sh
 
+      # Pages link to content-hashed static files (ManifestStaticFilesStorage),
+      # and {% static %} raises an error until collectstatic has written the
+      # manifest, so it runs before the tests render any page.
+      - name: Collect Static Files
+        env:
+          SECRET_KEY: ci-test-secret-key-not-for-production-environment
+          DEBUG: "True"
+        run: |
+          python manage.py collectstatic --noinput --clear --ignore=admin --ignore=django_otp --ignore=otp_totp
+
       - name: Run Full Test Suite with PostgreSQL 17
         env:
           DATABASE_NAME: kura

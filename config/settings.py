@@ -254,6 +254,17 @@ USE_TZ = True
 STATIC_URL = "/static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# collectstatic writes each file a second time with a hash of its content in
+# the name (kura.css becomes kura.<hash>.css) and {% static %} links to that
+# copy. Changing a file changes its name, so nginx can let browsers cache static
+# files for 30 days and a new stylesheet still reaches everyone right away.
+# {% static %} raises an error if collectstatic has not been run, so the
+# collectstatic service in docker-compose.yml runs before web starts.
+STORAGES = {
+    "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
+    "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.ManifestStaticFilesStorage"},
+}
 MEDIA_URL = "/media/"
 
 
