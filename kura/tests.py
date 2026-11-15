@@ -8998,6 +8998,76 @@ class SharedRateLimitCacheTests(TestCase):
         self.assertIsNone(caches["default"].get(cache_key))
 
 
+class ExtraRateLimitTests(TestCase):
+    """
+    Tests the upload and search URL names added to RateLimitMiddleware.
+    Each endpoint returns 429 after its limit, while another user on another IP is not blocked.
+    """
+
+    def setUp(self):
+        from django.core.cache import caches
+
+        caches["ratelimit"].clear()
+        self.user_a = make_user("Student")
+        self.user_b = make_user("Student")
+        self.client_a = Client()
+        self.client_b = Client()
+        login_with_session(self.client_a, self.user_a)
+        login_with_session(self.client_b, self.user_b)
+
+    def send(self, client, method, url, data, ip):
+        # Uploads are POST and searches are GET.
+        if method == "post":
+            return client.post(url, data, REMOTE_ADDR=ip)
+        return client.get(url, data, REMOTE_ADDR=ip)
+
+    def assert_limited(self, method, url, limit, data=None):
+        data = data or {}
+        # User A fills both their user counter and the counter for their IP.
+        for _ in range(limit):
+            self.send(self.client_a, method, url, data, "192.0.2.1")
+        limited = self.send(self.client_a, method, url, data, "192.0.2.1")
+        self.assertEqual(limited.status_code, 429)
+        self.assertEqual(limited.headers.get("Retry-After"), "60")
+
+        # User B on a different IP has separate counters, so the limit does not reach them.
+        other = self.send(self.client_b, method, url, data, "192.0.2.2")
+        self.assertNotEqual(other.status_code, 429)
+
+    def test_item_create_upload_is_limited(self):
+        self.assert_limited("post", reverse("kura:item_create", args=[uuid.uuid4()]), 20)
+
+    def test_item_edit_upload_is_limited(self):
+        self.assert_limited("post", reverse("kura:item_edit", args=[uuid.uuid4()]), 20)
+
+    def test_admin_sessions_search_is_limited(self):
+        self.assert_limited("get", reverse("kura:admin_sessions"), 60, {"q": "name"})
+
+    def test_admin_users_search_is_limited(self):
+        self.assert_limited("get", reverse("kura:admin_users"), 60, {"q": "name"})
+
+    def test_staff_list_search_is_limited(self):
+        self.assert_limited("get", reverse("kura:staff_list"), 60, {"q": "name"})
+
+    def test_student_list_search_is_limited(self):
+        self.assert_limited("get", reverse("kura:student_list"), 60, {"q": "name"})
+
+    def test_attendance_history_search_is_limited(self):
+        self.assert_limited("get", reverse("kura:attendance_history"), 60, {"q": "name"})
+
+    def test_course_grades_search_is_limited(self):
+        self.assert_limited("get", reverse("kura:course_grades", args=[uuid.uuid4()]), 60, {"q": "name"})
+
+    def test_search_page_without_term_is_not_counted(self):
+        from django.core.cache import caches
+
+        # Opening the page or paging through results without a search term costs nothing.
+        url = reverse("kura:student_list")
+        self.client_a.get(url)
+        self.client_a.get(url, {"q": "  ", "page": "2"})
+        self.assertIsNone(caches["ratelimit"].get(f"rate_limit_search_{self.user_a.id}"))
+
+
 class PasswordHistoryTests(TestCase):
     """
     Tests PasswordHistory tracking and reuse prevention for the last 5 passwords (AUTH-06).
