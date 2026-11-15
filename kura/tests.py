@@ -4928,6 +4928,7 @@ class GradeChangeRequestsTests(TestCase):
         )
 
         login_with_session(self.client, self.head)
+        confirm_second_factor(self.client)
         response = self.client.post(
             reverse("kura:grade_change_request_review", kwargs={"request_id": change_request.id}),
             {"decision": ChangeRequestStatus.APPROVED, "review_note": "Approved based on submitted rubric evidence."},
@@ -4960,6 +4961,7 @@ class GradeChangeRequestsTests(TestCase):
         )
 
         login_with_session(self.client, self.head)
+        confirm_second_factor(self.client)
         response = self.client.post(
             reverse("kura:grade_change_request_review", kwargs={"request_id": change_request.id}),
             {"decision": ChangeRequestStatus.REJECTED, "review_note": "Insufficient justification."},
@@ -11377,6 +11379,7 @@ class AuditGroup2DataIntegrityTests(TestCase):
 
         head_client = Client()
         login_with_session(head_client, self.head)
+        confirm_second_factor(head_client)
         self.assertEqual(head_client.get(reverse("kura:grade_appeal_review", args=[appeal.id])).status_code, 200)
 
         # Approve change request -> updates grade AND recalculates released CourseResult, then blocks re-decision (404).
