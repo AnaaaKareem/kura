@@ -214,11 +214,14 @@ echo "$INTERMEDIATE_CERT" | vault_root write pki_int/intermediate/set-signed cer
 # The only kind of certificate the intermediate may issue: one of Kura's seven
 # service names (alloy = the metrics collector's PostgreSQL login) (plus localhost / 127.0.0.1 for health checks inside a
 # container), for at most 1 year, usable as both server and client certificate.
+# cn_validations=disabled lets the common name be "kura_migrator", a PostgreSQL
+# user name that is not a valid host name. allowed_domains still limits the names.
 vault_root write pki_int/roles/kura-service \
     allowed_domains="nginx,waf,web,db,vault,relay,alloy,kura_migrator,netbird.kura.lan,localhost" \
     allow_bare_domains=true \
     allow_subdomains=false \
     allow_wildcard_certificates=false \
+    cn_validations=disabled \
     allow_ip_sans=true \
     server_flag=true \
     client_flag=true \
