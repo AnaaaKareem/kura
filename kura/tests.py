@@ -12457,3 +12457,225 @@ class AuditGroup8FinalFixesTests(TestCase):
         self.assertIn("breach-alerts", am_text)
         notice_resp = self.client.get(reverse("kura:privacy_notice"))
         self.assertContains(notice_resp, "FERPA")
+
+
+class DjangoSecurityBaselineTests(TestCase):
+    """
+    Django security baseline check. Each test names the baseline rule it proves.
+    Rules already covered elsewhere (idle and absolute timeout, failed-login
+    logging, role change and grade release allowed with a fresh factor, a
+    student downloading another student's file) are not repeated here.
+    """
+
+    PASSWORD = "ValidPassword123!"
+
+    def setUp(self):
+        self.head = make_user("Department head")
+        self.instructor = make_user("Instructor")
+        self.student = make_user("Student", password=self.PASSWORD)
+        self.dept = Department.objects.create(name="Baseline", code="BASE", head_user=self.head)
+        StudentProfile.objects.create(
+            user=self.student, department=self.dept, current_level="level_4", matriculation_year=2026
+        )
+        self.course = Course.objects.create(
+            department=self.dept, code="BASE101", title="Baseline course", semester="1",
+            academic_year=2026, is_published=True, published_by=self.head, published_at=timezone.now(),
+        )
+        CourseStaff.objects.create(
+            course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True
+        )
+        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
+        module = Module.objects.create(course=self.course, title="Module", is_visible=True)
+        section = ModuleSection.objects.create(module=module, title="Exam", section_type="exam")
+        self.assessment = Assessment.objects.create(
+            section=section, title="Baseline exam", component_type=GradeComponentType.EXAM,
+            max_score=Decimal("100.00"), max_attempts=1, opens_at=timezone.now(),
+            due_date=timezone.now() + timezone.timedelta(hours=1), duration_minutes=60,
+            created_by=self.instructor,
+        )
+        self.attempt = AssessmentAttempt.objects.create(
+            assessment=self.assessment, student=self.student, attempt_no=1,
+            status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1",
+        )
+
+    def assert_no_secrets_in_logs(self, lines, extra_values):
+        # Security rule 6: no password, token, MFA secret or raw score in a log record.
+        joined = "\n".join(lines)
+        for value in [self.PASSWORD, "password=", "otp_token", "mfa_secret"] + extra_values:
+            self.assertNotIn(value, joined)
+
+    # --- Baseline 2: production cookie flags ---
+
+    def test_rule_production_settings_turn_on_secure_cookies_and_hsts(self):
+        # Settings are read once, so load them in a new process with DEBUG off.
+        environment = os.environ.copy()
+        environment["DJANGO_SETTINGS_MODULE"] = "config.settings"
+        environment["SECRET_KEY"] = secrets.token_urlsafe(48)
+        environment["DEBUG"] = "False"
+        environment.pop("SECURE_SSL_REDIRECT", None)
+        code = (
+            "from django.conf import settings as s; "
+            "print(s.SESSION_COOKIE_SECURE, s.SESSION_COOKIE_HTTPONLY, s.SESSION_COOKIE_SAMESITE, "
+            "s.CSRF_COOKIE_SECURE, s.CSRF_COOKIE_HTTPONLY, s.CSRF_COOKIE_SAMESITE, "
+            "s.SECURE_SSL_REDIRECT, s.SECURE_PROXY_SSL_HEADER, "
+            "s.SECURE_HSTS_SECONDS, s.SECURE_HSTS_INCLUDE_SUBDOMAINS)"
+        )
+        result = subprocess.run(
+            [sys.executable, "-c", code], cwd=settings.BASE_DIR, env=environment, capture_output=True, text=True
+        )
+        self.assertEqual(result.returncode, 0, result.stderr)
+        self.assertEqual(
+            result.stdout.strip(),
+            "True True Lax True True Lax True ('HTTP_X_FORWARDED_PROTO', 'https') 31536000 True",
+        )
+
+    @override_settings(SESSION_COOKIE_SECURE=True, CSRF_COOKIE_SECURE=True)
+    def test_rule_session_and_csrf_cookies_are_secure_httponly_samesite(self):
+        # With the production values, both cookies carry Secure, HttpOnly and SameSite.
+        login_page = self.client.get(reverse("kura:login"))
+        csrf_cookie = login_page.cookies[settings.CSRF_COOKIE_NAME]
+        self.assertTrue(csrf_cookie["secure"])
+        self.assertTrue(csrf_cookie["httponly"])
+        self.assertEqual(csrf_cookie["samesite"], "Lax")
+
+        self.student.mfa_enabled = False
+        self.student.save(update_fields=["mfa_enabled"])
+        response = self.client.post(reverse("kura:login"), {"email": self.student.email, "password": self.PASSWORD})
+        session_cookie = response.cookies[settings.SESSION_COOKIE_NAME]
+        self.assertTrue(session_cookie["secure"])
+        self.assertTrue(session_cookie["httponly"])
+        self.assertEqual(session_cookie["samesite"], "Lax")
+
+    # --- Baseline 3: CSP and response headers on a signed-in page ---
+
+    def test_rule_csp_has_no_inline_or_eval_on_signed_in_page(self):
+        login_with_session(self.client, self.student)
+        response = self.client.get(reverse("kura:home"))
+        self.assertEqual(response.status_code, 200)
+        csp_header = response.headers["Content-Security-Policy"]
+        self.assertIn("script-src 'self'", csp_header)
+        self.assertIn("style-src 'self'", csp_header)
+        self.assertNotIn("unsafe-inline", csp_header)
+        self.assertNotIn("unsafe-eval", csp_header)
+        self.assertEqual(response.headers["X-Frame-Options"], "DENY")
+        self.assertEqual(response.headers["X-Content-Type-Options"], "nosniff")
+
+    # --- Baseline 5: re-authentication for sensitive actions ---
+
+    def test_rule_grade_release_refused_with_wrong_code(self):
+        # Releasing a grade needs a valid second-factor code typed on the release form.
+        grade = Grade.objects.create(
+            assessment=self.assessment, student=self.student, attempt=self.attempt,
+            score=Decimal("80.00"), status=GradeStatus.FINALIZED,
+        )
+        login_with_session(self.client, self.instructor)
+        with self.assertLogs("kura.security", level="WARNING") as logs:
+            response = self.client.post(reverse("kura:grade_release", args=[grade.id]), {"otp_token": "000000"})
+        self.assertEqual(response.status_code, 400)
+        grade.refresh_from_db()
+        self.assertEqual(grade.status, GradeStatus.FINALIZED)
+        self.assertTrue(any('event="grade.release_mfa_failed"' in line for line in logs.output))
+        self.assert_no_secrets_in_logs(logs.output, ["000000", "80.00"])
+
+    def test_rule_course_result_release_needs_fresh_second_factor(self):
+        result = CourseResult.objects.create(
+            course=self.course, student=self.student, final_score=Decimal("75.00"), status=GradeStatus.DRAFT
+        )
+        login_with_session(self.client, self.instructor)
+        url = reverse("kura:course_result_release", args=[self.course.id])
+        response = self.client.post(url)
+        self.assertTrue(response["Location"].startswith(reverse("kura:mfa_reauth")))
+        result.refresh_from_db()
+        self.assertEqual(result.status, GradeStatus.DRAFT)
+
+    def test_rule_grade_change_after_release_needs_fresh_second_factor(self):
+        # Approving a change to a released grade needs a fresh second factor.
+        grade = Grade.objects.create(
+            assessment=self.assessment, student=self.student, attempt=self.attempt,
+            score=Decimal("75.00"), status=GradeStatus.RELEASED,
+        )
+        change_request = GradeChangeRequest.objects.create(
+            grade=grade, requested_by=self.instructor, current_score=Decimal("75.00"),
+            proposed_score=Decimal("85.00"), reason="Marking error on question 2.",
+            status=ChangeRequestStatus.PENDING,
+        )
+        url = reverse("kura:grade_change_request_review", args=[change_request.id])
+        decision = {"decision": ChangeRequestStatus.APPROVED, "review_note": "Checked the script."}
+        login_with_session(self.client, self.head)
+
+        # Without a fresh factor: sent to the confirm page and nothing changes.
+        response = self.client.post(url, decision)
+        self.assertTrue(response["Location"].startswith(reverse("kura:mfa_reauth")))
+        grade.refresh_from_db()
+        self.assertEqual(grade.score, Decimal("75.00"))
+
+        # With a fresh factor: the change is applied.
+        confirm_second_factor(self.client)
+        response = self.client.post(url, decision)
+        self.assertEqual(response.status_code, 302)
+        grade.refresh_from_db()
+        self.assertEqual(grade.score, Decimal("85.00"))
+
+    # --- Baseline 5: security event logging ---
+
+    def test_rule_lockout_is_logged_without_password(self):
+        login_url = reverse("kura:login")
+        for _ in range(5):
+            self.client.post(login_url, {"email": self.student.email, "password": "WrongPassword999!"})
+        with self.assertLogs("kura.security", level="WARNING") as logs:
+            response = self.client.post(login_url, {"email": self.student.email, "password": self.PASSWORD})
+        self.assertEqual(response.status_code, 429)
+        self.assertTrue(
+            any('event="access.denied"' in line and 'reason="axes_lockout"' in line for line in logs.output)
+        )
+        self.assert_no_secrets_in_logs(logs.output, ["WrongPassword999!", self.student.email])
+
+    def test_rule_role_change_is_logged_without_secrets(self):
+        admin = make_user("Admin")
+        login_with_session(self.client, admin)
+        confirm_second_factor(self.client)
+        ta_role = Role.objects.get(name="Teaching assistant")
+        with self.assertLogs("kura.security", level="WARNING") as logs:
+            self.client.post(
+                reverse("kura:user_roles", args=[self.instructor.id]), {"action": "assign", "role_id": ta_role.id}
+            )
+        self.assertTrue(any('event="admin.role.changed"' in line for line in logs.output))
+        totp_key = TOTPDevice.objects.get(user=admin).key
+        session_key = self.client.session.session_key
+        self.assert_no_secrets_in_logs(logs.output, [totp_key, session_key])
+
+    def test_rule_grade_change_is_logged_without_scores(self):
+        grade = Grade.objects.create(
+            assessment=self.assessment, student=self.student, attempt=self.attempt,
+            score=Decimal("75.00"), status=GradeStatus.RELEASED,
+        )
+        change_request = GradeChangeRequest.objects.create(
+            grade=grade, requested_by=self.instructor, current_score=Decimal("75.00"),
+            proposed_score=Decimal("85.00"), reason="Marking error on question 2.",
+            status=ChangeRequestStatus.PENDING,
+        )
+        login_with_session(self.client, self.head)
+        confirm_second_factor(self.client)
+        with self.assertLogs("kura.security", level="INFO") as logs:
+            self.client.post(
+                reverse("kura:grade_change_request_review", args=[change_request.id]),
+                {"decision": ChangeRequestStatus.APPROVED, "review_note": "Checked the script."},
+            )
+        self.assertTrue(any('event="grade.change_decided"' in line for line in logs.output))
+        self.assert_no_secrets_in_logs(logs.output, ["75.00", "85.00", "Checked the script."])
+
+    # --- Baseline 5: object-level authorization ---
+
+    def test_rule_student_cannot_open_another_students_attempt(self):
+        # A classmate in the same course still cannot open this student's submission.
+        classmate = make_user("Student")
+        Enrollment.objects.create(course=self.course, student=classmate, status=EnrollmentStatus.ACTIVE)
+        login_with_session(self.client, classmate)
+        response = self.client.get(reverse("kura:attempt_detail", args=[self.attempt.id]))
+        self.assertEqual(response.status_code, 403)
+
+    def test_rule_instructor_cannot_open_course_they_do_not_teach(self):
+        outsider = make_user("Instructor")
+        login_with_session(self.client, outsider)
+        self.assertEqual(self.client.get(reverse("kura:course_detail", args=[self.course.id])).status_code, 403)
+        self.assertEqual(self.client.get(reverse("kura:course_grades", args=[self.course.id])).status_code, 403)
