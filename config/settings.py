@@ -373,13 +373,21 @@ SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = "same-origin"
 
 # HTTP Strict Transport Security (HSTS) in production
+# The secure cookies above, HSTS and the HTTPS redirect all follow DEBUG.
+# DEBUG is off unless the environment says "True", and docker-compose.yml
+# sets it to "False" for web, so a missing variable keeps them on.
 if not DEBUG:
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
+    # On by default. It may be turned off (SECURE_SSL_REDIRECT=False) only where
+    # nginx already redirects HTTP to HTTPS, as in docker-compose.yml, or for the
+    # plain-HTTP smoke test in CI.
     SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "True").lower() == "true"
 
-# Trust X-Forwarded-Proto header passed by the Nginx reverse proxy
+# Trust X-Forwarded-Proto header passed by the Nginx reverse proxy.
+# Safe because Django only accepts connections from the WAF over mutual TLS
+# (MTLS_ENABLED), so no visitor can send this header to Django directly.
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 USE_X_FORWARDED_HOST = True
 
