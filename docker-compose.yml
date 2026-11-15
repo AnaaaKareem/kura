@@ -115,7 +115,9 @@ services:
       # Writable state for Gunicorn's control server on a read-only filesystem
       - /app/.gunicorn:size=16M,mode=1777
     volumes:
-      - static_data:/app/staticfiles
+      # Read-only: only the collectstatic service below writes static files,
+      # so a broken-into Django cannot change the JavaScript nginx serves.
+      - static_data:/app/staticfiles:ro
       # Only Django's own certificate and key, plus the CA certificate.
       - ./certs/internal/ca.crt:/certs/internal/ca.crt:ro
       - ./certs/internal/web.crt:/certs/internal/web.crt:ro
@@ -200,18 +202,60 @@ services:
         reservations:
           cpus: "0.5"
           memory: 512M
-    # Django needs the database and Vault (for its database login).
+    # Django needs the database and Vault (for its database login), and the
+    # static files from this image ({% static %} fails without the manifest).
     depends_on:
       db:
         condition: service_healthy
       vault:
         condition: service_healthy
+      collectstatic:
+        condition: service_completed_successfully
     healthcheck:
       test: ["CMD", "python", "-c", "import os, ssl, urllib.request; mtls = os.environ.get('MTLS_ENABLED', 'False').lower() in ('true', '1'); ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile='/certs/internal/ca.crt') if mtls else None; ctx.load_cert_chain('/certs/internal/web.crt', '/certs/internal/web.key') if mtls else None; ctx.check_hostname = False if mtls else None; urllib.request.urlopen('https://127.0.0.1:8443/login/' if mtls else 'http://127.0.0.1:8000/login/', context=ctx)"]
       interval: 15s
       timeout: 5s
       retries: 3
       start_period: 15s
+
+  # ============================================================================
+  # Static files (one-off job, runs on every "docker compose up")
+  # Copies the static files from the web image into the shared static_data
+  # volume with content-hashed names (ManifestStaticFilesStorage). --clear
+  # empties the volume first, so files from an older build never linger.
+  # --ignore skips the admin-only folders that no Kura page loads.
+  # It writes only the volume: read-only root, no network, no capabilities.
+  # Run it by hand after a rebuild with:
+  #   docker compose run --rm collectstatic
+  # ============================================================================
+  collectstatic:
+    image: kura-web:latest
+    read_only: true
+    tmpfs:
+      - /tmp:size=64M,mode=1777
+    command:
+      - python
+      - manage.py
+      - collectstatic
+      - --noinput
+      - --clear
+      - --ignore=admin
+      - --ignore=django_otp
+      - --ignore=otp_totp
+    volumes:
+      - static_data:/app/staticfiles
+    # Settings need the secret key to load; nothing else is used.
+    secrets:
+      - django_secret_key
+    environment:
+      DEBUG: "False"
+      VAULT_ENABLED: "False"
+    network_mode: none
+    cap_drop:
+      - ALL
+    security_opt:
+      - no-new-privileges:true
+    restart: "no"
 
   # ============================================================================
   # Database Migrations (one-off job, never left running)

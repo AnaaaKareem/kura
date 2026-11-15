@@ -33,3 +33,6 @@ kura/tests.py
 
 # The lock file is for local tooling; the image installs requirements.txt.
 uv.lock
+
+# Local collectstatic output. The collectstatic service fills the volume from the image.
+staticfiles/
