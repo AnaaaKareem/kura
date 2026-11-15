@@ -25,6 +25,7 @@ from django.core.management.base import CommandError
 from django.db import DatabaseError, IntegrityError, connection, connections, transaction
 from django.db.models import QuerySet
 from django.template.loader import render_to_string
+from django.templatetags.static import static
 from django.contrib.auth.models import AnonymousUser
 from django.contrib.messages.middleware import MessageMiddleware
 from django.contrib.sessions.middleware import SessionMiddleware
@@ -387,7 +388,8 @@ class BaseTemplateAndHomeTests(TestCase):
         self.assertContains(response, "data-theme-selector")
         self.assertContains(response, 'id="theme-selector"')
         self.assertContains(response, 'name="theme"')
-        self.assertContains(response, "/static/js/theme.js")
+        # static() gives the content-hashed URL, the one the page links to.
+        self.assertContains(response, static("js/theme.js"))
         self.assertContains(response, 'name="htmx-config"')
         self.assertContains(response, 'includeIndicatorStyles')
         self.assertContains(response, 'rel="icon"')
@@ -396,12 +398,16 @@ class BaseTemplateAndHomeTests(TestCase):
 
         # Verify static CSS and JS are loaded from local static files without external URLs.
         content = response.content.decode("utf-8")
-        self.assertIn("/static/css/tailwind.min.css", content)
-        self.assertIn("/static/css/daisyui.min.css", content)
-        self.assertIn("/static/js/htmx.min.js", content)
+        htmx_url = static("js/htmx.min.js")
+        # The stylesheet name carries a content hash, so a changed file gets a new URL.
+        self.assertRegex(static("css/kura.css"), r"^/static/css/kura\.[0-9a-f]{12}\.css$")
+        self.assertIn(static("css/kura.css"), content)
+        self.assertIn(static("css/tailwind.min.css"), content)
+        self.assertIn(static("css/daisyui.min.css"), content)
+        self.assertIn(htmx_url, content)
         self.assertNotIn("https://cdn.", content)
         self.assertNotIn("https://unpkg.", content)
-        self.assertLess(content.index('name="htmx-config"'), content.index("/static/js/htmx.min.js"))
+        self.assertLess(content.index('name="htmx-config"'), content.index(htmx_url))
         self.assertIn("style-src 'self'", response.headers["Content-Security-Policy"])
         self.assertNotIn("unsafe-inline", response.headers["Content-Security-Policy"])
 
