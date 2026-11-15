@@ -168,37 +168,55 @@ class SecurityEnforcementMiddleware:
 
 class RateLimitMiddleware:
     """
-    Applies sliding-window rate limits on file uploads (20/min) and autosave calls (120/min)
-    to protect server capacity against bursts.
+    Applies sliding-window rate limits on file uploads (20/min), autosave calls (120/min)
+    and text searches (60/min) to protect server capacity against bursts.
     """
 
     UPLOAD_URL_NAMES = {
         "assessment_attempt_file_upload",
         "assessment_file_upload",
         "scanned_paper_staff_upload",
+        # Course material items can carry a file attachment on create and edit.
+        "item_create",
+        "item_edit",
     }
     AUTOSAVE_URL_NAMES = {"assessment_autosave"}
+    # List pages with a free-text "q" filter. Enrollment search has its own limit in views.py.
+    SEARCH_URL_NAMES = {
+        "admin_sessions",
+        "admin_users",
+        "staff_list",
+        "student_list",
+        "attendance_history",
+        "course_grades",
+    }
 
     def __init__(self, get_response):
         self.get_response = get_response
 
     def __call__(self, request):
-        # Match resolved URL names on POST requests only so substring URLs or GETs are not miscounted (P7).
+        # Match resolved URL names so substring URLs are not miscounted (P7).
         limit = None
         bucket = None
         window = 60
-        if request.method == "POST":
+        # Uploads and autosaves are POST. Searches are GET and only count when a search term is sent,
+        # so plain page loads and pagination stay free. Counting only touches the rate-limit cache.
+        has_search_term = request.method == "GET" and request.GET.get("q", "").strip() != ""
+        if request.method == "POST" or has_search_term:
             try:
                 match = resolve(request.path_info)
             except Resolver404:
                 match = None
-            if match is not None:
+            if match is not None and request.method == "POST":
                 if match.url_name in self.UPLOAD_URL_NAMES:
                     limit = 20
                     bucket = "upload"
                 elif match.url_name in self.AUTOSAVE_URL_NAMES:
                     limit = 120
                     bucket = "autosave"
+            elif match is not None and match.url_name in self.SEARCH_URL_NAMES:
+                limit = 60
+                bucket = "search"
 
         if limit and bucket:
             from django.core.cache import caches
