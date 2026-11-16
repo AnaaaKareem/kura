@@ -30,7 +30,7 @@ SECRETS_DIR="secrets"
 GENERATED_SECRETS="db_password backup_encryption_key django_secret_key crowdsec_bouncer_key grafana_admin_password grafana_viewer_password"
 # Secrets that come from outside services or from Vault. We cannot generate
 # these, so setup creates an empty file and says where the value comes from.
-EXTERNAL_SECRETS="cloudflare_tunnel_token telegram_bot_token telegram_chat_id smtp_relay_credentials vault_role_id vault_secret_id"
+EXTERNAL_SECRETS="telegram_bot_token telegram_chat_id smtp_relay_credentials vault_role_id vault_secret_id"
 # Host-only secrets written by vault-init (never mounted into a container).
 HOST_ONLY_SECRETS="vault_issuer_role_id vault_issuer_secret_id"
 
@@ -103,7 +103,6 @@ secret_owner() {
         django_secret_key|vault_role_id|vault_secret_id) echo 10001 ;;  # "kura" in our Dockerfile
         grafana_admin_password) echo 472 ;;                    # "grafana" in the Grafana image
         telegram_bot_token|telegram_chat_id) echo 65534 ;;     # "nobody" in the Alertmanager image
-        cloudflare_tunnel_token) echo 65532 ;;                 # "nonroot" in the cloudflared image
         *) echo 0 ;;  # crowdsec_bouncer_key, smtp_relay_credentials (read as root), host-only files
     esac
 }
@@ -143,6 +142,31 @@ vault_initialised() {
     is_running vault || return 1
     status=$(vault_cli status -format=json 2>/dev/null || true)
     echo "$status" | grep -q '"initialized": true'
+}
+
+# Give the folder a service mounts at TARGET (a named volume or a host folder,
+# as written in docker-compose.yml) to OWNER, mode 700. Uses the database image
+# as a throwaway root container with no network; the service itself is untouched.
+fix_volume_owner() {
+    service=$1
+    target=$2
+    owner=$3
+    # Ask Compose which volume or host folder is mounted at TARGET. A named
+    # volume is reported by its short name, so look up its real Docker name.
+    source=$(docker compose config --format json | python3 -c '
+import json, sys
+config = json.load(sys.stdin)
+for mount in config["services"][sys.argv[1]]["volumes"]:
+    if mount["target"] == sys.argv[2]:
+        name = mount["source"]
+        volume = config.get("volumes", {}).get(name)
+        print(volume["name"] if volume else name)
+' "$service" "$target")
+    [ -n "$source" ] || die "No mount at $target for service $service in docker-compose.yml."
+    image=$(docker compose config --images db | head -1)
+    docker run --rm --user 0 --network none --entrypoint sh -v "$source:/fix" "$image" \
+        -c 'chown "$1" /fix && chmod 700 /fix' sh "$owner"
+    say "$source now belongs to $owner"
 }
 
 # ------------------------------------------------------------------------------
@@ -220,7 +244,6 @@ cmd_secrets() {
     for name in $EXTERNAL_SECRETS; do
         file="$SECRETS_DIR/$name.txt"
         case "$name" in
-            cloudflare_tunnel_token) source="Cloudflare Zero Trust dashboard > Tunnels" ;;
             telegram_bot_token) source="Telegram @BotFather" ;;
             telegram_chat_id) source="the Telegram chat that receives alerts" ;;
             smtp_relay_credentials) source="your mail provider. One line: [smtp.example.com]:587 username:password" ;;
@@ -250,8 +273,9 @@ cmd_secrets() {
 # certs
 # ------------------------------------------------------------------------------
 
-# Create the self-signed public certificate Nginx serves (Cloudflare trusts it
-# as the origin certificate). Skipped when it already exists.
+# Create the self-signed public certificate Nginx serves on port 443. Browsers
+# warn about it; a real deployment replaces certs/kura.crt and kura.key with a
+# CA-issued certificate (certs/README.md). Skipped when it already exists.
 cmd_certs() {
     need_root certs
     if [ -f certs/kura.crt ] && [ -f certs/kura.key ]; then
@@ -1180,11 +1204,11 @@ check_cert_expiry() {
     done
 }
 
-# Nothing may publish a port on all interfaces. Grafana must be exactly
-# 127.0.0.1:3000; Prometheus, Loki and Alertmanager must publish no port.
-# nginx (8080/8443) and the CrowdSec API (8085) are allowed on loopback only.
+# Only nginx may publish ports on all interfaces, and only 80 (redirect) and
+# 443. Grafana must be exactly 127.0.0.1:3000 and the CrowdSec API stays on
+# loopback; Prometheus, Loki and Alertmanager must publish no port.
 check_published_ports() {
-    ports=$(docker compose --profile tools --profile remote-access config --format json 2>/dev/null | python3 -c '
+    ports=$(docker compose --profile tools config --format json 2>/dev/null | python3 -c '
 import json, sys
 config = json.load(sys.stdin)
 for name, service in config["services"].items():
@@ -1198,7 +1222,7 @@ for name, service in config["services"].items():
     bad=0
     while read -r service host_ip published target; do
         case "$service:$host_ip:$published" in
-            grafana:127.0.0.1:3000|nginx:127.0.0.1:8080|nginx:127.0.0.1:8443|crowdsec:127.0.0.1:8085) ;;
+            grafana:127.0.0.1:3000|nginx:0.0.0.0:80|nginx:0.0.0.0:443|crowdsec:127.0.0.1:8085) ;;
             *) fail "$service publishes $host_ip:$published -> $target (not allowed)"; bad=1 ;;
         esac
     done <<EOF
@@ -1208,7 +1232,7 @@ EOF
         fail "grafana must publish 127.0.0.1:3000"
         bad=1
     fi
-    [ "$bad" = 0 ] && pass "published ports: Grafana 127.0.0.1:3000; nginx and CrowdSec API on loopback; nothing on all interfaces"
+    [ "$bad" = 0 ] && pass "published ports: only nginx 80 and 443 on all interfaces; Grafana 127.0.0.1:3000; CrowdSec API on loopback"
     return 0
 }
 
@@ -1261,11 +1285,11 @@ cmd_health() {
     done < /tmp/kura-health.$$
     rm -f /tmp/kura-health.$$
 
-    # The site through nginx on loopback (self-signed certificate, so -k).
-    code=$(curl -k -s -o /dev/null -w '%{http_code}' https://127.0.0.1:8443/login/ || true)
+    # The site through nginx on port 443 (self-signed certificate, so -k).
+    code=$(curl -k -s -o /dev/null -w '%{http_code}' https://127.0.0.1/login/ || true)
     case "$code" in
-        200|301|302) pass "https://127.0.0.1:8443/login/ answers ($code)" ;;
-        *) fail "https://127.0.0.1:8443/login/ answered ${code:-nothing}" ;;
+        200|301|302) pass "https://127.0.0.1/login/ answers ($code)" ;;
+        *) fail "https://127.0.0.1/login/ answered ${code:-nothing}" ;;
     esac
 
     # Grafana's health endpoint on loopback (the SSH tunnel's target).
@@ -1324,6 +1348,22 @@ cmd_setup() {
     if ! planned "start db and wait until healthy, then run migrations (tools profile)"; then
         docker compose up -d --wait db
         docker compose --profile tools run --rm migrate
+    fi
+
+    # A new, empty Docker volume belongs to root. Loki (UID 10001) and the
+    # second pgBackRest repository (postgres, UID 26) cannot write to it, so
+    # Loki would crash on start and stanza-create would fail. Give each its owner.
+    if ! planned "give the Loki volume to UID 10001 and the second backup repository to UID 26"; then
+        docker compose up --no-start loki
+        fix_volume_owner loki /var/loki 10001:10001
+        fix_volume_owner db /var/lib/pgbackrest-offsite 26:26
+    fi
+
+    # Create the pgBackRest stanza in both repositories (safe to repeat), so WAL
+    # archiving works from the start, then check archiving end to end.
+    if ! planned "create the pgBackRest stanza and run pgbackrest check"; then
+        docker compose exec -T db pgbackrest --stanza=kura stanza-create
+        docker compose exec -T db pgbackrest --stanza=kura check
     fi
 
     # Vault, then its one-time setup (which issues the certificates from Vault).

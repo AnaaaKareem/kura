@@ -19,7 +19,7 @@ table inet kura_host {
     # Optional IPv6 admin addresses, for example: elements = { 2001:db8::10 }
     set admin_allowlist6 { type ipv6_addr; flags interval; }
 
-    # Filter traffic addressed to the host, not Docker's forwarded traffic.
+    # Filter traffic addressed to the host itself.
     chain input {
         type filter hook input priority filter; policy drop;
 
@@ -37,11 +37,29 @@ table inet kura_host {
         # Permit limited IPv4 ping for diagnosis without opening TCP ports.
         ip protocol icmp icmp type echo-request limit rate 5/second accept
 
+        # Public web traffic: HTTPS on 443, and 80 only for nginx's redirect
+        # to HTTPS. Docker forwards its published ports through the forward
+        # hook (below), not this one, so these lines document the intent and
+        # cover a host-installed web server.
+        tcp dport { 80, 443 } accept
+
         # SSH only from the admin allowlist. Grafana is reached through this
         # SSH connection (local port forward to 127.0.0.1:3000), so no other
-        # admin port is opened. Web traffic arrives through the outbound-only
-        # Cloudflare Tunnel, so 80 and 443 stay closed.
+        # admin port is opened.
         ip saddr @admin_allowlist tcp dport 22 accept
         ip6 saddr @admin_allowlist6 tcp dport 22 accept
+    }
+
+    # Docker sends traffic for published ports (nginx on 80 and 443) through
+    # the forward hook after rewriting the destination, so the input chain
+    # above never sees it. This chain only drops addresses banned by CrowdSec,
+    # so bans also stop web clients. It runs just before Docker's own rules
+    # (priority filter - 10) and accepts everything else, leaving Docker's
+    # forwarding untouched.
+    chain forward {
+        type filter hook forward priority filter - 10; policy accept;
+
+        ip saddr @crowdsec_blacklists drop
+        ip6 saddr @crowdsec6_blacklists drop
     }
 }

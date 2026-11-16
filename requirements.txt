@@ -1,6 +1,6 @@
 Django==6.1.2
 python-dotenv==1.2.4
-psycopg2==2.9.13
+psycopg[binary]==3.3.9
 argon2-cffi==25.1.0
 django-axes==9.0.0
 django-otp==1.7.5

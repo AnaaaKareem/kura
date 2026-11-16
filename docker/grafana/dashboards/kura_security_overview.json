@@ -447,6 +447,28 @@
         "sortOrder": "Descending",
         "enableLogDetails": false
       }
+    },
+    {
+      "type": "logs",
+      "datasource": { "type": "loki", "uid": "loki" },
+      "gridPos": { "x": 0, "y": 51, "w": 24, "h": 10 },
+      "id": 20,
+      "title": "All Kura security events",
+      "description": "Security events from Kura containers and collected scheduled jobs. Use Grafana Explore with the Loki data source to filter by event, service, or time. This view contains the latest events in the selected time range, not a delivery guarantee.",
+      "targets": [
+        {
+          "refId": "A",
+          "expr": "{service=~\".+\"} | logfmt | logger=\"kura.security\" | event != \"\"",
+          "queryType": "range"
+        }
+      ],
+      "options": {
+        "showTime": true,
+        "showLabels": true,
+        "wrapLogMessage": true,
+        "sortOrder": "Descending",
+        "enableLogDetails": false
+      }
     }
   ],
   "timepicker": {},

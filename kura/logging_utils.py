@@ -2,8 +2,8 @@
 
 Every security event in Kura is written to the "kura.security" logger so the
 lines have the same fields and escaping. These helpers live outside views.py
-because kura.views imports kura.files and kura.vault, so those modules cannot
-import the helpers from views without a circular import (LOG-04).
+so views, management commands, and the database backend can share them without
+circular imports (LOG-04).
 """
 
 import ipaddress

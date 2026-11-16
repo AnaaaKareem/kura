@@ -1,4 +1,5 @@
 import csv
+import base64
 import hashlib
 import hmac
 import html
@@ -6,16 +7,25 @@ import io
 import ipaddress
 import json
 import logging
+import os
 import random
 import secrets
+import socket
+import ssl
+import struct
 import time
 import urllib.parse
+import urllib.request
 import uuid
 from base64 import b32encode
+from datetime import datetime, timedelta, timezone as datetime_timezone
 from decimal import Decimal
+import magic
 import nh3
 import qrcode
 import qrcode.image.svg
+from cryptography.exceptions import InvalidTag
+from cryptography.hazmat.primitives.ciphers.aead import AESGCM
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
@@ -26,7 +36,7 @@ from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
 from django.db.models import Avg, Count, Prefetch, Q, Value
 from django.db.models.functions import Concat
-from django.http import Http404, HttpResponse, HttpResponseForbidden, HttpResponseNotAllowed, JsonResponse
+from django.http import Http404, HttpResponse, HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template import loader
 from django.urls import reverse
@@ -34,14 +44,13 @@ from django.views.decorators.cache import never_cache
 from django.views.decorators.csrf import csrf_exempt
 from django.utils import timezone
 from django.utils.crypto import salted_hmac
-from django.utils.http import url_has_allowed_host_and_scheme
+from django.utils.http import content_disposition_header, url_has_allowed_host_and_scheme
 from django_otp.plugins.otp_static.models import StaticDevice, StaticToken
 from django_otp.oath import TOTP
 from django_otp.plugins.otp_totp.models import TOTPDevice
 from django_otp.util import random_hex
 from axes.handlers.proxy import AxesProxyHandler
 
-from .files import create_download_response, validate_and_save_upload
 from .forms import (
     AdminCourseForm,
     AdminCourseFilterForm,
@@ -131,6 +140,7 @@ from .models import (
     Room,
     Enrollment,
     EnrollmentStatus,
+    FileContent,
     ExamAnswerKey,
     Grade,
     GradeAppeal,
@@ -174,7 +184,508 @@ from .permissions import (
     student_can_see_module,
 )
 from .templatetags.markdown import render_markdown
-from .vault import decrypt_answer_key, decrypt_mfa_secret, encrypt_answer_key, encrypt_mfa_secret
+from .base import get_vault_client
+
+
+def nav_roles(request):
+    """Return the role names used to show the current user's navigation."""
+    if not hasattr(request, "user") or not request.user.is_authenticated:
+        return {"nav_roles": set()}
+    return {"nav_roles": set(request.user.user_roles.values_list("role__name", flat=True))}
+
+
+def check_breached_password(password):
+    """Reject breached passwords while sending only a five-character hash prefix."""
+    # SHA-1 is the lookup format required by the breach service, not a password hash for storage.
+    password_hash = hashlib.sha1(password.encode("utf-8"), usedforsecurity=False).hexdigest().upper()  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1
+    request = urllib.request.Request(
+        f"https://api.pwnedpasswords.com/range/{password_hash[:5]}",
+        headers={"User-Agent": "Kura-LMS-BreachedPasswordValidator"},
+    )
+    try:
+        # Use public certificate authorities and the restricted proxy when configured.
+        if settings.BREACH_CHECK_CA_FILE:
+            tls_context = ssl.create_default_context(cafile=settings.BREACH_CHECK_CA_FILE)
+        else:
+            tls_context = ssl.create_default_context()
+        handlers = [urllib.request.HTTPSHandler(context=tls_context)]
+        if settings.BREACH_CHECK_PROXY_URL:
+            handlers.append(urllib.request.ProxyHandler({"https": settings.BREACH_CHECK_PROXY_URL}))
+        else:
+            handlers.append(urllib.request.ProxyHandler({}))
+        opener = urllib.request.build_opener(*handlers)
+        with opener.open(request, timeout=2.5) as response:
+            for line in response.read().decode("utf-8").splitlines():
+                if line.split(":", 1)[0].strip() == password_hash[5:]:
+                    raise ValidationError(
+                        "This password has appeared in a known data breach. Choose a different, unique password.",
+                        code="password_breached",
+                    )
+    except OSError as error:
+        # Preserve the existing fail-open behavior without logging a password or hash.
+        log_security_event(None, "auth.breach_check.unavailable", {"error_type": type(error).__name__}, level=logging.WARNING)
+
+
+def encrypt_mfa_secret(secret_plaintext):
+    """Encrypt an authenticator secret with Vault when enabled."""
+    if not secret_plaintext:
+        return None
+    if not getattr(settings, "VAULT_ENABLED", False):
+        return secret_plaintext
+    try:
+        client = get_vault_client()
+        response = client.secrets.transit.encrypt_data(
+            name=settings.VAULT_TRANSIT_KEY,
+            mount_point=settings.VAULT_TRANSIT_MOUNT,
+            plaintext=base64.b64encode(secret_plaintext.encode("utf-8")).decode("utf-8"),
+        )
+        return response["data"]["ciphertext"]
+    except Exception as error:
+        log_security_event(None, "vault.error", {"operation": "encrypt_mfa_secret"}, level=logging.ERROR)
+        raise ValidationError("MFA secret encryption failed. The security vault is unreachable.") from error
+
+
+def decrypt_mfa_secret(ciphertext):
+    """Decrypt a Vault-protected authenticator secret in memory."""
+    if not ciphertext:
+        return None
+    if not getattr(settings, "VAULT_ENABLED", False):
+        return ciphertext
+    if not ciphertext.startswith("vault:"):
+        log_security_event(None, "vault.error", {"operation": "decrypt_mfa_secret_invalid_ciphertext"}, level=logging.ERROR)
+        raise ValidationError("MFA secret is not encrypted.")
+    try:
+        client = get_vault_client()
+        response = client.secrets.transit.decrypt_data(
+            name=settings.VAULT_TRANSIT_KEY, mount_point=settings.VAULT_TRANSIT_MOUNT, ciphertext=ciphertext,
+        )
+        return base64.b64decode(response["data"]["plaintext"].encode("utf-8")).decode("utf-8")
+    except Exception as error:
+        log_security_event(None, "vault.error", {"operation": "decrypt_mfa_secret"}, level=logging.ERROR)
+        raise ValidationError("MFA secret decryption failed. The security vault is unreachable.") from error
+
+
+def encrypt_answer_key(answer_key_dict):
+    """Encrypt an exam answer key with Vault before saving it."""
+    if not getattr(settings, "VAULT_ENABLED", False):
+        return answer_key_dict
+    try:
+        client = get_vault_client()
+        plaintext = json.dumps(answer_key_dict, sort_keys=True).encode("utf-8")
+        response = client.secrets.transit.encrypt_data(
+            name=settings.VAULT_ANSWER_KEYS_KEY,
+            mount_point=settings.VAULT_TRANSIT_MOUNT,
+            plaintext=base64.b64encode(plaintext).decode("utf-8"),
+        )
+        return {"ciphertext": response["data"]["ciphertext"]}
+    except Exception as error:
+        log_security_event(None, "vault.error", {"operation": "encrypt_answer_key"}, level=logging.ERROR)
+        raise ValidationError("Answer key encryption failed. The security vault is unreachable.") from error
+
+
+def decrypt_answer_key(stored_json):
+    """Decrypt an exam answer key in memory and reject unencrypted keys."""
+    if not getattr(settings, "VAULT_ENABLED", False):
+        return stored_json
+    ciphertext = stored_json.get("ciphertext", "")
+    if not isinstance(ciphertext, str) or not ciphertext.startswith("vault:"):
+        log_security_event(None, "vault.error", {"operation": "decrypt_answer_key_not_encrypted"}, level=logging.ERROR)
+        raise ValidationError("Answer key is not encrypted.")
+    try:
+        client = get_vault_client()
+        response = client.secrets.transit.decrypt_data(
+            name=settings.VAULT_ANSWER_KEYS_KEY, mount_point=settings.VAULT_TRANSIT_MOUNT, ciphertext=ciphertext,
+        )
+        plaintext = base64.b64decode(response["data"]["plaintext"].encode("utf-8")).decode("utf-8")
+        return json.loads(plaintext)
+    except Exception as error:
+        log_security_event(None, "vault.error", {"operation": "decrypt_answer_key"}, level=logging.ERROR)
+        raise ValidationError("Answer key decryption failed. The security vault is unreachable.") from error
+
+def encrypt_file_content(content_bytes, stored_file_id):
+    """Encrypt a file with AES-GCM and wrap its data key with Vault."""
+    raw_bytes = bytes(content_bytes)
+    if not getattr(settings, "VAULT_ENABLED", False):
+        return {"content": raw_bytes, "wrapped_key": "", "nonce": b"", "encryption_version": 0}
+
+    # Bind the ciphertext to its file ID so it cannot be swapped between files.
+    data_key = AESGCM.generate_key(bit_length=256)
+    nonce = os.urandom(12)
+    ciphertext = AESGCM(data_key).encrypt(nonce, raw_bytes, str(stored_file_id).encode("utf-8"))
+    try:
+        client = get_vault_client()
+        response = client.secrets.transit.encrypt_data(
+            name=settings.VAULT_FILES_KEY,
+            mount_point=settings.VAULT_TRANSIT_MOUNT,
+            plaintext=base64.b64encode(data_key).decode("utf-8"),
+        )
+        wrapped_key = response["data"]["ciphertext"]
+    except Exception as error:
+        log_security_event(None, "vault.error", {"operation": "encrypt_file_content"}, level=logging.ERROR)
+        raise ValidationError("File encryption failed. The security vault is unreachable.") from error
+    return {"content": ciphertext, "wrapped_key": wrapped_key, "nonce": nonce, "encryption_version": 1}
+
+
+def decrypt_file_content(file_content):
+    """Unwrap the file key with Vault and authenticate the encrypted file."""
+    version = file_content.encryption_version
+    if not getattr(settings, "VAULT_ENABLED", False):
+        if version == 0:
+            return bytes(file_content.content)
+        log_security_event(None, "file.decrypt_failed", {"file_id": file_content.file_id, "reason": "vault_disabled"}, level=logging.ERROR)
+        raise ValidationError("Encrypted files cannot be read while Vault is disabled.")
+    if version == 0:
+        if getattr(settings, "ALLOW_LEGACY_UNENCRYPTED_FILE_READS", False):
+            return bytes(file_content.content)
+        log_security_event(None, "file.decrypt_failed", {"file_id": file_content.file_id, "reason": "unencrypted_legacy_file"}, level=logging.ERROR)
+        raise ValidationError("File decryption failed.")
+    if version != 1:
+        log_security_event(None, "file.decrypt_failed", {"file_id": file_content.file_id, "reason": "unsupported_version"}, level=logging.ERROR)
+        raise ValidationError("File decryption failed.")
+
+    wrapped_key = file_content.wrapped_key or ""
+    nonce = bytes(file_content.nonce)
+    if not wrapped_key.startswith("vault:") or len(nonce) != 12:
+        log_security_event(None, "file.decrypt_failed", {"file_id": file_content.file_id, "reason": "invalid_envelope"}, level=logging.ERROR)
+        raise ValidationError("File decryption failed.")
+    try:
+        client = get_vault_client()
+        response = client.secrets.transit.decrypt_data(
+            name=settings.VAULT_FILES_KEY, mount_point=settings.VAULT_TRANSIT_MOUNT, ciphertext=wrapped_key,
+        )
+        data_key = base64.b64decode(response["data"]["plaintext"].encode("utf-8"))
+    except Exception as error:
+        log_security_event(None, "file.decrypt_failed", {"file_id": file_content.file_id, "reason": "vault_unwrap_failed"}, level=logging.ERROR)
+        raise ValidationError("File decryption failed.") from error
+    try:
+        return AESGCM(data_key).decrypt(nonce, bytes(file_content.content), str(file_content.file_id).encode("utf-8"))
+    except (InvalidTag, ValueError, TypeError) as error:
+        log_security_event(None, "file.decrypt_failed", {"file_id": file_content.file_id, "reason": "gcm_auth_failed"}, level=logging.ERROR)
+        raise ValidationError("File decryption failed.") from error
+
+
+# Filename extensions accepted for each MIME type that validate_and_save_upload
+# allows. A PDF renamed to .html would otherwise pass the MIME check and be
+# stored under a web-page extension, so the two must agree. libmagic sometimes
+# reports an Office or OpenDocument file as application/zip, so those
+# extensions are also listed there to keep legitimate uploads working.
+ALLOWED_EXTENSIONS_BY_MIME = {
+    "application/pdf": {".pdf"},
+    "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {".docx"},
+    "application/vnd.openxmlformats-officedocument.presentationml.presentation": {".pptx"},
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet": {".xlsx"},
+    "application/msword": {".doc", ".dot"},
+    "application/vnd.ms-powerpoint": {".ppt", ".pps"},
+    "application/vnd.ms-excel": {".xls"},
+    "application/vnd.oasis.opendocument.text": {".odt"},
+    "application/vnd.oasis.opendocument.presentation": {".odp"},
+    "application/vnd.oasis.opendocument.spreadsheet": {".ods"},
+    "image/png": {".png"},
+    "image/jpeg": {".jpg", ".jpeg"},
+    "image/gif": {".gif"},
+    "image/webp": {".webp"},
+    # Plain text is what libmagic reports for .txt, .md and sometimes .csv.
+    "text/plain": {".txt", ".csv", ".md"},
+    "text/csv": {".csv"},
+    "text/markdown": {".md"},
+    "video/mp4": {".mp4", ".m4v"},
+    "audio/mpeg": {".mp3"},
+    "application/zip": {".zip", ".docx", ".pptx", ".xlsx", ".odt", ".odp", ".ods"},
+}
+
+
+def sanitize_filename(filename):
+    """
+    Strips directory traversal paths and leading/trailing whitespace from an uploaded filename.
+    Returns 'download' if the name becomes empty.
+    """
+    clean_name = filename.replace("\\", "/").split("/")[-1].strip()
+    return clean_name or "download"
+
+
+def scan_file_for_malware(content_bytes):
+    """
+    Streams file bytes to ClamAV over a TCP socket before saving anything.
+    Raises ValidationError if malware is found or if the scanner is required but unreachable.
+    When ClamAV rejects the file, the error has code "malware" and carries what
+    ClamAV reported (params["detection"]), so validate_and_save_upload can quarantine it.
+    """
+    clamav_host = getattr(settings, "CLAMAV_HOST", "clamav")
+    clamav_port = getattr(settings, "CLAMAV_PORT", 3310)
+    scanner_is_required = getattr(settings, "CLAMAV_REQUIRED", not settings.DEBUG)
+    scanner_timeout = getattr(settings, "CLAMAV_TIMEOUT_SECONDS", 10)
+
+    clamav_socket = None
+    try:
+        # Open a TCP stream socket to the ClamAV daemon.
+        clamav_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        clamav_socket.settimeout(scanner_timeout)
+        clamav_socket.connect((clamav_host, clamav_port))
+
+        # Send the zINSTREAM command (null-terminated chunk format).
+        clamav_socket.sendall(b"zINSTREAM\x00")
+
+        # Stream the file content in chunks (64 KiB at a time).
+        # Each chunk starts with a 4-byte unsigned integer indicating the chunk size.
+        chunk_size = 64 * 1024
+        for offset in range(0, len(content_bytes), chunk_size):
+            chunk = content_bytes[offset : offset + chunk_size]
+            length_header = struct.pack("!I", len(chunk))
+            clamav_socket.sendall(length_header + chunk)
+
+        # Terminate the stream by sending a zero-length integer (0x00000000).
+        clamav_socket.sendall(struct.pack("!I", 0))
+
+        # Read the scan result response from ClamAV.
+        scanner_response = b""
+        while True:
+            chunk = clamav_socket.recv(4096)
+            if not chunk:
+                break
+            scanner_response += chunk
+            if b"\x00" in scanner_response or b"\n" in scanner_response:
+                break
+
+    except (OSError, socket.timeout) as error:
+        # In production (or when required), fail closed to keep the system safe.
+        if scanner_is_required:
+            log_security_event(None, "clamav.unavailable", {"error_type": type(error).__name__}, level=logging.ERROR)
+            raise ValidationError("Antivirus service is unavailable. Upload rejected for safety.")
+        # In development mode, allow the upload with a warning so offline development works.
+        log_security_event(None, "clamav.unavailable", {"error_type": type(error).__name__}, level=logging.ERROR)
+        return
+    finally:
+        # Always close the socket connection.
+        if clamav_socket:
+            try:
+                clamav_socket.close()
+            except OSError:
+                pass
+
+    # Convert the bytes response to text for inspection.
+    scanner_response_text = scanner_response.decode("utf-8", errors="replace").strip("\x00\r\n ")
+
+    # If ClamAV rejects the file, the response ends with "FOUND", for example
+    # "stream: Eicar-Test-Signature FOUND" or "stream: Heuristics.Encrypted.Zip FOUND".
+    # The words in between are the detection name; keep them for the quarantine record.
+    if scanner_response_text.endswith("FOUND"):
+        detection = scanner_response_text.removeprefix("stream:").removesuffix("FOUND").strip()
+        # The user only ever sees this generic message (never the detection name).
+        raise ValidationError(
+            "The uploaded file failed security scanning.",
+            code="malware",
+            params={"detection": detection[:255] or "unknown"},
+        )
+
+    # If ClamAV encountered an internal scanning error (e.g. stream size limit exceeded).
+    if "ERROR" in scanner_response_text:
+        log_security_event(None, "clamav.unavailable", {"error_type": "ScannerError"}, level=logging.ERROR)
+        if scanner_is_required:
+            raise ValidationError("Security scanner encountered an error. Upload rejected.")
+        return
+
+    # A closed connection or malformed reply is not a successful clean scan.
+    if not scanner_response.endswith((b"\x00", b"\n")) or scanner_response_text != "stream: OK":
+        log_security_event(None, "clamav.unavailable", {"error_type": "InvalidScannerResponse"}, level=logging.ERROR)
+        if scanner_is_required:
+            raise ValidationError("Security scanner encountered an error. Upload rejected.")
+
+
+def check_signature_age():
+    """
+    Asks ClamAV how old its virus signatures are and logs a warning when they
+    are more than 3 days old (signature updates are probably failing).
+    Kura policy: uploads continue with old signatures; this only warns.
+    Any problem talking to ClamAV here is ignored: the scan itself already
+    decides whether the scanner is usable.
+    """
+    clamav_socket = None
+    try:
+        # "zVERSION" answers e.g. "ClamAV 1.5.4/27812/Thu Nov  5 09:27:46 2026".
+        clamav_socket = socket.create_connection(
+            (getattr(settings, "CLAMAV_HOST", "clamav"), getattr(settings, "CLAMAV_PORT", 3310)),
+            timeout=getattr(settings, "CLAMAV_TIMEOUT_SECONDS", 10),
+        )
+        clamav_socket.sendall(b"zVERSION\x00")
+        version_reply = clamav_socket.recv(1024).decode("utf-8", errors="replace").strip("\x00\r\n ")
+    except OSError as error:
+        # Report an unavailable scanner without logging network details or user data.
+        log_security_event(None, "clamav.unavailable", {"error_type": type(error).__name__}, level=logging.ERROR)
+        return
+    finally:
+        if clamav_socket:
+            clamav_socket.close()
+
+    # The third part (after the second "/") is the date of the newest signatures.
+    reply_parts = version_reply.split("/")
+    if len(reply_parts) != 3:
+        log_security_event(None, "clamav.unavailable", {"error_type": "InvalidVersionResponse"}, level=logging.WARNING)
+        return
+    try:
+        signature_date = datetime.strptime(reply_parts[2].strip(), "%a %b %d %H:%M:%S %Y")
+    except ValueError:
+        log_security_event(None, "clamav.unavailable", {"error_type": "InvalidSignatureDate"}, level=logging.WARNING)
+        return
+
+    # ClamAV reports the date in UTC. Warn when it is more than 3 days old.
+    signature_age = datetime.now(datetime_timezone.utc).replace(tzinfo=None) - signature_date
+    if signature_age > timedelta(days=3):
+        log_security_event(None, "clamav.signatures_old", {"age_days": signature_age.days}, level=logging.WARNING)
+
+
+def validate_and_save_upload(uploaded_file, user, request=None, log_context=None):
+    """
+    Validates file size (up to 25 MiB), checks bytes for malware with ClamAV,
+    detects real MIME type with python-magic, computes a SHA-256 digest,
+    and stores the metadata and binary content in PostgreSQL.
+    """
+    # Enforce file size limits: between 1 byte and 25 MiB.
+    file_size = uploaded_file.size
+    if file_size <= 0:
+        log_security_event(request, "file.upload_rejected", {"reason": "empty_file"}, level=logging.WARNING)
+        raise ValidationError("Uploaded file is empty.")
+    if file_size > MAX_UPLOAD_BYTES:
+        log_security_event(request, "file.upload_rejected", {"reason": "size_limit"}, level=logging.WARNING)
+        raise ValidationError(f"File size exceeds the maximum limit of {MAX_UPLOAD_BYTES // (1024 * 1024)} MiB.")
+
+    # Read binary content to detect real MIME type and compute hash.
+    content_bytes = uploaded_file.read()
+
+    # Scan binary content for malware with ClamAV before storing.
+    try:
+        scan_file_for_malware(content_bytes)
+    except ValidationError as error:
+        # Only a file ClamAV rejected is quarantined; scanner outages are not.
+        if error.code != "malware":
+            # Scanner failures also reject the upload, but are not malware quarantines.
+            log_security_event(request, "file.upload_rejected", {"reason": "scanner_unavailable"}, level=logging.WARNING)
+            raise
+        detection = error.params["detection"]
+        original_filename = sanitize_filename(uploaded_file.name)
+        content_sha256 = hashlib.sha256(content_bytes).hexdigest()
+
+        # Keep the rejected file for 7 days so an Admin can investigate.
+        # .using("quarantine") saves on a separate database connection that
+        # commits immediately, so the record survives even though the upload's
+        # own transaction is about to be rolled back (see config/settings.py).
+        QuarantinedFile.objects.using("quarantine").create(
+            uploaded_by_id=user.id,
+            original_filename=original_filename,
+            size_bytes=file_size,
+            sha256_hash=content_sha256,
+            detection=detection,
+            content=content_bytes,
+        )
+
+        # Log only safe file identifiers; omit original_filename to keep PII out of logs.
+        log_security_event(
+            request,
+            "file.quarantined",
+            {
+                "user_id": user.id,
+                "sha256": content_sha256,
+                "size": file_size,
+                "detection": detection[:500],
+            },
+            level=logging.WARNING,
+        )
+        raise
+
+    # Warn (but carry on) if ClamAV's virus signatures are out of date.
+    check_signature_age()
+
+    # Inspect the actual file bytes using python-magic (do not trust user extension).
+    detected_mime_type = magic.from_buffer(content_bytes, mime=True)
+
+    # Validate against allowed MIME types.
+    if detected_mime_type not in ALLOWED_UPLOAD_MIME_TYPES:
+        log_security_event(request, "file.upload_rejected", {"reason": "mime_type"}, level=logging.WARNING)
+        raise ValidationError(
+            "This file type isn't allowed. Allowed: PDF, Word, PowerPoint, Excel, "
+            "OpenDocument, CSV, text, Markdown, images (PNG, JPEG, GIF, WebP), MP4, MP3, ZIP."
+        )
+
+    # Calculate SHA-256 hash.
+    content_sha256 = hashlib.sha256(content_bytes).hexdigest()
+
+    # The extension must match the detected type, so a valid PDF named .html
+    # cannot be stored and later downloaded under a web-page extension (INP-01).
+    original_filename = sanitize_filename(uploaded_file.name)
+    extension = os.path.splitext(original_filename)[1].lower()
+    if extension not in ALLOWED_EXTENSIONS_BY_MIME.get(detected_mime_type, set()):
+        log_security_event(request, "file.upload_rejected", {"reason": "extension_mismatch"}, level=logging.WARNING)
+        raise ValidationError("The file extension does not match the detected file type.")
+
+    # Save metadata and encrypted file content atomically so Vault failure leaves no orphan row.
+    with transaction.atomic():
+        stored_file = StoredFile.objects.create(
+            uploaded_by=user,
+            original_filename=original_filename,
+            mime_type=detected_mime_type,
+            size_bytes=file_size,
+            sha256_hash=content_sha256,
+        )
+
+        encrypted = encrypt_file_content(content_bytes, stored_file.id)
+        FileContent.objects.create(
+            file=stored_file,
+            content=encrypted["content"],
+            wrapped_key=encrypted["wrapped_key"],
+            nonce=encrypted["nonce"],
+            encryption_version=encrypted["encryption_version"],
+        )
+
+    # Record safe metadata after both the file record and its content are stored.
+    upload_details = {
+        "file_id": stored_file.id,
+        "sha256": content_sha256,
+        "size": file_size,
+        "mime": detected_mime_type,
+    }
+    if log_context:
+        upload_details.update(log_context)
+    log_security_event(request, "file.uploaded", upload_details)
+
+    return stored_file
+
+
+def create_download_response(stored_file):
+    """
+    Builds an HTTP download response with forced attachment disposition,
+    MIME type, nosniff, and no-store caching headers after decrypting and re-verifying SHA-256.
+    """
+    # Decrypt FileContent in memory and fail closed with a generic error on crypto failure.
+    try:
+        binary_content = decrypt_file_content(stored_file.content)
+    except ValidationError:
+        return HttpResponse("File decryption failed.", status=500)
+
+    actual_sha256 = hashlib.sha256(binary_content).hexdigest()
+    if not hmac.compare_digest(actual_sha256, stored_file.sha256_hash):
+        log_security_event(
+            None,
+            "file.integrity_failed",
+            {"file_id": stored_file.id, "expected_sha256": stored_file.sha256_hash},
+            level=logging.ERROR,
+        )
+        return HttpResponse("File integrity verification failed.", status=500)
+
+    response = HttpResponse(binary_content, content_type=stored_file.mime_type)
+    safe_filename = sanitize_filename(stored_file.original_filename)
+
+    # Force browser download instead of inline execution. Django's helper quotes and
+    # escapes the name and adds filename*=UTF-8'' for non-ASCII names, so a stored
+    # filename containing a quote or semicolon cannot inject extra header parameters.
+    response["Content-Disposition"] = content_disposition_header(True, safe_filename)
+
+    # Prevent MIME confusion attacks.
+    response["X-Content-Type-Options"] = "nosniff"
+
+    # Ensure sensitive materials are not stored in shared caches.
+    response["Cache-Control"] = "no-store"
+
+    return response
+
 
 # Keep work-area links on the dashboard and only show areas for assigned roles.
 DASHBOARD_CARDS_BY_ROLE = {
@@ -853,14 +1364,14 @@ def normalize_fido2_response(response, generic_error_message):
         return response
 
     try:
-        result = json.loads(response.content)
+        body = json.loads(response.content)
     except (ValueError, TypeError):
         return JsonResponse({"status": "ERR", "message": generic_error_message}, status=500)
 
-    if not isinstance(result, dict):
+    if not isinstance(body, dict):
         return response
 
-    if result.get("status") == "ERR":
+    if body.get("status") == "ERR":
         status_code = 400 if response.status_code in (200, 400) else 500
         return JsonResponse({"status": "ERR", "message": generic_error_message}, status=status_code)
 
@@ -891,10 +1402,10 @@ def passkey_register_complete_view(request):
 
     if "application/json" in normalized.get("Content-Type", "").lower():
         try:
-            result = json.loads(normalized.content)
+            body = json.loads(normalized.content)
         except (ValueError, TypeError):
-            result = {}
-        if isinstance(result, dict) and result.get("status") in ("OK", "RECOVERY"):
+            body = {}
+        if isinstance(body, dict) and body.get("status") in ("OK", "RECOVERY"):
             newest_key = (
                 User_Keys.objects.filter(username=request.user.username, key_type="FIDO2").order_by("-id").first()
             )
@@ -1482,6 +1993,13 @@ def password_change_view(request):
 """
     form = PasswordChangeForm(request.user, request.POST or None, request=request)
 
+    # Check the chosen password before changing the account or its sessions.
+    if request.method == "POST" and form.is_valid():
+        try:
+            check_breached_password(form.cleaned_data["new_password"])
+        except ValidationError as error:
+            form.add_error("new_password", error)
+
     if request.method == "POST" and form.is_valid():
         new_password = form.cleaned_data["new_password"]
 
@@ -1688,6 +2206,13 @@ def password_reset_confirm_view(request, token):
         return redirect("kura:password_reset_request")
 
     form = PasswordResetConfirmForm(reset_record.user, request.POST or None)
+
+    # Do not consume the reset token if the chosen password is breached.
+    if request.method == "POST" and form.is_valid():
+        try:
+            check_breached_password(form.cleaned_data["new_password"])
+        except ValidationError as error:
+            form.add_error("new_password", error)
 
     if request.method == "POST" and form.is_valid():
         new_password = form.cleaned_data["new_password"]
@@ -2545,6 +3070,14 @@ def staff_create_view(request):
 
     form = StaffCreateForm(request.POST or None)
 
+    # Check the generated temporary password before creating the account.
+    if request.method == "POST" and form.is_valid():
+        temporary_password = secrets.token_urlsafe(12)
+        try:
+            check_breached_password(temporary_password)
+        except ValidationError as error:
+            form.add_error(None, error)
+
     if request.method == "POST" and form.is_valid():
         email = form.cleaned_data["email"].strip().lower()
         first_name = form.cleaned_data["first_name"].strip()
@@ -2553,9 +3086,6 @@ def staff_create_view(request):
         staff_title = form.cleaned_data["staff_title"].strip()
         room = form.cleaned_data["room"]
         office_location = str(room) if room else ""
-
-        # Generate a secure 16-character temporary password.
-        temporary_password = secrets.token_urlsafe(12)
 
         with transaction.atomic():
             # Create user account requiring password rotation on first login.
@@ -2709,9 +3239,9 @@ def staff_settings_view(request):
                     },
                 )
             else:
-                obj = submitted_form.save()
+                saved_record = submitted_form.save()
                 # kind is one of the fixed keys in the forms dict, never a raw POST value (LOG-02).
-                log_security_event(request, f"admin.{kind}.saved", {"id": str(obj.pk)})
+                log_security_event(request, f"admin.{kind}.saved", {"id": str(saved_record.pk)})
             messages.success(request, "Saved successfully.")
             return redirect("kura:staff_settings")
         # Log which fields failed, never the submitted names or codes (LOG-03).
@@ -2957,6 +3487,14 @@ def student_create_view(request):
 
     form = StudentCreateForm(request.POST or None)
 
+    # Check the generated temporary password before creating the account.
+    if request.method == "POST" and form.is_valid():
+        temporary_password = secrets.token_urlsafe(12)
+        try:
+            check_breached_password(temporary_password)
+        except ValidationError as error:
+            form.add_error(None, error)
+
     if request.method == "POST" and form.is_valid():
         email = form.cleaned_data["email"].strip().lower()
         first_name = form.cleaned_data["first_name"].strip()
@@ -2964,9 +3502,6 @@ def student_create_view(request):
         department = form.cleaned_data["department"]
         current_level = form.cleaned_data["current_level"]
         matriculation_year = form.cleaned_data["matriculation_year"]
-
-        # Generate a secure 16-character temporary password.
-        temporary_password = secrets.token_urlsafe(12)
 
         with transaction.atomic():
             # Create student user account.
@@ -5354,42 +5889,42 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
             if not question_editing_disabled and delivery_mode == AssessmentDeliveryMode.ONLINE:
                 for question_form in question_forms.ordered_forms:
                     index = question_forms.forms.index(question_form)
-                    data = question_form.cleaned_data
-                    if not data or data.get("DELETE"):
+                    question_data = question_form.cleaned_data
+                    if not question_data or question_data.get("DELETE"):
                         continue
                     question_id = f"q_{uuid.uuid4().hex}"
                     question = {
                         "question_id": question_id,
-                        "type": data["type"],
-                        "prompt": data["prompt"],
-                        "points": float(data["points"]),
+                        "type": question_data["type"],
+                        "prompt": question_data["prompt"],
+                        "points": float(question_data["points"]),
                     }
-                    if data["type"] == "multiple_choice":
+                    if question_data["type"] == "multiple_choice":
                         question["options"] = []
                         correct_options = []
                         for number in range(1, 9):
-                            option = data.get(f"option_{number}")
+                            option = question_data.get(f"option_{number}")
                             if option:
                                 option_id = f"opt_{number}"
                                 question["options"].append({"option_id": option_id, "text": option})
-                                if data.get(f"correct_{number}"):
+                                if question_data.get(f"correct_{number}"):
                                     correct_options.append(option_id)
                         answer_keys[question_id] = {
                             "correct_option_ids": correct_options,
-                            "explanation": data.get("explanation", ""),
+                            "explanation": question_data.get("explanation", ""),
                         }
-                    elif data["type"] == "matching":
+                    elif question_data["type"] == "matching":
                         question["left_prompts"] = []
                         question["available_matches"] = []
                         correct_pairs = {}
                         for number in range(1, 9):
-                            if data.get(f"left_{number}"):
+                            if question_data.get(f"left_{number}"):
                                 pair_id = f"pair_{number}"
-                                question["left_prompts"].append({"pair_id": pair_id, "text": data[f"left_{number}"]})
-                                if data[f"right_{number}"] not in question["available_matches"]:
-                                    question["available_matches"].append(data[f"right_{number}"])
-                                correct_pairs[pair_id] = data[f"right_{number}"]
-                        for match in data.get("extra_matches", "").splitlines():
+                                question["left_prompts"].append({"pair_id": pair_id, "text": question_data[f"left_{number}"]})
+                                if question_data[f"right_{number}"] not in question["available_matches"]:
+                                    question["available_matches"].append(question_data[f"right_{number}"])
+                                correct_pairs[pair_id] = question_data[f"right_{number}"]
+                        for match in question_data.get("extra_matches", "").splitlines():
                             match = match.strip()
                             if match and match not in question["available_matches"]:
                                 question["available_matches"].append(match)
@@ -5397,9 +5932,9 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
                         question["available_matches"].sort()
                         answer_keys[question_id] = {"correct_pairs": correct_pairs}
                     else:
-                        question["max_words"] = data["max_words"]
+                        question["max_words"] = question_data["max_words"]
                         criteria = []
-                        for line in data["rubric"].splitlines():
+                        for line in question_data["rubric"].splitlines():
                             if line.strip():
                                 criteria.append({"criterion": line.strip()})
                         # Preserve existing detailed marking criteria when their text was not changed.
@@ -5407,13 +5942,13 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
                         if (
                             assessment
                             and index < len(initial_questions)
-                            and data["rubric"] == initial_questions[index].get("rubric", "")
+                            and question_data["rubric"] == initial_questions[index].get("rubric", "")
                         ):
                             old_id = assessment.questions_json[index].get("question_id")
                             old_rubric = existing_keys.get(old_id, {}).get("tutor_rubric", {})
                             rubric = old_rubric.copy()
                             criteria = old_rubric.get("criteria", criteria)
-                        rubric["max_words"] = data["max_words"]
+                        rubric["max_words"] = question_data["max_words"]
                         rubric["criteria"] = criteria
                         answer_keys[question_id] = {"tutor_rubric": rubric}
                     questions.append(question)
@@ -6398,7 +6933,7 @@ def build_question_reviews(attempt):
         q_id = question.get("question_id")
         q_type = question.get("type")
         saved = answers_by_id.get(q_id, {})
-        item = {
+        review = {
             "number": index,
             "type": q_type,
             "prompt": question.get("prompt", ""),
@@ -6407,18 +6942,18 @@ def build_question_reviews(attempt):
         }
         if q_type == "multiple_choice":
             selected_ids = set(saved.get("selected_option_ids", []))
-            item["selected_options"] = [
+            review["selected_options"] = [
                 opt.get("text", "") for opt in question.get("options", []) if opt.get("option_id") in selected_ids
             ]
         elif q_type == "matching":
             match_by_pair = {m.get("pair_id"): m.get("selected_match", "") for m in saved.get("submitted_matches", [])}
-            item["matching_rows"] = [
+            review["matching_rows"] = [
                 {"left": pair.get("text", ""), "selected": match_by_pair.get(pair.get("pair_id"), "")}
                 for pair in question.get("left_prompts", [])
             ]
         else:
-            item["response_text"] = saved.get("response_text", "")
-        reviews.append(item)
+            review["response_text"] = saved.get("response_text", "")
+        reviews.append(review)
     return reviews
 
 

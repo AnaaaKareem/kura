@@ -249,6 +249,15 @@ loki.process "pipeline" {
     stage.structured_metadata {
       values = { user_db = "" }
     }
+
+    // Second layer behind psycopg 3 server-side binding (config/settings.py):
+    // blank every quoted SQL literal, so a value written straight into a
+    // statement (a session key, password hash or token hash) never reaches Loki.
+    // Table and column names are kept, so the audit trail still shows who did what.
+    stage.replace {
+      expression = "'([^']*)'"
+      replace    = "<redacted>"
+    }
   }
 
   // Surface PostgreSQL fatal and error lines for authentication and database failures.
@@ -293,9 +302,9 @@ loki.process "pipeline" {
     }
   }
 
-  // Extract text log severity from ClamAV, CrowdSec, and Cloudflare Tunnel.
+  // Extract text log severity from ClamAV and CrowdSec.
   stage.match {
-    selector = "{service=~\"clamav|crowdsec|cloudflared\"}"
+    selector = "{service=~\"clamav|crowdsec\"}"
 
     stage.regex {
       expression = "(?i)(?P<level>debug|info|warn(?:ing)?|error|fatal)"
@@ -419,7 +428,7 @@ prometheus.scrape "host" {
 }
 
 // Probes ("is it answering?") from Alloy's point of view:
-//  - site:        the public login page through Cloudflare (end to end);
+//  - site:        the public login page at the public host name (end to end);
 //                 KURA_PUBLIC_HOSTNAME comes from .env via docker-compose.yml
 //  - vault:       Vault's health endpoint answers 200 only when unsealed
 //                 (503 when sealed), checked with Kura's internal CA

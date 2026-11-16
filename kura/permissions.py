@@ -18,7 +18,8 @@ def service_rls_context():
     finally:
         with connection.cursor() as cursor:
             if previous_role:
-                cursor.execute("SET kura.service_role = %s;", [previous_role])
+                # set_config is SET for the session, but accepts a bound parameter.
+                cursor.execute("SELECT set_config('kura.service_role', %s, false);", [previous_role])
             else:
                 cursor.execute("RESET kura.service_role;")
 
