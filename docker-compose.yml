@@ -1,3 +1,13 @@
+# Log rotation for every service: Docker's json-file driver keeps at most five
+# 10 MB files per container, so container logs cannot fill the VM's disk.
+# Alloy and CrowdSec read these logs through the Docker API, which works the
+# same with rotation. Loki keeps the 180-day copy.
+x-logging: &default-logging
+  driver: json-file
+  options:
+    max-size: "10m"
+    max-file: "5"
+
 services:
   # ============================================================================
   # Database Service (PostgreSQL 17, pgEdge image with pgAudit and pgBackRest)
@@ -6,6 +16,7 @@ services:
   # ============================================================================
   db:
     image: ghcr.io/pgedge/pgedge-postgres:17-spock5-standard@sha256:6d2fb528a11a059d07247e38b38e601a3795d1ab2bfd78ad945f9e77227c0a15
+    logging: *default-logging
     container_name: kura-db
     restart: unless-stopped
     read_only: true
@@ -105,6 +116,7 @@ services:
       context: .
       dockerfile: Dockerfile
     image: kura-web:latest
+    logging: *default-logging
     container_name: kura-web
     restart: unless-stopped
     read_only: true
@@ -230,6 +242,7 @@ services:
   # ============================================================================
   collectstatic:
     image: kura-web:latest
+    logging: *default-logging
     read_only: true
     tmpfs:
       - /tmp:size=64M,mode=1777
@@ -266,6 +279,7 @@ services:
   # ============================================================================
   migrate:
     image: kura-web:latest
+    logging: *default-logging
     profiles: ["tools"]
     read_only: true
     tmpfs:
@@ -316,6 +330,7 @@ services:
   # ============================================================================
   netbird-proxy:
     image: nginx:1.31.8-alpine@sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606
+    logging: *default-logging
     container_name: kura-netbird-proxy
     restart: unless-stopped
     read_only: true
@@ -365,6 +380,7 @@ services:
 
   netbird-server:
     image: netbirdio/netbird-server:0.82.0@sha256:7b5b53b2dc8bc25639f791cf72d47cf86911894ff3f8a97cb79bab9be958109c
+    logging: *default-logging
     container_name: kura-netbird-server
     restart: unless-stopped
     read_only: true
@@ -404,6 +420,7 @@ services:
 
   netbird-dashboard:
     image: netbirdio/dashboard:v2.96.0-rootless@sha256:0f0097965c36bd4702eae6cdb007d6398ea7783f3d395942c909c7fb55a827d4
+    logging: *default-logging
     container_name: kura-netbird-dashboard
     restart: unless-stopped
     read_only: true
@@ -455,6 +472,7 @@ services:
     build:
       context: ./docker/postfix
     image: kura-relay:latest
+    logging: *default-logging
     container_name: kura-relay
     restart: unless-stopped
     read_only: true
@@ -518,6 +536,7 @@ services:
     build:
       context: ./docker/breach-proxy
     image: kura-breach-proxy:latest
+    logging: *default-logging
     container_name: kura-breach-proxy
     restart: unless-stopped
     read_only: true
@@ -554,6 +573,7 @@ services:
   # ============================================================================
   nginx:
     image: nginx:1.31.8-alpine@sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606
+    logging: *default-logging
     container_name: kura-nginx
     restart: unless-stopped
     read_only: true
@@ -621,6 +641,7 @@ services:
   # ============================================================================
   waf:
     image: ghcr.io/coreruleset/coraza-crs:nginx@sha256:0089154673011788070e7b7591b62dd8e7a6686d4e6ba75ad92947b97d54799a
+    logging: *default-logging
     container_name: kura-waf
     restart: unless-stopped
     read_only: true
@@ -679,6 +700,7 @@ services:
   # ============================================================================
   clamav:
     image: clamav/clamav-debian:1.5.4@sha256:c21aa18cc0a358678255a3dfb343a4555b58f71b97d7b869df8fdf7ea0a5b4b1
+    logging: *default-logging
     container_name: kura-clamav
     restart: unless-stopped
     read_only: true
@@ -731,6 +753,7 @@ services:
   # ============================================================================
   crowdsec:
     image: crowdsecurity/crowdsec:v1.8.2@sha256:65b74942f7e7ed5c60fde4ac15fc4ba715904c398c8b16dd451f4907d90347d4
+    logging: *default-logging
     container_name: kura-crowdsec
     restart: unless-stopped
     ports:
@@ -811,6 +834,7 @@ services:
     # restarts in a loop). See docker/cloudflare/README.md.
     profiles: ["remote-access"]
     image: cloudflare/cloudflared:2026.10.7@sha256:4955524aeaa379e154023d5a027c250f7b35041a2e7e950cf13f144bc9b9c5ba
+    logging: *default-logging
     container_name: kura-cloudflared
     restart: unless-stopped
     read_only: true
@@ -854,6 +878,7 @@ services:
   # ============================================================================
   loki:
     image: grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
+    logging: *default-logging
     container_name: kura-loki
     restart: unless-stopped
     command: -config.file=/etc/loki/loki.yml
@@ -893,6 +918,7 @@ services:
   # ============================================================================
   prometheus:
     image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
+    logging: *default-logging
     container_name: kura-prometheus
     restart: unless-stopped
     command:
@@ -937,6 +963,7 @@ services:
   # ============================================================================
   alertmanager:
     image: prom/alertmanager:v0.34.2@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b
+    logging: *default-logging
     container_name: kura-alertmanager
     restart: unless-stopped
     command:
@@ -984,6 +1011,7 @@ services:
   # ============================================================================
   alloy:
     image: grafana/alloy:v1.21.3@sha256:8ab871206bd2d8f89277f53abffee5f452a293980788d52f85fa183a87a505a4
+    logging: *default-logging
     container_name: kura-alloy
     # Match the image's data-directory owner when capabilities are dropped.
     user: "473:473"
@@ -1028,6 +1056,14 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
+    # Ready when Alloy's own HTTP server answers /-/ready. The image has bash
+    # but no curl or wget, so bash's /dev/tcp sends the request.
+    healthcheck:
+      test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/12345 && printf 'GET /-/ready HTTP/1.0\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200 '"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 20s
     mem_limit: 256m
     cpus: 0.5
     deploy:
@@ -1053,6 +1089,7 @@ services:
   # ============================================================================
   docker-api-proxy:
     image: lscr.io/linuxserver/socket-proxy:3.4.7@sha256:4e5e59efd3338205561c54262581992036e5a36ccca97d487b1d4ec41f9adc58
+    logging: *default-logging
     container_name: kura-docker-api-proxy
     restart: unless-stopped
     read_only: true
@@ -1138,6 +1175,7 @@ services:
   # ============================================================================
   grafana:
     image: grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
+    logging: *default-logging
     container_name: kura-grafana
     restart: unless-stopped
     read_only: true
@@ -1206,6 +1244,7 @@ services:
     # NetBird server and setup key exist. See docker/netbird/README.md.
     profiles: ["remote-access"]
     image: netbirdio/netbird:0.82.0@sha256:eca5b274c635bfbb04ec6724a0712d1146190dd450eea199eeb83916fdd94965
+    logging: *default-logging
     container_name: kura-netbird
     restart: unless-stopped
     read_only: true
@@ -1264,6 +1303,7 @@ services:
   # ============================================================================
   vault:
     image: hashicorp/vault:2.2.1@sha256:962a92876e168d68eaaa24b0b8b49bbce1cb63024060a67bba95cd158a366fc2
+    logging: *default-logging
     container_name: kura-vault
     restart: unless-stopped
     command: server
