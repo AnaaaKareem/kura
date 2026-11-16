@@ -906,6 +906,10 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/host/root:ro
+    # Group 4 is "adm" on Ubuntu: lets Alloy read /var/log/auth.log (root:adm,
+    # mode 640) through the read-only host mount, for the SSH login alerts.
+    group_add:
+      - "4"
     networks:
       - observability
       # Docker log access is limited by the internal socket-proxy network.
@@ -1068,6 +1072,10 @@ services:
       GF_SECURITY_COOKIE_SAMESITE: strict
       # Logs go to the container output where Alloy collects them.
       GF_LOG_MODE: console
+      # Log every HTTP request (method, path, status, user name; never the
+      # body), so successful logins (POST /login, status 200) reach Loki as
+      # well as failed ones, for the Grafana login alerts in docker/loki/rules.
+      GF_SERVER_ROUTER_LOGGING: "true"
       GF_SERVER_SERVE_FROM_SUB_PATH: "false"
     volumes:
       - ./docker/grafana/provisioning:/etc/grafana/provisioning:ro

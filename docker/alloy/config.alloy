@@ -82,6 +82,21 @@ loki.source.file "cron_logs" {
   forward_to = [loki.process.pipeline.receiver]
 }
 
+// The VM's authentication log: sshd logins and failures (and sudo). Ubuntu's
+// rsyslog writes /var/log/auth.log as root:adm mode 640; Alloy reads it through
+// the read-only host mount as a member of the adm group (group_add in
+// docker-compose.yml). Labelled service="auth" for the SSH alert rules.
+// Grafana's own login log needs no extra source: it arrives through the Docker
+// source above as service="grafana".
+local.file_match "auth_log" {
+  path_targets = [{ "__path__" = "/host/root/var/log/auth.log", "service" = "auth" }]
+}
+
+loki.source.file "auth_log" {
+  targets    = local.file_match.auth_log.targets
+  forward_to = [loki.process.pipeline.receiver]
+}
+
 // Extract the Docker log message, timestamp, and stdout/stderr stream label.
 loki.process "docker_envelope" {
   stage.docker {}

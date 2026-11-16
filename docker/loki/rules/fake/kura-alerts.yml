@@ -223,3 +223,53 @@ groups:
         annotations:
           summary: "Unexpected database audit or DDL discrepancy"
           description: "pgAudit recorded a destructive, schema, or role change against protected grade or audit tables within 5 minutes. Verify whether an authorized maintenance window is active."
+
+      # 23. Any successful SSH login to the VM. Only allowlisted admins can
+      #     reach SSH, so each login should be expected; grouped per user and
+      #     source address. Lines come from /var/log/auth.log (service="auth").
+      #     OpenSSH 9.8+ logs as "sshd-session", older versions as "sshd".
+      - alert: SshLoginSucceeded
+        expr: |-
+          sum by (user, ip) (count_over_time({service="auth"} |~ `sshd(-session)?\[[0-9]+\]: Accepted ` | regexp `Accepted \S+ for (?P<user>\S+) from (?P<ip>[0-9a-fA-F.:]+)` [5m])) >= 1
+        labels:
+          severity: warning
+        annotations:
+          summary: "SSH login to the Kura VM"
+          description: "{{ $labels.user }} logged in over SSH from {{ $labels.ip }} within the last 5 minutes. Confirm it was a planned admin session."
+
+      # 24. Burst of failed SSH logins from one address. CrowdSec's sshd
+      #     scenarios ban the address; this alert tells the admin it happened.
+      - alert: SshLoginFailureBurst
+        expr: |-
+          sum by (ip) (count_over_time({service="auth"} |~ `sshd(-session)?\[[0-9]+\]: (Failed \S+ for|Invalid user|Connection closed by authenticating user|Disconnected from authenticating user)` | regexp `from (?:invalid user \S+ |authenticating user \S+ )?(?P<ip>[0-9a-fA-F.:]+)` [10m])) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: "Failed SSH logins from one address"
+          description: "More than 5 SSH login attempts from {{ $labels.ip }} failed within 10 minutes. Check that CrowdSec banned it and that the address is not on the admin allowlist."
+
+      # 25. The Grafana admin account was used. Day-to-day viewing uses the
+      #     read-only "viewer" account, so admin activity means a change or a
+      #     recovery. Grafana logs every request with the user name
+      #     (GF_SERVER_ROUTER_LOGGING); its successful login line has no user
+      #     name, so the admin's first request after logging in is the signal.
+      - alert: GrafanaAdminLogin
+        expr: |-
+          sum(count_over_time({service="grafana"} |= `msg="Request Completed"` |= ` uname=admin ` [5m])) >= 1
+        labels:
+          severity: warning
+        annotations:
+          summary: "Grafana admin account in use"
+          description: "The Grafana admin account made requests within the last 5 minutes. It should only be used for configuration changes or recovery; confirm the session was planned."
+
+      # 26. Burst of failed Grafana logins (wrong user or password). Grafana's
+      #     brute-force protection locks an account after repeated failures;
+      #     this alert shows someone is guessing through the SSH tunnel.
+      - alert: GrafanaLoginFailureBurst
+        expr: |-
+          sum(count_over_time({service="grafana"} |= `msg="Request Completed"` |= `path=/login` |= `status=401` [5m])) > 5
+        labels:
+          severity: warning
+        annotations:
+          summary: "Many failed Grafana logins"
+          description: "More than 5 Grafana logins failed within 5 minutes. Only admins with SSH access can reach Grafana; check who holds a tunnel."
