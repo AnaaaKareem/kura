@@ -12,7 +12,7 @@ This directory configures PostgreSQL to enforce Mutual TLS (mTLS) for all incomi
 | `kura-admin` | Migrations and administrative maintenance (superuser created by `POSTGRES_USER`). | Password from the `db_password` Docker secret, sent only inside TLS. |
 
 `docker/postgres/vault-roles.sql` makes `kura_app` NOLOGIN and creates
-`vault_admin`. `docker/vault/init-vault.sh` runs it. The login rules are in
+`vault_admin`. `./kura.sh vault-init` runs it. The login rules are in
 `pg_hba.conf`: the first matching line wins, and any user without a line
 (for example `kura_app`) can't log in at all.
 
@@ -75,7 +75,7 @@ log line would never contain a usable password. `log_line_prefix` includes
 
 ### Certificate files
 
-Each container mounts only `ca.crt` plus its own `.crt` and `.key` (PostgreSQL: `db.*`, Django: `web.*`). The certificates come from Vault's intermediate CA and last 30 days (`certs/renew-certs-from-vault.sh`); the CA keys exist only inside Vault, so nobody can sign client certificates that PostgreSQL trusts without going through Vault. `ca.crt` is the root CA; each `.crt` file carries the intermediate CA too, so PostgreSQL and libpq can build the chain. The renewal script reloads PostgreSQL (`pg_reload_conf()`), which re-reads the certificate files without dropping connections. On Linux both certificate scripts make `db.key` belong to the image's `postgres` user (UID 26) with mode `0600`, which PostgreSQL requires before it will start.
+Each container mounts only `ca.crt` plus its own `.crt` and `.key` (PostgreSQL: `db.*`, Django: `web.*`). The certificates come from Vault's intermediate CA and last 30 days (`./kura.sh renew-certs`); the CA keys exist only inside Vault, so nobody can sign client certificates that PostgreSQL trusts without going through Vault. `ca.crt` is the root CA; each `.crt` file carries the intermediate CA too, so PostgreSQL and libpq can build the chain. The renewal step reloads PostgreSQL (`pg_reload_conf()`), which re-reads the certificate files without dropping connections. On Linux both `./kura.sh mtls-bootstrap` and `./kura.sh renew-certs` make `db.key` belong to the image's `postgres` user (UID 26) with mode `0600`, which PostgreSQL requires before it will start.
 
 `ALTER DEFAULT PRIVILEGES` in `init-roles.sql` automatically grants future tables
 (created by that migration) to `kura_app`, including `kura_search_cache`.

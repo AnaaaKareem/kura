@@ -119,7 +119,7 @@ the production volumes and data were never touched:
 
 ## 6. Safe restore drill (checked 6 November 2026)
 
-`docker/postgres/restore-drill.sh` restores into a **throwaway** database and
+`./kura.sh restore-drill` restores into a **throwaway** database and
 never touches the live one:
 - a separate container with no network
 - its own new volume
@@ -131,7 +131,7 @@ folder.
 
 ```bash
 # Point-in-time drill (time in UTC); prints live vs restored row counts and the RTO.
-sh docker/postgres/restore-drill.sh "2026-11-06 15:26:03+00"
+sudo ./kura.sh restore-drill "2026-11-06 15:26:03+00"
 ```
 
 Result of the first drill:
@@ -146,4 +146,4 @@ The off-site `repo2` repository is configured in `docker/postgres/pgbackrest.con
 a scheduled `backup-offsite` cron job (`docker/cron/kura.crontab`). Point
 `KURA_OFFSITE_BACKUP_DIR` in `.env` at an external disk or off-host mount, or
 switch `repo2-*` settings to S3/Backblaze B2 with Object Lock when institutional
-credentials are provisioned, then re-run `restore-drill.sh` against `repo2`.
+credentials are provisioned, then re-run `./kura.sh restore-drill` against `repo2`.
