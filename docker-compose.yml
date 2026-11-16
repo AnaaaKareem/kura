@@ -1038,22 +1038,30 @@ services:
     tmpfs:
       - /tmp:size=64M,mode=1777
     ports:
-      # Published on loopback only, so it cannot be reached from any network
-      # interface. The host-layer step re-binds it to the NetBird (wt0) address.
+      # Published on the host's loopback address only. Admins reach it through
+      # an SSH tunnel: ssh -N -L 3000:127.0.0.1:3000 <admin>@<vm> (docker/grafana/README.md).
       - "127.0.0.1:3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
-      # No anonymous browsing and no self sign-up: only the admin account exists.
+      # No anonymous browsing, no self sign-up and no new organisations: only
+      # the admin account and the read-only "viewer" (./kura.sh grafana-users).
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_USERS_ALLOW_SIGN_UP: "false"
+      GF_USERS_ALLOW_ORG_CREATE: "false"
+      # No HTTP basic auth on the API: every login goes through the login form,
+      # which has brute-force protection (5 failures lock the account briefly).
+      GF_AUTH_BASIC_ENABLED: "false"
+      GF_SECURITY_DISABLE_BRUTE_FORCE_LOGIN_PROTECTION: "false"
       GF_SECURITY_DISABLE_GRAVATAR: "true"
       # No outbound phone-home: usage reporting and update checks go to Grafana Labs.
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
-      # Grafana is reached through the SSH tunnel as plain localhost, so HTTPS
-      # would break the cookie on http://localhost. The tunnel encrypts it.
-      GF_SECURITY_COOKIE_SECURE: "false"
+      # The session cookie is Secure and SameSite=Strict. Browsers treat
+      # http://localhost as a secure context, so the cookie still works through
+      # the SSH tunnel (which encrypts the traffic).
+      GF_SECURITY_COOKIE_SECURE: "true"
+      GF_SECURITY_COOKIE_SAMESITE: strict
       # Logs go to the container output where Alloy collects them.
       GF_LOG_MODE: console
       GF_SERVER_SERVE_FROM_SUB_PATH: "false"
