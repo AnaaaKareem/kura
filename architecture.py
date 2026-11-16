@@ -26,7 +26,7 @@ How to read the picture:
 import os
 
 from diagrams import Cluster, Diagram, Edge
-from diagrams.generic.network import VPN, Firewall
+from diagrams.generic.network import Firewall
 from diagrams.generic.storage import Storage
 from diagrams.onprem.ci import GithubActions
 from diagrams.onprem.client import User, Users
@@ -75,7 +75,7 @@ with Diagram(
     # People who use Kura.
     # ------------------------------------------------------------------
     students_and_staff = Users("Students and staff\n(web browser)")
-    admin = User("Admin\n(NetBird app, MFA)")
+    admin = User("Admin laptop\n(Ed25519 SSH key)")
 
     # ------------------------------------------------------------------
     # Layer 0: Cloudflare's edge (configured, waiting for a domain).
@@ -99,8 +99,10 @@ with Diagram(
     with Cluster("Ubuntu Server 24.04 VM (Hyper-V) running Docker Compose"):
         # Layer 1: the host firewall and CrowdSec.
         with Cluster("Layer 1: host firewall"):
-            host_firewall = Firewall("nftables\ndefault DROP\n(only NetBird ports open)")
-            crowdsec = Firewall("CrowdSec\nKura parsers + scenarios\nbans real client IPs")
+            host_firewall = Firewall("nftables\ndefault DROP\n(only SSH 22 from\nadmin allowlist)")
+            crowdsec = Firewall("CrowdSec\nKura parsers + scenarios,\nsshd collection,\nbans real client IPs")
+            # The VM's SSH server: keys only, one admin user, one allowed forward.
+            sshd = Server("VM sshd\nEd25519 keys only,\nAllowUsers admin,\nforward only to\n127.0.0.1:3000")
 
         # Layer 2: the web front door ("frontend" network).
         with Cluster("Layer 2: frontend network"):
@@ -137,15 +139,10 @@ with Diagram(
         # Monitoring and SIEM ("observability" network).
         with Cluster("Observability and SIEM (observability network)"):
             alloy = Grafana("Grafana Alloy\nlogs, metrics,\nprobes")
-            loki = Loki("Loki\n180-day logs,\n22 LogQL alert rules")
+            loki = Loki("Loki\n180-day logs,\n26 LogQL alert rules")
             prometheus = Prometheus("Prometheus\nmetric alerts")
-            alertmanager = Prometheus("Alertmanager\ngroup + route")
-            grafana = Grafana("Grafana\n3 dashboards\n(127.0.0.1 only)")
-
-        # The admin VPN ("netbird" network).
-        with Cluster("Zero-trust admin access (netbird network)"):
-            netbird_server = VPN("NetBird server\n+ dashboard\n(MFA login)")
-            netbird_client = VPN("NetBird client\nallows admins\nonly SSH (TCP 22)")
+            alertmanager = Prometheus("Alertmanager\ngroup + route\n(no host port)")
+            grafana = Grafana("Grafana\n127.0.0.1:3000\n3 dashboards,\nadmin + viewer")
 
     # ------------------------------------------------------------------
     # Places outside the server.
@@ -192,16 +189,21 @@ with Diagram(
     alertmanager >> Edge(label="critical only") >> telegram
     grafana >> Edge(label="queries") >> loki
     grafana >> Edge(label="queries") >> prometheus
+    grafana >> Edge(label="alerts view") >> alertmanager
 
     # CrowdSec reads the web logs and the firewall drops banned IPs.
     crowdsec >> Edge(label="reads nginx, WAF,\nDjango logs\n(Docker API proxy)") >> nginx
     crowdsec >> Edge(label="pushes bans") >> host_firewall
 
-    # Admin access: only through NetBird, then SSH (and an SSH tunnel to Grafana).
-    admin >> Edge(label="WireGuard + MFA") >> host_firewall
-    host_firewall >> Edge(label="NetBird ports only") >> netbird_server
-    netbird_server >> Edge(label="policy: Admins -> SSH") >> netbird_client
-    netbird_client >> Edge(label="SSH tunnel") >> grafana
+    # Admin access: an SSH tunnel from the admin's laptop to Grafana on the
+    # VM's loopback address. Prometheus, Loki and Alertmanager have no host
+    # port; the admin sees them only through Grafana.
+    host_firewall >> Edge(label="TCP 22 from allowlist") >> sshd
+    admin >> Edge(label="SSH tunnel") >> sshd
+    sshd >> Edge(label="local forward") >> grafana
+    # SSH logins are logged: Alloy ships auth.log to Loki, CrowdSec bans brute force.
+    sshd >> Edge(label="auth.log") >> alloy
+    sshd >> Edge(label="auth.log") >> crowdsec
 
     # Development: the checked image is what runs on the server.
     image_scanner >> Edge(label="built image\n(local, no registry)", style="dashed") >> gunicorn
