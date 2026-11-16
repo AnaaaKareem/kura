@@ -6,8 +6,7 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 10
-    # Wait 7 days after a release before proposing it, so a broken or
-    # malicious release is usually found and pulled before we are offered it.
+    # Wait 7 days after a release before proposing it, so a broken or malicious release is usually found and pulled before we are offered it.
     cooldown:
       default-days: 7
 
@@ -17,8 +16,7 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
-    # Wait 7 days after a release before proposing it, so a broken or
-    # malicious release is usually found and pulled before we are offered it.
+    # Wait 7 days after a release before proposing it, so a broken or malicious release is usually found and pulled before we are offered it.
     cooldown:
       default-days: 7
 
@@ -28,8 +26,7 @@ updates:
     schedule:
       interval: "weekly"
     open-pull-requests-limit: 5
-    # Wait 7 days after a release before proposing it, so a broken or
-    # malicious release is usually found and pulled before we are offered it.
+    # Wait 7 days after a release before proposing it, so a broken or malicious release is usually found and pulled before we are offered it.
     cooldown:
       default-days: 7
 

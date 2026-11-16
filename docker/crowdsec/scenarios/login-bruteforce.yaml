@@ -1,9 +1,6 @@
-# ==============================================================================
-# CrowdSec scenario: More than 10 failed Kura logins from one IP in 5 minutes
-# A "leaky bucket": each matching event adds one drop; drops leak out at a
-# steady rate. If the bucket overflows (more than 10 events faster than the
-# leak), an alert is raised and the remediation profile bans the IP.
-# ==============================================================================
+# Detect more than 10 failed Kura logins from one IP in 5 minutes.
+# Each matching event adds a drop to a bucket that drains at a steady rate.
+# If the bucket overflows (more than 10 events faster than the leak), an alert is raised and the remediation profile bans the IP.
 type: leaky
 name: kura/login-bruteforce
 description: "More than 10 failed Kura logins from one IP in 5 minutes"

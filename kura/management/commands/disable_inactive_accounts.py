@@ -41,8 +41,7 @@ class Command(BaseCommand):
         now = timezone.now()
         cutoff = now - timezone.timedelta(days=days)
 
-        # Select active accounts whose last login is older than the cutoff, or
-        # that were created before the cutoff and have never signed in (ACL-08).
+        # Select active accounts whose last login is older than the cutoff, or that were created before the cutoff and have never signed in (ACL-08).
         inactive_users = User.objects.filter(is_active=True).filter(
             Q(last_login__lt=cutoff) | Q(last_login__isnull=True, created_at__lt=cutoff)
         )

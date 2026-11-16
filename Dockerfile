@@ -1,5 +1,4 @@
-# Multi-stage Dockerfile for Kura Secure Learning Management System
-# Pinned base image by SHA-256 digest for supply chain integrity
+# Build Kura in stages with a SHA-256-pinned base image.
 
 # Stage 1: Build dependencies and compile wheels
 FROM python:3.14-slim@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e757d7ec6f3966 AS builder
@@ -43,8 +42,7 @@ WORKDIR /app
 # Copy application source code with ownership set to non-root user
 COPY --chown=kura:kura . /app
 
-# Create the static files folder owned by kura. A new, empty named volume
-# copies this folder's owner, so collectstatic (running as kura) can write to it.
+# Give kura ownership of staticfiles so collectstatic can write to a new volume.
 RUN mkdir -p /app/staticfiles && chown kura:kura /app/staticfiles
 
 # Switch to unprivileged user

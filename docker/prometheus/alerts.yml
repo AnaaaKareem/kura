@@ -1,20 +1,10 @@
-# ==============================================================================
 # Prometheus Alerting Rules (alerts.yml)
-#
-# Infrastructure alerting rules for Kura, one group per concern. Every rule
-# has a `severity` (critical = phone call, warning = check in the morning)
-# and a plain-English `summary` and `description`, which are the texts the
-# owner receives by email and Telegram (WP4 of docs/INFRASTRUCTURE_HANDOFF.md).
-#
-# Metric names that do not exist yet come from later work (blackbox and
-# node exporter in WP3, textfile metrics in WP11); the thresholds follow the
-# handoff table so the alerts start working as soon as those metrics appear.
-# ==============================================================================
+# Infrastructure alerting rules for Kura, one group per concern.
+# Every rule has a `severity` (critical = phone call, warning = check in the morning) and a plain-English `summary` and `description`, which are the texts the owner receives by email and Telegram (WP4 of docs/INFRASTRUCTURE_HANDOFF.md).
+# Metric names that do not exist yet come from later work (blackbox and node exporter in WP3, textfile metrics in WP11); the thresholds follow the handoff table so the alerts start working as soon as those metrics appear.
 
 groups:
-  # ------------------------------------------------------------------
   # Availability: the site itself, Vault and every monitored container.
-  # ------------------------------------------------------------------
   - name: availability
     rules:
       # The public website does not answer through the blackbox probe.
@@ -57,10 +47,7 @@ groups:
           summary: "PostgreSQL is down"
           description: "The database stopped answering for more than 2 minutes. The whole site depends on it."
 
-  # ------------------------------------------------------------------
-  # Certificates: public site certificate, internal mTLS certificates,
-  # and the renewal job that keeps the internal ones fresh.
-  # ------------------------------------------------------------------
+  # Certificates: public site certificate, internal mTLS certificates, and the renewal job that keeps the internal ones fresh.
   - name: certificates
     rules:
       # The public certificate seen by browsers expires within 14 days.
@@ -90,10 +77,7 @@ groups:
           summary: "Certificate renewal has not succeeded for over 8 days"
           description: "The renewal job last succeeded more than 8 days ago. Internal certificates will expire soon; check the renewal script and its Vault access."
 
-  # ------------------------------------------------------------------
-  # Backups and mail: pgBackRest finishes, offsite copy arrives,
-  # and the email outbox keeps moving.
-  # ------------------------------------------------------------------
+  # Backups and mail: pgBackRest finishes, offsite copy arrives, and the email outbox keeps moving.
   - name: backups_and_email
     rules:
       # Same result as above, for the second (offsite) backup repository.
@@ -132,14 +116,11 @@ groups:
           summary: "Notification emails are failing"
           description: "At least one notification email failed to send in the last hour. Check the relay container and the outbox error column."
 
-  # ------------------------------------------------------------------
   # Host resources (node exporter, [VM] only) and database capacity.
-  # ------------------------------------------------------------------
   - name: resources
     rules:
       # Less than 10% of a disk's space is free.
-      # Ignore in-memory and read-only system images (always "full" by design;
-      # a live test showed a false alarm for Docker Desktop's read-only erofs).
+      # Ignore in-memory and read-only system images (always "full" by design; a live test showed a false alarm for Docker Desktop's read-only erofs).
       - alert: DiskAlmostFull
         expr: (node_filesystem_avail_bytes{fstype!~"tmpfs|overlay|squashfs|erofs|ramfs|devtmpfs"} / node_filesystem_size_bytes{fstype!~"tmpfs|overlay|squashfs|erofs|ramfs|devtmpfs"} < 0.10) and on(device, mountpoint, fstype) node_filesystem_readonly == 0
         for: 10m
@@ -168,9 +149,7 @@ groups:
           summary: "PostgreSQL is near its connection limit"
           description: "More than 80% of the allowed database connections are in use. New logins (temporary Vault users) may start failing."
 
-  # ------------------------------------------------------------------
   # Intrusion prevention and metrics self-monitoring.
-  # ------------------------------------------------------------------
   - name: security_and_selfcheck
     rules:
       # Active CrowdSec bans grew by more than 20 in 10 minutes.

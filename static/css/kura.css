@@ -1,8 +1,6 @@
 /* Kura Design System - LMS Teal & Amber (Flat & Crisp) */
 
-/* ==============================================================================
-   1. Typography / @font-face (Self-hosted for strict 'self' CSP)
-   ============================================================================== */
+/* 1. Typography / @font-face (Self-hosted for strict 'self' CSP) */
 @font-face {
   font-family: "Inter";
   font-style: normal;
@@ -45,9 +43,7 @@ table,
   font-feature-settings: "tnum";
 }
 
-/* ==============================================================================
-   2. Themes: Light ("kura"), Dark ("kura-dark"), System ("kura-system")
-   ============================================================================== */
+/* 2. Themes: Light ("kura"), Dark ("kura-dark"), System ("kura-system") */
 :root,
 [data-theme="kura"] {
   color-scheme: light;
@@ -187,9 +183,7 @@ table,
   }
 }
 
-/* ==============================================================================
-   3. Flat & Crisp Surfaces, Typography, and Interactive Controls
-   ============================================================================== */
+/* 3. Flat & Crisp Surfaces, Typography, and Interactive Controls */
 .k-muted {
   color: var(--k-muted);
 }
@@ -277,9 +271,7 @@ label.label.cursor-pointer {
   color: var(--fallback-p, oklch(var(--p) / 1));
 }
 
-/* ==============================================================================
-   4. Flat Ledger Tables
-   ============================================================================== */
+/* 4. Flat Ledger Tables */
 .k-table {
   width: 100%;
   font-size: 0.875rem;
@@ -338,9 +330,7 @@ label.label.cursor-pointer {
   background-color: var(--fallback-b2, oklch(var(--b2) / 1));
 }
 
-/* ==============================================================================
-   5. Accessibility, Focus Rings, and Form Controls
-   ============================================================================== */
+/* 5. Accessibility, Focus Rings, and Form Controls */
 .k-skip {
   position: absolute;
   left: -9999px;
@@ -395,9 +385,7 @@ textarea.textarea-bordered,
   opacity: 1;
 }
 
-/* ==============================================================================
-   6. Tinted Badges & Flat Alerts (WCAG AA Contrast in Light & Dark)
-   ============================================================================== */
+/* 6. Tinted Badges & Flat Alerts (WCAG AA Contrast in Light & Dark) */
 .badge-ghost {
   background-color: var(--fallback-b2, oklch(var(--b2) / 1));
   color: var(--fallback-bc, oklch(var(--bc) / 1));
@@ -433,9 +421,7 @@ textarea.textarea-bordered,
   border-width: 1px;
 }
 
-/* ==============================================================================
-   7. Motion Preference
-   ============================================================================== */
+/* 7. Motion Preference */
 @media (prefers-reduced-motion: reduce) {
   *,
   ::before,

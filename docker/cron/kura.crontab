@@ -1,11 +1,9 @@
-# ==============================================================================
-# Kura's scheduled jobs. Install into ROOT's crontab on the VM:
+# Kura's scheduled jobs.
+# Install into ROOT's crontab on the VM:
 #     sudo crontab docker/cron/kura.crontab
-# (root is needed by the certificate renewal, which rewrites keys owned by
-# container users). Every job runs through run-job.sh, which records its last
-# success and exit code as metrics for Prometheus (alerts in WP4).
+# (root is needed by the certificate renewal, which rewrites keys owned by container users).
+# Every job runs through run-job.sh, which records its last success and exit code as metrics for Prometheus (alerts in WP4).
 # Logs: /var/log/kura/<job>.log, rotated by docker/cron/kura.logrotate.
-# ==============================================================================
 SHELL=/bin/sh
 PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin
 # CHANGE if Kura lives somewhere else on the VM.
@@ -29,8 +27,9 @@ KURA_METRICS_DIR=/var/lib/kura-metrics
 # Every day at 04:15: disable accounts with no login for 90 days (ACL-08).
 15 4 * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh disable-inactive docker compose exec -T web python manage.py disable_inactive_accounts --days=90 >> /var/log/kura/disable-inactive.log 2>&1
 
-# Every Monday at 03:30: renew the internal certificates from Vault (they last
-# 30 days). Vault must be unsealed. Also writes certificate expiry metrics.
+# Every Monday at 03:30: renew the internal certificates from Vault (they last 30 days).
+# Vault must be unsealed.
+# Also writes certificate expiry metrics.
 30 3 * * 1 /bin/sh $KURA_DIR/docker/cron/run-job.sh cert-renewal ./kura.sh renew-certs >> /var/log/kura/cert-renewal.log 2>&1
 
 # Every day at 04:30: purge expired Django sessions from django_session.
@@ -43,8 +42,7 @@ KURA_METRICS_DIR=/var/lib/kura-metrics
 
 # Backups (pgBackRest, local encrypted repository repo1 and secondary repo2).
 # WAL is archived continuously by PostgreSQL itself.
-# Full backup every Sunday at 02:00; differential every other day at 02:00;
-# secondary repo2 sync/backup daily at 03:00; consistency check every day at 06:00.
+# Full backup every Sunday at 02:00; differential every other day at 02:00; secondary repo2 sync/backup daily at 03:00; consistency check every day at 06:00.
 0 2 * * 0 /bin/sh $KURA_DIR/docker/cron/run-job.sh backup-full docker compose exec -T db pgbackrest --stanza=kura --repo=1 --type=full backup >> /var/log/kura/backup.log 2>&1
 0 2 * * 1-6 /bin/sh $KURA_DIR/docker/cron/run-job.sh backup-diff docker compose exec -T db pgbackrest --stanza=kura --repo=1 --type=diff backup >> /var/log/kura/backup.log 2>&1
 0 3 * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh backup-offsite docker compose exec -T db pgbackrest --stanza=kura --repo=2 --type=diff backup >> /var/log/kura/backup-offsite.log 2>&1

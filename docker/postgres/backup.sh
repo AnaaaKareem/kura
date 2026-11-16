@@ -1,15 +1,10 @@
 #!/usr/bin/env bash
-# ==============================================================================
 # Kura LMS - Automated Encrypted Backup Script (pgBackRest)
-#
 # Creates AES-256 encrypted backups of PostgreSQL with continuous WAL archiving.
 # Can take full, differential, or incremental backups.
-#
 # Usage:
 #   ./backup.sh [full|diff|incr|info|check]
-#
 # Default: full
-# ==============================================================================
 
 set -euo pipefail
 

@@ -31,9 +31,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        """
-        Deletes expired sessions, old django-axes records, and old sent emails while preserving active lockouts.
-        """
+        """Delete expired sessions, old django-axes records, and old sent emails while preserving active lockouts."""
         days = options["days"]
         email_days = options["email_days"]
         dry_run = options["dry_run"]

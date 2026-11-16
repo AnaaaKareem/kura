@@ -1,12 +1,10 @@
 # The Compose project is always "kura", whatever the folder is called.
-# Alloy (docker/alloy/config.alloy) only collects logs from containers of the
-# "kura" project named kura-*, so a different project name would lose logs.
+# Alloy (docker/alloy/config.alloy) only collects logs from containers of the "kura" project named kura-*, so a different project name would lose logs.
 name: kura
 
-# Log rotation for every service: Docker's json-file driver keeps at most five
-# 10 MB files per container, so container logs cannot fill the VM's disk.
-# Alloy and CrowdSec read these logs through the Docker API, which works the
-# same with rotation. Loki keeps the 180-day copy.
+# Log rotation for every service: Docker's json-file driver keeps at most five 10 MB files per container, so container logs cannot fill the VM's disk.
+# Alloy and CrowdSec read these logs through the Docker API, which works the same with rotation.
+# Loki keeps the 180-day copy.
 x-logging: &default-logging
   driver: json-file
   options:
@@ -14,33 +12,27 @@ x-logging: &default-logging
     max-file: "5"
 
 services:
-  # ============================================================================
-  # Database Service (PostgreSQL 17, pgEdge image with pgAudit and pgBackRest)
-  # Security: isolated on internal network, read-only root, dropped capabilities,
-  # secrets-backed password, mutual TLS certificates, explicit resource limits.
-  # ============================================================================
+  # PostgreSQL 17 uses the pgEdge image with pgAudit and pgBackRest on an internal network.
+  # Protect it with a read-only root, limited capabilities, Docker secrets, mTLS and resource limits.
   db:
     image: ghcr.io/pgedge/pgedge-postgres:17-spock5-standard@sha256:6d2fb528a11a059d07247e38b38e601a3795d1ab2bfd78ad945f9e77227c0a15
     logging: *default-logging
     container_name: kura-db
     restart: unless-stopped
     read_only: true
-    # Writable in-memory RAM partitions: temp files, PostgreSQL Unix sockets
-    # (used by the health check and pgBackRest), and pgBackRest log files.
+    # Writable in-memory RAM partitions: temp files, PostgreSQL Unix sockets (used by the health check and pgBackRest), and pgBackRest log files.
     tmpfs:
       - /tmp:size=128M,mode=1777
       - /var/run/postgresql:size=16M,mode=1777
       - /var/log/pgbackrest:size=64M,mode=1777
     volumes:
-      # pgEdge layout: the cluster lives in /var/lib/pgsql/17/data (the image
-      # pre-creates this path with the correct postgres ownership).
+      # pgEdge layout: the cluster lives in /var/lib/pgsql/17/data (the image pre-creates this path with the correct postgres ownership).
       - postgres_data:/var/lib/pgsql/17/data
       # pgBackRest WAL archive and backup repository storage (repo1 primary, repo2 off-site mount).
       - postgres_backups:/var/lib/pgbackrest
       - "${KURA_OFFSITE_BACKUP_DIR:-postgres_backups_offsite}:/var/lib/pgbackrest-offsite"
-      # Mutual TLS: PostgreSQL's own certificate and key, plus the CA certificate
-      # used to check client certificates. Only these three files are mounted, so
-      # this container never sees another service's key or the CA private key.
+      # Mutual TLS: PostgreSQL's own certificate and key, plus the CA certificate used to check client certificates.
+      # Only these three files are mounted, so this container never sees another service's key or the CA private key.
       - ./certs/internal/ca.crt:/var/lib/postgresql/certs/ca.crt:ro
       - ./certs/internal/db.crt:/var/lib/postgresql/certs/db.crt:ro
       - ./certs/internal/db.key:/var/lib/postgresql/certs/db.key:ro
@@ -71,19 +63,16 @@ services:
       # UTF-8 database with page checksums (the image defaults to a C locale).
       POSTGRES_INITDB_ARGS: --encoding=UTF8 --locale=C.UTF-8 --data-checksums
       PGDATA: /var/lib/pgsql/17/data
-    # Wrap the image entrypoint so PostgreSQL exports PGBACKREST_REPO1_CIPHER_PASS
-    # from /run/secrets/backup_encryption_key for archive_command/restore_command.
+    # Wrap the image entrypoint so PostgreSQL exports PGBACKREST_REPO1_CIPHER_PASS from /run/secrets/backup_encryption_key for archive_command/restore_command.
     entrypoint: ["/usr/local/bin/kura-db-entrypoint.sh"]
-    # Point the server at the mounted configuration and authentication files,
-    # overriding the default copies generated inside the data directory.
+    # Point the server at the mounted configuration and authentication files, overriding the default copies generated inside the data directory.
     command:
       - postgres
       - -c
       - config_file=/etc/postgresql/postgresql.conf
       - -c
       - hba_file=/etc/postgresql/pg_hba.conf
-    # Drop all Linux capabilities and only retain minimal permissions required
-    # for the entrypoint to set data folder ownership and drop to user postgres
+    # Drop all Linux capabilities and only retain minimal permissions required for the entrypoint to set data folder ownership and drop to user postgres
     cap_drop:
       - ALL
     cap_add:
@@ -111,11 +100,8 @@ services:
       retries: 5
       start_period: 10s
 
-  # ============================================================================
-  # Application Service (Django WSGI running on Gunicorn)
-  # Security: non-root user (kura, UID 10001), read-only root filesystem,
-  # zero capabilities (cap_drop ALL), memory/CPU limits, Docker secrets.
-  # ============================================================================
+  # Run Django on Gunicorn as kura (UID 10001) with a read-only root and no capabilities.
+  # Use Docker secrets and limit memory and CPU use.
   web:
     build:
       context: .
@@ -132,8 +118,7 @@ services:
       # Writable state for Gunicorn's control server on a read-only filesystem
       - /app/.gunicorn:size=16M,mode=1777
     volumes:
-      # Read-only: only the collectstatic service below writes static files,
-      # so a broken-into Django cannot change the JavaScript nginx serves.
+      # Read-only: only the collectstatic service below writes static files, so a broken-into Django cannot change the JavaScript nginx serves.
       - static_data:/app/staticfiles:ro
       # Only Django's own certificate and key, plus the CA certificate.
       - ./certs/internal/ca.crt:/certs/internal/ca.crt:ro
@@ -151,9 +136,9 @@ services:
       - clamav
       - mail
       - breach_check
-    # No db_password here: that is the kura-admin (superuser) password. Django
-    # logs in as kura_app with its certificate, so it never needs it. If Django
-    # were ever broken into, the attacker must not find the superuser password.
+    # No db_password here: that is the kura-admin (superuser) password.
+    # Django logs in as kura_app with its certificate, so it never needs it.
+    # If Django were ever broken into, the attacker must not find the superuser password.
     # Migrations use the separate "migrate" service below instead.
     secrets:
       - django_secret_key
@@ -162,20 +147,18 @@ services:
       - vault_secret_id
     environment:
       DEBUG: "False"
-      # Gunicorn worker processes (gunicorn.conf.py). The load test made the
-      # 3-worker default CPU-bound at about 36 requests per second; 5 workers
-      # use the 2 CPUs better and stay well inside the 2 GB memory limit.
+      # Gunicorn worker processes (gunicorn.conf.py).
+      # The load test made the 3-worker default CPU-bound at about 36 requests per second; 5 workers use the 2 CPUs better and stay well inside the 2 GB memory limit.
       GUNICORN_WORKERS: "5"
       DATABASE_NAME: kura
-      # Django logs in as temporary users from Vault (15 minutes each, members
-      # of the least-privilege role kura_app), not a fixed account. See
-      # kura/base.py. Migrations use the "migrate" service.
+      # Django logs in as temporary users from Vault (15 minutes each, members of the least-privilege role kura_app), not a fixed account.
+      # See kura/base.py.
+      # Migrations use the "migrate" service.
       VAULT_DATABASE_CREDENTIALS: "True"
       DATABASE_HOST: db
       DATABASE_PORT: "5432"
-      # KURA_PUBLIC_HOSTNAME is the public host name visitors type, which
-      # points at the VM's address. Set it in .env on the server
-      # (e.g. KURA_PUBLIC_HOSTNAME=kura.yourdomain.com).
+      # KURA_PUBLIC_HOSTNAME is the public host name visitors type, which points at the VM's address.
+      # Set it in .env on the server (e.g. KURA_PUBLIC_HOSTNAME=kura.yourdomain.com).
       ALLOWED_HOSTS: "localhost,127.0.0.1,web,${KURA_PUBLIC_HOSTNAME:-kura.example.com}"
       CLAMAV_HOST: "clamav"
       CLAMAV_PORT: "3310"
@@ -185,21 +168,19 @@ services:
       VAULT_CA_CERT: "/certs/internal/ca.crt"
       VAULT_ENABLED: "True"
       MTLS_ENABLED: "True"
-      # Trust the WAF's X-Real-IP header for the visitor's IP. Safe only because
-      # MTLS_ENABLED makes Gunicorn require a client certificate, and Django is
-      # only reachable from the WAF (app network). See config/settings.py.
+      # Trust the WAF's X-Real-IP header for the visitor's IP.
+      # Safe only because MTLS_ENABLED makes Gunicorn require a client certificate, and Django is only reachable from the WAF (app network).
+      # See config/settings.py.
       TRUST_PROXY_IP_HEADER: "True"
-      # Email: Django hands mail to the Postfix relay with STARTTLS. Python's
-      # default TLS checks use SSL_CERT_FILE, so the relay's certificate is
-      # checked against Kura's internal CA (and nothing else is trusted).
+      # Email: Django hands mail to the Postfix relay with STARTTLS.
+      # Python's default TLS checks use SSL_CERT_FILE, so the relay's certificate is checked against Kura's internal CA (and nothing else is trusted).
       EMAIL_HOST: "relay"
       EMAIL_PORT: "25"
       EMAIL_USE_TLS: "True"
       SSL_CERT_FILE: "/certs/internal/ca.crt"
       DEFAULT_FROM_EMAIL: "Kura <noreply@kura.edu>"
-      # Breached-password check: through the breach-check proxy, checking
-      # HaveIBeenPwned's certificate against the public CAs (SSL_CERT_FILE above
-      # trusts only Kura's internal CA). See config/settings.py.
+      # Breached-password check: through the breach-check proxy, checking HaveIBeenPwned's certificate against the public CAs (SSL_CERT_FILE above trusts only Kura's internal CA).
+      # See config/settings.py.
       BREACH_CHECK_PROXY_URL: "http://breach-proxy:8888"
       BREACH_CHECK_CA_FILE: "/etc/ssl/certs/ca-certificates.crt"
       # Links in emails always point here (never at the Host header a visitor sent).
@@ -224,8 +205,7 @@ services:
         reservations:
           cpus: "0.5"
           memory: 512M
-    # Django needs the database and Vault (for its database login), and the
-    # static files from this image ({% static %} fails without the manifest).
+    # Django needs the database and Vault (for its database login), and the static files from this image ({% static %} fails without the manifest).
     depends_on:
       db:
         condition: service_healthy
@@ -240,16 +220,12 @@ services:
       retries: 3
       start_period: 15s
 
-  # ============================================================================
-  # Static files (one-off job, runs on every "docker compose up")
-  # Copies the static files from the web image into the shared static_data
-  # volume with content-hashed names (ManifestStaticFilesStorage). --clear
-  # empties the volume first, so files from an older build never linger.
+  # Collect static files on every "docker compose up" into the shared static_data volume.
+  # ManifestStaticFilesStorage adds content hashes; --clear removes files from older builds.
   # --ignore skips the admin-only folders that no Kura page loads.
   # It writes only the volume: read-only root, no network, no capabilities.
   # Run it by hand after a rebuild with:
   #   docker compose run --rm collectstatic
-  # ============================================================================
   collectstatic:
     image: kura-web:latest
     logging: *default-logging
@@ -280,13 +256,10 @@ services:
       - no-new-privileges:true
     restart: "no"
 
-  # ============================================================================
-  # Database Migrations (one-off job, never left running)
-  # Runs "manage.py migrate" as kura_migrator over mutual TLS (CN=kura_migrator),
-  # never as superuser kura-admin. The "tools" profile stops "docker compose up"
-  # from starting it. Run it with:
+  # Database Migrations (one-off job, never left running) Runs "manage.py migrate" as kura_migrator over mutual TLS (CN=kura_migrator), never as superuser kura-admin.
+  # The "tools" profile stops "docker compose up" from starting it.
+  # Run it with:
   #   docker compose run --rm migrate
-  # ============================================================================
   migrate:
     image: kura-web:latest
     logging: *default-logging
@@ -313,8 +286,7 @@ services:
       DATABASE_PORT: "5432"
       # Migrations never encrypt anything, so this job does not talk to Vault.
       VAULT_ENABLED: "False"
-      # Client-certificate login (pg_hba.conf "cert clientcert=verify-full")
-      # inside verified TLS; no superuser password needed.
+      # Client-certificate login (pg_hba.conf "cert clientcert=verify-full") inside verified TLS; no superuser password needed.
       DB_SSL_MODE: "verify-full"
       DB_SSL_ROOTCERT: "/certs/internal/ca.crt"
       DB_SSL_CERT: "/certs/internal/migrator.crt"
@@ -327,13 +299,12 @@ services:
       db:
         condition: service_healthy
 
-  # ============================================================================
-  # Mail Relay (Postfix, built from docker/postfix on a pinned Alpine image)
-  # Django -> relay (STARTTLS, Vault certificate) -> mail provider (TLS checked,
-  # login from the smtp_relay_credentials secret). Accepts mail only from the
-  # private "mail" network and only from noreply@kura.edu. The only Kura
-  # container with internet access for email. See docker/postfix/README.md.
-  # ============================================================================
+  # Build the Postfix relay from docker/postfix on a pinned Alpine image.
+  # Django uses STARTTLS with a Vault certificate; the relay verifies the provider's TLS certificate.
+  # The smtp_relay_credentials secret supplies the provider login.
+  # Accepts mail only from the private "mail" network and only from noreply@kura.edu.
+  # The only Kura container with internet access for email.
+  # See docker/postfix/README.md.
   relay:
     build:
       context: ./docker/postfix
@@ -361,8 +332,7 @@ services:
     networks:
       - mail
       - mail_egress
-    # Postfix starts as root to open port 25 and fix its queue folders, then
-    # runs its workers as the unprivileged "postfix" user.
+    # Postfix starts as root to open port 25 and fix its queue folders, then runs its workers as the unprivileged "postfix" user.
     cap_drop:
       - ALL
     cap_add:
@@ -391,13 +361,9 @@ services:
       retries: 3
       start_period: 10s
 
-  # ============================================================================
-  # Breach-check proxy (tinyproxy, built from docker/breach-proxy on a pinned
-  # Alpine image). Django has no internet route; this is its only way out, and
-  # it allows exactly one thing: an HTTPS tunnel to api.pwnedpasswords.com, for
-  # the breached-password check. Every other site gets "403 Filtered". TLS runs
-  # from Django straight to HaveIBeenPwned, so the proxy sees no data.
-  # ============================================================================
+  # Breach-check proxy (tinyproxy, built from docker/breach-proxy on a pinned Alpine image).
+  # Django has no internet route; this is its only way out, and it allows exactly one thing: an HTTPS tunnel to api.pwnedpasswords.com, for the breached-password check.
+  # Every other site gets "403 Filtered". TLS runs from Django straight to HaveIBeenPwned, so the proxy sees no data.
   breach-proxy:
     build:
       context: ./docker/breach-proxy
@@ -406,8 +372,7 @@ services:
     container_name: kura-breach-proxy
     restart: unless-stopped
     read_only: true
-    # breach_check: Django reaches the proxy here (internal, fixed subnet that
-    # tinyproxy.conf's "Allow" line accepts).
+    # breach_check: Django reaches the proxy here (internal, fixed subnet that tinyproxy.conf's "Allow" line accepts).
     # breach_check_egress: the proxy's only route to the internet.
     networks:
       - breach_check
@@ -432,11 +397,8 @@ services:
       retries: 3
       start_period: 5s
 
-  # ============================================================================
-  # Reverse Proxy Service (Nginx Alpine)
-  # Security: TLS 1.3 only, HSTS, rate limits, 25MB body limit, server tokens hidden,
-  # read-only root, dropped capabilities, isolated on frontend network.
-  # ============================================================================
+  # Nginx Alpine accepts TLS 1.3 only, with HSTS, rate limits, a 25MB body limit and hidden server tokens.
+  # Keep its root read-only, drop capabilities and isolate it on the frontend network.
   nginx:
     image: nginx:1.31.8-alpine@sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606
     logging: *default-logging
@@ -448,8 +410,8 @@ services:
       - /var/cache/nginx:size=64M,mode=1777
       - /var/run:size=16M,mode=1777
       - /tmp:size=64M,mode=1777
-    # The only ports published on every interface: visitors connect here
-    # directly. Port 80 only redirects to HTTPS (docker/nginx/conf.d/kura.conf).
+    # The only ports published on every interface: visitors connect here directly.
+    # Port 80 only redirects to HTTPS (docker/nginx/conf.d/kura.conf).
     # The host firewall (docker/nftables/kura.nft) allows 80 and 443 in.
     ports:
       - "80:80"
@@ -500,23 +462,17 @@ services:
       retries: 3
       start_period: 5s
 
-  # ============================================================================
-  # Web Application Firewall Service (Coraza WAF with OWASP Core Rule Set v4)
-  # Request path: Nginx --mTLS--> WAF --mTLS--> Django.
-  # Security: blocks at CRS anomaly score 5 (paranoia 1, detection-only at 2),
-  # accepts only Nginx's client certificate, read-only root, runs as the
-  # image's unprivileged "nginx" user with no capabilities.
+  # Web Application Firewall Service (Coraza WAF with OWASP Core Rule Set v4) Request path: Nginx --mTLS--> WAF --mTLS--> Django.
+  # Security: blocks at CRS anomaly score 5 (paranoia 1, detection-only at 2), accepts only Nginx's client certificate, read-only root, runs as the image's unprivileged "nginx" user with no capabilities.
   # All configuration is in docker/coraza/ (see the README there).
-  # ============================================================================
   waf:
     image: ghcr.io/coreruleset/coraza-crs:nginx@sha256:0089154673011788070e7b7591b62dd8e7a6686d4e6ba75ad92947b97d54799a
     logging: *default-logging
     container_name: kura-waf
     restart: unless-stopped
     read_only: true
-    # The image's start-up script writes generated config files, which a
-    # read-only container cannot do. We mount finished config files instead
-    # and start nginx directly.
+    # The image's start-up script writes generated config files, which a read-only container cannot do.
+    # We mount finished config files instead and start nginx directly.
     entrypoint: ["nginx", "-c", "/etc/coraza/nginx.conf", "-g", "daemon off;"]
     # Writable in-memory folders for nginx temp files and Coraza's work files.
     tmpfs:
@@ -540,8 +496,7 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    # Resource limits to prevent DoS. 768 MB: under the load test the WAF used
-    # 496 of 512 MB (CRS rules and request buffers), too close to being killed.
+    # Resource limits to prevent DoS. 768 MB: under the load test the WAF used 496 of 512 MB (CRS rules and request buffers), too close to being killed.
     mem_limit: 768m
     cpus: 1.0
     deploy:
@@ -562,12 +517,8 @@ services:
       retries: 3
       start_period: 10s
 
-  # ============================================================================
-  # Antivirus Scanner Service (official multi-architecture ClamAV image)
-  # Security: scans file uploads in memory via INSTREAM protocol on port 3310,
-  # isolated on backend network with no public ports exposed, read-only root,
-  # persistent volume for signature database, resource limits.
-  # ============================================================================
+  # The official multi-architecture ClamAV image scans uploads in memory over INSTREAM on port 3310.
+  # Keep it isolated with no public ports, a read-only root, persistent signatures and resource limits.
   clamav:
     image: clamav/clamav-debian:1.5.4@sha256:c21aa18cc0a358678255a3dfb343a4555b58f71b97d7b869df8fdf7ea0a5b4b1
     logging: *default-logging
@@ -583,13 +534,11 @@ services:
       - /var/log/clamav:size=16M,uid=1000,gid=1000,mode=0750
     volumes:
       - clamav_db:/var/lib/clamav
-      # Kura's scanner settings: reject encrypted files, Office macros and
-      # files too large/deep to scan (see docker/clamav/clamd.conf).
+      # Kura's scanner settings: reject encrypted files, Office macros and files too large/deep to scan (see docker/clamav/clamd.conf).
       - ./docker/clamav/clamd.conf:/etc/clamav/clamd.conf:ro
     # clamav: internal network shared only with web because INSTREAM is plain TCP (CFG-06).
-    # clamav_updates: lets freshclam download new virus signatures from the
-    # internet (clamav is internal and has no internet route). No other
-    # container is on either network, so Nginx, WAF, DB and Vault cannot reach ClamAV.
+    # clamav_updates: lets freshclam download new virus signatures from the internet (clamav is internal and has no internet route).
+    # No other container is on either network, so Nginx, WAF, DB and Vault cannot reach ClamAV.
     networks:
       - clamav
       - clamav_updates
@@ -616,11 +565,8 @@ services:
       retries: 5
       start_period: 180s
 
-  # ============================================================================
-  # Intrusion Detection & Prevention Service (CrowdSec IDS/IPS)
-  # Security: monitors Nginx access/error logs, detects brute-force attacks
-  # and web exploitation, generates dynamic 4-hour bans pushed to nftables.
-  # ============================================================================
+  # CrowdSec monitors Nginx access/error logs for brute force and web attacks.
+  # It sends 4-hour bans to the host's nftables bouncer.
   crowdsec:
     image: crowdsecurity/crowdsec:v1.8.2@sha256:65b74942f7e7ed5c60fde4ac15fc4ba715904c398c8b16dd451f4907d90347d4
     logging: *default-logging
@@ -655,14 +601,13 @@ services:
       - crowdsec_config:/etc/crowdsec
     secrets:
       - crowdsec_bouncer_key
-    # No "frontend": CrowdSec reads every log through the Docker API proxy and
-    # needs no access to nginx or the WAF over the network.
+    # No "frontend": CrowdSec reads every log through the Docker API proxy and needs no access to nginx or the WAF over the network.
     networks:
       - observability
       # Gives CrowdSec read-only access to container logs through the proxy.
       - docker_api
-    # Hardened like the other services. CrowdSec writes only to its two volumes
-    # (/etc/crowdsec, /var/lib/crowdsec/data) and /tmp.
+    # Hardened like the other services.
+    # CrowdSec writes only to its two volumes (/etc/crowdsec, /var/lib/crowdsec/data) and /tmp.
     read_only: true
     tmpfs:
       - /tmp:size=64M,mode=1777
@@ -692,15 +637,11 @@ services:
       start_period: 15s
 
   # NOTE: the CrowdSec nftables firewall bouncer is NOT a container.
-  # CrowdSec publishes it as a Linux host package (crowdsec-firewall-bouncer-nftables),
-  # not as a Docker image, so it is installed on the host in the host-layer step.
+  # CrowdSec publishes it as a Linux host package (crowdsec-firewall-bouncer-nftables), not as a Docker image, so it is installed on the host in the host-layer step.
   # It reads bans from the CrowdSec Local API on 127.0.0.1:8085 (published above).
 
-  # ============================================================================
-  # Log Aggregation Service (Grafana Loki)
-  # Security: tamper-resistant log store, enforces mandatory 180-day retention
-  # (4320h) per Egyptian Law No. 175 and LMS specification, internal network only.
-  # ============================================================================
+  # Loki stores logs on an internal network with 180-day retention (4320h).
+  # The retention period follows Egyptian Law No. 175 and the LMS specification.
   loki:
     image: grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28
     logging: *default-logging
@@ -730,17 +671,11 @@ services:
         reservations:
           cpus: "0.1"
           memory: 128M
-    # No Docker health check: the Loki image has no shell, wget or curl, so a
-    # check inside the container can never run (it only ever reported
-    # "unhealthy"). Instead Alloy probes http://loki:3100/ready from outside
-    # (prometheus.exporter.blackbox in docker/alloy/config.alloy), and the
-    # ServiceDown / LokiNotReady alerts fire if it stops answering.
+    # No Docker health check: the Loki image has no shell, wget or curl, so a check inside the container can never run (it only ever reported "unhealthy").
+    # Instead Alloy probes http://loki:3100/ready from outside (prometheus.exporter.blackbox in docker/alloy/config.alloy), and the ServiceDown / LokiNotReady alerts fire if it stops answering.
 
-  # ============================================================================
-  # Time-Series Monitoring Service (Prometheus)
-  # Security: collects internal metrics, evaluates security alerting rules,
-  # isolated on internal observability network with no public ports.
-  # ============================================================================
+  # Prometheus collects internal metrics and evaluates security alerts on the observability network.
+  # It publishes no public ports.
   prometheus:
     image: prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2
     logging: *default-logging
@@ -781,11 +716,8 @@ services:
       retries: 3
       start_period: 15s
 
-  # ============================================================================
-  # Alert Dispatcher Service (Prometheus Alertmanager)
-  # Security: groups and routes critical alerts to Telegram, uses Docker secrets
-  # for bot credentials, isolated on internal observability network.
-  # ============================================================================
+  # Alertmanager groups critical alerts for Telegram using bot credentials from Docker secrets.
+  # Keep it on the internal observability network.
   alertmanager:
     image: prom/alertmanager:v0.34.2@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b
     logging: *default-logging
@@ -829,11 +761,8 @@ services:
       retries: 3
       start_period: 10s
 
-  # ============================================================================
-  # Unified Telemetry Collector (Grafana Alloy)
-  # Security: scrapes Nginx logs and telemetry, streams to Loki and Prometheus.
+  # Alloy collects Nginx logs and telemetry for Loki and Prometheus.
   # Read-only log access, isolated on observability network.
-  # ============================================================================
   alloy:
     image: grafana/alloy:v1.21.3@sha256:8ab871206bd2d8f89277f53abffee5f452a293980788d52f85fa183a87a505a4
     logging: *default-logging
@@ -871,8 +800,7 @@ services:
       - /proc:/host/proc:ro
       - /sys:/host/sys:ro
       - /:/host/root:ro
-    # Group 4 is "adm" on Ubuntu: lets Alloy read /var/log/auth.log (root:adm,
-    # mode 640) through the read-only host mount, for the SSH login alerts.
+    # Group 4 is "adm" on Ubuntu: lets Alloy read /var/log/auth.log (root:adm, mode 640) through the read-only host mount, for the SSH login alerts.
     group_add:
       - "4"
     networks:
@@ -885,8 +813,8 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    # Ready when Alloy's own HTTP server answers /-/ready. The image has bash
-    # but no curl or wget, so bash's /dev/tcp sends the request.
+    # Ready when Alloy's own HTTP server answers /-/ready.
+    # The image has bash but no curl or wget, so bash's /dev/tcp sends the request.
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/12345 && printf 'GET /-/ready HTTP/1.0\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200 '"]
       interval: 30s
@@ -907,15 +835,10 @@ services:
       - loki
       - prometheus
 
-  # ============================================================================
   # Read-only Docker API proxy for Alloy and CrowdSec.
-  # LinuxServer's maintained compatible image is used instead of Tecnativa's
-  # because Tecnativa versions through 0.5.0 have CVE-2026-78122; the reported
-  # fix was still an open upstream pull request on 2026-11-06. LinuxServer's
-  # separate ALLOW_LOGS control lets Alloy read logs while keeping other
-  # container filesystem endpoints disabled.
+  # Tecnativa versions through 0.5.0 have CVE-2026-78122; its fix was still an open pull request on 2026-11-06.
+  # LinuxServer's compatible image has a separate ALLOW_LOGS control for Alloy without other filesystem access.
   # Image version 3.4.7, released 2026-10-27; checked 2026-11-06.
-  # ============================================================================
   docker-api-proxy:
     image: lscr.io/linuxserver/socket-proxy:3.4.7@sha256:4e5e59efd3338205561c54262581992036e5a36ccca97d487b1d4ec41f9adc58
     logging: *default-logging
@@ -953,12 +876,11 @@ services:
       DISTRIBUTION: "0"
       EXEC: "0"
       IMAGES: "0"
-      # CrowdSec's Docker log source calls GET /info when it starts and exits
-      # if refused (it crashed in a loop with INFO=0). Read-only system facts.
+      # CrowdSec's Docker log source calls GET /info when it starts and exits if refused (it crashed in a loop with INFO=0).
+      # Read-only system facts.
       INFO: "1"
-      # Alloy's Docker discovery also lists networks (to label containers by
-      # network); without this every discovery refresh failed with 403 and no
-      # container logs reached Loki. Read-only: POST=0 still blocks any change.
+      # Alloy's Docker discovery also lists networks (to label containers by network); without this every discovery refresh failed with 403 and no container logs reached Loki.
+      # Read-only: POST=0 still blocks any change.
       NETWORKS: "1"
       NODES: "0"
       PLUGINS: "0"
@@ -997,11 +919,7 @@ services:
       retries: 3
       start_period: 10s
 
-  # ============================================================================
-  # Visual Operations & Security Dashboard (Grafana)
-  # Security: bound to 127.0.0.1 (loopback only) away from public internet,
-  # admin password injected via Docker secret, automatic provisioning.
-  # ============================================================================
+  # Grafana binds to 127.0.0.1 with provisioned dashboards and an admin password from a Docker secret.
   grafana:
     image: grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205
     logging: *default-logging
@@ -1011,35 +929,32 @@ services:
     tmpfs:
       - /tmp:size=64M,mode=1777
     ports:
-      # Published on the host's loopback address only. Admins reach it through
-      # an SSH tunnel: ssh -N -L 3000:127.0.0.1:3000 <admin>@<vm> (docker/grafana/README.md).
+      # Published on the host's loopback address only.
+      # Admins reach it through an SSH tunnel: ssh -N -L 3000:127.0.0.1:3000 <admin>@<vm> (docker/grafana/README.md).
       - "127.0.0.1:3000:3000"
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
-      # No anonymous browsing, no self sign-up and no new organisations: only
-      # the admin account and the read-only "viewer" (./kura.sh grafana-users).
+      # No anonymous browsing, no self sign-up and no new organisations: only the admin account and the read-only "viewer" (./kura.sh grafana-users).
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_USERS_ALLOW_ORG_CREATE: "false"
-      # No HTTP basic auth on the API: every login goes through the login form,
-      # which has brute-force protection (5 failures lock the account briefly).
+      # No HTTP basic auth on the API: every login goes through the login form, which has brute-force protection (5 failures lock the account briefly).
       GF_AUTH_BASIC_ENABLED: "false"
       GF_SECURITY_DISABLE_BRUTE_FORCE_LOGIN_PROTECTION: "false"
       GF_SECURITY_DISABLE_GRAVATAR: "true"
       # No outbound phone-home: usage reporting and update checks go to Grafana Labs.
       GF_ANALYTICS_REPORTING_ENABLED: "false"
       GF_ANALYTICS_CHECK_FOR_UPDATES: "false"
-      # The session cookie is Secure and SameSite=Strict. Browsers treat
+      # The session cookie is Secure and SameSite=Strict.
+      # Browsers treat
       # http://localhost as a secure context, so the cookie still works through
       # the SSH tunnel (which encrypts the traffic).
       GF_SECURITY_COOKIE_SECURE: "true"
       GF_SECURITY_COOKIE_SAMESITE: strict
       # Logs go to the container output where Alloy collects them.
       GF_LOG_MODE: console
-      # Log every HTTP request (method, path, status, user name; never the
-      # body), so successful logins (POST /login, status 200) reach Loki as
-      # well as failed ones, for the Grafana login alerts in docker/loki/rules.
+      # Log every HTTP request (method, path, status, user name; never the body), so successful logins (POST /login, status 200) reach Loki as well as failed ones, for the Grafana login alerts in docker/loki/rules.
       GF_SERVER_ROUTER_LOGGING: "true"
       GF_SERVER_SERVE_FROM_SUB_PATH: "false"
     volumes:
@@ -1074,13 +989,9 @@ services:
       retries: 3
       start_period: 15s
 
-  # ============================================================================
-  # Secrets & Cryptographic Management (HashiCorp Vault)
-  # Encrypts authenticator (TOTP) seeds with its Transit engine; Django only
-  # ever stores the ciphertext. HTTPS only (certificate from our internal CA).
-  # Set up once with ./kura.sh vault-init, and unsealed by hand after
-  # each restart (see docker/vault/README.md). Isolated on backend.
-  # ============================================================================
+  # Secrets & Cryptographic Management (HashiCorp Vault) Encrypts authenticator (TOTP) seeds with its Transit engine; Django only ever stores the ciphertext. HTTPS only (certificate from our internal CA).
+  # Set up once with ./kura.sh vault-init, and unsealed by hand after each restart (see docker/vault/README.md).
+  # Isolated on backend.
   vault:
     image: hashicorp/vault:2.2.1@sha256:962a92876e168d68eaaa24b0b8b49bbce1cb63024060a67bba95cd158a366fc2
     logging: *default-logging
@@ -1091,8 +1002,7 @@ services:
     tmpfs:
       - /tmp:size=16M,mode=1777
     environment:
-      # Used by the vault command line tool inside the container (setup,
-      # unseal, health check): talk HTTPS to itself and check the certificate.
+      # Used by the vault command line tool inside the container (setup, unseal, health check): talk HTTPS to itself and check the certificate.
       VAULT_ADDR: "https://127.0.0.1:8200"
       VAULT_CACERT: "/vault/tls/ca.crt"
       VAULT_CONFIG_DIR: "/vault/config"
@@ -1122,31 +1032,26 @@ services:
           cpus: "0.1"
           memory: 128M
     healthcheck:
-      # "vault status" exits 0 when unsealed and 2 when sealed. Both mean the
-      # server is running; a sealed Vault is reported by the alerts (stage 6).
+      # "vault status" exits 0 when unsealed and 2 when sealed.
+      # Both mean the server is running; a sealed Vault is reported by the alerts (stage 6).
       test: ["CMD-SHELL", "vault status > /dev/null; [ $$? -le 2 ]"]
       interval: 15s
       timeout: 5s
       retries: 3
       start_period: 10s
 
-# ==============================================================================
-# Isolated Networks
-# frontend: for reverse proxy (Nginx) and external traffic ingress
-# app: only the WAF and Django (internal: true), so the WAF cannot be skipped
-# backend: strictly internal network (internal: true); no internet access
-# observability: isolated metrics and log collection network
-# ==============================================================================
+# frontend receives external traffic through Nginx.
+# app connects only the WAF and Django (internal: true), preventing WAF bypass.
+# backend is internal (internal: true) with no internet access.
+# observability isolates metrics and log collection.
 networks:
   frontend:
     driver: bridge
-    # Fixed subnet so Nginx can have a fixed address, which the WAF's
-    # real-client-IP setting depends on.
+    # Fixed subnet so Nginx can have a fixed address, which the WAF's real-client-IP setting depends on.
     ipam:
       config:
         - subnet: 172.28.10.0/24
-          # Automatic addresses come only from .128-.255, so they can never
-          # clash with nginx's fixed .20.
+          # Automatic addresses come only from .128-.255, so they can never clash with nginx's fixed .20.
           ip_range: 172.28.10.128/25
   # Only the WAF and Django. internal: no internet route.
   app:
@@ -1161,8 +1066,8 @@ networks:
   docker_api:
     driver: bridge
     internal: true
-  # Django -> mail relay only. internal: no internet. Fixed subnet because the
-  # relay's main.cf only accepts mail from 172.28.30.0/24.
+  # Django -> mail relay only. internal: no internet.
+  # Fixed subnet because the relay's main.cf only accepts mail from 172.28.30.0/24.
   mail:
     driver: bridge
     internal: true
@@ -1179,8 +1084,8 @@ networks:
   # Outbound-only route for ClamAV signature updates (nothing else joins it).
   clamav_updates:
     driver: bridge
-  # Django -> breach-check proxy only. internal: no internet. Fixed subnet
-  # because tinyproxy.conf only accepts clients from 172.28.50.0/24.
+  # Django -> breach-check proxy only. internal: no internet.
+  # Fixed subnet because tinyproxy.conf only accepts clients from 172.28.50.0/24.
   breach_check:
     driver: bridge
     internal: true
@@ -1191,13 +1096,11 @@ networks:
   breach_check_egress:
     driver: bridge
 
-# ==============================================================================
 # Persistent Named Volumes
-# ==============================================================================
 volumes:
   postgres_data:
-    # Keep pgEdge on a fresh volume. The similarly named kura_postgres_data
-    # volume is an older cluster and does not use the pgEdge data-directory layout.
+    # Keep pgEdge on a fresh volume.
+    # The similarly named kura_postgres_data volume is an older cluster and does not use the pgEdge data-directory layout.
     name: kura_pgedge_postgres_data
   static_data:
     name: kura_static_data
@@ -1225,10 +1128,7 @@ volumes:
   relay_queue:
     name: kura_relay_queue
 
-# ==============================================================================
-# Docker Secrets
-# Credentials are read from files and mounted into /run/secrets in RAM
-# ==============================================================================
+# Mount file-backed Docker secrets at /run/secrets in RAM.
 secrets:
   db_password:
     file: ./secrets/db_password.txt

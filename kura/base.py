@@ -1,11 +1,9 @@
 """
 Kura's PostgreSQL database backend.
 
-It is Django's normal PostgreSQL backend with ONE change: before each new
-database connection, it asks Vault for a temporary username and
-password, instead of using a fixed account from settings. Vault drops each
-temporary user after 15 minutes, so a stolen database password stops working
-quickly, and nobody can log in as kura_app directly.
+Django opens connections with a temporary login from Vault, cached per worker.
+Vault drops each temporary user after 15 minutes, limiting how long a stolen
+password works. The kura_app role cannot log in directly.
 
 Turned on in config/settings.py when VAULT_DATABASE_CREDENTIALS=True (Docker only).
 """
@@ -57,19 +55,18 @@ def get_dynamic_database_credentials():
 
 class DatabaseWrapper(base.DatabaseWrapper):
     """
-    Django's PostgreSQL DatabaseWrapper, with the login taken from Vault.
-    Django requires a database backend to be a class named DatabaseWrapper in a
-    file named base.py, which is why this is a class (it only changes one method).
+    Django's PostgreSQL backend with a Vault-issued login.
+
+    Django requires the name DatabaseWrapper in base.py; only connection
+    parameters are overridden.
     """
 
     def get_connection_params(self):
-        # Start from Django's normal connection settings: host, port, database
-        # name and the TLS options (CA certificate, Django's client certificate).
+        """Keep Django's database and TLS settings, but use a temporary Vault login."""
         connection_params = super().get_connection_params()
 
         # Get the temporary login from Vault (reused until it is nearly expired).
-        # If Vault is down or sealed, report it as a database connection error,
-        # so Django shows its normal generic error page and never the details.
+        # Report Vault failures as database connection errors so Django shows its generic error page.
         try:
             database_login = get_dynamic_database_credentials()
         except ValidationError as error:

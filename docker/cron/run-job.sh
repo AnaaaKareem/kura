@@ -40,8 +40,7 @@ fi
 
 # Replace the metrics file atomically, so scrapers never read half a file.
 printf 'kura_job_last_exit_code{job="%s"} %s\n' "$job_name" "$exit_code" >> "$temporary_file"
-# mktemp creates owner-only files; Alloy runs as another user and must be able
-# to read them (they hold only job names, times and exit codes, nothing secret).
+# mktemp creates owner-only files; Alloy runs as another user and must be able to read them (they hold only job names, times and exit codes, nothing secret).
 chmod 0644 "$temporary_file" || exit 1
 mv -f -- "$temporary_file" "$metrics_file" || exit 1
 exit "$exit_code"

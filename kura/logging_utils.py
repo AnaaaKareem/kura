@@ -53,8 +53,7 @@ def hash_login_identifier(email):
 
 
 def get_client_ip(request):
-    """
-    Returns the IP address of the real visitor.
+    """Return the IP address of the real visitor.
     Used by: session records, rate limits, attendance, assessment lab checks,
     the rate-limit middleware, and django-axes (AXES_CLIENT_IP_CALLABLE).
     Security: the X-Real-IP header is only trusted when TRUST_PROXY_IP_HEADER is

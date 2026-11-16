@@ -1,23 +1,14 @@
 #!/usr/bin/env bash
-# ==============================================================================
 # kura.sh: one script for setting up and running Kura on the Ubuntu Server VM.
-#
 #     ./kura.sh help                 list every subcommand
 #     sudo ./kura.sh setup           first setup on a fresh VM
 #     sudo ./kura.sh preflight       read-only production checks
-#
 # Options (anywhere on the command line):
-#     --dry-run   print what each step would do and change nothing
-#     --force     answer YES to the confirmation of a destructive step
-#
-# Every step is safe to run twice: work that is already done is skipped, and
-# the script says so. Destructive steps ask you to type YES first.
+# --dry-run   print what each step would do and change nothing --force     answer YES to the confirmation of a destructive step
+# Every step is safe to run twice: work that is already done is skipped, and the script says so.
+# Destructive steps ask you to type YES first.
 # The script never runs "docker compose down -v" and never deletes a volume.
-#
-# On Linux, private keys and secret files belong to the container user that
-# reads them (see certs/README.md and secrets/README.md), so the commands that
-# write or read them must run as root.
-# ==============================================================================
+# On Linux, private keys and secret files belong to the container user that reads them (see certs/README.md and secrets/README.md), so the commands that write or read them must run as root.
 set -eu
 
 # Work from the project folder so "docker compose" finds docker-compose.yml.
@@ -28,8 +19,8 @@ SECRETS_DIR="secrets"
 
 # Secrets Kura generates itself with a cryptographic random generator.
 GENERATED_SECRETS="db_password backup_encryption_key django_secret_key crowdsec_bouncer_key grafana_admin_password grafana_viewer_password"
-# Secrets that come from outside services or from Vault. We cannot generate
-# these, so setup creates an empty file and says where the value comes from.
+# Secrets that come from outside services or from Vault.
+# We cannot generate these, so setup creates an empty file and says where the value comes from.
 EXTERNAL_SECRETS="telegram_bot_token telegram_chat_id smtp_relay_credentials vault_role_id vault_secret_id"
 # Host-only secrets written by vault-init (never mounted into a container).
 HOST_ONLY_SECRETS="vault_issuer_role_id vault_issuer_secret_id"
@@ -43,17 +34,15 @@ DRY_RUN=0
 FORCE=0
 RESET_PASSWORD=0
 
-# ------------------------------------------------------------------------------
 # Small helpers
-# ------------------------------------------------------------------------------
 
 # Print a step, a skipped step, or an error in one consistent format.
 say() { echo "[*] $*"; }
 skip() { echo "[skip] $*"; }
 die() { echo "[-] $*" >&2; exit 1; }
 
-# In --dry-run mode, print the planned action and return success so the caller
-# skips the real work. Otherwise return failure so the caller does the work.
+# In --dry-run mode, print the planned action and return success so the caller skips the real work.
+# Otherwise return failure so the caller does the work.
 planned() {
     if [ "$DRY_RUN" = 1 ]; then
         echo "[dry-run] would $*"
@@ -62,8 +51,8 @@ planned() {
     return 1
 }
 
-# Ask before a destructive step. --force answers for you. Anything other than
-# exactly YES stops the script without changing anything.
+# Ask before a destructive step. --force answers for you.
+# Anything other than exactly YES stops the script without changing anything.
 confirm() {
     echo "[!] $1"
     if [ "$FORCE" = 1 ]; then
@@ -80,9 +69,7 @@ confirm() {
 
 is_linux() { [ "$(uname -s)" = "Linux" ]; }
 
-# On Linux the key and secret files belong to container users, so commands
-# that write or read them must run as root. A dry run changes nothing, so it
-# may run as anyone.
+# On Linux the key and secret files belong to container users, so commands that write or read them must run as root. A dry run changes nothing, so it may run as anyone.
 need_root() {
     if [ "$DRY_RUN" = 0 ] && is_linux && [ "$(id -u)" != "0" ]; then
         die "Run this as root on Linux:  sudo ./kura.sh $1"
@@ -94,9 +81,9 @@ is_running() {
     docker compose ps --status running --services 2>/dev/null | grep -qx "$1"
 }
 
-# Set a secret file to mode 600 and give it to the one container user that
-# reads it. Host-only files belong to root. Docker Desktop on macOS ignores
-# owners, so the owner is only set on Linux.
+# Set a secret file to mode 600 and give it to the one container user that reads it.
+# Host-only files belong to root.
+# Docker Desktop on macOS ignores owners, so the owner is only set on Linux.
 secret_owner() {
     case "$1" in
         db_password|backup_encryption_key) echo 26 ;;          # "postgres" in the pgEdge image
@@ -127,7 +114,8 @@ fix_secret_file() {
     echo "fixed     $file (mode 600, owner $want_owner)"
 }
 
-# Read a secret file without printing it. Only used inside $(...).
+# Read a secret file without printing it.
+# Only used inside $(...).
 read_secret() {
     tr -d '\r\n' < "$SECRETS_DIR/$1.txt"
 }
@@ -144,15 +132,12 @@ vault_initialised() {
     echo "$status" | grep -q '"initialized": true'
 }
 
-# Give the folder a service mounts at TARGET (a named volume or a host folder,
-# as written in docker-compose.yml) to OWNER, mode 700. Uses the database image
-# as a throwaway root container with no network; the service itself is untouched.
+# Give the folder a service mounts at TARGET (a named volume or a host folder, as written in docker-compose.yml) to OWNER, mode 700. Uses the database image as a throwaway root container with no network; the service itself is untouched.
 fix_volume_owner() {
     service=$1
     target=$2
     owner=$3
-    # Ask Compose which volume or host folder is mounted at TARGET. A named
-    # volume is reported by its short name, so look up its real Docker name.
+    # Ask Compose which volume or host folder is mounted at TARGET. A named volume is reported by its short name, so look up its real Docker name.
     source=$(docker compose config --format json | python3 -c '
 import json, sys
 config = json.load(sys.stdin)
@@ -169,9 +154,7 @@ for mount in config["services"][sys.argv[1]]["volumes"]:
     say "$source now belongs to $owner"
 }
 
-# ------------------------------------------------------------------------------
 # help
-# ------------------------------------------------------------------------------
 
 # Print every subcommand with one line about what it does.
 cmd_help() {
@@ -208,24 +191,18 @@ Destructive steps (ask for YES, or pass --force):
 EOF
 }
 
-# ------------------------------------------------------------------------------
 # secrets
-# ------------------------------------------------------------------------------
 
-# Create every missing secret file. A file that already exists is NEVER
-# overwritten, so running it again cannot break a database or Vault that is
-# already set up. Values are never printed to the screen.
+# Create every missing secret file. A file that already exists is NEVER overwritten, so running it again cannot break a database or Vault that is already set up.
+# Values are never printed to the screen.
 cmd_secrets() {
     need_root secrets
-    # The secrets/ folder is locked to its owner (700), so other users on the
-    # host cannot open any file inside it.
+    # The secrets/ folder is locked to its owner (700), so other users on the host cannot open any file inside it.
     if ! planned "set $SECRETS_DIR/ to mode 700"; then
         chmod 700 "$SECRETS_DIR"
     fi
 
-    # 1. Secrets we generate. "openssl rand -base64 48" gives 48 random bytes
-    #    (384 bits) as text; tr removes characters that cause trouble in
-    #    connection strings. umask 077 creates the file as owner-only.
+    # 1. Secrets we generate. "openssl rand -base64 48" gives 48 random bytes (384 bits) as text; tr removes characters that cause trouble in connection strings. umask 077 creates the file as owner-only.
     for name in $GENERATED_SECRETS; do
         file="$SECRETS_DIR/$name.txt"
         if [ -f "$file" ]; then
@@ -239,8 +216,8 @@ cmd_secrets() {
         [ -f "$file" ] && fix_secret_file "$name"
     done
 
-    # 2. Secrets from outside services. Compose refuses to start if a file is
-    #    missing, so an empty file is created and we say where the value comes from.
+    # 2. Secrets from outside services.
+    # Compose refuses to start if a file is missing, so an empty file is created and we say where the value comes from.
     for name in $EXTERNAL_SECRETS; do
         file="$SECRETS_DIR/$name.txt"
         case "$name" in
@@ -269,13 +246,10 @@ cmd_secrets() {
     return 0
 }
 
-# ------------------------------------------------------------------------------
 # certs
-# ------------------------------------------------------------------------------
 
-# Create the self-signed public certificate Nginx serves on port 443. Browsers
-# warn about it; a real deployment replaces certs/kura.crt and kura.key with a
-# CA-issued certificate (certs/README.md). Skipped when it already exists.
+# Create the self-signed public certificate Nginx serves on port 443. Browsers warn about it; a real deployment replaces certs/kura.crt and kura.key with a CA-issued certificate (certs/README.md).
+# Skipped when it already exists.
 cmd_certs() {
     need_root certs
     if [ -f certs/kura.crt ] && [ -f certs/kura.key ]; then
@@ -299,8 +273,7 @@ cmd_certs() {
         -subj "/C=EG/ST=Cairo/L=Cairo/O=Kura/OU=Security/CN=localhost" \
         -addext "subjectAltName=DNS:localhost,DNS:web,DNS:nginx,IP:127.0.0.1"
 
-    # On Linux the key must belong to root: Nginx reads it as root at start-up and
-    # has no permission to read files owned by other users (see docker-compose.yml).
+    # On Linux the key must belong to root: Nginx reads it as root at start-up and has no permission to read files owned by other users (see docker-compose.yml).
     chmod 0600 certs/kura.key
     if is_linux; then
         chown 0 certs/kura.key
@@ -308,16 +281,12 @@ cmd_certs() {
     say "TLS certificate generated in certs/"
 }
 
-# ------------------------------------------------------------------------------
 # mtls-bootstrap
-# ------------------------------------------------------------------------------
 
 # BOOTSTRAP ONLY: first internal mTLS certificates.
-# PostgreSQL and Vault need TLS certificates before Vault can issue any, so on
-# a new server this makes a temporary openssl CA and the first certificates.
-# vault-init then switches every service to certificates issued by Vault's own
-# CA (renew-certs) and deletes this bootstrap CA's key. After that this step
-# would replace the trusted CA, so it asks for YES.
+# PostgreSQL and Vault need TLS certificates before Vault can issue any, so on a new server this makes a temporary openssl CA and the first certificates.
+# vault-init then switches every service to certificates issued by Vault's own CA (renew-certs) and deletes this bootstrap CA's key.
+# After that this step would replace the trusted CA, so it asks for YES.
 # Each container mounts only its own .crt/.key plus ca.crt (docker-compose.yml).
 # The CA private key is kept in certs/ca/, which is never mounted.
 cmd_mtls_bootstrap() {
@@ -336,9 +305,7 @@ cmd_mtls_bootstrap() {
         return 0
     fi
 
-    # Requires OpenSSL 3: the CA must carry a Subject Key Identifier so leaf
-    # certificates can reference it. macOS ships LibreSSL, which omits it, so a
-    # modern binary is preferred when installed (e.g. Homebrew's openssl@3).
+    # Requires OpenSSL 3: the CA must carry a Subject Key Identifier so leaf certificates can reference it. macOS ships LibreSSL, which omits it, so a modern binary is preferred when installed (e.g. Homebrew's openssl@3).
     if command -v /opt/homebrew/opt/openssl@3/bin/openssl >/dev/null 2>&1; then
         OPENSSL=/opt/homebrew/opt/openssl@3/bin/openssl
     elif command -v openssl >/dev/null 2>&1; then
@@ -357,9 +324,8 @@ cmd_mtls_bootstrap() {
     mkdir -p "$CERT_DIR" certs/ca
     chmod 700 certs/ca
 
-    # Remove old keys first. On Linux they belong to container users after the
-    # last run, so we could not overwrite them, but we can delete them because we
-    # own the folder.
+    # Remove old keys first.
+    # On Linux they belong to container users after the last run, so we could not overwrite them, but we can delete them because we own the folder.
     rm -f "$CERT_DIR"/*.key "$CERT_DIR"/*.crt certs/ca/ca.key certs/ca/ca.srl
 
     say "Generating Internal Root CA..."
@@ -376,8 +342,8 @@ cmd_mtls_bootstrap() {
     bootstrap_cert nginx nginx "DNS:nginx,DNS:nginx.kura.internal"
     # Coraza WAF: SERVER for Nginx (name "waf") and CLIENT to Django.
     bootstrap_cert waf waf "DNS:waf,DNS:waf.kura.internal"
-    # Django: serves TLS to the WAF and is the database CLIENT. PostgreSQL
-    # certificate login requires CN = database user, so the CN is kura_app.
+    # Django: serves TLS to the WAF and is the database CLIENT.
+    # PostgreSQL certificate login requires CN = database user, so the CN is kura_app.
     bootstrap_cert web kura_app "DNS:web,DNS:web.kura.internal,DNS:localhost,IP:127.0.0.1"
     # PostgreSQL client/server certificate.
     bootstrap_cert db db "DNS:db,DNS:db.kura.internal,DNS:localhost,IP:127.0.0.1"
@@ -424,10 +390,9 @@ EOF
     rm -f "$CERT_DIR/$name.csr" "$CERT_DIR/$name.ext"
 }
 
-# On Linux, a 0600 key can only be read by its owner. Each container runs as a
-# different user, so give every key to the one container user that needs it.
-# PostgreSQL also refuses to start unless it owns its key. (Docker Desktop on
-# macOS ignores file owners, so this is only needed on Linux.)
+# On Linux, a 0600 key can only be read by its owner.
+# Each container runs as a different user, so give every key to the one container user that needs it.
+# PostgreSQL also refuses to start unless it owns its key. (Docker Desktop on macOS ignores file owners, so this is only needed on Linux.)
 set_key_owners() {
     is_linux || return 0
     for entry in $KEY_OWNERS; do
@@ -435,28 +400,27 @@ set_key_owners() {
     done
 }
 
-# ------------------------------------------------------------------------------
 # vault-init
-# ------------------------------------------------------------------------------
 
-# One-time Vault setup. Needs the database up and migrated, and Vault started
-# (setup does both). Refuses to run twice: initialising again would throw away
-# every key. Steps:
-#   1. Initialise Vault and show the unseal key ONCE. Nothing is saved to disk.
-#   2. Unseal.
-#   3. Audit log (every request, secrets hashed) to the container output.
-#   4. Transit keys kura-mfa, kura-answer-keys (AES-256-GCM) and kura-files (RSA-4096).
-#   5. Temporary database users (database engine).
-#   6. The "kura-web" policy and Django's AppRole login, written to secrets/.
-#   7. Kura's CA inside Vault: a root CA that only signs an intermediate CA.
-#   8. The "kura-cert-issuer" AppRole for renew-certs (host-only login).
-#   9. Revoke the root token, so no all-powerful token is left anywhere.
-#  10. renew-certs: every service switches to certificates issued by Vault.
+# One-time Vault setup.
+# Needs the database up and migrated, and Vault started (setup does both).
+# Refuses to run twice: initialising again would throw away every key.
+# Steps:
+# 1. Initialise Vault and show the unseal key ONCE.
+# Nothing is saved to disk.
+# 2. Unseal.
+# 3. Audit log (every request, secrets hashed) to the container output.
+# 4. Transit keys kura-mfa, kura-answer-keys (AES-256-GCM) and kura-files (RSA-4096).
+# 5. Temporary database users (database engine).
+# 6. The "kura-web" policy and Django's AppRole login, written to secrets/.
+# 7. Kura's CA inside Vault: a root CA that only signs an intermediate CA.
+# 8. The "kura-cert-issuer" AppRole for renew-certs (host-only login).
+# 9. Revoke the root token, so no all-powerful token is left anywhere.
+# 10. renew-certs: every service switches to certificates issued by Vault.
 cmd_vault_init() {
     need_root vault-init
 
-    # 0. Never initialise twice. "vault status" exits with 2 while sealed, so its
-    #    exit code is ignored and only the "initialized" line is checked.
+    # 0. Never initialise twice. "vault status" exits with 2 while sealed, so its exit code is ignored and only the "initialized" line is checked.
     STATUS=$(vault_cli status -format=json 2>/dev/null || true)
     if echo "$STATUS" | grep -q '"initialized": true'; then
         skip "Vault is already initialised"
@@ -475,8 +439,8 @@ cmd_vault_init() {
         return 0
     fi
 
-    # 1. Initialise with one unseal key. Vault returns JSON; we pick out the unseal
-    #    key and the root token with grep (no extra tools needed on the host).
+    # 1. Initialise with one unseal key.
+    # Vault returns JSON; we pick out the unseal key and the root token with grep (no extra tools needed on the host).
     say "[1/9] Initialising Vault..."
     INIT_JSON=$(vault_cli operator init -key-shares=1 -key-threshold=1 -format=json)
     UNSEAL_KEY=$(echo "$INIT_JSON" | grep -A1 '"unseal_keys_b64"' | tail -n 1 | tr -d ' ",')
@@ -488,8 +452,8 @@ cmd_vault_init() {
         exit 1
     fi
 
-    # Show the unseal key straight away. If any later step fails, the key is
-    # already on screen: without it, this Vault could never be opened again.
+    # Show the unseal key straight away.
+    # If any later step fails, the key is already on screen: without it, this Vault could never be opened again.
     echo ""
     echo "=============================================================================="
     echo " UNSEAL KEY (shown only this once, NOT saved anywhere). Store it in your"
@@ -499,32 +463,30 @@ cmd_vault_init() {
     echo "=============================================================================="
     echo ""
 
-    # If a later step fails, also show the root token, so the remaining steps can
-    # be finished by hand. On success the token is revoked and never shown.
+    # If a later step fails, also show the root token, so the remaining steps can be finished by hand.
+    # On success the token is revoked and never shown.
     trap show_root_token_on_failure EXIT
 
-    # 2. Unseal by writing the key to Vault's unseal endpoint. "key=-" makes the
-    #    vault tool read the key from standard input instead of the command line,
-    #    so the key does not appear in the container's process list.
+    # 2. Unseal by writing the key to Vault's unseal endpoint. "key=-" makes the vault tool read the key from standard input instead of the command line, so the key does not appear in the container's process list.
     say "[2/9] Unsealing Vault..."
     printf '%s' "$UNSEAL_KEY" | vault_cli write sys/unseal key=- > /dev/null
 
-    # 3. Audit log: one JSON line per request on the container output. Vault
-    #    replaces secret values with HMAC hashes before writing them.
+    # 3. Audit log: one JSON line per request on the container output.
+    # Vault replaces secret values with HMAC hashes before writing them.
     say "[3/9] Turning on the audit log..."
     vault_root audit enable file file_path=stdout > /dev/null
 
-    # 4. Transit engine and the key that encrypts authenticator seeds. Vault keeps
-    #    the key inside; Django can only ask Vault to use it.
+    # 4. Transit engine and the key that encrypts authenticator seeds.
+    # Vault keeps the key inside; Django can only ask Vault to use it.
     say "[4/9] Creating the kura-mfa, kura-answer-keys, and kura-files encryption keys..."
     vault_root secrets enable transit > /dev/null
     vault_root write -f transit/keys/kura-mfa type=aes256-gcm96 > /dev/null
-    #    A second key, used only for exam answer keys (ExamAnswerKey.answer_key_json).
+    # A second key, used only for exam answer keys (ExamAnswerKey.answer_key_json).
     vault_root write -f transit/keys/kura-answer-keys type=aes256-gcm96 > /dev/null
-    #    An RSA-4096 key used to wrap per-file AES-256-GCM data keys (FileContent.wrapped_key).
+    # An RSA-4096 key used to wrap per-file AES-256-GCM data keys (FileContent.wrapped_key).
     vault_root write -f transit/keys/kura-files type=rsa-4096 > /dev/null
-    #    Rotate Transit keys every 30 days (720h). Vault Transit keeps old
-    #    key versions, so previously encrypted seeds, answer keys, and file keys still decrypt (LOG-05).
+    # Rotate Transit keys every 30 days (720h).
+    # Vault Transit keeps old key versions, so previously encrypted seeds, answer keys, and file keys still decrypt (LOG-05).
     vault_root write transit/keys/kura-mfa/config auto_rotate_period=720h > /dev/null
     vault_root write transit/keys/kura-answer-keys/config auto_rotate_period=720h > /dev/null
     vault_root write transit/keys/kura-files/config auto_rotate_period=720h > /dev/null
@@ -532,24 +494,22 @@ cmd_vault_init() {
     # 5. Temporary database users.
     say "[5/9] Setting up temporary database users..."
 
-    #    a) In PostgreSQL (as kura-admin through the container's local socket):
-    #       make kura_app NOLOGIN and create vault_admin (docker/postgres/vault-roles.sql).
+    # a) In PostgreSQL (as kura-admin through the container's local socket):
+    # make kura_app NOLOGIN and create vault_admin (docker/postgres/vault-roles.sql).
     docker compose exec -T db sh -c 'PGPASSWORD="$(tr -d "\r\n" < /run/secrets/db_password)" exec psql -q -U kura-admin -d kura -v ON_ERROR_STOP=1' < docker/postgres/vault-roles.sql > /dev/null
 
-    #    b) Give vault_admin a random first password. It only lives for a moment:
-    #       step d) replaces it with one that only Vault knows.
+    # b) Give vault_admin a random first password.
+    # It only lives for a moment:
+    # step d) replaces it with one that only Vault knows.
     FIRST_PASSWORD=$(openssl rand -hex 24)
     printf "ALTER ROLE vault_admin WITH PASSWORD '%s';\n" "$FIRST_PASSWORD" | \
         docker compose exec -T db sh -c 'PGPASSWORD="$(tr -d "\r\n" < /run/secrets/db_password)" exec psql -q -U kura-admin -d kura -v ON_ERROR_STOP=1'
 
-    #    c) Connect Vault's database engine to PostgreSQL:
-    #       - TLS with the database certificate checked (verify-full) and Vault's
-    #         own certificate as the client certificate (pg_hba.conf requires it).
-    #       - password_authentication=scram-sha-256: Vault sends PostgreSQL a
-    #         hash, never the plain password, so the pgAudit log of "CREATE ROLE"
-    #         never contains a usable password.
-    #       - Temporary users are named kura_dyn_<20 random characters>.
-    #       The first password is read from standard input ("password=-").
+    # c) Connect Vault's database engine to PostgreSQL:
+    # - TLS with the database certificate checked (verify-full) and Vault's own certificate as the client certificate (pg_hba.conf requires it).
+    # - password_authentication=scram-sha-256: Vault sends PostgreSQL a hash, never the plain password, so the pgAudit log of "CREATE ROLE" never contains a usable password.
+    # - Temporary users are named kura_dyn_<20 random characters>.
+    # The first password is read from standard input ("password=-").
     vault_root secrets enable database > /dev/null
     printf '%s' "$FIRST_PASSWORD" | vault_root write database/config/kura-postgresql \
         plugin_name=postgresql-database-plugin \
@@ -560,13 +520,11 @@ cmd_vault_init() {
         username_template='kura_dyn_{{random 20 | lowercase}}' \
         allowed_roles=kura-app > /dev/null
 
-    #    d) "rotate-root": Vault changes vault_admin's password to a new random one
-    #       that it never shows to anyone.
+    # d) "rotate-root": Vault changes vault_admin's password to a new random one that it never shows to anyone.
     vault_root write -f database/rotate-root/kura-postgresql > /dev/null
 
-    #    e) The "kura-app" role: each request makes a new user that can log in for
-    #       15 minutes and gets kura_app's permissions (IN ROLE kura_app). When the
-    #       15 minutes are up, Vault drops the user.
+    # e) The "kura-app" role: each request makes a new user that can log in for 15 minutes and gets kura_app's permissions (IN ROLE kura_app).
+    # When the 15 minutes are up, Vault drops the user.
     vault_root write database/roles/kura-app \
         db_name=kura-postgresql \
         creation_statements="CREATE ROLE \"{{name}}\" WITH LOGIN PASSWORD '{{password}}' VALID UNTIL '{{expiration}}' IN ROLE kura_app;" \
@@ -576,7 +534,7 @@ cmd_vault_init() {
 
     # 6. Policy and AppRole for Django.
     #    token_type=batch: login tokens are not stored by Vault, so logging in for
-    #    every request does not fill up Vault's storage.
+    # every request does not fill up Vault's storage.
     #    token_ttl=15m: a stolen token stops working after 15 minutes.
     say "[6/9] Creating Django's policy and AppRole login..."
     vault_root policy write kura-web /vault/policies/kura-web.hcl > /dev/null
@@ -587,22 +545,19 @@ cmd_vault_init() {
         token_ttl=15m \
         token_max_ttl=15m > /dev/null
 
-    # Write Django's two login values into Docker secret files, then give them
-    # to the Django user (mode 600, UID 10001).
+    # Write Django's two login values into Docker secret files, then give them to the Django user (mode 600, UID 10001).
     vault_root read -field=role_id auth/approle/role/kura-web/role-id > "$SECRETS_DIR/vault_role_id.txt"
     vault_root write -f -field=secret_id auth/approle/role/kura-web/secret-id > "$SECRETS_DIR/vault_secret_id.txt"
     fix_secret_file vault_role_id
     fix_secret_file vault_secret_id
 
     # 7. Kura's certificate authority (PKI engine), in two levels:
-    #    - "pki": the ROOT CA, valid 10 years. Its only job is to sign the
-    #      intermediate CA below, so it is almost never used.
-    #    - "pki_int": the INTERMEDIATE CA, valid 5 years. It signs every service
-    #      certificate. If it were ever compromised it could be replaced without
-    #      changing ca.crt (the root) in every service.
-    #    "generate/internal" means the private key is created inside Vault and can
-    #    never be exported. certs/ca/ca.key (the openssl bootstrap CA) is no longer
-    #    needed after step 10.
+    # - "pki": the ROOT CA, valid 10 years.
+    # Its only job is to sign the intermediate CA below, so it is almost never used.
+    # - "pki_int": the INTERMEDIATE CA, valid 5 years.
+    # It signs every service certificate.
+    # If it were ever compromised it could be replaced without changing ca.crt (the root) in every service.
+    # "generate/internal" means the private key is created inside Vault and can never be exported. certs/ca/ca.key (the openssl bootstrap CA) is no longer needed after step 10.
     say "[7/9] Creating Kura's certificate authority (root + intermediate)..."
     vault_root secrets enable -path=pki pki > /dev/null
     vault_root secrets tune -max-lease-ttl=87600h pki > /dev/null
@@ -611,19 +566,15 @@ cmd_vault_init() {
 
     vault_root secrets enable -path=pki_int pki > /dev/null
     vault_root secrets tune -max-lease-ttl=43800h pki_int > /dev/null
-    # The intermediate makes a signing request (CSR), the root signs it, and the
-    # signed certificate is loaded back into the intermediate. Each step reads the
-    # previous step's output on standard input ("=-").
+    # The intermediate makes a signing request (CSR), the root signs it, and the signed certificate is loaded back into the intermediate.
+    # Each step reads the previous step's output on standard input ("=-").
     INTERMEDIATE_CSR=$(vault_root write -field=csr pki_int/intermediate/generate/internal \
         common_name="Kura Internal Intermediate CA" key_type=ec key_bits=384)
     INTERMEDIATE_CERT=$(echo "$INTERMEDIATE_CSR" | vault_root write -field=certificate pki/root/sign-intermediate \
         csr=- format=pem_bundle ttl=43800h)
     echo "$INTERMEDIATE_CERT" | vault_root write pki_int/intermediate/set-signed certificate=- > /dev/null
 
-    # The only kind of certificate the intermediate may issue: one of Kura's
-    # service names (alloy = the metrics collector's PostgreSQL login) (plus
-    # localhost / 127.0.0.1 for health checks inside a container), for at most
-    # 1 year, usable as both server and client certificate.
+    # The only kind of certificate the intermediate may issue: one of Kura's service names (alloy = the metrics collector's PostgreSQL login) (plus localhost / 127.0.0.1 for health checks inside a container), for at most 1 year, usable as both server and client certificate.
     # cn_validations=disabled lets the common name be "kura_migrator", a PostgreSQL
     # user name that is not a valid host name. allowed_domains still limits the names.
     vault_root write pki_int/roles/kura-service \
@@ -639,9 +590,9 @@ cmd_vault_init() {
         key_bits=256 \
         max_ttl=8760h > /dev/null
 
-    # 8. The renewal step's own login. Its policy may ONLY issue certificates
-    #    with the kura-service role (docker/vault/policies/kura-cert-issuer.hcl).
-    #    The login stays on the host in secrets/ with mode 600 (owner only).
+    # 8. The renewal step's own login.
+    # Its policy may ONLY issue certificates with the kura-service role (docker/vault/policies/kura-cert-issuer.hcl).
+    # The login stays on the host in secrets/ with mode 600 (owner only).
     say "[8/9] Creating the certificate renewal AppRole..."
     vault_root policy write kura-cert-issuer /vault/policies/kura-cert-issuer.hcl > /dev/null
     vault_root write auth/approle/role/kura-cert-issuer \
@@ -657,8 +608,8 @@ cmd_vault_init() {
     fix_secret_file vault_issuer_role_id
     fix_secret_file vault_issuer_secret_id
 
-    # 9. Revoke the root token. If full admin access is ever needed again, a new
-    #    root token can be made with the unseal key ("vault operator generate-root").
+    # 9. Revoke the root token.
+    # If full admin access is ever needed again, a new root token can be made with the unseal key ("vault operator generate-root").
     say "[9/9] Revoking the root token..."
     vault_root token revoke -self > /dev/null
     trap - EXIT
@@ -681,8 +632,7 @@ cmd_vault_init() {
     echo "=============================================================================="
 }
 
-# The vault tool, logged in with the temporary root token from vault-init or
-# vault-add-name.
+# The vault tool, logged in with the temporary root token from vault-init or vault-add-name.
 vault_root() {
     docker compose exec -T -e VAULT_TOKEN="$ROOT_TOKEN" vault vault "$@"
 }
@@ -697,16 +647,14 @@ show_root_token_on_failure() {
     fi
 }
 
-# ------------------------------------------------------------------------------
 # vault-add-name
-# ------------------------------------------------------------------------------
 
-# Add a service name to Vault's "kura-service" certificate role on a Vault that
-# is already set up. The root token was revoked at setup, so this:
-#   1. asks for the UNSEAL KEY (typed, not shown, never saved),
-#   2. makes a short-lived root token with "vault operator generate-root",
-#   3. adds the name to pki_int/roles/kura-service (keeping all other settings),
-#   4. revokes that root token again.
+# Add a service name to Vault's "kura-service" certificate role on a Vault that is already set up.
+# The root token was revoked at setup, so this:
+# 1. asks for the UNSEAL KEY (typed, not shown, never saved),
+# 2. makes a short-lived root token with "vault operator generate-root",
+# 3. adds the name to pki_int/roles/kura-service (keeping all other settings),
+# 4. revokes that root token again.
 # Afterwards add the name to INTERNAL_CERTS and KEY_OWNERS above and run renew-certs.
 cmd_vault_add_name() {
     NEW_NAME=${1:-}
@@ -726,8 +674,8 @@ cmd_vault_add_name() {
     # Remove spaces, tabs and line breaks that often come along when pasting.
     UNSEAL_KEY=$(printf '%s' "$UNSEAL_KEY" | tr -d ' \t\r\n')
 
-    # 2. Make a temporary root token. Vault returns it encoded with a one-time
-    #    password (OTP); only someone holding both can decode it.
+    # 2. Make a temporary root token.
+    # Vault returns it encoded with a one-time password (OTP); only someone holding both can decode it.
     # Cancel any earlier attempt that was left unfinished (e.g. a wrong key).
     vault_cli operator generate-root -cancel > /dev/null 2>&1 || true
     OTP=$(vault_cli operator generate-root -generate-otp)
@@ -740,8 +688,7 @@ cmd_vault_add_name() {
     trap revoke_root_token EXIT
 
     # 3. Read the current allowed names and add the new one (if not there yet).
-    #    "patch" changes ONLY allowed_domains; "write" would reset the role's other
-    #    settings (lifetimes, key type, flags) to their defaults.
+    # "patch" changes ONLY allowed_domains; "write" would reset the role's other settings (lifetimes, key type, flags) to their defaults.
     CURRENT=$(vault_root read -field=allowed_domains pki_int/roles/kura-service | tr -d '[]' | tr ' ' ',')
     case ",$CURRENT," in
         *",$NEW_NAME,"*)
@@ -759,24 +706,18 @@ revoke_root_token() {
     echo "Temporary root token revoked."
 }
 
-# ------------------------------------------------------------------------------
 # renew-certs
-# ------------------------------------------------------------------------------
 
-# Renew the internal mTLS certificates from Vault's CA. Runs weekly from root's
-# crontab (docker/cron/kura.crontab) and at the end of vault-init.
-#   1. Log in to Vault with the "kura-cert-issuer" AppRole (secrets/, host only).
-#   2. Ask the intermediate CA for a new certificate and key for each service:
-#      30 days for most, 1 year for Vault itself (so Vault's own certificate
-#      cannot expire during a long sealed period).
-#   3. Only when ALL of them were issued, write them over the old files IN
-#      PLACE. (docker-compose.yml mounts single files; replacing a file with a
-#      new one would leave the container looking at the old one.)
-#   4. Reload each running service so it picks up its new certificate without
-#      downtime.
-#   5. Delete the openssl bootstrap CA key (certs/ca/), which nothing trusts
-#      any more: ca.crt is now Vault's root CA.
-# Vault must be unsealed. Nothing is changed if any step before 3 fails.
+# Renew the internal mTLS certificates from Vault's CA.
+# Runs weekly from root's crontab (docker/cron/kura.crontab) and at the end of vault-init.
+# 1. Log in to Vault with the "kura-cert-issuer" AppRole (secrets/, host only).
+# 2. Ask the intermediate CA for a new certificate and key for each service:
+# 30 days for most, 1 year for Vault itself (so Vault's own certificate cannot expire during a long sealed period).
+# 3. Only when ALL of them were issued, write them over the old files IN PLACE. (docker-compose.yml mounts single files; replacing a file with a new one would leave the container looking at the old one.)
+# 4. Reload each running service so it picks up its new certificate without downtime.
+# 5. Delete the openssl bootstrap CA key (certs/ca/), which nothing trusts any more: ca.crt is now Vault's root CA.
+# Vault must be unsealed.
+# Nothing is changed if any step before 3 fails.
 # Renewing twice is safe: each run issues a fresh set.
 cmd_renew_certs() {
     need_root renew-certs
@@ -784,22 +725,21 @@ cmd_renew_certs() {
         return 0
     fi
 
-    # New certificates and keys are first written to a private temporary folder
-    # (umask 077: owner only) that is always deleted at the end.
+    # New certificates and keys are first written to a private temporary folder (umask 077: owner only) that is always deleted at the end.
     old_umask=$(umask)
     umask 077
     WORK_DIR=$(mktemp -d)
     trap 'rm -rf "$WORK_DIR"' EXIT
 
-    # 1. Log in. The secret ID goes in on standard input, so it is not visible in
-    #    the process list. The returned token lives for 10 minutes.
+    # 1. Log in.
+    # The secret ID goes in on standard input, so it is not visible in the process list.
+    # The returned token lives for 10 minutes.
     say "[1/5] Logging in to Vault as kura-cert-issuer..."
     ROLE_ID=$(read_secret vault_issuer_role_id)
     ISSUER_TOKEN=$(docker compose exec -T vault vault write -field=token auth/approle/login \
         role_id="$ROLE_ID" secret_id=- < "$SECRETS_DIR/vault_issuer_secret_id.txt")
 
-    # 2. Issue them all. "localhost" and 127.0.0.1 are for health checks that run
-    #    inside the container itself.
+    # 2. Issue them all. "localhost" and 127.0.0.1 are for health checks that run inside the container itself.
     say "[2/5] Issuing new certificates..."
     issue_certificate nginx "nginx" 720h
     issue_certificate waf "waf" 720h
@@ -820,8 +760,7 @@ cmd_renew_certs() {
         grep -q "PRIVATE KEY" "$WORK_DIR/$NAME.key" || die "Vault returned a bad $NAME.key"
     done
 
-    # 3. Write the new files over the old ones IN PLACE ("cat new > old" keeps the
-    #    same file, so the containers' single-file mounts see the new content).
+    # 3. Write the new files over the old ones IN PLACE ("cat new > old" keeps the same file, so the containers' single-file mounts see the new content).
     say "[3/5] Installing the new certificates..."
     for NAME in ca $INTERNAL_CERTS; do
         for FILE in "$NAME.crt" "$NAME.key"; do
@@ -837,8 +776,7 @@ cmd_renew_certs() {
     # On Linux, each key must belong to the container user that reads it.
     set_key_owners
 
-    # 4. Tell each running service to load its new certificate. A service that is
-    #    not running simply reads the new files when it next starts.
+    # 4. Tell each running service to load its new certificate. A service that is not running simply reads the new files when it next starts.
     say "[4/5] Reloading services..."
     if is_running db; then
         docker compose exec -T db sh -c 'PGPASSWORD="$(tr -d "\r\n" < /run/secrets/db_password)" psql -q -U kura-admin -d kura -c "SELECT pg_reload_conf();"' > /dev/null
@@ -865,8 +803,7 @@ cmd_renew_certs() {
         echo "      web: sent SIGHUP (Gunicorn starts new workers with the new certificate)"
     fi
 
-    # 5. The openssl bootstrap CA is no longer trusted by anything (ca.crt is now
-    #    Vault's root), so its private key is deleted.
+    # 5. The openssl bootstrap CA is no longer trusted by anything (ca.crt is now Vault's root), so its private key is deleted.
     say "[5/5] Removing the openssl bootstrap CA key..."
     rm -f certs/ca/ca.key certs/ca/ca.srl
 
@@ -882,18 +819,17 @@ cmd_renew_certs() {
     done
 }
 
-# Ask the intermediate CA for one certificate. Vault answers in JSON; python3
-# (standard library only) picks out the parts:
+# Ask the intermediate CA for one certificate.
+# Vault answers in JSON; python3 (standard library only) picks out the parts:
 #   <name>.crt = the certificate followed by the intermediate CA certificate
-#                (the "chain", so others can link it back to the root CA)
+# (the "chain", so others can link it back to the root CA)
 #   <name>.key = the private key, created by Vault and shown only this once
 issue_certificate() {
     NAME=$1
     DNS_NAMES=$2
     LIFETIME=$3
-    # kura_migrator is a PostgreSQL user name, not a DNS name ("_" is not allowed
-    # in DNS names), so Vault refuses it as a DNS name. PostgreSQL only checks the
-    # common name, so the migrator certificate gets the common name and no DNS names.
+    # kura_migrator is a PostgreSQL user name, not a DNS name ("_" is not allowed in DNS names), so Vault refuses it as a DNS name.
+    # PostgreSQL only checks the common name, so the migrator certificate gets the common name and no DNS names.
     if [ "$NAME" = "migrator" ]; then
         NAME_ARGS="common_name=$DNS_NAMES exclude_cn_from_sans=true"
     else
@@ -911,10 +847,9 @@ issue_certificate() {
     rm "$WORK_DIR/$NAME.json"
 }
 
-# Record each certificate's expiry time for Prometheus (InternalCertExpiring
-# alert). Same folder and write-then-rename pattern as the other metric files.
-# A missing metrics folder must not make the renewal itself look failed: the
-# certificates are already installed at this point, so only warn.
+# Record each certificate's expiry time for Prometheus (InternalCertExpiring alert).
+# Same folder and write-then-rename pattern as the other metric files.
+# A missing metrics folder must not make the renewal itself look failed: the certificates are already installed at this point, so only warn.
 write_cert_metrics() {
     metrics_directory=${KURA_METRICS_DIR:-/var/lib/kura-metrics}
     if ! mkdir -p "$metrics_directory" 2>/dev/null; then
@@ -930,22 +865,16 @@ write_cert_metrics() {
             echo "kura_cert_expiry_timestamp_seconds{service=\"$NAME\"} $EXPIRY_SECONDS"
         done
     } > "$metrics_directory/kura_certs.prom.tmp"
-    # Renewal runs with umask 077 (for the keys); the metrics file holds only
-    # expiry dates, and Alloy (another user) must be able to read it.
+    # Renewal runs with umask 077 (for the keys); the metrics file holds only expiry dates, and Alloy (another user) must be able to read it.
     chmod 0644 "$metrics_directory/kura_certs.prom.tmp"
     mv -f "$metrics_directory/kura_certs.prom.tmp" "$metrics_directory/kura_certs.prom"
 }
 
-# ------------------------------------------------------------------------------
 # grafana-users
-# ------------------------------------------------------------------------------
 
-# Keep the built-in "admin" account for setup and recovery, and make sure one
-# personal read-only account "viewer" exists with the Viewer role. Uses the
-# Grafana HTTP API on 127.0.0.1:3000. Basic auth is off (docker-compose.yml),
-# so the script logs in through the login form like a browser and keeps the
-# session cookie in a private folder. Passwords go from the secret files into
-# that folder and to Grafana, never onto the command line or the screen.
+# Keep the built-in "admin" account for setup and recovery, and make sure one personal read-only account "viewer" exists with the Viewer role.
+# Uses the Grafana HTTP API on 127.0.0.1:3000. Basic auth is off (docker-compose.yml), so the script logs in through the login form like a browser and keeps the session cookie in a private folder.
+# Passwords go from the secret files into that folder and to Grafana, never onto the command line or the screen.
 # Safe to rerun: an existing viewer is kept; only a wrong role is corrected.
 # --reset-password (asks for YES) sets both passwords back to the secret files.
 cmd_grafana_users() {
@@ -978,8 +907,8 @@ cmd_grafana_users() {
     fi
     skip "admin account works (kept for setup and recovery)"
 
-    # 2. Create "viewer" if it does not exist yet. The JSON body (with the
-    #    password) is built from the secret file inside the private folder.
+    # 2. Create "viewer" if it does not exist yet.
+    # The JSON body (with the password) is built from the secret file inside the private folder.
     code=$(grafana_api admin GET "/api/users/lookup?loginOrEmail=viewer")
     if [ "$code" = "404" ]; then
         python3 -c 'import json, sys; print(json.dumps({"name": "Viewer", "login": "viewer", "email": "viewer@localhost", "password": sys.stdin.read().strip(), "OrgId": 1}))' \
@@ -1029,9 +958,8 @@ cmd_grafana_users() {
     trap - EXIT
 }
 
-# Log in to Grafana through the login form as "admin" or "viewer", with the
-# password from the named secret file. Keeps the session cookie in
-# $GRAFANA_WORK/<login>.cookies and prints only the HTTP status.
+# Log in to Grafana through the login form as "admin" or "viewer", with the password from the named secret file.
+# Keeps the session cookie in $GRAFANA_WORK/<login>.cookies and prints only the HTTP status.
 grafana_login() {
     login=$1
     secret=$2
@@ -1042,9 +970,9 @@ grafana_login() {
     rm -f "$GRAFANA_WORK/login.json"
 }
 
-# Call the Grafana API with the session of "admin" or "viewer". Prints only
-# the HTTP status; the answer body goes to $GRAFANA_WORK/answer.json. An
-# optional fourth argument is a JSON file sent as the request body.
+# Call the Grafana API with the session of "admin" or "viewer".
+# Prints only the HTTP status; the answer body goes to $GRAFANA_WORK/answer.json.
+# An optional fourth argument is a JSON file sent as the request body.
 grafana_api() {
     login=$1
     method=$2
@@ -1059,21 +987,21 @@ grafana_api() {
     fi
 }
 
-# ------------------------------------------------------------------------------
 # preflight
-# ------------------------------------------------------------------------------
 
 PASSED=0
 FAILED=0
 
-# Record one check result. Messages never contain secret values.
+# Record one check result.
+# Messages never contain secret values.
 pass() { echo "[PASS] $*"; PASSED=$((PASSED + 1)); }
 fail() { echo "[FAIL] $*"; FAILED=$((FAILED + 1)); }
 
-# Read-only production checks. Ends with PASS or FAIL and exits non-zero when
-# any check fails. Nothing is changed, so --dry-run makes no difference. Run it
-# as root on the VM: secret files belong to container users, and sshd -T needs
-# root. As another user, unreadable files are reported as failures.
+# Read-only production checks.
+# Ends with PASS or FAIL and exits non-zero when any check fails.
+# Nothing is changed, so --dry-run makes no difference.
+# Run it as root on the VM: secret files belong to container users, and sshd -T needs root.
+# As another user, unreadable files are reported as failures.
 cmd_preflight() {
     check_compose_config
     check_django_deploy
@@ -1101,8 +1029,8 @@ check_compose_config() {
     fi
 }
 
-# Django's deployment checklist, inside the web image in a throwaway container
-# (removed afterwards). Only the check output is shown, never the environment.
+# Django's deployment checklist, inside the web image in a throwaway container (removed afterwards).
+# Only the check output is shown, never the environment.
 check_django_deploy() {
     if docker compose run --rm --no-deps -T web python manage.py check --deploy --fail-level WARNING > /tmp/kura-check-deploy.$$ 2>&1; then
         pass "manage.py check --deploy"
@@ -1113,7 +1041,8 @@ check_django_deploy() {
     rm -f /tmp/kura-check-deploy.$$
 }
 
-# DEBUG must not be true in .env. Only that one key is read; no value is printed.
+# DEBUG must not be true in .env.
+# Only that one key is read; no value is printed.
 check_debug_off() {
     if [ ! -f .env ]; then
         pass ".env not present (Compose sets DEBUG=False for every Django container)"
@@ -1126,8 +1055,7 @@ check_debug_off() {
     esac
 }
 
-# No secret file may be missing, empty, a known placeholder, or (for keys and
-# passwords Kura generates) shorter than 32 characters.
+# No secret file may be missing, empty, a known placeholder, or (for keys and passwords Kura generates) shorter than 32 characters.
 check_secret_values() {
     for name in $GENERATED_SECRETS $EXTERNAL_SECRETS $HOST_ONLY_SECRETS; do
         file="$SECRETS_DIR/$name.txt"
@@ -1160,8 +1088,7 @@ check_secret_values() {
     done
 }
 
-# Secret files and private keys must be mode 600 and belong to the expected
-# user; the secrets folder must be 700.
+# Secret files and private keys must be mode 600 and belong to the expected user; the secrets folder must be 700.
 check_file_modes() {
     if ! is_linux; then
         pass "file owners not checked (not Linux)"
@@ -1205,8 +1132,7 @@ check_cert_expiry() {
 }
 
 # Only nginx may publish ports on all interfaces, and only 80 (redirect) and
-# 443. Grafana must be exactly 127.0.0.1:3000 and the CrowdSec API stays on
-# loopback; Prometheus, Loki and Alertmanager must publish no port.
+# 443. Grafana must be exactly 127.0.0.1:3000 and the CrowdSec API stays on loopback; Prometheus, Loki and Alertmanager must publish no port.
 check_published_ports() {
     ports=$(docker compose --profile tools config --format json 2>/dev/null | python3 -c '
 import json, sys
@@ -1262,12 +1188,11 @@ check_sshd() {
     rm -f /tmp/kura-sshd.$$
 }
 
-# ------------------------------------------------------------------------------
 # health
-# ------------------------------------------------------------------------------
 
-# Container health states, the HTTPS site through nginx, and Grafana's health
-# endpoint. Read-only. Exits non-zero when anything is unhealthy.
+# Container health states, the HTTPS site through nginx, and Grafana's health endpoint.
+# Read-only.
+# Exits non-zero when anything is unhealthy.
 cmd_health() {
     PASSED=0
     FAILED=0
@@ -1309,12 +1234,10 @@ cmd_health() {
     fi
 }
 
-# ------------------------------------------------------------------------------
 # setup
-# ------------------------------------------------------------------------------
 
-# One-command first setup on a fresh VM. Each step skips what is already done,
-# so it is safe to run again after fixing a problem.
+# One-command first setup on a fresh VM.
+# Each step skips what is already done, so it is safe to run again after fixing a problem.
 cmd_setup() {
     need_root setup
 
@@ -1350,17 +1273,16 @@ cmd_setup() {
         docker compose --profile tools run --rm migrate
     fi
 
-    # A new, empty Docker volume belongs to root. Loki (UID 10001) and the
-    # second pgBackRest repository (postgres, UID 26) cannot write to it, so
-    # Loki would crash on start and stanza-create would fail. Give each its owner.
+    # A new, empty Docker volume belongs to root.
+    # Loki (UID 10001) and the second pgBackRest repository (postgres, UID 26) cannot write to it, so Loki would crash on start and stanza-create would fail.
+    # Give each its owner.
     if ! planned "give the Loki volume to UID 10001 and the second backup repository to UID 26"; then
         docker compose up --no-start loki
         fix_volume_owner loki /var/loki 10001:10001
         fix_volume_owner db /var/lib/pgbackrest-offsite 26:26
     fi
 
-    # Create the pgBackRest stanza in both repositories (safe to repeat), so WAL
-    # archiving works from the start, then check archiving end to end.
+    # Create the pgBackRest stanza in both repositories (safe to repeat), so WAL archiving works from the start, then check archiving end to end.
     if ! planned "create the pgBackRest stanza and run pgbackrest check"; then
         docker compose exec -T db pgbackrest --stanza=kura stanza-create
         docker compose exec -T db pgbackrest --stanza=kura check
@@ -1394,13 +1316,10 @@ cmd_setup() {
     fi
 }
 
-# ------------------------------------------------------------------------------
 # app-metrics
-# ------------------------------------------------------------------------------
 
-# Save Kura's application counts (manage.py write_app_metrics) as a metrics
-# file for Alloy's textfile collector. Writes to a temporary file first and then
-# renames it, so Alloy never reads half a file.
+# Save Kura's application counts (manage.py write_app_metrics) as a metrics file for Alloy's textfile collector.
+# Writes to a temporary file first and then renames it, so Alloy never reads half a file.
 cmd_app_metrics() {
     if planned "write \${KURA_METRICS_DIR:-/var/lib/kura-metrics}/kura_app.prom"; then
         return 0
@@ -1412,19 +1331,15 @@ cmd_app_metrics() {
     mv -f "$metrics_directory/kura_app.prom.tmp" "$metrics_directory/kura_app.prom"
 }
 
-# ------------------------------------------------------------------------------
 # restore-drill
-# ------------------------------------------------------------------------------
 
-# SAFE restore drill: restores the backups into a THROWAWAY database and
-# compares it with the live one. The live database is never touched.
-#   - the restore runs in a separate container with NO network (--network none)
-#   - into its own new, empty volume (kura_restore_drill_<time>)
-#   - with WAL archiving OFF, so the drill can never write into the backup repo
-#   - the backup repository volume is mounted READ-ONLY
-# At the end it prints row counts from the live and the restored database and
-# how long the restore took (the "RTO"). Remove the drill volume afterwards
-# with the command it prints.
+# SAFE restore drill: restores the backups into a THROWAWAY database and compares it with the live one.
+# The live database is never touched.
+# - the restore runs in a separate container with NO network (--network none)
+# - into its own new, empty volume (kura_restore_drill_<time>)
+# - with WAL archiving OFF, so the drill can never write into the backup repo
+# - the backup repository volume is mounted READ-ONLY At the end it prints row counts from the live and the restored database and how long the restore took (the "RTO").
+# Remove the drill volume afterwards with the command it prints.
 cmd_restore_drill() {
     need_root restore-drill
     TARGET_TIME=${1:-latest}
@@ -1444,10 +1359,8 @@ cmd_restore_drill() {
     docker run --rm -v "$DRILL_VOLUME":/restore --entrypoint sh "$IMAGE" -c 'chown 26:26 /restore && chmod 700 /restore' > /dev/null 2>&1 || \
         docker run --rm --user 0 -v "$DRILL_VOLUME":/restore --entrypoint sh "$IMAGE" -c 'chown 26:26 /restore && chmod 700 /restore'
 
-    # 2. Restore with pgBackRest into that volume. "--type=time" stops replaying
-    #    WAL at TARGET_TIME (point-in-time recovery); "latest" replays everything.
-    #    The options are kept as separate, quoted arguments ("set --"), because the
-    #    target time contains a space and must stay one argument.
+    # 2. Restore with pgBackRest into that volume. "--type=time" stops replaying WAL at TARGET_TIME (point-in-time recovery); "latest" replays everything.
+    # The options are kept as separate, quoted arguments ("set --"), because the target time contains a space and must stay one argument.
     if [ "$TARGET_TIME" = "latest" ]; then
         set -- --type=default
     else
@@ -1463,8 +1376,7 @@ cmd_restore_drill() {
         --entrypoint /usr/local/bin/pgbackrest "$IMAGE" \
         --stanza=kura --pg1-path=/restore --lock-path=/tmp "$@" restore > /dev/null
 
-    # 3. Start PostgreSQL on the restored copy: no network, no archiving, and the
-    #    default settings from the restored folder (so it never touches the repo).
+    # 3. Start PostgreSQL on the restored copy: no network, no archiving, and the default settings from the restored folder (so it never touches the repo).
     say "[2/3] Starting the restored copy and replaying WAL..."
     docker run -d --name "$DRILL_CONTAINER" --network none --tmpfs /tmp --tmpfs /var/run/postgresql:mode=1777 --tmpfs /var/log/pgbackrest:mode=1777 \
         -v "$DRILL_VOLUME":/restore \
@@ -1501,12 +1413,9 @@ cmd_restore_drill() {
     echo "  docker rm -f $DRILL_CONTAINER && docker volume rm $DRILL_VOLUME"
 }
 
-# ------------------------------------------------------------------------------
 # Command line
-# ------------------------------------------------------------------------------
 
-# Options may appear anywhere; the first other word is the command and the
-# rest are its arguments.
+# Options may appear anywhere; the first other word is the command and the rest are its arguments.
 COMMAND=""
 ARGUMENT=""
 for word in "$@"; do
