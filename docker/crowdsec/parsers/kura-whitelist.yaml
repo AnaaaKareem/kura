@@ -5,12 +5,10 @@
 name: kura/internal-whitelist
 description: "Never ban Kura's own internal addresses"
 whitelist:
-  reason: "internal Docker, loopback or NetBird admin address"
+  reason: "internal Docker or loopback address"
   cidr:
     # The host itself.
     - "127.0.0.0/8"
     # Docker's private networks (all of Kura's networks are inside this range,
     # including cloudflared at 172.28.10.10 and nginx at 172.28.10.20).
     - "172.16.0.0/12"
-    # NetBird's default address range for admin devices (confirm in WP8).
-    - "100.64.0.0/10"
