@@ -617,11 +617,15 @@ services:
       - "127.0.0.1:8085:8080"
     environment:
       # crowdsecurity/linux adds the base parsers the others depend on.
-      COLLECTIONS: "crowdsecurity/linux crowdsecurity/nginx crowdsecurity/http-cve crowdsecurity/base-http-scenarios"
+      # crowdsecurity/sshd bans SSH brute force found in the VM's auth log.
+      COLLECTIONS: "crowdsecurity/linux crowdsecurity/sshd crowdsecurity/nginx crowdsecurity/http-cve crowdsecurity/base-http-scenarios"
       BOUNCER_KEY_FIREWALL_FILE: /run/secrets/crowdsec_bouncer_key
     volumes:
       - ./docker/crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml:ro
       - ./docker/crowdsec/profiles.yaml:/etc/crowdsec/profiles.yaml:ro
+      # The VM's SSH log, read-only, for the crowdsecurity/sshd scenarios.
+      # Ubuntu Server's rsyslog writes it; it must exist before the stack starts.
+      - /var/log/auth.log:/var/log/host/auth.log:ro
       # Turns on Prometheus metrics on :6060 for Alloy (WP3).
       - ./docker/crowdsec/config.yaml.local:/etc/crowdsec/config.yaml.local:ro
       # Kura's own parsers, whitelist and scenarios (docker/crowdsec/README.md).

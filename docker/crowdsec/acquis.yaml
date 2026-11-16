@@ -38,3 +38,13 @@ container_name:
   - kura-web
 labels:
   type: kura_django
+
+---
+# 4. The VM's SSH log (/var/log/auth.log, mounted read-only by docker-compose.yml).
+# The crowdsecurity/sshd collection parses it and bans SSH brute force; the
+# host bouncer then drops the address in nftables before the SSH rule.
+source: file
+filenames:
+  - /var/log/host/auth.log
+labels:
+  type: syslog
