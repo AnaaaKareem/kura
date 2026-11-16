@@ -12238,8 +12238,10 @@ class AuditGroup7InfraAndConfigTests(TestCase):
         # NetBird was replaced by an SSH tunnel to Grafana.
         self.assertNotIn("netbird", compose_text.lower())
 
-        self.assertIn("ip saddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } tcp dport 443 accept", nft_text)
-        self.assertIn("ip saddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } udp dport 3478 accept", nft_text)
+        # The host firewall opens only SSH, and only from the admin allowlist.
+        self.assertIn("ip saddr @admin_allowlist tcp dport 22 accept", nft_text)
+        self.assertNotIn("dport 443", nft_text)
+        self.assertNotIn("wt0", nft_text)
 
     def test_settings_hardening_and_pinned_requirements(self):
         self.assertNotIn("django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher", settings.PASSWORD_HASHERS)
