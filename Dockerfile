@@ -10,7 +10,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 WORKDIR /build
 
-# Install compiler and headers needed for compiling packages (psycopg2, argon2)
+# Install compiler and headers needed for compiling packages (argon2)
 RUN apt-get update && \
     apt-get install -y --no-install-recommends gcc libpq-dev python3-dev && \
     rm -rf /var/lib/apt/lists/*
@@ -26,7 +26,7 @@ FROM python:3.14-slim@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
-# Install only shared runtime libraries needed by psycopg2 and python-magic
+# Install only shared runtime libraries needed by PostgreSQL clients and python-magic
 RUN apt-get update && \
     apt-get install -y --no-install-recommends libpq5 libmagic1 && \
     rm -rf /var/lib/apt/lists/*
@@ -42,6 +42,10 @@ WORKDIR /app
 
 # Copy application source code with ownership set to non-root user
 COPY --chown=kura:kura . /app
+
+# Create the static files folder owned by kura. A new, empty named volume
+# copies this folder's owner, so collectstatic (running as kura) can write to it.
+RUN mkdir -p /app/staticfiles && chown kura:kura /app/staticfiles
 
 # Switch to unprivileged user
 USER kura

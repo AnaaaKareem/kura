@@ -1,3 +1,8 @@
+# The Compose project is always "kura", whatever the folder is called.
+# Alloy (docker/alloy/config.alloy) only collects logs from containers of the
+# "kura" project named kura-*, so a different project name would lose logs.
+name: kura
+
 # Log rotation for every service: Docker's json-file driver keeps at most five
 # 10 MB files per container, so container logs cannot fill the VM's disk.
 # Alloy and CrowdSec read these logs through the Docker API, which works the
@@ -139,7 +144,7 @@ services:
     # clamav: internal network shared only with ClamAV (INSTREAM is plain TCP; CFG-06).
     # mail: so Django can hand email to the Postfix relay (nothing else is there).
     # breach_check: so Django can reach the breach-check proxy (nothing else is there).
-    # Not on frontend (Nginx/cloudflared) or observability.
+    # Not on frontend (Nginx) or observability.
     networks:
       - app
       - backend
@@ -157,15 +162,20 @@ services:
       - vault_secret_id
     environment:
       DEBUG: "False"
+      # Gunicorn worker processes (gunicorn.conf.py). The load test made the
+      # 3-worker default CPU-bound at about 36 requests per second; 5 workers
+      # use the 2 CPUs better and stay well inside the 2 GB memory limit.
+      GUNICORN_WORKERS: "5"
       DATABASE_NAME: kura
       # Django logs in as temporary users from Vault (15 minutes each, members
       # of the least-privilege role kura_app), not a fixed account. See
-      # kura/vault_postgres/base.py. Migrations use the "migrate" service.
+      # kura/base.py. Migrations use the "migrate" service.
       VAULT_DATABASE_CREDENTIALS: "True"
       DATABASE_HOST: db
       DATABASE_PORT: "5432"
-      # KURA_PUBLIC_HOSTNAME is the Cloudflare Tunnel hostname, set in .env
-      # on the server (e.g. KURA_PUBLIC_HOSTNAME=kura.yourdomain.com).
+      # KURA_PUBLIC_HOSTNAME is the public host name visitors type, which
+      # points at the VM's address. Set it in .env on the server
+      # (e.g. KURA_PUBLIC_HOSTNAME=kura.yourdomain.com).
       ALLOWED_HOSTS: "localhost,127.0.0.1,web,${KURA_PUBLIC_HOSTNAME:-kura.example.com}"
       CLAMAV_HOST: "clamav"
       CLAMAV_PORT: "3310"
@@ -438,9 +448,12 @@ services:
       - /var/cache/nginx:size=64M,mode=1777
       - /var/run:size=16M,mode=1777
       - /tmp:size=64M,mode=1777
+    # The only ports published on every interface: visitors connect here
+    # directly. Port 80 only redirects to HTTPS (docker/nginx/conf.d/kura.conf).
+    # The host firewall (docker/nftables/kura.nft) allows 80 and 443 in.
     ports:
-      - "127.0.0.1:8080:80"
-      - "127.0.0.1:8443:443"
+      - "80:80"
+      - "443:443"
     volumes:
       - ./docker/nginx/nginx.conf:/etc/nginx/nginx.conf:ro
       - ./docker/nginx/conf.d:/etc/nginx/conf.d:ro
@@ -527,14 +540,15 @@ services:
       - ALL
     security_opt:
       - no-new-privileges:true
-    # Resource limits to prevent DoS
-    mem_limit: 512m
+    # Resource limits to prevent DoS. 768 MB: under the load test the WAF used
+    # 496 of 512 MB (CRS rules and request buffers), too close to being killed.
+    mem_limit: 768m
     cpus: 1.0
     deploy:
       resources:
         limits:
           cpus: "1.0"
-          memory: 512M
+          memory: 768M
         reservations:
           cpus: "0.2"
           memory: 128M
@@ -642,7 +656,7 @@ services:
     secrets:
       - crowdsec_bouncer_key
     # No "frontend": CrowdSec reads every log through the Docker API proxy and
-    # needs no access to nginx, cloudflared or the WAF over the network.
+    # needs no access to nginx or the WAF over the network.
     networks:
       - observability
       # Gives CrowdSec read-only access to container logs through the proxy.
@@ -681,55 +695,6 @@ services:
   # CrowdSec publishes it as a Linux host package (crowdsec-firewall-bouncer-nftables),
   # not as a Docker image, so it is installed on the host in the host-layer step.
   # It reads bans from the CrowdSec Local API on 127.0.0.1:8085 (published above).
-
-  # ============================================================================
-  # Cloudflare Tunnel Service (cloudflared)
-  # Security: outbound-only encrypted tunnel to Cloudflare Edge.
-  # Requires zero public inbound ports open on host firewall (ports 80/443 closed).
-  # Read-only root filesystem, dropped capabilities, token injected via secret.
-  # ============================================================================
-  cloudflared:
-    # Only started with "docker compose --profile remote-access up -d", once a
-    # real tunnel token is in secrets/cloudflare_tunnel_token.txt (otherwise it
-    # restarts in a loop). See docker/cloudflare/README.md.
-    profiles: ["remote-access"]
-    image: cloudflare/cloudflared:2026.10.7@sha256:4955524aeaa379e154023d5a027c250f7b35041a2e7e950cf13f144bc9b9c5ba
-    logging: *default-logging
-    container_name: kura-cloudflared
-    restart: unless-stopped
-    read_only: true
-    tmpfs:
-      - /tmp:size=32M,mode=1777
-    command: tunnel --no-autoupdate run
-    environment:
-      TUNNEL_TOKEN_FILE: /run/secrets/cloudflare_tunnel_token
-    volumes:
-      - ./docker/cloudflare/config.yml:/etc/cloudflared/config.yml:ro
-      # Nginx's public certificate, so cloudflared can VERIFY it is talking to
-      # our Nginx (instead of "No TLS Verify"). See docker/cloudflare/README.md.
-      - ./certs/kura.crt:/etc/cloudflared/origin-ca.crt:ro
-    secrets:
-      - cloudflare_tunnel_token
-    networks:
-      frontend:
-        # Fixed address: Nginx trusts CF-Connecting-IP only from here.
-        ipv4_address: 172.28.10.10
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    mem_limit: 256m
-    cpus: 0.5
-    deploy:
-      resources:
-        limits:
-          cpus: "0.5"
-          memory: 256M
-        reservations:
-          cpus: "0.1"
-          memory: 64M
-    depends_on:
-      - nginx
 
   # ============================================================================
   # Log Aggregation Service (Grafana Loki)
@@ -1175,13 +1140,13 @@ services:
 networks:
   frontend:
     driver: bridge
-    # Fixed subnet so Nginx and cloudflared can have fixed addresses, which the
-    # real-client-IP settings in Nginx and the WAF depend on.
+    # Fixed subnet so Nginx can have a fixed address, which the WAF's
+    # real-client-IP setting depends on.
     ipam:
       config:
         - subnet: 172.28.10.0/24
           # Automatic addresses come only from .128-.255, so they can never
-          # clash with the fixed ones (.10 cloudflared, .20 nginx).
+          # clash with nginx's fixed .20.
           ip_range: 172.28.10.128/25
   # Only the WAF and Django. internal: no internet route.
   app:
@@ -1273,8 +1238,6 @@ secrets:
     file: ./secrets/django_secret_key.txt
   crowdsec_bouncer_key:
     file: ./secrets/crowdsec_bouncer_key.txt
-  cloudflare_tunnel_token:
-    file: ./secrets/cloudflare_tunnel_token.txt
   grafana_admin_password:
     file: ./secrets/grafana_admin_password.txt
   telegram_bot_token:

@@ -38,18 +38,18 @@ from django_otp.plugins.otp_totp.models import TOTPDevice
 from django_otp.util import random_hex
 from unittest.mock import MagicMock, call, patch
 
-from .files import check_signature_age, create_download_response, scan_file_for_malware, validate_and_save_upload
 from .forms import PasswordChangeForm
-from .validators import BreachedPasswordValidator
-from .vault import (
+from .base import get_vault_client
+from .views import (
+    check_signature_age,
+    create_download_response,
+    scan_file_for_malware,
+    validate_and_save_upload,
+    check_breached_password,
     decrypt_answer_key,
     decrypt_mfa_secret,
     encrypt_answer_key,
     encrypt_mfa_secret,
-    get_dynamic_database_credentials,
-    get_vault_client,
-)
-from .views import (
     compute_submission_hash,
     evaluate_attempt,
     hash_attendance_passcode,
@@ -62,8 +62,8 @@ from .views import (
     queue_email,
     verify_totp_code,
 )
-from .vault import database_login_cache
-from .vault_postgres.base import DatabaseWrapper as VaultDatabaseWrapper
+from .base import DatabaseWrapper as VaultDatabaseWrapper
+from .base import database_login_cache, get_dynamic_database_credentials
 from .models import (
     OutgoingEmail,
     OutgoingEmailStatus,
@@ -213,6 +213,27 @@ class RolesAndPermissionsTests(TestCase):
     Tests seed roles and permissions data migration.
     Verifies roles exist and Admin role is strictly forbidden from grade access.
     """
+
+    def test_navigation_context_for_anonymous_and_missing_user(self):
+        from .views import nav_roles
+
+        request = RequestFactory().get("/")
+        self.assertEqual(nav_roles(request), {"nav_roles": set()})
+        request.user = AnonymousUser()
+        self.assertEqual(nav_roles(request), {"nav_roles": set()})
+
+    def test_navigation_context_processor_exposes_assigned_roles(self):
+        from django.template import engines
+
+        user = make_user("Student")
+        instructor = Role.objects.get(name="Instructor")
+        UserRole.objects.create(user=user, role=instructor)
+        request = RequestFactory().get("/")
+        request.user = user
+        template = engines["django"].from_string(
+            "{% if 'Student' in nav_roles and 'Instructor' in nav_roles %}both roles{% endif %}"
+        )
+        self.assertEqual(template.render({}, request), "both roles")
 
     def test_six_roles_exist(self):
         # Check that all six core roles exist in the database.
@@ -634,6 +655,19 @@ class FirstLoginPasswordChangeTests(TestCase):
         response = self.client.get(reverse("kura:home"))
         self.assertRedirects(response, reverse("kura:password_change"))
 
+    @patch("kura.views.check_breached_password", side_effect=ValidationError("Breached password"))
+    def test_breached_password_does_not_change_account(self, check):
+        login_with_session(self.client, self.user)
+        response = self.client.post(reverse("kura:password_change"), {
+            "old_password": self.password,
+            "new_password": "NewSecurePassword456!",
+            "confirm_password": "NewSecurePassword456!",
+        })
+        self.assertEqual(response.status_code, 400)
+        check.assert_called_once_with("NewSecurePassword456!")
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password(self.password))
+
     def test_password_change_succeeds(self):
         # Completing password change updates password_changed_at and removes flag.
         login_with_session(self.client, self.user)
@@ -785,6 +819,21 @@ class PasswordResetTests(TestCase):
             expires_at=timezone.now() + timezone.timedelta(minutes=30),
         )
         return raw_token, reset_record
+
+    @patch("kura.views.check_breached_password", side_effect=ValidationError("Breached password"))
+    def test_breached_password_does_not_consume_reset_token(self, check):
+        raw_token, reset_record = self.make_reset_token()
+        response = self.client.post(reverse("kura:password_reset_confirm", kwargs={"token": raw_token}), {
+            "code": "000000",
+            "new_password": "BrandNewPassword789!",
+            "confirm_password": "BrandNewPassword789!",
+        })
+        self.assertEqual(response.status_code, 400)
+        check.assert_called_once_with("BrandNewPassword789!")
+        reset_record.refresh_from_db()
+        self.assertIsNone(reset_record.used_at)
+        self.user.refresh_from_db()
+        self.assertTrue(self.user.check_password("OriginalPassword123!"))
 
     def test_request_always_emails_a_link(self):
         # AUTH-03: the request page no longer skips the email step; it only
@@ -1180,6 +1229,16 @@ class AdminStaffAccountsTests(TestCase):
         self.assertTrue(created_user.must_change_password)
         self.assertTrue(StaffProfile.objects.filter(user=created_user).exists())
 
+    @patch("kura.views.check_breached_password", side_effect=ValidationError("Breached password"))
+    def test_breached_temporary_password_does_not_create_staff(self, check):
+        login_with_session(self.client, self.admin)
+        response = self.client.post(reverse("kura:staff_create"), {
+            "email": "blocked.staff@example.com", "department": self.department.id, "staff_title": "Instructor",
+        })
+        self.assertEqual(response.status_code, 400)
+        check.assert_called_once()
+        self.assertFalse(User.objects.filter(email="blocked.staff@example.com").exists())
+
     def test_new_staff_account_gets_the_role_named_by_its_title(self):
         # The chosen title becomes the first role, recorded with the Admin who assigned it.
         login_with_session(self.client, self.admin)
@@ -1423,6 +1482,17 @@ class RegistrarStudentsAndEnrollmentTests(TestCase):
         self.assertTrue(created_user.must_change_password)
         self.assertTrue(StudentProfile.objects.filter(user=created_user).exists())
         self.assertTrue(has_role(created_user, "Student"))
+
+    @patch("kura.views.check_breached_password", side_effect=ValidationError("Breached password"))
+    def test_breached_temporary_password_does_not_create_student(self, check):
+        login_with_session(self.client, self.registrar)
+        response = self.client.post(reverse("kura:student_create"), {
+            "email": "blocked.student@example.com", "department": self.department.id,
+            "current_level": "level_4", "matriculation_year": 2026,
+        })
+        self.assertEqual(response.status_code, 400)
+        check.assert_called_once()
+        self.assertFalse(User.objects.filter(email="blocked.student@example.com").exists())
 
     def test_duplicate_student_email_has_a_clear_validation_message(self):
         # A registrar should learn why an existing email cannot be used for a new student.
@@ -1890,7 +1960,7 @@ class InstructorModulesAndContentTests(TestCase):
         module = Module.objects.create(course=self.course, title="Module")
         section = ModuleSection.objects.create(module=module, title="Section", section_type="lecture")
         item = SectionItem.objects.create(section=section, title="Old item")
-        with patch("kura.files.scan_file_for_malware"):
+        with patch("kura.views.scan_file_for_malware"):
             stored = validate_and_save_upload(SimpleUploadedFile("notes.txt", b"Plain course notes"), self.lead)
         SectionItemFile.objects.create(section_item=item, file=stored)
         login_with_session(self.client, self.lead)
@@ -2327,7 +2397,7 @@ class FileUploadsAndDownloadsTests(TestCase):
         with self.assertRaises(ValidationError):
             validate_and_save_upload(fake_pdf, self.instructor)
 
-    @patch("kura.files.scan_file_for_malware")
+    @patch("kura.views.scan_file_for_malware")
     def test_new_file_formats_pass_real_content_detection(self, mock_scan):
         # Check actual bytes rather than trusting each file's extension or browser MIME type.
         import base64
@@ -2362,7 +2432,7 @@ class FileUploadsAndDownloadsTests(TestCase):
                 self.assertEqual(stored.content.content, content)
         self.assertEqual(mock_scan.call_count, len(samples))
 
-    @patch("kura.files.scan_file_for_malware")
+    @patch("kura.views.scan_file_for_malware")
     def test_html_svg_and_executable_bytes_are_rejected(self, mock_scan):
         # A safe-looking filename cannot make active HTML, SVG, or executable content acceptable.
         for content in (
@@ -2376,7 +2446,7 @@ class FileUploadsAndDownloadsTests(TestCase):
         self.assertEqual(mock_scan.call_count, 3)
         self.assertFalse(StoredFile.objects.filter(original_filename="document.txt").exists())
 
-    @patch("kura.files.scan_file_for_malware")
+    @patch("kura.views.scan_file_for_malware")
     def test_rejected_upload_explains_allowed_types(self, mock_scan):
         # Give the author useful guidance without trusting a disguised filename.
         upload = SimpleUploadedFile("malware.pdf", b"\x7fELF\x02\x01\x01\x00executable")
@@ -2444,7 +2514,7 @@ class FileUploadsAndDownloadsTests(TestCase):
 
     def test_enrolled_student_cannot_download_file_from_hidden_section(self):
         # Hiding a section also blocks direct URLs to otherwise visible files.
-        with patch("kura.files.scan_file_for_malware"):
+        with patch("kura.views.scan_file_for_malware"):
             stored_file = validate_and_save_upload(SimpleUploadedFile("private.txt", b"Private notes"), self.instructor)
         item = SectionItem.objects.create(section=self.section, title="Private", is_visible=True)
         SectionItemFile.objects.create(section_item=item, file=stored_file)
@@ -5343,7 +5413,7 @@ class VaultIntegrationTests(TestCase):
             self.assertIsNone(encrypt_mfa_secret(None))
             self.assertIsNone(decrypt_mfa_secret(None))
 
-    @patch("kura.vault.get_vault_client")
+    @patch("kura.views.get_vault_client")
     @override_settings(VAULT_ENABLED=True)
     def test_transit_encrypt_mfa_secret_with_vault(self, mock_get_client):
         # With Vault enabled, secret is base64-encoded and encrypted via Transit engine.
@@ -5361,7 +5431,7 @@ class VaultIntegrationTests(TestCase):
         self.assertEqual(ciphertext, "vault:v1:YWJjZGVmMTIzNDU2")
         mock_client.secrets.transit.encrypt_data.assert_called_once()
 
-    @patch("kura.vault.get_vault_client")
+    @patch("kura.views.get_vault_client")
     @override_settings(VAULT_ENABLED=True)
     def test_transit_decrypt_mfa_secret_with_vault(self, mock_get_client):
         # Ciphertext with 'vault:v1:' prefix is decrypted back to plaintext string.
@@ -5377,7 +5447,7 @@ class VaultIntegrationTests(TestCase):
         decrypted = decrypt_mfa_secret("vault:v1:YWJjZGVmMTIzNDU2")
         self.assertEqual(decrypted, "JBSWY3DPEHPK3PXP")
 
-    @patch("kura.vault.get_vault_client")
+    @patch("kura.views.get_vault_client")
     @override_settings(VAULT_ENABLED=True)
     def test_transit_encryption_fails_closed_on_vault_error(self, mock_get_client):
         # In production, if Vault is unreachable, encryption fails closed to protect secret integrity.
@@ -5563,11 +5633,10 @@ class RowLevelSecurityAndPostgresRolesTests(TestCase):
             # Switch to application role which enforces RLS policies
             cursor.execute("SET ROLE kura_app;")
             # Set session context to student_a
-            cursor.execute("SET kura.current_user_id = %s;", [str(self.student_a.id)])
+            cursor.execute("SELECT set_config('kura.current_user_id', %s, false);", [str(self.student_a.id)])
 
-            # Query all grades directly from table
-            cursor.execute("SELECT id, student_id FROM grades;")
-            visible_rows = cursor.fetchall()
+            # Query grades through the ORM while PostgreSQL enforces RLS.
+            visible_rows = list(Grade.objects.values_list("id", "student_id"))
 
             # Always clean up session context and role
             cursor.execute("RESET kura.current_user_id;")
@@ -5584,9 +5653,8 @@ class RowLevelSecurityAndPostgresRolesTests(TestCase):
 
         with connection.cursor() as cursor:
             cursor.execute("SET ROLE kura_app;")
-            cursor.execute("SET kura.current_user_id = %s;", [str(self.instructor.id)])
-            cursor.execute("SELECT id FROM grades;")
-            visible_rows = cursor.fetchall()
+            cursor.execute("SELECT set_config('kura.current_user_id', %s, false);", [str(self.instructor.id)])
+            visible_rows = list(Grade.objects.values_list("id", flat=True))
 
             cursor.execute("RESET kura.current_user_id;")
             cursor.execute("RESET ROLE;")
@@ -5913,6 +5981,33 @@ class LokiSIEMAlertRulesTests(TestCase):
         # docker-compose.yml must mount the rules directory into the Loki container.
         content = self.compose_file.read_text(encoding="utf-8")
         self.assertIn("./docker/loki/rules:/etc/loki/rules:ro", content)
+
+    def test_grafana_security_dashboard_shows_collected_security_events(self):
+        # Search all collected services, not only web, so cron events are included.
+        dashboard_path = self.base_dir / "docker" / "grafana" / "dashboards" / "kura_security_overview.json"
+        dashboard = json.loads(dashboard_path.read_text(encoding="utf-8"))
+        panels = [panel for panel in dashboard["panels"] if panel.get("title") == "All Kura security events"]
+        self.assertEqual(len(panels), 1)
+        self.assertEqual(panels[0]["type"], "logs")
+        self.assertEqual(panels[0]["datasource"]["uid"], "loki")
+        self.assertEqual(
+            panels[0]["targets"][0]["expr"],
+            '{service=~".+"} | logfmt | logger="kura.security" | event != ""',
+        )
+
+    def test_security_logger_and_alloy_forward_logs_to_loki(self):
+        # Keep the logger-to-console and Alloy-to-Loki configuration connected.
+        logger = settings.LOGGING["loggers"]["kura.security"]
+        self.assertEqual(logger["handlers"], ["console"])
+        self.assertEqual(settings.LOGGING["handlers"]["console"]["class"], "logging.StreamHandler")
+        alloy = (self.base_dir / "docker" / "alloy" / "config.alloy").read_text(encoding="utf-8")
+        self.assertIn('loki.source.docker "containers"', alloy)
+        self.assertIn('loki.source.file "cron_logs"', alloy)
+        self.assertIn("forward_to = [loki.process.docker_envelope.receiver]", alloy)
+        self.assertIn("forward_to = [loki.process.pipeline.receiver]", alloy)
+        self.assertIn('selector = "{service=~\\\"web|cron\\\"}"', alloy)
+        self.assertIn("forward_to = [loki.write.local_loki.receiver]", alloy)
+        self.assertIn('url = "http://loki:3100/loki/api/v1/push"', alloy)
 
 
 class DataRetentionAndIPAnonymizationTests(TestCase):
@@ -6659,24 +6754,24 @@ class BreachedPasswordCheckTests(TestCase):
 
     def test_breached_password_is_rejected(self):
         opener = self.fake_opener(f"0000000000000000000000000000000000A:1\r\n{self.BREACHED_SUFFIX}:2500\r\n")
-        with patch("kura.validators.urllib.request.build_opener", return_value=opener):
+        with patch("kura.views.urllib.request.build_opener", return_value=opener):
             with self.assertRaises(ValidationError):
-                BreachedPasswordValidator().validate(self.BREACHED_PASSWORD)
+                check_breached_password(self.BREACHED_PASSWORD)
         # Only the 5-character prefix was sent.
         sent_request = opener.open.call_args[0][0]
         self.assertTrue(sent_request.full_url.endswith("/range/CBFDA"))
 
     def test_password_not_in_list_is_accepted(self):
         opener = self.fake_opener("0000000000000000000000000000000000A:1\r\n")
-        with patch("kura.validators.urllib.request.build_opener", return_value=opener):
-            BreachedPasswordValidator().validate(self.BREACHED_PASSWORD)
+        with patch("kura.views.urllib.request.build_opener", return_value=opener):
+            check_breached_password(self.BREACHED_PASSWORD)
 
     def test_network_failure_is_logged_without_the_password(self):
         opener = MagicMock()
         opener.open.side_effect = OSError("no route to host")
-        with patch("kura.validators.urllib.request.build_opener", return_value=opener):
+        with patch("kura.views.urllib.request.build_opener", return_value=opener):
             with self.assertLogs("kura.security", level="WARNING") as captured:
-                BreachedPasswordValidator().validate(self.BREACHED_PASSWORD)
+                check_breached_password(self.BREACHED_PASSWORD)
         log_text = "\n".join(captured.output)
         self.assertIn('event="auth.breach_check.unavailable"', log_text)
         self.assertNotIn(self.BREACHED_PASSWORD, log_text)
@@ -6685,8 +6780,8 @@ class BreachedPasswordCheckTests(TestCase):
     @override_settings(BREACH_CHECK_PROXY_URL="http://breach-proxy:8888")
     def test_lookup_goes_through_the_proxy_when_set(self):
         opener = self.fake_opener("")
-        with patch("kura.validators.urllib.request.build_opener", return_value=opener) as build_opener:
-            BreachedPasswordValidator().validate("a-long-unique-test-password")
+        with patch("kura.views.urllib.request.build_opener", return_value=opener) as build_opener:
+            check_breached_password("a-long-unique-test-password")
         proxy_handlers = []
         for handler in build_opener.call_args[0]:
             if isinstance(handler, urllib.request.ProxyHandler):
@@ -6698,8 +6793,8 @@ class BreachedPasswordCheckTests(TestCase):
     def test_no_proxy_means_a_direct_connection(self):
         # An empty proxy setting also ignores any HTTPS_PROXY in the environment.
         opener = self.fake_opener("")
-        with patch("kura.validators.urllib.request.build_opener", return_value=opener) as build_opener:
-            BreachedPasswordValidator().validate("a-long-unique-test-password")
+        with patch("kura.views.urllib.request.build_opener", return_value=opener) as build_opener:
+            check_breached_password("a-long-unique-test-password")
         for handler in build_opener.call_args[0]:
             if isinstance(handler, urllib.request.ProxyHandler):
                 self.assertEqual(handler.proxies, {})
@@ -6708,7 +6803,7 @@ class BreachedPasswordCheckTests(TestCase):
     def test_missing_ca_file_fails_open_with_a_warning(self):
         # A wrong certificate path must not break password changes (500 error).
         with self.assertLogs("kura.security", level="WARNING") as captured:
-            BreachedPasswordValidator().validate("a-long-unique-test-password")
+            check_breached_password("a-long-unique-test-password")
         self.assertIn('event="auth.breach_check.unavailable"', "\n".join(captured.output))
 
 
@@ -6785,7 +6880,7 @@ class AnswerKeyEncryptionTests(TestCase):
     def setUp(self):
         self.client = Client()
         self.fake_vault = FakeTransitVault()
-        vault_patch = patch("kura.vault.get_vault_client", return_value=self.fake_vault)
+        vault_patch = patch("kura.views.get_vault_client", return_value=self.fake_vault)
         vault_patch.start()
         self.addCleanup(vault_patch.stop)
 
@@ -6951,7 +7046,7 @@ class GradeHistoryInsertOnlyTests(TestCase):
         # so a refused statement does not break the rest of the test), then switch back.
         with connection.cursor() as cursor:
             cursor.execute("SET ROLE kura_app;")
-            cursor.execute("SET kura.current_user_id = %s;", [str(self.instructor.id)])
+            cursor.execute("SELECT set_config('kura.current_user_id', %s, false);", [str(self.instructor.id)])
             try:
                 with transaction.atomic():
                     cursor.execute(sql, parameters)
@@ -7169,7 +7264,7 @@ class VaultTOTPSeedTests(TestCase):
         VAULT_SECRET_ID="test-secret-id",
     )
     def test_vault_client_checks_certificate_and_logs_in_with_approle(self):
-        with patch("kura.vault.hvac.Client") as mock_client_class:
+        with patch("kura.base.hvac.Client") as mock_client_class:
             client = get_vault_client()
         mock_client_class.assert_called_once_with(url="https://vault:8200", verify="/certs/internal/ca.crt")
         client.auth.approle.login.assert_called_once_with(role_id="test-role-id", secret_id="test-secret-id")
@@ -7226,8 +7321,8 @@ class VaultTOTPSeedTests(TestCase):
 class VaultDatabaseLoginTests(TestCase):
     """
     Stage 3a: Django logs in to PostgreSQL with temporary users from Vault.
-    kura/vault.py caches one login per worker; kura/vault_postgres/base.py uses it
-    for every new connection. Vault itself is replaced by a mock here.
+    The database backend caches one login per worker and uses it for every new
+    connection. Vault itself is replaced by a mock here.
     """
 
     def setUp(self):
@@ -7246,7 +7341,7 @@ class VaultDatabaseLoginTests(TestCase):
         }
         return client
 
-    @patch("kura.vault.get_vault_client")
+    @patch("kura.base.get_vault_client")
     def test_login_comes_from_the_kura_app_role(self, mock_get_client):
         mock_get_client.return_value = self.fake_vault_client()
         login = get_dynamic_database_credentials()
@@ -7256,14 +7351,14 @@ class VaultDatabaseLoginTests(TestCase):
             name="kura-app", mount_point="database"
         )
 
-    @patch("kura.vault.get_vault_client")
+    @patch("kura.base.get_vault_client")
     def test_login_is_reused_instead_of_asking_vault_every_time(self, mock_get_client):
         mock_get_client.return_value = self.fake_vault_client()
         for _ in range(5):
             get_dynamic_database_credentials()
         self.assertEqual(mock_get_client.return_value.secrets.database.generate_credentials.call_count, 1)
 
-    @patch("kura.vault.get_vault_client")
+    @patch("kura.base.get_vault_client")
     def test_new_login_is_fetched_five_minutes_before_expiry(self, mock_get_client):
         mock_get_client.return_value = self.fake_vault_client(lease_seconds=900)
         before = time.time()
@@ -7276,12 +7371,12 @@ class VaultDatabaseLoginTests(TestCase):
         mock_get_client.return_value = self.fake_vault_client(username="kura_dyn_second")
         self.assertEqual(get_dynamic_database_credentials()["username"], "kura_dyn_second")
 
-    @patch("kura.vault.get_vault_client", side_effect=Exception("Vault is sealed"))
+    @patch("kura.base.get_vault_client", side_effect=Exception("Vault is sealed"))
     def test_vault_failure_raises_validation_error(self, mock_get_client):
         with self.assertRaises(ValidationError):
             get_dynamic_database_credentials()
 
-    @patch("kura.vault_postgres.base.get_dynamic_database_credentials")
+    @patch("kura.base.get_dynamic_database_credentials")
     def test_backend_uses_vault_login_and_keeps_tls_options(self, mock_get_login):
         mock_get_login.return_value = {"username": "kura_dyn_test", "password": "temporary-password"}
         settings_dict = dict(connection.settings_dict)
@@ -7299,7 +7394,7 @@ class VaultDatabaseLoginTests(TestCase):
         self.assertEqual(params["sslmode"], "verify-full")
         self.assertEqual(params["sslcert"], "/certs/internal/web.crt")
 
-    @patch("kura.vault_postgres.base.get_dynamic_database_credentials", side_effect=ValidationError("down"))
+    @patch("kura.base.get_dynamic_database_credentials", side_effect=ValidationError("down"))
     def test_backend_reports_vault_failure_as_database_error(self, mock_get_login):
         from django.db.utils import OperationalError
 
@@ -7322,7 +7417,7 @@ class VaultDatabaseLoginTests(TestCase):
                 text=True,
             )
             engines.append(result.stdout.strip())
-        self.assertEqual(engines, ["kura.vault_postgres", "django.db.backends.postgresql"])
+        self.assertEqual(engines, ["kura", "django.db.backends.postgresql"])
 
 
 def fake_clamav_reply(reply):
@@ -8000,7 +8095,7 @@ class RowLevelSecurityFailClosedTests(TestCase):
             real_execute = cursor.execute
 
             def guarded_execute(sql, params=None):
-                if isinstance(sql, str) and "SET kura.current_user_id" in sql:
+                if isinstance(sql, str) and "set_config('kura.current_user_id'" in sql:
                     raise OperationalError("Simulated SET failure")
                 return real_execute(sql, params)
 
@@ -8538,7 +8633,7 @@ class UploadExtensionMatchTests(TestCase):
         self.instructor = make_user("Instructor")
         self.pdf_bytes = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF"
 
-    @patch("kura.files.scan_file_for_malware")
+    @patch("kura.views.scan_file_for_malware")
     def test_pdf_bytes_with_html_extension_are_rejected(self, mock_scan):
         before = StoredFile.objects.count()
 
@@ -8547,14 +8642,14 @@ class UploadExtensionMatchTests(TestCase):
 
         self.assertEqual(StoredFile.objects.count(), before)
 
-    @patch("kura.files.scan_file_for_malware")
+    @patch("kura.views.scan_file_for_malware")
     def test_matching_pdf_extension_is_accepted(self, mock_scan):
         stored = validate_and_save_upload(SimpleUploadedFile("report.pdf", self.pdf_bytes), self.instructor)
 
         self.assertEqual(stored.original_filename, "report.pdf")
         self.assertEqual(stored.mime_type, "application/pdf")
 
-    @patch("kura.files.scan_file_for_malware")
+    @patch("kura.views.scan_file_for_malware")
     def test_uppercase_pdf_extension_is_accepted(self, mock_scan):
         stored = validate_and_save_upload(SimpleUploadedFile("REPORT.PDF", self.pdf_bytes), self.instructor)
 
@@ -9112,7 +9207,7 @@ class PasswordHistoryTests(TestCase):
             },
         )
 
-    @patch("kura.validators.BreachedPasswordValidator.validate", return_value=None)
+    @patch("kura.views.check_breached_password", return_value=None)
     def test_password_history_enforces_five_previous_passwords_and_prunes_older(self, _mock_breach):
         login_with_session(self.client, self.user)
 
@@ -10163,7 +10258,7 @@ class WorkItem1LoggingTests(TestCase):
                 reverse("kura:login"),
                 {"email": head.email, "password": "ValidPassword123!"},
             )
-        self.assertTrue(any('event="session.created"' in l and 'method="password"' in l for l in cap_login.output))
+        self.assertTrue(any('event="session.created"' in line and 'method="password"' in line for line in cap_login.output))
         head.mfa_enabled = True
         head.save(update_fields=["mfa_enabled"])
 
@@ -10180,43 +10275,43 @@ class WorkItem1LoggingTests(TestCase):
                     "academic_year": 2026,
                 },
             )
-        self.assertTrue(any('event="course.created"' in l and "course_id=" in l for l in cap_course.output))
+        self.assertTrue(any('event="course.created"' in line and "course_id=" in line for line in cap_course.output))
         course = Course.objects.get(code="LOG101")
 
         with self.assertLogs("kura.security", level="INFO") as cap_pub:
             self.client.post(reverse("kura:course_publish_toggle", args=[course.id]))
-        self.assertTrue(any('event="admin.course.published"' in l and 'is_published="True"' in l for l in cap_pub.output))
+        self.assertTrue(any('event="admin.course.published"' in line and 'is_published="True"' in line for line in cap_pub.output))
 
         with self.assertLogs("kura.security", level="INFO") as cap_ta:
             self.client.post(reverse("kura:course_ta_assign", args=[course.id]), {"user": ta.id})
-        self.assertTrue(any('event="admin.ta.assigned"' in l and f'target_user_id="{ta.id}"' in l for l in cap_ta.output))
+        self.assertTrue(any('event="admin.ta.assigned"' in line and f'target_user_id="{ta.id}"' in line for line in cap_ta.output))
 
         with self.assertLogs("kura.security", level="INFO") as cap_mod:
             self.client.post(reverse("kura:module_create", args=[course.id]), {"title": "Mod 1", "description": "D", "is_visible": True})
-        self.assertTrue(any('event="course.module.created"' in l for l in cap_mod.output))
+        self.assertTrue(any('event="course.module.created"' in line for line in cap_mod.output))
         module = Module.objects.get(course=course)
         with self.assertLogs("kura.security", level="INFO") as cap_mod_ed:
             self.client.post(reverse("kura:module_edit", args=[module.id]), {"title": "Mod 1b", "description": "D", "is_visible": True})
-        self.assertTrue(any('event="course.module.edited"' in l for l in cap_mod_ed.output))
+        self.assertTrue(any('event="course.module.edited"' in line for line in cap_mod_ed.output))
 
         with self.assertLogs("kura.security", level="INFO") as cap_sec:
             self.client.post(reverse("kura:section_create", args=[module.id]), {"title": "Sec 1", "section_type": "lecture"})
-        self.assertTrue(any('event="course.section.created"' in l for l in cap_sec.output))
+        self.assertTrue(any('event="course.section.created"' in line for line in cap_sec.output))
         section = ModuleSection.objects.get(module=module)
         with self.assertLogs("kura.security", level="INFO") as cap_sec_ed:
             self.client.post(reverse("kura:section_edit", args=[section.id]), {"title": "Sec 1b", "section_type": "lecture"})
-        self.assertTrue(any('event="course.section.edited"' in l for l in cap_sec_ed.output))
+        self.assertTrue(any('event="course.section.edited"' in line for line in cap_sec_ed.output))
 
         with self.assertLogs("kura.security", level="INFO") as cap_item:
             self.client.post(reverse("kura:item_create", args=[section.id]), {"title": "Item 1", "content_body": "Body"})
-        self.assertTrue(any('event="course.item.created"' in l for l in cap_item.output))
+        self.assertTrue(any('event="course.item.created"' in line for line in cap_item.output))
         item = SectionItem.objects.get(section=section)
         with self.assertLogs("kura.security", level="INFO") as cap_item_ed:
             self.client.post(reverse("kura:item_edit", args=[item.id]), {"title": "Item 1b", "content_body": "Body"})
-        self.assertTrue(any('event="course.item.edited"' in l for l in cap_item_ed.output))
+        self.assertTrue(any('event="course.item.edited"' in line for line in cap_item_ed.output))
         with self.assertLogs("kura.security", level="INFO") as cap_item_vis:
             self.client.post(reverse("kura:item_visibility_toggle", args=[item.id]))
-        self.assertTrue(any('event="course.item.visibility_changed"' in l for l in cap_item_vis.output))
+        self.assertTrue(any('event="course.item.visibility_changed"' in line for line in cap_item_vis.output))
 
         with self.assertLogs("kura.security", level="INFO") as cap_sched:
             self.client.post(
@@ -10232,7 +10327,7 @@ class WorkItem1LoggingTests(TestCase):
                     "recurrence_end": "2026-12-01",
                 },
             )
-        self.assertTrue(any('event="course.schedule.created"' in l for l in cap_sched.output))
+        self.assertTrue(any('event="course.schedule.created"' in line for line in cap_sched.output))
         sched = Schedule.objects.get(course=course)
         with self.assertLogs("kura.security", level="INFO") as cap_sched_ed:
             self.client.post(
@@ -10248,7 +10343,7 @@ class WorkItem1LoggingTests(TestCase):
                     "recurrence_end": "2026-12-01",
                 },
             )
-        self.assertTrue(any('event="course.schedule.edited"' in l for l in cap_sched_ed.output))
+        self.assertTrue(any('event="course.schedule.edited"' in line for line in cap_sched_ed.output))
 
         # Attendance start, check-in failure & success, manual record, close (course staff only per O1).
         CourseStaff.objects.create(course=course, user=instructor, staff_role="lead_instructor", can_release_grades=True, assigned_by=head)
@@ -10257,19 +10352,19 @@ class WorkItem1LoggingTests(TestCase):
         Enrollment.objects.create(course=course, student=student, status=EnrollmentStatus.ACTIVE, enrolled_by=registrar)
         with self.assertLogs("kura.security", level="INFO") as cap_att_start:
             inst_client.post(reverse("kura:attendance_session_start", args=[module.id]), {"title": "Roll 1", "duration_minutes": 15})
-        self.assertTrue(any('event="attendance.session_started"' in l for l in cap_att_start.output))
+        self.assertTrue(any('event="attendance.session_started"' in line for line in cap_att_start.output))
         att_sess = ModuleAttendanceSession.objects.get(module=module)
         raw_passcode = inst_client.session[f"session_passcode_{att_sess.id}"]
 
         with self.assertLogs("kura.security", level="WARNING") as cap_man_inv:
             inst_client.post(reverse("kura:attendance_manual_record", args=[att_sess.id]), {"student": student.id, "status": AttendanceStatus.PRESENT, "override_reason": ""})
-        self.assertTrue(any('event="input.invalid"' in l for l in cap_man_inv.output))
+        self.assertTrue(any('event="input.invalid"' in line for line in cap_man_inv.output))
         with self.assertLogs("kura.security", level="INFO") as cap_man:
             inst_client.post(
                 reverse("kura:attendance_manual_record", args=[att_sess.id]),
                 {"student": student.id, "status": AttendanceStatus.LATE, "override_reason": "Bus delay"},
             )
-        self.assertTrue(any('event="attendance.manual_recorded"' in l and 'has_justification="True"' in l for l in cap_man.output))
+        self.assertTrue(any('event="attendance.manual_recorded"' in line and 'has_justification="True"' in line for line in cap_man.output))
         self.assertNotIn("Bus delay", " ".join(cap_man.output))
 
         AttendanceRecord.objects.filter(session=att_sess, student=student).delete()
@@ -10277,25 +10372,25 @@ class WorkItem1LoggingTests(TestCase):
         login_with_session(stud_client, student)
         with self.assertLogs("kura.security", level="WARNING") as cap_ci_bad:
             stud_client.post(reverse("kura:student_checkin", args=[att_sess.id]), {"passcode": "000000"})
-        self.assertTrue(any('event="attendance.checkin_failed"' in l and 'reason="bad_passcode"' in l for l in cap_ci_bad.output))
+        self.assertTrue(any('event="attendance.checkin_failed"' in line and 'reason="bad_passcode"' in line for line in cap_ci_bad.output))
 
         with self.assertLogs("kura.security", level="INFO") as cap_ci_ok:
             stud_client.post(reverse("kura:student_checkin", args=[att_sess.id]), {"passcode": raw_passcode})
-        self.assertTrue(any('event="attendance.checked_in"' in l for l in cap_ci_ok.output))
+        self.assertTrue(any('event="attendance.checked_in"' in line for line in cap_ci_ok.output))
 
         with self.assertLogs("kura.security", level="INFO") as cap_att_close:
             inst_client.post(reverse("kura:attendance_session_close", args=[att_sess.id]))
-        self.assertTrue(any('event="attendance.session_closed"' in l for l in cap_att_close.output))
+        self.assertTrue(any('event="attendance.session_closed"' in line for line in cap_att_close.output))
 
         # Registrar viewing student profile logs record.viewed; invalid enrollment logs input.invalid.
         reg_client = Client()
         login_with_session(reg_client, registrar)
         with self.assertLogs("kura.security", level="INFO") as cap_prof:
             reg_client.get(reverse("kura:student_profile", args=[student.id]))
-        self.assertTrue(any('event="record.viewed"' in l and 'record_type="student_profile"' in l for l in cap_prof.output))
+        self.assertTrue(any('event="record.viewed"' in line and 'record_type="student_profile"' in line for line in cap_prof.output))
         with self.assertLogs("kura.security", level="WARNING") as cap_enr_inv:
             reg_client.post(reverse("kura:enrollment_create"), {})
-        self.assertTrue(any('event="input.invalid"' in l for l in cap_enr_inv.output))
+        self.assertTrue(any('event="input.invalid"' in line for line in cap_enr_inv.output))
 
         # Result calculate, release, and CSV report export.
         sess = inst_client.session
@@ -10303,33 +10398,33 @@ class WorkItem1LoggingTests(TestCase):
         sess.save()
         with self.assertLogs("kura.security", level="INFO") as cap_res_calc:
             inst_client.post(reverse("kura:course_result_calculate", args=[course.id]))
-        self.assertTrue(any('event="course.result.calculated"' in l for l in cap_res_calc.output))
+        self.assertTrue(any('event="course.result.calculated"' in line for line in cap_res_calc.output))
         with self.assertLogs("kura.security", level="INFO") as cap_res_rel:
             inst_client.post(reverse("kura:course_result_release", args=[course.id]))
-        self.assertTrue(any('event="course.result.released"' in l for l in cap_res_rel.output))
+        self.assertTrue(any('event="course.result.released"' in line for line in cap_res_rel.output))
         with self.assertLogs("kura.security", level="INFO") as cap_csv:
             self.client.get(reverse("kura:department_reports", args=[dept.id]) + "?format=csv")
-        self.assertTrue(any('event="report.exported"' in l for l in cap_csv.output))
+        self.assertTrue(any('event="report.exported"' in line for line in cap_csv.output))
 
         # Password reset token_created event.
         from .views import create_reset_token
 
         with self.assertLogs("kura.security", level="INFO") as cap_rst:
             raw_tok, _ = create_reset_token(student)
-        self.assertTrue(any('event="password_reset.token_created"' in l for l in cap_rst.output))
+        self.assertTrue(any('event="password_reset.token_created"' in line for line in cap_rst.output))
         self.assertNotIn(raw_tok, cap_rst.output[0])
 
         # Invalid form logs on auth/admin/registrar forms.
         anon_client = Client()
         with self.assertLogs("kura.security", level="WARNING") as cap_login_inv:
             anon_client.post(reverse("kura:login"), {})
-        self.assertTrue(any('event="input.invalid"' in l for l in cap_login_inv.output))
+        self.assertTrue(any('event="input.invalid"' in line for line in cap_login_inv.output))
         with self.assertLogs("kura.security", level="WARNING") as cap_rst_inv:
             anon_client.post(reverse("kura:password_reset_request"), {})
-        self.assertTrue(any('event="input.invalid"' in l for l in cap_rst_inv.output))
+        self.assertTrue(any('event="input.invalid"' in line for line in cap_rst_inv.output))
         with self.assertLogs("kura.security", level="WARNING") as cap_stu_inv:
             reg_client.post(reverse("kura:student_create"), {})
-        self.assertTrue(any('event="input.invalid"' in l for l in cap_stu_inv.output))
+        self.assertTrue(any('event="input.invalid"' in line for line in cap_stu_inv.output))
 
     def test_assessment_file_uploads_and_attempt_view_logging(self):
         from .models import AssessmentDeliveryMode
@@ -10380,18 +10475,18 @@ class WorkItem1LoggingTests(TestCase):
         pdf = SimpleUploadedFile("spec.pdf", b"%PDF-1.4 spec", content_type="application/pdf")
         with self.assertLogs("kura.security", level="INFO") as cap_ass:
             self.client.post(reverse("kura:assessment_file_upload", args=[assessment.id]), {"file": pdf})
-        self.assertTrue(any('event="file.uploaded"' in l and 'context="assessment"' in l and f'assessment_id="{assessment.id}"' in l for l in cap_ass.output))
+        self.assertTrue(any('event="file.uploaded"' in line and 'context="assessment"' in line and f'assessment_id="{assessment.id}"' in line for line in cap_ass.output))
 
         stud_client = Client()
         login_with_session(stud_client, student)
         pdf2 = SimpleUploadedFile("sub.pdf", b"%PDF-1.4 sub", content_type="application/pdf")
         with self.assertLogs("kura.security", level="INFO") as cap_sub:
             stud_client.post(reverse("kura:assessment_attempt_file_upload", args=[attempt.id]), {"file": pdf2})
-        self.assertTrue(any('event="file.uploaded"' in l and 'context="attempt"' in l and f'attempt_id="{attempt.id}"' in l for l in cap_sub.output))
+        self.assertTrue(any('event="file.uploaded"' in line and 'context="attempt"' in line and f'attempt_id="{attempt.id}"' in line for line in cap_sub.output))
 
         with self.assertLogs("kura.security", level="INFO") as cap_view:
             self.client.get(reverse("kura:attempt_detail", args=[attempt.id]))
-        self.assertTrue(any('event="record.viewed"' in l and 'record_type="assessment_attempt"' in l for l in cap_view.output))
+        self.assertTrue(any('event="record.viewed"' in line and 'record_type="assessment_attempt"' in line for line in cap_view.output))
 
     def test_every_write_view_emits_security_log(self):
         import ast
@@ -10603,7 +10698,7 @@ class WorkItem3SessionTests(TestCase):
             expires_at=timezone.now() + timezone.timedelta(hours=12),
         )
 
-        with patch("kura.validators.BreachedPasswordValidator.validate", return_value=None):
+        with patch("kura.views.check_breached_password", return_value=None):
             with self.assertLogs("kura.security", level="INFO") as captured:
                 resp = self.client.post(
                     reverse("kura:password_change"),
@@ -10614,7 +10709,7 @@ class WorkItem3SessionTests(TestCase):
         other_session.refresh_from_db()
         self.assertIsNone(current_session.revoked_at)
         self.assertIsNotNone(other_session.revoked_at)
-        self.assertTrue(any('event="session.revoked"' in l and 'by="password_change"' in l for l in captured.output))
+        self.assertTrue(any('event="session.revoked"' in line and 'by="password_change"' in line for line in captured.output))
 
     def test_untracked_authenticated_session_is_rejected(self):
         user = make_user("Student", mfa_enabled=True)
@@ -10622,7 +10717,7 @@ class WorkItem3SessionTests(TestCase):
         with self.assertLogs("kura.security", level="WARNING") as captured:
             resp = self.client.get(reverse("kura:home"))
         self.assertRedirects(resp, reverse("kura:login"))
-        self.assertTrue(any('event="session.invalid"' in l and 'reason="untracked"' in l for l in captured.output))
+        self.assertTrue(any('event="session.invalid"' in line and 'reason="untracked"' in line for line in captured.output))
 
     def test_pre_mfa_step_expires_after_five_minutes(self):
         password = "ValidPassword123!"
@@ -10927,6 +11022,15 @@ class WorkItem5FileEncryptionTests(TestCase):
     def setUp(self):
         self.user = make_user("Instructor")
 
+    @override_settings(VAULT_ENABLED=True)
+    @patch("kura.views.get_vault_client")
+    def test_invalid_vault_encryption_response_fails_closed(self, get_client):
+        from .views import encrypt_file_content
+
+        get_client.return_value.secrets.transit.encrypt_data.return_value = {"data": {}}
+        with self.assertRaises(ValidationError):
+            encrypt_file_content(b"file contents", uuid.uuid4())
+
     def _mock_vault_client(self):
         import base64
 
@@ -10950,7 +11054,7 @@ class WorkItem5FileEncryptionTests(TestCase):
         payload = b"%PDF-1.4 secret student paper payload"
         mock_client, wrapped_store = self._mock_vault_client()
 
-        with patch("kura.vault.get_vault_client", return_value=mock_client):
+        with patch("kura.views.get_vault_client", return_value=mock_client):
             with self.assertLogs("kura.security", level="INFO") as cap_up:
                 up1 = SimpleUploadedFile("paper1.pdf", payload, content_type="application/pdf")
                 up2 = SimpleUploadedFile("paper2.pdf", payload, content_type="application/pdf")
@@ -10987,7 +11091,7 @@ class WorkItem5FileEncryptionTests(TestCase):
         payload = b"%PDF-1.4 tamper test content"
         mock_client, _ = self._mock_vault_client()
 
-        with patch("kura.vault.get_vault_client", return_value=mock_client):
+        with patch("kura.views.get_vault_client", return_value=mock_client):
             sf1 = validate_and_save_upload(SimpleUploadedFile("a.pdf", payload, content_type="application/pdf"), self.user)
             sf2 = validate_and_save_upload(SimpleUploadedFile("b.pdf", payload, content_type="application/pdf"), self.user)
 
@@ -11005,7 +11109,7 @@ class WorkItem5FileEncryptionTests(TestCase):
                 resp_tamper = create_download_response(sf1)
             self.assertEqual(resp_tamper.status_code, 500)
             self.assertEqual(resp_tamper.content, b"File decryption failed.")
-            self.assertTrue(any('event="file.decrypt_failed"' in l for l in cap_tamper.output))
+            self.assertTrue(any('event="file.decrypt_failed"' in line for line in cap_tamper.output))
 
             # Move valid ciphertext/envelope from sf2 onto sf1 -> AAD mismatch fails.
             fc1.content = fc2.content
@@ -11017,7 +11121,7 @@ class WorkItem5FileEncryptionTests(TestCase):
             with self.assertLogs("kura.security", level="ERROR") as cap_swap:
                 resp_swap = create_download_response(sf1)
             self.assertEqual(resp_swap.status_code, 500)
-            self.assertTrue(any('event="file.decrypt_failed"' in l for l in cap_swap.output))
+            self.assertTrue(any('event="file.decrypt_failed"' in line for line in cap_swap.output))
 
     @override_settings(CLAMAV_REQUIRED=False)
     def test_encrypt_file_contents_command_migrates_legacy_rows_idempotently(self):
@@ -11034,7 +11138,7 @@ class WorkItem5FileEncryptionTests(TestCase):
             with self.assertLogs("kura.security", level="ERROR"):
                 self.assertEqual(create_download_response(sf).status_code, 500)
 
-            with patch("kura.vault.get_vault_client", return_value=mock_client):
+            with patch("kura.views.get_vault_client", return_value=mock_client):
                 out1 = StringIO()
                 call_command("encrypt_file_contents", stdout=out1)
                 self.assertIn("Encrypted 1 file(s)", out1.getvalue())
@@ -11428,7 +11532,7 @@ class AuditGroup2DataIntegrityTests(TestCase):
         )
         url = reverse("kura:password_reset_confirm", args=[raw_token])
         new_pw = "ValidResetPassword!987"
-        with patch("kura.validators.BreachedPasswordValidator.validate", return_value=None):
+        with patch("kura.views.check_breached_password", return_value=None):
             first = self.client.post(url, {"new_password": new_pw, "confirm_password": new_pw})
             self.assertEqual(first.status_code, 302)
             second = self.client.post(url, {"new_password": new_pw + "x", "confirm_password": new_pw + "x"})
@@ -11639,7 +11743,7 @@ class AuditGroup3DatabaseAndRolesTests(TestCase):
                 self.assertEqual(ExamAnswerKey.objects.count(), 0)
 
                 # Student A sees own attempt & grade, 0 unreleased CourseResult, 0 GradeHistory, 0 ExamAnswerKey.
-                cursor.execute("SET kura.current_user_id = %s;", [str(self.student_a.id)])
+                cursor.execute("SELECT set_config('kura.current_user_id', %s, false);", [str(self.student_a.id)])
                 self.assertEqual(list(AssessmentAttempt.objects.values_list("id", flat=True)), [self.attempt_a.id])
                 self.assertEqual(list(Grade.objects.values_list("id", flat=True)), [self.grade_a.id])
                 self.assertEqual(CourseResult.objects.count(), 0)
@@ -11647,11 +11751,11 @@ class AuditGroup3DatabaseAndRolesTests(TestCase):
                 self.assertEqual(ExamAnswerKey.objects.count(), 0)
 
                 # Student B sees own released CourseResult.
-                cursor.execute("SET kura.current_user_id = %s;", [str(self.student_b.id)])
+                cursor.execute("SELECT set_config('kura.current_user_id', %s, false);", [str(self.student_b.id)])
                 self.assertEqual(list(CourseResult.objects.values_list("id", flat=True)), [self.result_b_released.id])
 
                 # TA sees course grades/results/history/attempts, 0 ExamAnswerKeys, and cannot promote Grade to FINALIZED.
-                cursor.execute("SET kura.current_user_id = %s;", [str(self.ta.id)])
+                cursor.execute("SELECT set_config('kura.current_user_id', %s, false);", [str(self.ta.id)])
                 self.assertEqual(ExamAnswerKey.objects.count(), 0)
                 self.assertEqual(Grade.objects.count(), 2)
                 with self.assertRaises(DatabaseError):
@@ -11659,7 +11763,7 @@ class AuditGroup3DatabaseAndRolesTests(TestCase):
                         Grade.objects.filter(id=self.grade_a.id).update(status=GradeStatus.FINALIZED)
 
                 # Admin sees 0 rows on all 5 tables even with a stale CourseStaff link.
-                cursor.execute("SET kura.current_user_id = %s;", [str(self.admin.id)])
+                cursor.execute("SELECT set_config('kura.current_user_id', %s, false);", [str(self.admin.id)])
                 self.assertEqual(Grade.objects.count(), 0)
                 self.assertEqual(CourseResult.objects.count(), 0)
                 self.assertEqual(GradeHistory.objects.count(), 0)
@@ -11667,7 +11771,7 @@ class AuditGroup3DatabaseAndRolesTests(TestCase):
                 self.assertEqual(ExamAnswerKey.objects.count(), 0)
 
                 # Instructor sees ExamAnswerKey and course records.
-                cursor.execute("SET kura.current_user_id = %s;", [str(self.instructor.id)])
+                cursor.execute("SELECT set_config('kura.current_user_id', %s, false);", [str(self.instructor.id)])
                 self.assertEqual(ExamAnswerKey.objects.count(), 1)
                 self.assertEqual(CourseResult.objects.count(), 2)
                 self.assertEqual(GradeHistory.objects.count(), 1)
@@ -11709,15 +11813,15 @@ class AuditGroup3DatabaseAndRolesTests(TestCase):
             )
             cursor.execute("SET ROLE kura_readonly;")
             try:
-                for table in ("file_contents", "exam_answer_keys", "password_reset_tokens"):
+                for model in (FileContent, ExamAnswerKey, PasswordResetToken):
                     with self.assertRaises(DatabaseError):
                         with transaction.atomic():
-                            cursor.execute(f"SELECT count(*) FROM {table};")
+                            model.objects.count()
                 with self.assertRaises(DatabaseError):
                     with transaction.atomic():
-                        cursor.execute("SELECT mfa_secret FROM users;")
-                cursor.execute("SELECT id, email FROM users LIMIT 1;")
-                self.assertEqual(len(cursor.fetchall()), 1)
+                        list(User.objects.values_list("mfa_secret", flat=True))
+                visible_users = list(User.objects.values_list("id", "email")[:1])
+                self.assertEqual(len(visible_users), 1)
             finally:
                 cursor.execute("RESET ROLE;")
 
@@ -11914,7 +12018,7 @@ class AuditGroup4AccessAndSessionsTests(TestCase):
         self.assertEqual(user_session.session_token_hash, hash_session_token(self.client.session.session_key))
 
         # Password change updates session_token_hash after update_session_auth_hash cycles the key.
-        with patch("kura.validators.BreachedPasswordValidator.validate", return_value=None):
+        with patch("kura.views.check_breached_password", return_value=None):
             pw_resp = self.client.post(
                 reverse("kura:password_change"),
                 {"old_password": old_pw, "new_password": new_pw, "confirm_password": new_pw},
@@ -12000,7 +12104,7 @@ class AuditGroup6PolicyAndGdprTests(TestCase):
         student = make_user("Student", password=old_pw, mfa_enabled=True)
         stud_client = Client()
         stud_session = login_with_session(stud_client, student)
-        with patch("kura.validators.BreachedPasswordValidator.validate", return_value=None):
+        with patch("kura.views.check_breached_password", return_value=None):
             short_resp = stud_client.post(
                 reverse("kura:password_change"),
                 {
@@ -12174,7 +12278,7 @@ class AuditGroup6PolicyAndGdprTests(TestCase):
         student.refresh_from_db()
         self.assertIsNotNone(student.erasure_requested_at)
         self.assertEqual(Grade.objects.filter(student=student).count(), 2)
-        self.assertTrue((Path(settings.BASE_DIR) / "docs" / "PRIVACY_AND_ROPA.md").exists())
+        self.assertIn("Privacy, processing and FERPA", (Path(settings.BASE_DIR) / "docs" / "DEPLOYMENT.md").read_text(encoding="utf-8"))
 
 
 class AuditGroup7InfraAndConfigTests(TestCase):
@@ -12190,7 +12294,7 @@ class AuditGroup7InfraAndConfigTests(TestCase):
         self.assertIn("semgrep/semgrep@sha256:", ci_text)
         self.assertIn("ghcr.io/zaproxy/zaproxy:stable@sha256:", ci_text)
 
-    def test_nginx_limit_conn_and_body_size_loki_audit_rule_and_alertmanager_webhook(self):
+    def test_nginx_limit_conn_and_body_size_loki_audit_rule_and_alertmanager_routes(self):
         nginx_main = (Path(settings.BASE_DIR) / "docker" / "nginx" / "nginx.conf").read_text(encoding="utf-8")
         nginx_site = (Path(settings.BASE_DIR) / "docker" / "nginx" / "conf.d" / "kura.conf").read_text(encoding="utf-8")
         loki_rules = (
@@ -12206,8 +12310,10 @@ class AuditGroup7InfraAndConfigTests(TestCase):
         self.assertIn("limit_conn conn_limit 10;", nginx_site)
         self.assertIn("limit_conn conn_limit 30;", nginx_site)
         self.assertIn("- alert: AuditDiscrepancy", loki_rules)
-        self.assertIn('- name: "webhook-alerts"', alertmanager)
-        self.assertIn("webhook_configs:", alertmanager)
+        self.assertIn('receiver: telegram-alerts', alertmanager)
+        self.assertIn('receiver: breach-alerts', alertmanager)
+        self.assertIn('receiver: email-alerts', alertmanager)
+        self.assertNotIn("127.0.0.1:9999", alertmanager)
 
     def test_offsite_backup_repo2_and_container_hardening_and_nftables_lan_scope(self):
         pgbackrest_conf = (Path(settings.BASE_DIR) / "docker" / "postgres" / "pgbackrest.conf").read_text(
@@ -12235,13 +12341,19 @@ class AuditGroup7InfraAndConfigTests(TestCase):
         self.assertIn("read_only: true", grafana_block)
         self.assertIn("cap_drop:\n      - ALL", grafana_block)
         self.assertIn('"127.0.0.1:3000:3000"', grafana_block)
-        # NetBird was replaced by an SSH tunnel to Grafana.
-        self.assertNotIn("netbird", compose_text.lower())
 
-        # The host firewall opens only SSH, and only from the admin allowlist.
+        # The host firewall opens web ports to everyone, SSH only to the
+        # admin allowlist, and applies CrowdSec bans to Docker's forwarded
+        # traffic as well (nginx is published directly on 80 and 443).
+        self.assertIn("tcp dport { 80, 443 } accept", nft_text)
         self.assertIn("ip saddr @admin_allowlist tcp dport 22 accept", nft_text)
-        self.assertNotIn("dport 443", nft_text)
-        self.assertNotIn("wt0", nft_text)
+        self.assertIn("type filter hook forward priority filter - 10; policy accept;", nft_text)
+        # nginx no longer trusts a CDN header for the client address.
+        nginx_site = (Path(settings.BASE_DIR) / "docker" / "nginx" / "conf.d" / "kura.conf").read_text(
+            encoding="utf-8"
+        )
+        self.assertNotIn("set_real_ip_from", nginx_site)
+        self.assertNotIn("CF-Connecting-IP", nginx_site)
 
     def test_settings_hardening_and_pinned_requirements(self):
         self.assertNotIn("django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher", settings.PASSWORD_HASHERS)
@@ -12460,12 +12572,11 @@ class AuditGroup8FinalFixesTests(TestCase):
 
         # M4, M10, M12 artifacts exist and Alertmanager includes breach-alerts route.
         ir_text = (Path(settings.BASE_DIR) / "docs" / "INCIDENT_RESPONSE.md").read_text(encoding="utf-8")
-        rmf_text = (Path(settings.BASE_DIR) / "docs" / "NIST_RMF_RECORD.md").read_text(encoding="utf-8")
-        ferpa_text = (Path(settings.BASE_DIR) / "docs" / "FERPA_NOTICE.md").read_text(encoding="utf-8")
+        guidance_text = (Path(settings.BASE_DIR) / "docs" / "DEPLOYMENT.md").read_text(encoding="utf-8")
         am_text = (Path(settings.BASE_DIR) / "docker" / "alertmanager" / "alertmanager.yml").read_text(encoding="utf-8")
         self.assertIn("72-Hour Regulatory Breach Notification", ir_text)
-        self.assertIn("Asset Classification Register", rmf_text)
-        self.assertIn("Annual Notification of Rights", ferpa_text)
+        self.assertIn("Asset Classification Register", guidance_text)
+        self.assertIn("FERPA", guidance_text)
         self.assertIn("breach-alerts", am_text)
         notice_resp = self.client.get(reverse("kura:privacy_notice"))
         self.assertContains(notice_resp, "FERPA")
@@ -12691,3 +12802,57 @@ class DjangoSecurityBaselineTests(TestCase):
         login_with_session(self.client, outsider)
         self.assertEqual(self.client.get(reverse("kura:course_detail", args=[self.course.id])).status_code, 403)
         self.assertEqual(self.client.get(reverse("kura:course_grades", args=[self.course.id])).status_code, 403)
+
+
+class StackTestFindingsTests(TestCase):
+    """Regression tests for the problems found by the isolated full-stack test (2026-11-16)."""
+
+    def setUp(self):
+        base_dir = Path(settings.BASE_DIR)
+        self.compose_text = (base_dir / "docker-compose.yml").read_text(encoding="utf-8")
+        self.alloy_text = (base_dir / "docker" / "alloy" / "config.alloy").read_text(encoding="utf-8")
+        self.kura_sh_text = (base_dir / "kura.sh").read_text(encoding="utf-8")
+
+    def test_queries_send_values_separately_from_sql_text(self):
+        # psycopg2 wrote values into the SQL text, so pgAudit logged session keys
+        # and password hashes. Server-side binding keeps values out of the text.
+        import psycopg
+
+        self.assertTrue(settings.DATABASES["default"]["OPTIONS"]["server_side_binding"])
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT %s::text", ["value-not-in-sql-text"])
+            self.assertEqual(cursor.fetchone()[0], "value-not-in-sql-text")
+            # Django uses ClientCursor (values inlined) unless server-side binding is on.
+            self.assertIsInstance(cursor.cursor, psycopg.Cursor)
+            self.assertNotIsInstance(cursor.cursor, psycopg.ClientCursor)
+
+    def test_rls_user_context_still_set_with_server_side_binding(self):
+        # SET cannot take a bound parameter, so the middleware uses set_config.
+        user = make_user("Student")
+        login_with_session(self.client, user)
+        self.assertEqual(self.client.get(reverse("kura:home")).status_code, 200)
+        with connection.cursor() as cursor:
+            cursor.execute("SELECT set_config('kura.current_user_id', %s, false)", [str(user.id)])
+            cursor.execute("SELECT current_setting('kura.current_user_id', true)")
+            self.assertEqual(cursor.fetchone()[0], str(user.id))
+            cursor.execute("RESET kura.current_user_id")
+
+    def test_alloy_blanks_sql_literals_in_pgaudit_lines(self):
+        audit_block = self.alloy_text.split('selector = "{service=\\"db\\"} |= \\"AUDIT:\\""')[1].split("stage.match")[0]
+        self.assertIn("stage.replace", audit_block)
+        self.assertIn("expression = \"'([^']*)'\"", audit_block)
+
+    def test_setup_gives_new_volumes_their_owners_and_creates_stanza(self):
+        setup_body = self.kura_sh_text.split("cmd_setup() {")[1].split("\n}\n")[0]
+        self.assertIn("fix_volume_owner loki /var/loki 10001:10001", setup_body)
+        self.assertIn("fix_volume_owner db /var/lib/pgbackrest-offsite 26:26", setup_body)
+        self.assertIn("pgbackrest --stanza=kura stanza-create", setup_body)
+        # Volumes are fixed before the stanza is created, which needs the second repository.
+        self.assertLess(setup_body.index("fix_volume_owner db"), setup_body.index("pgbackrest --stanza=kura stanza-create"))
+
+    def test_compose_project_name_waf_memory_and_gunicorn_workers(self):
+        self.assertRegex(self.compose_text, r"(?m)^name: kura$")
+        self.assertIn('GUNICORN_WORKERS: "5"', self.compose_text)
+        waf_block = self.compose_text.split("\n  waf:\n")[1].split("\n  clamav:\n")[0]
+        self.assertIn("mem_limit: 768m", waf_block)
+        self.assertIn("memory: 768M", waf_block)
