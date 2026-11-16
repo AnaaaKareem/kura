@@ -10,7 +10,7 @@ storage "file" {
 }
 
 # HTTPS only. The certificate is signed by Kura's internal CA
-# (certs/generate_internal_mtls_certs.sh), and Django checks it with ca.crt,
+# (./kura.sh mtls-bootstrap), and Django checks it with ca.crt,
 # so nothing on the Docker network can pretend to be Vault.
 listener "tcp" {
   address         = "0.0.0.0:8200"

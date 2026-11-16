@@ -3,7 +3,7 @@ HashiCorp Vault helper functions for Kura LMS:
 1. Transit engine: encrypts and decrypts MFA TOTP secret seeds (AES-256-GCM).
    A second Transit key encrypts exam answer keys the same way.
 2. Database engine: temporary PostgreSQL users (15 minutes) for Django's connections.
-(Internal TLS certificates are issued by certs/renew-certs-from-vault.sh, not by Django.)
+(Internal TLS certificates are issued by ./kura.sh renew-certs, not by Django.)
 """
 
 import base64

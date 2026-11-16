@@ -15,7 +15,7 @@ KURA_METRICS_DIR=/var/lib/kura-metrics
 
 # Every minute: send queued emails, and save the application counts.
 * * * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh send-emails docker compose exec -T web python manage.py send_queued_emails >> /var/log/kura/send-emails.log 2>&1
-* * * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh app-metrics sh docker/cron/write-app-metrics.sh >> /var/log/kura/app-metrics.log 2>&1
+* * * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh app-metrics ./kura.sh app-metrics >> /var/log/kura/app-metrics.log 2>&1
 
 # Every 5 minutes: finalize assessment attempts whose deadline has passed.
 */5 * * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh finalize-attempts docker compose exec -T web python manage.py finalize_attempts >> /var/log/kura/finalize-attempts.log 2>&1
@@ -31,7 +31,7 @@ KURA_METRICS_DIR=/var/lib/kura-metrics
 
 # Every Monday at 03:30: renew the internal certificates from Vault (they last
 # 30 days). Vault must be unsealed. Also writes certificate expiry metrics.
-30 3 * * 1 /bin/sh $KURA_DIR/docker/cron/run-job.sh cert-renewal sh certs/renew-certs-from-vault.sh >> /var/log/kura/cert-renewal.log 2>&1
+30 3 * * 1 /bin/sh $KURA_DIR/docker/cron/run-job.sh cert-renewal ./kura.sh renew-certs >> /var/log/kura/cert-renewal.log 2>&1
 
 # Every day at 04:30: purge expired Django sessions from django_session.
 30 4 * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh clear-sessions docker compose exec -T web python manage.py clearsessions >> /var/log/kura/clear-sessions.log 2>&1

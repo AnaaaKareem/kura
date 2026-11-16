@@ -95,12 +95,13 @@ jobs:
           pip install -r requirements.txt
 
       # Secrets and certificates are never committed (.gitignore), so CI makes
-      # its own throwaway ones with the same scripts a developer uses. The
-      # backup-key and mTLS-certificate tests then check real files.
+      # its own throwaway ones with the same kura.sh steps a developer uses.
+      # kura.sh gives each key and secret to its container user, so it runs as
+      # root. The mTLS-certificate tests then check real files.
       - name: Create Throwaway Secrets and Internal Certificates
         run: |
-          sh secrets/generate_secrets.sh
-          sh certs/generate_internal_mtls_certs.sh
+          sudo ./kura.sh secrets
+          sudo ./kura.sh mtls-bootstrap
 
       # Pages link to content-hashed static files (ManifestStaticFilesStorage),
       # and {% static %} raises an error until collectstatic has written the
