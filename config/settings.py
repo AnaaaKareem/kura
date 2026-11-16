@@ -139,7 +139,7 @@ TEMPLATES = [
                 "django.template.context_processors.request",
                 "django.contrib.auth.context_processors.auth",
                 "django.contrib.messages.context_processors.messages",
-                "kura.context_processors.nav_roles",
+                "kura.views.nav_roles",
             ],
         },
     },
@@ -179,20 +179,24 @@ if DB_SSL_MODE:
     if os.environ.get("DB_SSL_KEY"):
         DB_OPTIONS["sslkey"] = os.environ.get("DB_SSL_KEY")
 
-if DB_OPTIONS:
-    DATABASES["default"]["OPTIONS"] = DB_OPTIONS
+# Send query values separately from the SQL text (psycopg 3 server-side binding).
+# PostgreSQL then sees "WHERE session_key = $1" instead of the real value, so
+# pgAudit (docker/postgres/pgaudit.conf, log_parameter = off) never writes
+# session keys, password hashes or token hashes into the logs.
+DB_OPTIONS["server_side_binding"] = True
+DATABASES["default"]["OPTIONS"] = DB_OPTIONS
 
 # Temporary database users from Vault (production / Docker only).
-# When on, Django uses kura/vault_postgres/base.py: Django's normal PostgreSQL
+# When on, Django uses kura/base.py: Django's normal PostgreSQL
 # backend, except that each new connection logs in with a 15-minute user from
 # Vault instead of DATABASE_USER / DATABASE_PASSWORD. The TLS options above
 # (CA, client certificate and key) still apply. Off for local development and tests.
 VAULT_DATABASE_CREDENTIALS = os.environ.get("VAULT_DATABASE_CREDENTIALS", "False").lower() in ("true", "1")
 if VAULT_DATABASE_CREDENTIALS:
-    DATABASES["default"]["ENGINE"] = "kura.vault_postgres"
+    DATABASES["default"]["ENGINE"] = "kura"
 
 # A second connection to the SAME database, used only to save quarantined
-# uploads (kura/files.py). Uploads often run inside transaction.atomic(); when
+# uploads (kura/views.py). Uploads often run inside transaction.atomic(); when
 # an infected file is rejected that transaction is rolled back, which would
 # also undo a quarantine record saved on the normal connection. This
 # connection commits on its own, so the record is kept. In tests it points at
@@ -220,12 +224,9 @@ AUTH_PASSWORD_VALIDATORS = [
     {
         "NAME": "django.contrib.auth.password_validation.NumericPasswordValidator",
     },
-    {
-        "NAME": "kura.validators.BreachedPasswordValidator",
-    },
 ]
 
-# The breached-password check (kura/validators.py) asks HaveIBeenPwned over HTTPS.
+# The web password workflows in kura/views.py check HaveIBeenPwned over HTTPS.
 # In Docker the web container has no internet route, so it goes through the
 # breach-proxy container, which allows only api.pwnedpasswords.com.
 # Empty (local development) means "connect directly".
@@ -432,7 +433,6 @@ LOGGING = {
             "level": "INFO",
             "propagate": False,
         },
-        "kura.vault": {"handlers": ["console"], "level": "WARNING", "propagate": False},
         "django.request": {"handlers": ["console"], "level": "WARNING", "propagate": False},
         "django.security": {"handlers": ["console"], "level": "WARNING", "propagate": False},
         "axes": {"handlers": ["console"], "level": "WARNING", "propagate": False},

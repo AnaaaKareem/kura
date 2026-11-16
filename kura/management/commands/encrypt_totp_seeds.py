@@ -19,7 +19,7 @@ from django.db import transaction
 from django_otp.plugins.otp_totp.models import TOTPDevice
 from django_otp.util import random_hex
 
-from kura.vault import encrypt_mfa_secret
+from kura.views import encrypt_mfa_secret
 
 
 class Command(BaseCommand):

@@ -10,5 +10,5 @@ whitelist:
     # The host itself.
     - "127.0.0.0/8"
     # Docker's private networks (all of Kura's networks are inside this range,
-    # including cloudflared at 172.28.10.10 and nginx at 172.28.10.20).
+    # including nginx at 172.28.10.20).
     - "172.16.0.0/12"

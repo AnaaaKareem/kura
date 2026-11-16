@@ -43,7 +43,7 @@ if ! command -v pgbackrest &> /dev/null; then
     echo "[!] pgbackrest binary not found in current host PATH."
     echo "[*] If running within Docker Compose, execute via container:"
     echo "    docker compose exec db pgbackrest --stanza=${STANZA} --type=${BACKUP_TYPE} backup"
-    exit 0
+    exit 1
 fi
 
 # 3. Handle commands
@@ -74,4 +74,3 @@ case "${BACKUP_TYPE}" in
         exit 1
         ;;
 esac
-

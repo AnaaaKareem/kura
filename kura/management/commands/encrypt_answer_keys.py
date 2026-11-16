@@ -13,7 +13,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 from kura.models import ExamAnswerKey
 from kura.permissions import service_rls_context
-from kura.vault import encrypt_answer_key
+from kura.views import encrypt_answer_key
 
 
 class Command(BaseCommand):

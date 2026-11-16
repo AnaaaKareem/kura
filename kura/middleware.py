@@ -256,7 +256,10 @@ class RowLevelSecurityMiddleware:
 
             try:
                 with connection.cursor() as cursor:
-                    cursor.execute("SET kura.current_user_id = %s;", [str(request.user.id)])
+                    # set_config(..., false) is the same as SET for the session, but
+                    # unlike SET it accepts a bound parameter, which psycopg 3's
+                    # server-side binding needs (settings.py, DATABASES OPTIONS).
+                    cursor.execute("SELECT set_config('kura.current_user_id', %s, false);", [str(request.user.id)])
             except Exception as error:
                 # Fail closed: database policies treat a missing user id as unrestricted.
                 log_security_event(

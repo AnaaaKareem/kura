@@ -48,7 +48,7 @@ if ! command -v pgbackrest &> /dev/null; then
     else
         echo "    docker compose exec db pgbackrest --stanza=${STANZA} --type=time --target=\"${TARGET_TIME}\" --target-action=promote restore"
     fi
-    exit 0
+    exit 1
 fi
 
 # 3. Perform restoration
@@ -67,4 +67,3 @@ fi
 
 echo "[+] Restore completed successfully."
 echo "[+] Start PostgreSQL to begin WAL replay and cluster promotion."
-

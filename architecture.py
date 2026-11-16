@@ -19,8 +19,8 @@ How to read the picture:
     - Each arrow is a connection. Its label says the protocol and, where it
       matters, the security on it (TLS, mTLS, AppRole, ...).
     - Solid arrows are live traffic. Dashed arrows are designed but not active
-      yet (the Cloudflare Tunnel needs a domain; off-site backups need a
-      Backblaze B2 account; the mail relay needs the provider's login).
+      yet (off-site backups need a Backblaze B2 account; the mail relay
+      needs the provider's login).
 """
 
 import os
@@ -37,7 +37,6 @@ from diagrams.onprem.monitoring import Grafana, Prometheus
 from diagrams.onprem.network import Gunicorn, Nginx
 from diagrams.onprem.security import Trivy, Vault
 from diagrams.programming.framework import Django
-from diagrams.saas.cdn import Cloudflare
 from diagrams.saas.chat import Telegram
 
 # Where the picture is saved. The folder name matches the image link in the
@@ -78,12 +77,6 @@ with Diagram(
     admin = User("Admin laptop\n(Ed25519 SSH key)")
 
     # ------------------------------------------------------------------
-    # Layer 0: Cloudflare's edge (configured, waiting for a domain).
-    # ------------------------------------------------------------------
-    with Cluster("Layer 0: Cloudflare edge (planned: needs a domain)"):
-        cloudflare = Cloudflare("Cloudflare\nDDoS, bot management,\nedge WAF")
-
-    # ------------------------------------------------------------------
     # Development side: GitHub Actions checks every push.
     # ------------------------------------------------------------------
     with Cluster("CI/CD: GitHub Actions (actions pinned to commit hashes)"):
@@ -99,15 +92,14 @@ with Diagram(
     with Cluster("Ubuntu Server 24.04 VM (Hyper-V) running Docker Compose"):
         # Layer 1: the host firewall and CrowdSec.
         with Cluster("Layer 1: host firewall"):
-            host_firewall = Firewall("nftables\ndefault DROP\n(only SSH 22 from\nadmin allowlist)")
+            host_firewall = Firewall("nftables\ndefault DROP\n(HTTPS 443 + HTTP 80 open,\nSSH 22 only from\nadmin allowlist)")
             crowdsec = Firewall("CrowdSec\nKura parsers + scenarios,\nsshd collection,\nbans real client IPs")
             # The VM's SSH server: keys only, one admin user, one allowed forward.
             sshd = Server("VM sshd\nEd25519 keys only,\nAllowUsers admin,\nforward only to\n127.0.0.1:3000")
 
         # Layer 2: the web front door ("frontend" network).
         with Cluster("Layer 2: frontend network"):
-            tunnel = Server("cloudflared\n(outbound-only tunnel)\n(planned: remote-access profile)")
-            nginx = Nginx("nginx\nTLS 1.3, HSTS,\n10 req/s general,\n10 req/min sign-in,\n25 MiB cap\n(127.0.0.1 only)")
+            nginx = Nginx("nginx\nports 80 + 443\nTLS 1.3, HSTS,\nself-signed cert (lab),\n10 req/s general,\n10 req/min sign-in,\n25 MiB cap")
             waf = Firewall("Coraza WAF\nOWASP Core Rule Set")
 
         # The application ("app", "backend", "mail", "breach_check" and "clamav" networks, all internal).
@@ -155,9 +147,10 @@ with Diagram(
     # ------------------------------------------------------------------
     # Arrows: how a normal web request travels.
     # ------------------------------------------------------------------
-    students_and_staff >> Edge(label="HTTPS (planned)", style="dashed") >> cloudflare
-    cloudflare >> Edge(label="tunnel (planned)", style="dashed") >> tunnel
-    tunnel >> Edge(label="HTTPS (planned)", style="dashed") >> nginx
+    # Visitors connect straight to the VM: the host firewall lets 443 (and 80,
+    # which only redirects to HTTPS) through to nginx.
+    students_and_staff >> Edge(label="HTTPS 443") >> host_firewall
+    host_firewall >> Edge(label="443 / 80") >> nginx
     nginx >> Edge(label="mTLS") >> waf
     waf >> Edge(label="mTLS") >> gunicorn
     gunicorn >> django_app

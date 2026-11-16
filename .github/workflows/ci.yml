@@ -239,7 +239,7 @@ jobs:
       - name: Create missing placeholder secret files
         run: |
           mkdir -p secrets
-          for name in db_password backup_encryption_key django_secret_key crowdsec_bouncer_key cloudflare_tunnel_token grafana_admin_password telegram_bot_token telegram_chat_id smtp_relay_credentials vault_role_id vault_secret_id; do
+          for name in db_password backup_encryption_key django_secret_key crowdsec_bouncer_key grafana_admin_password telegram_bot_token telegram_chat_id smtp_relay_credentials vault_role_id vault_secret_id; do
             test -e "secrets/$name.txt" || touch "secrets/$name.txt"
           done
 
