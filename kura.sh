@@ -4,6 +4,7 @@
 #
 #     ./kura.sh help                 list every subcommand
 #     sudo ./kura.sh setup           first setup on a fresh VM
+#     sudo ./kura.sh preflight       read-only production checks
 #
 # Options (anywhere on the command line):
 #     --dry-run   print what each step would do and change nothing
@@ -164,6 +165,7 @@ Setup
   renew-certs        Renew internal certificates from Vault and reload services (weekly cron)
 
 Checks
+  preflight          Read-only production checks; ends with PASS or FAIL
   health             Container health, the HTTPS site and Grafana's health endpoint
 
 Operations
@@ -907,7 +909,7 @@ write_cert_metrics() {
 }
 
 # ------------------------------------------------------------------------------
-# health
+# preflight
 # ------------------------------------------------------------------------------
 
 PASSED=0
@@ -916,6 +918,202 @@ FAILED=0
 # Record one check result. Messages never contain secret values.
 pass() { echo "[PASS] $*"; PASSED=$((PASSED + 1)); }
 fail() { echo "[FAIL] $*"; FAILED=$((FAILED + 1)); }
+
+# Read-only production checks. Ends with PASS or FAIL and exits non-zero when
+# any check fails. Nothing is changed, so --dry-run makes no difference. Run it
+# as root on the VM: secret files belong to container users, and sshd -T needs
+# root. As another user, unreadable files are reported as failures.
+cmd_preflight() {
+    check_compose_config
+    check_django_deploy
+    check_debug_off
+    check_secret_values
+    check_file_modes
+    check_cert_expiry
+    check_published_ports
+    check_sshd
+    echo ""
+    if [ "$FAILED" -eq 0 ]; then
+        echo "PREFLIGHT PASS ($PASSED checks)"
+    else
+        echo "PREFLIGHT FAIL ($FAILED failed, $PASSED passed)"
+        exit 1
+    fi
+}
+
+# The Compose file must be valid.
+check_compose_config() {
+    if docker compose config --quiet 2>/dev/null; then
+        pass "docker compose config is valid"
+    else
+        fail "docker compose config reports an error (run: docker compose config --quiet)"
+    fi
+}
+
+# Django's deployment checklist, inside the web image in a throwaway container
+# (removed afterwards). Only the check output is shown, never the environment.
+check_django_deploy() {
+    if docker compose run --rm --no-deps -T web python manage.py check --deploy --fail-level WARNING > /tmp/kura-check-deploy.$$ 2>&1; then
+        pass "manage.py check --deploy"
+    else
+        fail "manage.py check --deploy reported problems:"
+        grep -E '^(System check|\?:|kura|SystemCheckError|CommandError|.*\(security\.)' /tmp/kura-check-deploy.$$ | head -20 | sed 's/^/       /'
+    fi
+    rm -f /tmp/kura-check-deploy.$$
+}
+
+# DEBUG must not be true in .env. Only that one key is read; no value is printed.
+check_debug_off() {
+    if [ ! -f .env ]; then
+        pass ".env not present (Compose sets DEBUG=False for every Django container)"
+        return
+    fi
+    debug=$(grep -E '^[[:space:]]*DEBUG[[:space:]]*=' .env | tail -n 1 | cut -d= -f2- | tr -d ' "'"'" | tr '[:upper:]' '[:lower:]')
+    case "$debug" in
+        true|1|yes|on) fail "DEBUG is true in .env" ;;
+        *) pass "DEBUG is not true in .env" ;;
+    esac
+}
+
+# No secret file may be missing, empty, a known placeholder, or (for keys and
+# passwords Kura generates) shorter than 32 characters.
+check_secret_values() {
+    for name in $GENERATED_SECRETS $EXTERNAL_SECRETS $HOST_ONLY_SECRETS; do
+        file="$SECRETS_DIR/$name.txt"
+        if [ ! -f "$file" ]; then
+            fail "$file is missing"
+            continue
+        fi
+        if [ ! -r "$file" ]; then
+            fail "$file is not readable by this user (run preflight as root)"
+            continue
+        fi
+        value=$(read_secret "$name")
+        length=${#value}
+        lower=$(printf '%s' "$value" | tr '[:upper:]' '[:lower:]')
+        value=""
+        case "$lower" in
+            "") fail "$file is empty"; continue ;;
+            *your-*-here*|*changeme*|*change-me*|*placeholder*|*example*|todo|xxx*)
+                fail "$file holds a placeholder value"; continue ;;
+        esac
+        case " $GENERATED_SECRETS " in
+            *" $name "*)
+                if [ "$length" -lt 32 ]; then
+                    fail "$file is shorter than 32 characters"
+                    continue
+                fi
+                ;;
+        esac
+        pass "$file is set"
+    done
+}
+
+# Secret files and private keys must be mode 600 and belong to the expected
+# user; the secrets folder must be 700.
+check_file_modes() {
+    if ! is_linux; then
+        pass "file owners not checked (not Linux)"
+        return
+    fi
+    check_mode "$SECRETS_DIR" 700 "$(stat -c %u "$SECRETS_DIR")"
+    for name in $GENERATED_SECRETS $EXTERNAL_SECRETS $HOST_ONLY_SECRETS; do
+        [ -f "$SECRETS_DIR/$name.txt" ] && check_mode "$SECRETS_DIR/$name.txt" 600 "$(secret_owner "$name")"
+    done
+    check_mode certs/kura.key 600 0
+    for entry in $KEY_OWNERS; do
+        check_mode "$CERT_DIR/${entry%%:*}.key" 600 "${entry#*:}"
+    done
+}
+
+# Compare one file's mode and owner with the expected values.
+check_mode() {
+    if [ ! -e "$1" ]; then
+        fail "$1 is missing"
+        return
+    fi
+    actual=$(stat -c '%a %u' "$1")
+    if [ "$actual" = "$2 $3" ]; then
+        pass "$1 is mode $2, owner $3"
+    else
+        fail "$1 is mode/owner $actual, expected $2 $3"
+    fi
+}
+
+# Every certificate must be valid for more than 7 more days.
+check_cert_expiry() {
+    for cert in certs/kura.crt "$CERT_DIR/ca.crt" $(for n in $INTERNAL_CERTS; do echo "$CERT_DIR/$n.crt"; done); do
+        if [ ! -f "$cert" ]; then
+            fail "$cert is missing"
+        elif openssl x509 -checkend 604800 -noout -in "$cert" > /dev/null; then
+            pass "$cert is valid for more than 7 days"
+        else
+            fail "$cert expires within 7 days"
+        fi
+    done
+}
+
+# Nothing may publish a port on all interfaces. Grafana must be exactly
+# 127.0.0.1:3000; Prometheus, Loki and Alertmanager must publish no port.
+# nginx (8080/8443) and the CrowdSec API (8085) are allowed on loopback only.
+check_published_ports() {
+    ports=$(docker compose --profile tools --profile remote-access config --format json 2>/dev/null | python3 -c '
+import json, sys
+config = json.load(sys.stdin)
+for name, service in config["services"].items():
+    for port in service.get("ports", []):
+        print(name, port.get("host_ip") or "0.0.0.0", port.get("published", ""), port.get("target"))
+')
+    if [ -z "$ports" ]; then
+        fail "could not read the published ports"
+        return
+    fi
+    bad=0
+    while read -r service host_ip published target; do
+        case "$service:$host_ip:$published" in
+            grafana:127.0.0.1:3000|nginx:127.0.0.1:8080|nginx:127.0.0.1:8443|crowdsec:127.0.0.1:8085) ;;
+            *) fail "$service publishes $host_ip:$published -> $target (not allowed)"; bad=1 ;;
+        esac
+    done <<EOF
+$ports
+EOF
+    if ! echo "$ports" | grep -q '^grafana 127.0.0.1 3000 3000$'; then
+        fail "grafana must publish 127.0.0.1:3000"
+        bad=1
+    fi
+    [ "$bad" = 0 ] && pass "published ports: Grafana 127.0.0.1:3000; nginx and CrowdSec API on loopback; nothing on all interfaces"
+    return 0
+}
+
+# On the VM, the live sshd settings must match docker/ssh/kura-sshd.conf.
+# Skipped where sshd is not installed (for example a development machine).
+check_sshd() {
+    if ! command -v sshd > /dev/null 2>&1 || ! sshd -T > /tmp/kura-sshd.$$ 2>/dev/null; then
+        echo "[note] sshd not found or not readable here: SSH settings not checked (run preflight on the VM)"
+        rm -f /tmp/kura-sshd.$$
+        return
+    fi
+    for setting in "passwordauthentication no" "kbdinteractiveauthentication no" "permitrootlogin no" \
+                   "pubkeyauthentication yes" "maxauthtries 3" "logingracetime 30" \
+                   "x11forwarding no" "allowagentforwarding no" "gatewayports no" "permittunnel no" \
+                   "allowtcpforwarding no" "permitopen none" "pubkeyacceptedalgorithms ssh-ed25519,sk-ssh-ed25519@openssh.com"; do
+        if grep -qx "$setting" /tmp/kura-sshd.$$; then
+            pass "sshd: $setting"
+        else
+            fail "sshd: expected '$setting'"
+        fi
+    done
+    if grep -q '^allowusers ' /tmp/kura-sshd.$$; then
+        pass "sshd: AllowUsers is set"
+    else
+        fail "sshd: AllowUsers is not set"
+    fi
+    rm -f /tmp/kura-sshd.$$
+}
+
+# ------------------------------------------------------------------------------
+# health
+# ------------------------------------------------------------------------------
 
 # Container health states, the HTTPS site through nginx, and Grafana's health
 # endpoint. Read-only. Exits non-zero when anything is unhealthy.
@@ -1168,6 +1366,7 @@ case "$COMMAND" in
     vault-init) cmd_vault_init ;;
     vault-add-name) cmd_vault_add_name "$ARGUMENT" ;;
     renew-certs) cmd_renew_certs ;;
+    preflight) cmd_preflight ;;
     health) cmd_health ;;
     app-metrics) cmd_app_metrics ;;
     restore-drill) cmd_restore_drill "$ARGUMENT" ;;
