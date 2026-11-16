@@ -11,9 +11,7 @@ on:
       - development
 
 jobs:
-  # ---------------------------------------------------------------------------
   # 1. Code Quality & Dependency Audit
-  # ---------------------------------------------------------------------------
   lint-and-audit:
     name: Lint & Dependency Security Audit
     runs-on: ubuntu-latest
@@ -37,14 +35,10 @@ jobs:
         run: |
           ruff check .
 
-      # Two known issues have no fixed release and cannot be reached in Kura,
-      # so they are ignored by ID only (any NEW vulnerability still fails):
-      # - PYSEC-2026-4298 (python-jose, pulled in by django-mfa2): forging
-      #   tokens needs the verifier to use a PUBLIC key. django-mfa2 signs and
-      #   checks its tokens with Django's SECRET_KEY, a shared secret.
-      # - PYSEC-2026-1325 (ecdsa, pulled in by python-jose): a timing attack
-      #   on CREATING ECDSA signatures. Kura never creates ECDSA signatures;
-      #   passkey checks only verify them.
+      # Two known issues have no fixed release and cannot be reached in Kura, so they are ignored by ID only (any NEW vulnerability still fails):
+      # - PYSEC-2026-4298 (python-jose, pulled in by django-mfa2): forging tokens needs the verifier to use a PUBLIC key. django-mfa2 signs and checks its tokens with Django's SECRET_KEY, a shared secret.
+      # - PYSEC-2026-1325 (ecdsa, pulled in by python-jose): a timing attack on CREATING ECDSA signatures.
+      # Kura never creates ECDSA signatures; passkey checks only verify them.
       # Re-check both whenever django-mfa2 is updated.
       - name: Run Pip-Audit Vulnerability Scanner
         run: |
@@ -52,9 +46,7 @@ jobs:
             --ignore-vuln PYSEC-2026-4298 \
             --ignore-vuln PYSEC-2026-1325
 
-  # ---------------------------------------------------------------------------
   # 2. Automated Tests & Production Deployment Check
-  # ---------------------------------------------------------------------------
   test-and-deploy-check:
     name: Tests & Deployment Configuration Check
     runs-on: ubuntu-latest
@@ -94,18 +86,15 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Secrets and certificates are never committed (.gitignore), so CI makes
-      # its own throwaway ones with the same kura.sh steps a developer uses.
-      # kura.sh gives each key and secret to its container user, so it runs as
-      # root. The mTLS-certificate tests then check real files.
+      # Secrets and certificates are never committed (.gitignore), so CI makes its own throwaway ones with the same kura.sh steps a developer uses.
+      # kura.sh gives each key and secret to its container user, so it runs as root.
+      # The mTLS-certificate tests then check real files.
       - name: Create Throwaway Secrets and Internal Certificates
         run: |
           sudo ./kura.sh secrets
           sudo ./kura.sh mtls-bootstrap
 
-      # Pages link to content-hashed static files (ManifestStaticFilesStorage),
-      # and {% static %} raises an error until collectstatic has written the
-      # manifest, so it runs before the tests render any page.
+      # Pages link to content-hashed static files (ManifestStaticFilesStorage), and {% static %} raises an error until collectstatic has written the manifest, so it runs before the tests render any page.
       - name: Collect Static Files
         env:
           SECRET_KEY: ci-test-secret-key-not-for-production-environment
@@ -139,9 +128,7 @@ jobs:
         run: |
           python manage.py check --deploy
 
-  # ---------------------------------------------------------------------------
   # 3. Static Application Security Testing (SAST) with Semgrep
-  # ---------------------------------------------------------------------------
   semgrep-scan:
     name: Semgrep SAST Scan (OWASP Top 10 & Django)
     runs-on: ubuntu-latest
@@ -156,9 +143,7 @@ jobs:
         run: |
           semgrep scan --config "p/django" --config "p/owasp-top-ten" --error
 
-  # ---------------------------------------------------------------------------
   # 4. Container Build & Image Vulnerability Scan with Trivy
-  # ---------------------------------------------------------------------------
   docker-build-and-trivy:
     name: Docker Image Build & Trivy Vulnerability Scan
     runs-on: ubuntu-latest
@@ -234,8 +219,8 @@ jobs:
       - name: Checkout source code
         uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
 
-      # These are empty CI-only files, never production credentials. Do not
-      # overwrite an existing file if this step is reused in another checkout.
+      # These are empty CI-only files, never production credentials.
+      # Do not overwrite an existing file if this step is reused in another checkout.
       - name: Create missing placeholder secret files
         run: |
           mkdir -p secrets
@@ -278,9 +263,7 @@ jobs:
             grafana/alloy:v1.21.3@sha256:8ab871206bd2d8f89277f53abffee5f452a293980788d52f85fa183a87a505a4 \
             validate /tmp/config.alloy
 
-  # ---------------------------------------------------------------------------
   # 5. Dynamic Application Security Testing (DAST) with OWASP ZAP
-  # ---------------------------------------------------------------------------
   owasp-zap-dast:
     name: OWASP ZAP Baseline DAST Scan
     runs-on: ubuntu-latest

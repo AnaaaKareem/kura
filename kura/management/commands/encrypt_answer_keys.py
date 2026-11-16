@@ -34,9 +34,8 @@ class Command(BaseCommand):
                     skipped_count += 1
                     continue
 
-                # Encrypt the plain key and save only that one field. If Vault is
-                # down, encrypt_answer_key raises an error and the command stops;
-                # keys saved before the error stay encrypted.
+                # Encrypt the plain key and save only that one field.
+                # If Vault is down, encrypt_answer_key raises an error and the command stops; keys saved before the error stay encrypted.
                 answer_key.answer_key_json = encrypt_answer_key(answer_key.answer_key_json)
                 answer_key.save(update_fields=["answer_key_json"])
                 encrypted_count += 1

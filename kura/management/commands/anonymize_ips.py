@@ -10,8 +10,7 @@ from kura.permissions import service_rls_context
 
 
 def anonymize_ip_address(ip_address: str) -> str:
-    """
-    Anonymizes an IP address by zeroing out host bits while keeping a valid format.
+    """Anonymize an IP address by zeroing out host bits while keeping a valid format.
     IPv4 addresses are masked to /24 (e.g. 198.51.100.42 becomes 198.51.100.0).
     IPv6 addresses are masked to /48 (e.g. 2001:db8:abcd:12::1 becomes 2001:db8:abcd::).
     """
@@ -49,9 +48,7 @@ class Command(BaseCommand):
         )
 
     def handle(self, *args, **options):
-        """
-        Masks IP addresses in old session, login, attendance, and attempt records.
-        """
+        """Mask IP addresses in old session, login, attendance, and attempt records."""
         days = options["days"]
         dry_run = options["dry_run"]
         cutoff = timezone.now() - timezone.timedelta(days=days)

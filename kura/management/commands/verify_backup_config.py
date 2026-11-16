@@ -6,8 +6,7 @@ from django.core.management.base import BaseCommand, CommandError
 
 
 def calculate_shannon_entropy(data: str) -> float:
-    """
-    Calculates the Shannon entropy of a string in bits per character.
+    """Calculate the Shannon entropy of a string in bits per character.
     High entropy (> 3.5 bits/char for alphanumeric) indicates cryptographic randomness.
     """
     if not data:
@@ -27,9 +26,7 @@ class Command(BaseCommand):
     help = "Validates PostgreSQL backup configuration, AES-256 encryption key entropy, and PITR settings."
 
     def handle(self, *args, **options):
-        """
-        Checks that backup keys, PostgreSQL backup settings, and scripts are present.
-        """
+        """Check that backup keys, PostgreSQL backup settings, and scripts are present."""
         self.stdout.write("[+] Inspecting Kura LMS Backup & Disaster Recovery Configuration...")
         base_dir = Path(settings.BASE_DIR)
 

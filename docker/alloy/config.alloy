@@ -1,6 +1,5 @@
 // Alloy collects Docker container logs and Nginx's rotated access/error files.
-// Only service, stream, and level become Loki labels; request details remain
-// structured metadata so user, path, and address values do not create streams.
+// Only service, stream, and level become Loki labels; request details remain structured metadata so user, path, and address values do not create streams.
 
 // Keep Alloy's own diagnostics readable in Docker's container log.
 logging {
@@ -23,9 +22,8 @@ discovery.relabel "kura_containers" {
     action        = "keep"
   }
 
-  // Keep only containers started by THIS Compose project ("kura"). Other local
-  // containers that happen to be named kura-* (e.g. a developer's test
-  // database) must not be mixed into Kura's logs.
+  // Keep only containers started by THIS Compose project ("kura").
+  // Other local containers that happen to be named kura-* (e.g. a developer's test database) must not be mixed into Kura's logs.
   rule {
     source_labels = ["__meta_docker_container_label_com_docker_compose_project"]
     regex         = "kura"
@@ -82,12 +80,10 @@ loki.source.file "cron_logs" {
   forward_to = [loki.process.pipeline.receiver]
 }
 
-// The VM's authentication log: sshd logins and failures (and sudo). Ubuntu's
-// rsyslog writes /var/log/auth.log as root:adm mode 640; Alloy reads it through
-// the read-only host mount as a member of the adm group (group_add in
-// docker-compose.yml). Labelled service="auth" for the SSH alert rules.
-// Grafana's own login log needs no extra source: it arrives through the Docker
-// source above as service="grafana".
+// The VM's authentication log: sshd logins and failures (and sudo).
+// Ubuntu's rsyslog writes /var/log/auth.log as root:adm mode 640; Alloy reads it through the read-only host mount as a member of the adm group (group_add in docker-compose.yml).
+// Labelled service="auth" for the SSH alert rules.
+// Grafana's own login log needs no extra source: it arrives through the Docker source above as service="grafana".
 local.file_match "auth_log" {
   path_targets = [{ "__path__" = "/host/root/var/log/auth.log", "service" = "auth" }]
 }
@@ -103,15 +99,12 @@ loki.process "docker_envelope" {
   forward_to = [loki.process.pipeline.receiver]
 }
 
-// Nginx needs no file reader: the official nginx image links
-// /var/log/nginx/access.log to /dev/stdout and error.log to /dev/stderr, so its
-// logs arrive through the Docker source above as service="nginx". Access lines
-// are recognised by their shape (they start with the client IP and " - ").
+// Nginx needs no file reader: the official nginx image links /var/log/nginx/access.log to /dev/stdout and error.log to /dev/stderr, so its logs arrive through the Docker source above as service="nginx".
+// Access lines are recognised by their shape (they start with the client IP and " - ").
 
 // Parse each service separately, keeping searchable details out of Loki labels.
-// Note: stage.static_labels sets a FIXED label value (e.g. level="warning");
-// stage.labels copies an EXTRACTED field into a label (level = "" means "use
-// the extracted field named level"). Mixing them up silently sets nothing.
+// Note: stage.static_labels sets a FIXED label value (e.g. level="warning"); stage.labels copies an EXTRACTED field into a label (level = "" means "use the extracted field named level").
+// Mixing them up silently sets nothing.
 loki.process "pipeline" {
   // Read Django's logfmt fields (both web and cron jobs) and keep event names as metadata.
   stage.match {
@@ -138,16 +131,14 @@ loki.process "pipeline" {
       expressions = {
         client_ip = "transaction.client_ip",
         uri       = "transaction.request.uri",
-        // There is no response status in the audit record; is_interrupted=true
-        // means the WAF blocked the request.
+        // There is no response status in the audit record; is_interrupted=true means the WAF blocked the request.
         action    = "transaction.is_interrupted",
       }
     }
 
-    // The pinned Coraza image leaves messages[*].data empty; the rule number
-    // only appears inside each message's text, like [id \"942100\"]. Take the
-    // FIRST one: it is the rule that detected the attack (later ones are the
-    // anomaly-score totals such as 949110). Checked against a real block.
+    // The pinned Coraza image leaves messages[*].data empty; the rule number only appears inside each message's text, like [id \"942100\"].
+    // Take the FIRST one: it is the rule that detected the attack (later ones are the anomaly-score totals such as 949110).
+    // Checked against a real block.
     stage.regex {
       expression = "\\[id \\\\\"(?P<rule_id>[0-9]+)\\\\\"\\]"
     }
@@ -168,8 +159,7 @@ loki.process "pipeline" {
   }
 
   // Keep the WAF's plain combined access lines searchable by IP and URI.
-  // The request id is matched as any non-space value, because the header is
-  // "-" whenever the request arrived without an x-request-id.
+  // The request id is matched as any non-space value, because the header is "-" whenever the request arrived without an x-request-id.
   stage.match {
     selector = "{service=\"waf\"} |~ \"^[0-9a-fA-F:.]+ \""
 
@@ -251,8 +241,7 @@ loki.process "pipeline" {
     }
 
     // Second layer behind psycopg 3 server-side binding (config/settings.py):
-    // blank every quoted SQL literal, so a value written straight into a
-    // statement (a session key, password hash or token hash) never reaches Loki.
+    // blank every quoted SQL literal, so a value written straight into a statement (a session key, password hash or token hash) never reaches Loki.
     // Table and column names are kept, so the audit trail still shows who did what.
     stage.replace {
       expression = "'([^']*)'"
@@ -316,8 +305,7 @@ loki.process "pipeline" {
   }
 
   // Parse Nginx's combined-format request fields into metadata, not labels.
-  // Same as the WAF stage: the request id is "-" when the header is absent,
-  // so the regex accepts any non-space value there.
+  // Same as the WAF stage: the request id is "-" when the header is absent, so the regex accepts any non-space value there.
   stage.match {
     selector = "{service=\"nginx\"} |~ \"^[0-9a-fA-F.:]+ - \""
 
@@ -391,23 +379,18 @@ prometheus.scrape "vault" {
   forward_to = [prometheus.remote_write.local_prometheus.receiver]
 }
 
-// ---------------------------------------------------------------------------
-// WP3: metrics. Alloy collects everything internal and remote-writes it to
-// Prometheus, so Prometheus never needs to join the internal networks.
-// ---------------------------------------------------------------------------
+// WP3: metrics.
+// Alloy collects everything internal and remote-writes it to Prometheus, so Prometheus never needs to join the internal networks.
 
-// CrowdSec serves Prometheus metrics on :6060 (docker/crowdsec/config.yaml.local),
-// reached over the "observability" network.
+// CrowdSec serves Prometheus metrics on :6060 (docker/crowdsec/config.yaml.local), reached over the "observability" network.
 prometheus.scrape "crowdsec" {
   targets    = [{ "__address__" = "crowdsec:6060" }]
   forward_to = [prometheus.remote_write.local_prometheus.receiver]
 }
 
 // Host metrics and script-health files.
-//  - procfs/sysfs/rootfs point at the host's /proc, /sys and / mounted
-//    read-only by docker-compose.yml (on the Mac these show Docker's VM).
-//  - textfile: every *.prom file the cron jobs write (job success times,
-//    certificate expiry, write_app_metrics counts).
+// - procfs/sysfs/rootfs point at the host's /proc, /sys and / mounted read-only by docker-compose.yml (on the Mac these show Docker's VM).
+// - textfile: every *.prom file the cron jobs write (job success times, certificate expiry, write_app_metrics counts).
 prometheus.exporter.unix "host" {
   procfs_path = "/host/proc"
   sysfs_path  = "/host/sys"
@@ -428,12 +411,9 @@ prometheus.scrape "host" {
 }
 
 // Probes ("is it answering?") from Alloy's point of view:
-//  - site:        the public login page at the public host name (end to end);
-//                 KURA_PUBLIC_HOSTNAME comes from .env via docker-compose.yml
-//  - vault:       Vault's health endpoint answers 200 only when unsealed
-//                 (503 when sealed), checked with Kura's internal CA
-//  - loki_ready:  Loki's readiness page (Loki's image cannot run its own
-//                 Docker health check)
+// - site:        the public login page at the public host name (end to end); KURA_PUBLIC_HOSTNAME comes from .env via docker-compose.yml
+// - vault:       Vault's health endpoint answers 200 only when unsealed (503 when sealed), checked with Kura's internal CA
+// - loki_ready:  Loki's readiness page (Loki's image cannot run its own Docker health check)
 prometheus.exporter.blackbox "probes" {
   config = "{ modules: { http_2xx: { prober: http, timeout: 5s }, vault_unsealed: { prober: http, timeout: 5s, http: { valid_status_codes: [200], tls_config: { ca_file: /etc/alloy/certs/ca.crt } } } } }"
 
@@ -456,8 +436,7 @@ prometheus.exporter.blackbox "probes" {
   }
 }
 
-// All three probes come out of one exporter with the same "instance", so give
-// each its own labels from the address it checks: instance = the URL, and
+// All three probes come out of one exporter with the same "instance", so give each its own labels from the address it checks: instance = the URL, and
 // job = site / vault / loki_ready (used by docker/prometheus/alerts.yml).
 // Without this Prometheus merges them into one series.
 discovery.relabel "probes" {
@@ -495,10 +474,9 @@ prometheus.scrape "probes" {
   forward_to = [prometheus.remote_write.local_prometheus.receiver]
 }
 
-// PostgreSQL statistics (connections, transactions, sizes) as the read-only
-// role "alloy". It logs in with Alloy's Vault-issued client certificate only
-// (pg_hba.conf, docker/postgres/monitor-role.sql) and checks the database's
-// certificate against Kura's CA (verify-full). No password exists.
+// PostgreSQL statistics (connections, transactions, sizes) as the read-only role "alloy".
+// It logs in with Alloy's Vault-issued client certificate only (pg_hba.conf, docker/postgres/monitor-role.sql) and checks the database's certificate against Kura's CA (verify-full).
+// No password exists.
 prometheus.exporter.postgres "kura" {
   data_source_names = ["postgresql://alloy@db:5432/kura?sslmode=verify-full&sslrootcert=/etc/alloy/certs/ca.crt&sslcert=/etc/alloy/certs/alloy.crt&sslkey=/etc/alloy/certs/alloy.key"]
 }

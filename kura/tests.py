@@ -155,9 +155,7 @@ class EmailConfigurationTests(TestCase):
 
 
 def make_user(role_name, email=None, password="ValidPassword123!", **extra_fields):
-    """
-    Test helper function to create a user and assign them a specific system role.
-    """
+    """Test helper function to create a user and assign them a specific system role."""
     # Generate unique test email if one was not provided.
     if not email:
         email = f"{role_name.lower().replace(' ', '_')}_{secrets.token_hex(4)}@example.com"
@@ -199,8 +197,7 @@ def login_with_session(client, user):
 
 
 def confirm_second_factor(client):
-    """
-    Test helper: marks the logged-in test client as having just entered a
+    """Test helper: marks the logged-in test client as having just entered a
     second-factor code, as the "confirm your identity" page would (AUTH-02, ACL-05).
     """
     session = client.session
@@ -533,8 +530,7 @@ class LoginAndLogoutTests(TestCase):
         self.assertContains(response, "Invalid email or password.", status_code=400)
 
     def test_deactivated_account_cannot_login(self):
-        # AUTH-01: even a correct password gets the generic message, so the
-        # response never confirms that the password was right.
+        # AUTH-01: even a correct password gets the generic message, so the response never confirms that the password was right.
         self.user.is_active = False
         self.user.save()
 
@@ -560,8 +556,7 @@ class LoginAndLogoutTests(TestCase):
         self.assertNotContains(response, "This account has been deactivated.", status_code=400)
 
     def test_locked_account_with_correct_password_shows_generic_message(self):
-        # AUTH-01: a correct password on a locked account gets the same
-        # message as a wrong one; the lock reason is only logged.
+        # AUTH-01: a correct password on a locked account gets the same message as a wrong one; the lock reason is only logged.
         self.user.locked_until = timezone.now() + timezone.timedelta(hours=2)
         self.user.save()
 
@@ -602,9 +597,7 @@ class LoginAndLogoutTests(TestCase):
         self.assertContains(response, "Invalid email or password.", status_code=400)
 
     def test_failed_login_checks_the_password_only_once(self):
-        # AUTH-04: a known email with a wrong password must cost one password
-        # hash, the same as an unknown email, so timing does not reveal which
-        # emails have accounts.
+        # AUTH-04: a known email with a wrong password must cost one password hash, the same as an unknown email, so timing does not reveal which emails have accounts.
         with patch.object(User, "check_password", autospec=True, return_value=False) as mock_check:
             self.client.post(
                 reverse("kura:login"),
@@ -836,15 +829,13 @@ class PasswordResetTests(TestCase):
         self.assertTrue(self.user.check_password("OriginalPassword123!"))
 
     def test_request_always_emails_a_link(self):
-        # AUTH-03: the request page no longer skips the email step; it only
-        # creates a token and sends the generic message.
+        # AUTH-03: the request page no longer skips the email step; it only creates a token and sends the generic message.
         response = self.client.post(reverse("kura:password_reset_request"), {"email": self.user.email})
         self.assertRedirects(response, reverse("kura:login"))
         self.assertEqual(PasswordResetToken.objects.filter(user=self.user).count(), 1)
 
     def test_mfa_account_needs_code_on_confirm_page(self):
-        # AUTH-03: the emailed link alone cannot reset an MFA account. A wrong
-        # code spends the link and leaves the password unchanged.
+        # AUTH-03: the emailed link alone cannot reset an MFA account. A wrong code spends the link and leaves the password unchanged.
         raw_token, reset_record = self.make_reset_token()
         response = self.client.post(
             reverse("kura:password_reset_confirm", kwargs={"token": raw_token}),
@@ -2405,8 +2396,7 @@ class FileUploadsAndDownloadsTests(TestCase):
         samples = [
             ("tiny.gif", base64.b64decode("R0lGODlhAQABAIAAAAAAAP///ywAAAAAAQABAAACAUwAOw=="), "image/gif"),
             ("tiny.webp", base64.b64decode("UklGRiIAAABXRUJQVlA4IBYAAAAwAQCdASoBAAEADsD+JaQAA3AAAAAA"), "image/webp"),
-            # Different libmagic versions call plain CSV "text/csv" (macOS) or
-            # "text/plain" (Ubuntu); both are on the allowlist.
+            # Different libmagic versions call plain CSV "text/csv" (macOS) or "text/plain" (Ubuntu); both are on the allowlist.
             ("table.csv", b"name,score\nAlice,10\nBob,20\n", ("text/csv", "text/plain")),
             ("notes.md", b"# Title\n\nThis is **bold** markdown text.\n", "text/plain"),
             ("clip.mp4", b"\x00\x00\x00\x18ftypmp42\x00\x00\x00\x00mp42isom", "video/mp4"),
@@ -2649,9 +2639,7 @@ class StudentCourseMaterialsTests(TestCase):
         self.assertNotContains(response, "Releases Later")
 
 
-# ==========================================
 # Schedules and attendance tests
-# ==========================================
 
 class SchedulesTests(TestCase):
     """
@@ -3161,9 +3149,7 @@ class AttendanceHistoryTests(TestCase):
         self.assertContains(response, "Late")
 
 
-# ==========================================
 # Assessments and grading tests
-# ==========================================
 
 class AssessmentAuthoringAndIsolationTests(TestCase):
     """
@@ -3508,8 +3494,7 @@ class AssessmentAuthoringAndIsolationTests(TestCase):
 
 
 def reseed_roles_after_flush():
-    """
-    Test helper: puts back the roles and permissions that migrations seed.
+    """Test helper: puts back the roles and permissions that migrations seed.
     A TransactionTestCase empties every table when it finishes, which would leave
     the tests that run after it without roles.
     """
@@ -4074,8 +4059,7 @@ class AssessmentAttemptAndDeliveryTests(TestCase):
 
     @override_settings(TRUST_PROXY_IP_HEADER=True)
     def test_lab_check_uses_visitor_ip_from_waf_not_waf_address(self):
-        # Behind the WAF, REMOTE_ADDR is the WAF's address (outside the lab
-        # subnet) and X-Real-IP carries the student's lab PC address.
+        # Behind the WAF, REMOTE_ADDR is the WAF's address (outside the lab subnet) and X-Real-IP carries the student's lab PC address.
         # The lab check must use the student's address.
         login_with_session(self.client, self.student)
         response = self.client.post(
@@ -4614,9 +4598,7 @@ class AutoGradingTests(TestCase):
         self.assertEqual(grade.status, GradeStatus.DRAFT)
 
 
-# ==========================================
 # Grades, appeals & transcripts tests
-# ==========================================
 
 class InstructorAndTAGradingTests(TestCase):
     """
@@ -5170,9 +5152,7 @@ class DepartmentReportsTests(TestCase):
         self.assertEqual(response.status_code, 403)
 
 
-# ==========================================
 # Hardening, logging & rate limits tests
-# ==========================================
 
 class SecuritySettingsAndHeadersTests(TestCase):
     """
@@ -5277,9 +5257,8 @@ class ClamAVVirusScanningTests(TransactionTestCase):
     clean files pass, production fail-closed behavior works, and dev fallback works.
     """
 
-    # Rejected uploads are saved through the separate "quarantine" connection,
-    # which only sees committed rows. TransactionTestCase really commits, so the
-    # uploader exists for that connection.
+    # Rejected uploads are saved through the separate "quarantine" connection, which only sees committed rows.
+    # TransactionTestCase really commits, so the uploader exists for that connection.
     databases = {"default", "quarantine"}
 
     @classmethod
@@ -5355,8 +5334,7 @@ class ClamAVVirusScanningTests(TransactionTestCase):
 
     @patch("socket.socket")
     def test_validate_and_save_upload_aborts_on_malware_before_db_write(self, mock_socket_cls):
-        # When an infected file is uploaded, validate_and_save_upload raises ValidationError
-        # and stores zero rows in StoredFile and FileContent.
+        # When an infected file is uploaded, validate_and_save_upload raises ValidationError and stores zero rows in StoredFile and FileContent.
         mock_socket = MagicMock()
         mock_socket.recv.side_effect = [b"stream: Win.Trojan.Agent FOUND\x00", b""]
         mock_socket_cls.return_value = mock_socket
@@ -5478,16 +5456,15 @@ class MTLSIntegrationTests(TestCase):
             content = cert_path.read_text()
             self.assertIn("-----BEGIN CERTIFICATE-----", content)
 
-        # Only check the service keys exist: on Linux each one belongs to its
-        # container user, so this test (running as you) may not be able to read it.
+        # Only check the service keys exist: on Linux each one belongs to its container user, so this test (running as you) may not be able to read it.
         for key_name in ["nginx.key", "waf.key", "web.key", "db.key", "vault.key"]:
             key_path = base_dir / key_name
             self.assertTrue(key_path.exists(), f"Missing private key: {key_name}")
 
-        # No CA private key may sit where containers mount files from. Once Vault
-        # issues the certificates (stage 3b) there is no CA key on disk at all:
-        # it only exists inside Vault. Before that, the openssl bootstrap key
-        # lives in certs/ca/, which no container mounts.
+        # No CA private key may sit where containers mount files from.
+        # Once Vault issues the certificates (stage 3b) there is no CA key on disk at all:
+        # it only exists inside Vault.
+        # Before that, the openssl bootstrap key lives in certs/ca/, which no container mounts.
         self.assertFalse((base_dir / "ca.key").exists(), "ca.key must not be in certs/internal/")
 
     def test_database_ssl_options_structure(self):
@@ -5625,8 +5602,7 @@ class RowLevelSecurityAndPostgresRolesTests(TestCase):
         )
 
     def test_rls_student_isolation_in_database(self):
-        # When kura.current_user_id is set to student_a under the application role,
-        # the PostgreSQL RLS policy filters out student_b's grade.
+        # When kura.current_user_id is set to student_a under the application role, the PostgreSQL RLS policy filters out student_b's grade.
         from django.db import connection
 
         with connection.cursor() as cursor:
@@ -5700,8 +5676,7 @@ class PostgreSQLEncryptedBackupAndPITRTests(TestCase):
 
         key_path = self.base_dir / "secrets" / "backup_encryption_key.txt"
         self.assertTrue(key_path.exists(), "Backup encryption key file must exist in secrets/")
-        # On Linux the key is mode 600 and belongs to the database container
-        # user (UID 26), so this test (running as you) may not read it.
+        # On Linux the key is mode 600 and belongs to the database container user (UID 26), so this test (running as you) may not read it.
         # ./kura.sh preflight checks its length as root instead.
         if not os.access(key_path, os.R_OK):
             self.skipTest("backup key belongs to the database container user")
@@ -5713,8 +5688,7 @@ class PostgreSQLEncryptedBackupAndPITRTests(TestCase):
         self.assertGreaterEqual(entropy, 3.5, "Encryption key must exhibit high cryptographic entropy")
 
     def test_pgbackrest_config_security_attributes(self):
-        # pgbackrest.conf must enforce AES-256-CBC cipher without broken file: syntax,
-        # and entrypoint/wrapper scripts must supply PGBACKREST_REPO1_CIPHER_PASS from the secret.
+        # pgbackrest.conf must enforce AES-256-CBC cipher without broken file: syntax, and entrypoint/wrapper scripts must supply PGBACKREST_REPO1_CIPHER_PASS from the secret.
         conf_path = self.base_dir / "docker" / "postgres" / "pgbackrest.conf"
         self.assertTrue(conf_path.exists(), "pgbackrest.conf must exist")
 
@@ -5830,7 +5804,8 @@ class PasskeyWebAuthnIntegrationTests(TestCase):
         self.assertNotContains(response, f"Passkey #{key_b.id}")
 
     def test_passkey_delete_view_owner_and_idor_protection(self):
-        # Users can delete their own passkeys via POST. Deleting another user's key raises 404 (IDOR).
+        # Users can delete their own passkeys via POST.
+        # Deleting another user's key raises 404 (IDOR).
         from mfa.models import User_Keys
 
         key_a = User_Keys.objects.create(
@@ -5939,8 +5914,7 @@ class LokiSIEMAlertRulesTests(TestCase):
         self.assertFalse(self.rules_directory_tenant.exists(), "Duplicate kura tenant rules must not exist")
 
     def test_all_siem_alert_rules_present(self):
-        # All 13 security alerts from the handoff's WP4 table, plus
-        # BreachCheckUnavailable (fix 3), must be defined.
+        # All 13 security alerts from the handoff's WP4 table, plus BreachCheckUnavailable (fix 3), must be defined.
         expected_alerts = [
             "BruteForceLogin",
             "SingleIpBruteForce",
@@ -6210,13 +6184,13 @@ class DataRetentionAndIPAnonymizationTests(TestCase):
         self.assertFalse(AccessLog.objects.filter(id=old_log.id).exists())
 
 
-# Where the incident-response runbook lives. The docs/ folder is kept on the
-# developer's machine and is not committed, so on GitHub (CI) the file is missing.
+# Where the incident-response runbook lives.
+# The docs/ folder is kept on the developer's machine and is not committed, so on GitHub (CI) the file is missing.
 INCIDENT_RUNBOOK_PATH = Path(__file__).resolve().parent.parent / "docs" / "INCIDENT_RESPONSE.md"
 
 
-# Skip (do not fail) these checks when the runbook is not in this copy of the
-# project. Where the file exists, every check below still runs.
+# Skip (do not fail) these checks when the runbook is not in this copy of the project.
+# Where the file exists, every check below still runs.
 @unittest.skipUnless(INCIDENT_RUNBOOK_PATH.exists(), "docs/INCIDENT_RESPONSE.md is not in this checkout")
 class IncidentResponseRunbookTests(TestCase):
     """
@@ -6651,8 +6625,7 @@ class ClientIPLockoutTests(TestCase):
 
     @override_settings(TRUST_PROXY_IP_HEADER=True)
     def test_axes_lockout_hits_attacker_ip_not_every_user(self):
-        # Five failed logins from one visitor must not lock out a different
-        # visitor, even though both reach Django from the same WAF address.
+        # Five failed logins from one visitor must not lock out a different visitor, even though both reach Django from the same WAF address.
         password = "ValidPassword123!"
         user = make_user("Student", password=password)
         login_url = reverse("kura:login")
@@ -6666,8 +6639,7 @@ class ClientIPLockoutTests(TestCase):
                 HTTP_X_REAL_IP="203.0.113.7",
             )
 
-        # The real student (198.51.100.20) can still log in: the password is
-        # accepted and they are redirected on to the MFA step.
+        # The real student (198.51.100.20) can still log in: the password is accepted and they are redirected on to the MFA step.
         response = Client().post(
             login_url,
             {"email": user.email, "password": password},
@@ -7042,8 +7014,7 @@ class GradeHistoryInsertOnlyTests(TestCase):
         self.instructor = instructor
 
     def run_as_app_role(self, sql, parameters):
-        # Run one statement as kura_app with the instructor's RLS context (inside a savepoint,
-        # so a refused statement does not break the rest of the test), then switch back.
+        # Run one statement as kura_app with the instructor's RLS context (inside a savepoint, so a refused statement does not break the rest of the test), then switch back.
         with connection.cursor() as cursor:
             cursor.execute("SET ROLE kura_app;")
             cursor.execute("SELECT set_config('kura.current_user_id', %s, false);", [str(self.instructor.id)])
@@ -7089,7 +7060,8 @@ class RecoveryCodeHashingTests(TestCase):
         StaticToken.objects.create(device=self.static_device, token=hash_recovery_code("ABCD1234"))
 
     def log_in_with_code(self, code):
-        # Step 1 (password), then step 2 (the recovery code). Returns the step 2 response.
+        # Step 1 (password), then step 2 (the recovery code).
+        # Returns the step 2 response.
         self.client.post(reverse("kura:login"), {"email": self.user.email, "password": "ValidPassword123!"})
         return self.client.post(reverse("kura:mfa_verify"), {"code": code})
 
@@ -7118,8 +7090,7 @@ class RecoveryCodeHashingTests(TestCase):
             self.assertIn(hash_recovery_code(code), saved_tokens)
 
     def test_hash_depends_on_secret_key(self):
-        # Without SECRET_KEY the hash cannot be recomputed, so the 4 billion
-        # possible codes cannot simply be tried against a stolen database.
+        # Without SECRET_KEY the hash cannot be recomputed, so the 4 billion possible codes cannot simply be tried against a stolen database.
         normal_hash = hash_recovery_code("ABCD1234")
         with override_settings(SECRET_KEY="a-different-secret-key-" + "x" * 40):
             other_hash = hash_recovery_code("ABCD1234")
@@ -7195,8 +7166,7 @@ class VaultTOTPSeedTests(TestCase):
         self.assertEqual(self.device.throttling_failure_count, 1)
 
     def test_vault_failure_rejects_code_without_blaming_the_user(self):
-        # Vault down: the right code is refused (fail closed) but is not counted
-        # as a wrong guess, so the user is not throttled for Vault's problem.
+        # Vault down: the right code is refused (fail closed) but is not counted as a wrong guess, so the user is not throttled for Vault's problem.
         with patch("kura.views.decrypt_mfa_secret", side_effect=ValidationError("Vault down")):
             self.assertFalse(verify_totp_code(self.device, self.user, self.current_code(self.seed_hex)))
         self.device.refresh_from_db()
@@ -7421,8 +7391,7 @@ class VaultDatabaseLoginTests(TestCase):
 
 
 def fake_clamav_reply(reply):
-    """
-    Test helper: a pretend ClamAV socket that answers every command with `reply`.
+    """Test helper: a pretend ClamAV socket that answers every command with `reply`.
     Used for scan results ("stream: ... FOUND") and version replies.
     """
     fake_socket = MagicMock()
@@ -7817,8 +7786,7 @@ class PasskeyOnlyMfaUrlsTests(TestCase):
                 self.assertEqual(self.client.get(unused_path).status_code, 404)
 
     def test_passkey_pages_keep_their_addresses(self):
-        # The library's templates and JavaScript use these names, so they must
-        # still resolve to the same addresses as before.
+        # The library's templates and JavaScript use these names, so they must still resolve to the same addresses as before.
         expected = {
             "start_fido2": "/mfa/fido2/",
             "fido2_begin_reg": "/mfa/fido2/begin_reg",
@@ -7837,8 +7805,7 @@ class PasskeyOnlyMfaUrlsTests(TestCase):
         self.assertEqual(self.client.get("/mfa/fido2/").status_code, 200)
 
     def test_passkey_registration_needs_a_signed_in_user(self):
-        # Without a full login, every registration step sends the visitor to
-        # the login page and never hands out a registration challenge.
+        # Without a full login, every registration step sends the visitor to the login page and never hands out a registration challenge.
         self.client.logout()
         for address in ["/mfa/fido2/", "/mfa/fido2/begin_reg", "/mfa/fido2/complete_reg"]:
             with self.subTest(address=address):
@@ -8452,8 +8419,7 @@ class DownloadFilenameHeaderTests(TestCase):
         # The double quote is escaped, so it cannot end the filename early.
         self.assertIn('\\"', header)
 
-        # Parse the header: the injected text must be part of the filename value,
-        # not a separate filename* parameter.
+        # Parse the header: the injected text must be part of the filename value, not a separate filename* parameter.
         from email.message import Message
 
         message = Message()
@@ -8810,8 +8776,7 @@ class PasskeyLoginCallbackTests(TestCase):
         self.other = make_user("Student")
 
     def call_callback(self, session_values):
-        # Build a request with a real session and message storage, the same
-        # way django-mfa2 would hand one to the callback.
+        # Build a request with a real session and message storage, the same way django-mfa2 would hand one to the callback.
         request = RequestFactory().post("/mfa/fido2/complete_auth")
         SessionMiddleware(lambda r: None).process_request(request)
         MessageMiddleware(lambda r: None).process_request(request)
@@ -8927,8 +8892,7 @@ class FreshSecondFactorTests(TestCase):
         self.assertRedirects(response, reverse("kura:home"), fetch_redirect_response=False)
 
     def test_users_without_mfa_are_not_blocked(self):
-        # Nobody without a second factor can be asked for one. (Middleware sends
-        # such users to MFA setup anyway, so the helper is checked directly.)
+        # Nobody without a second factor can be asked for one. (Middleware sends such users to MFA setup anyway, so the helper is checked directly.)
         request = RequestFactory().get("/")
         request.user = make_user("Admin", mfa_enabled=False)
         request.session = {}
@@ -9223,8 +9187,7 @@ class PasswordHistoryTests(TestCase):
         self.assertEqual(resp.status_code, 400)
         self.assertIn("Choose a password you have not used recently.", resp.context["form"].errors["new_password"])
 
-        # 6th change: P5 -> P6. Now history holds P5 (1st prev), P4 (2nd), P3 (3rd), P2 (4th), P1 (5th);
-        # P0 (6th previous) is pruned, and only 5 rows remain.
+        # 6th change: P5 -> P6. Now history holds P5 (1st prev), P4 (2nd), P3 (3rd), P2 (4th), P1 (5th); P0 (6th previous) is pruned, and only 5 rows remain.
         resp = self._change_password(self.passwords[5], self.passwords[6])
         self.assertRedirects(resp, reverse("kura:home"))
         self.assertEqual(PasswordHistory.objects.filter(user=self.user).count(), 5)
@@ -9380,8 +9343,7 @@ class CoursePageLinksTests(TestCase):
 
 
 def make_released_grade_course():
-    """
-    Test helper: a course with a department head, a lead instructor, a teaching
+    """Test helper: a course with a department head, a lead instructor, a teaching
     assistant and one student holding a released exam grade. Used by the
     gradebook, grade scheme and feedback tests.
     """
@@ -10913,8 +10875,7 @@ class WorkItem4AccessControlTests(TestCase):
             finally:
                 cursor.execute("RESET ROLE;")
 
-        # Management commands finalize_attempts and purge_retention succeed under kura_app with service RLS context,
-        # and seed_demo_data succeeds with service RLS context too.
+        # Management commands finalize_attempts and purge_retention succeed under kura_app with service RLS context, and seed_demo_data succeeds with service RLS context too.
         overdue_attempt = AssessmentAttempt.objects.create(
             assessment=self.assessment, student=make_user("Student"), attempt_no=1,
             status=AttemptStatus.IN_PROGRESS, expires_at=timezone.now() - timezone.timedelta(minutes=5),
@@ -11910,8 +11871,7 @@ class AuditGroup4AccessAndSessionsTests(TestCase):
             is_active=True,
         )
 
-        # Department head gets 403 on start, close, and manual attendance entry,
-        # and does not see Start/End/Manual controls in templates.
+        # Department head gets 403 on start, close, and manual attendance entry, and does not see Start/End/Manual controls in templates.
         login_with_session(self.client, self.head)
         self.assertEqual(self.client.get(reverse("kura:attendance_session_start", args=[self.module.id])).status_code, 403)
         self.assertEqual(
@@ -12342,9 +12302,7 @@ class AuditGroup7InfraAndConfigTests(TestCase):
         self.assertIn("cap_drop:\n      - ALL", grafana_block)
         self.assertIn('"127.0.0.1:3000:3000"', grafana_block)
 
-        # The host firewall opens web ports to everyone, SSH only to the
-        # admin allowlist, and applies CrowdSec bans to Docker's forwarded
-        # traffic as well (nginx is published directly on 80 and 443).
+        # The host firewall opens web ports to everyone, SSH only to the admin allowlist, and applies CrowdSec bans to Docker's forwarded traffic as well (nginx is published directly on 80 and 443).
         self.assertIn("tcp dport { 80, 443 } accept", nft_text)
         self.assertIn("ip saddr @admin_allowlist tcp dport 22 accept", nft_text)
         self.assertIn("type filter hook forward priority filter - 10; policy accept;", nft_text)
@@ -12814,8 +12772,8 @@ class StackTestFindingsTests(TestCase):
         self.kura_sh_text = (base_dir / "kura.sh").read_text(encoding="utf-8")
 
     def test_queries_send_values_separately_from_sql_text(self):
-        # psycopg2 wrote values into the SQL text, so pgAudit logged session keys
-        # and password hashes. Server-side binding keeps values out of the text.
+        # psycopg2 wrote values into the SQL text, so pgAudit logged session keys and password hashes.
+        # Server-side binding keeps values out of the text.
         import psycopg
 
         self.assertTrue(settings.DATABASES["default"]["OPTIONS"]["server_side_binding"])

@@ -21,8 +21,8 @@ if mtls_enabled:
 else:
     bind = "0.0.0.0:8000"
 workers = int(os.environ.get("GUNICORN_WORKERS", "3"))
-# Nginx and the WAF log requests after redacting password-reset tokens. Gunicorn
-# cannot safely redact paths, so only its errors are sent to the container log.
+# Nginx and the WAF log requests after redacting password-reset tokens.
+# Gunicorn cannot safely redact paths, so only its errors are sent to the container log.
 accesslog = None
 errorlog = "-"
 timeout = 60

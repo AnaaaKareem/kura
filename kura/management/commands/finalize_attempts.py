@@ -11,9 +11,7 @@ class Command(BaseCommand):
     help = "Auto-finalizes assessment attempts that passed their deadline without manual submission."
 
     def handle(self, *args, **options):
-        """
-        Submits and grades assessment attempts whose allowed duration has expired.
-        """
+        """Submit and grade assessment attempts whose allowed duration has expired."""
         with service_rls_context():
             # Query active in-progress attempts whose timer has expired.
             now = timezone.now()

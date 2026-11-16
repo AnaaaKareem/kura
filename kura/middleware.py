@@ -111,8 +111,7 @@ class SessionValidationMiddleware:
 
 
 def add_no_store_headers(response):
-    """
-    Marks an authenticated response as sensitive so browsers and proxies do not cache it.
+    """Mark an authenticated response as sensitive so browsers and proxies do not cache it.
     Used for every response path in SecurityEnforcementMiddleware, including redirects.
     """
     response["Cache-Control"] = "no-store, no-cache, must-revalidate, max-age=0"
@@ -145,8 +144,8 @@ class SecurityEnforcementMiddleware:
         if path == reverse("kura:logout"):
             return add_no_store_headers(self.get_response(request))
 
-        # Force password change on first login. The redirect and the allowed page
-        # both carry no-store, so a sensitive onboarding page is never cached.
+        # Force password change on first login.
+        # The redirect and the allowed page both carry no-store, so a sensitive onboarding page is never cached.
         password_change_url = reverse("kura:password_change")
         if request.user.must_change_password:
             if path != password_change_url:
@@ -181,7 +180,8 @@ class RateLimitMiddleware:
         "item_edit",
     }
     AUTOSAVE_URL_NAMES = {"assessment_autosave"}
-    # List pages with a free-text "q" filter. Enrollment search has its own limit in views.py.
+    # List pages with a free-text "q" filter.
+    # Enrollment search has its own limit in views.py.
     SEARCH_URL_NAMES = {
         "admin_sessions",
         "admin_users",
@@ -199,8 +199,9 @@ class RateLimitMiddleware:
         limit = None
         bucket = None
         window = 60
-        # Uploads and autosaves are POST. Searches are GET and only count when a search term is sent,
-        # so plain page loads and pagination stay free. Counting only touches the rate-limit cache.
+        # Uploads and autosaves are POST.
+        # Searches are GET and only count when a search term is sent, so plain page loads and pagination stay free.
+        # Counting only touches the rate-limit cache.
         has_search_term = request.method == "GET" and request.GET.get("q", "").strip() != ""
         if request.method == "POST" or has_search_term:
             try:
@@ -256,9 +257,7 @@ class RowLevelSecurityMiddleware:
 
             try:
                 with connection.cursor() as cursor:
-                    # set_config(..., false) is the same as SET for the session, but
-                    # unlike SET it accepts a bound parameter, which psycopg 3's
-                    # server-side binding needs (settings.py, DATABASES OPTIONS).
+                    # Use set_config(..., false) for session-wide SET with psycopg 3 bound parameters.
                     cursor.execute("SELECT set_config('kura.current_user_id', %s, false);", [str(request.user.id)])
             except Exception as error:
                 # Fail closed: database policies treat a missing user id as unrestricted.

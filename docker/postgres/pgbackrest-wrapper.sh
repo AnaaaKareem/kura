@@ -1,7 +1,6 @@
 #!/bin/sh
 # Wrapper placed at /usr/local/bin/pgbackrest ahead of /usr/bin/pgbackrest (W2).
-# Loads PGBACKREST_REPO1_CIPHER_PASS from the Docker secret when unset so
-# `docker compose exec db pgbackrest ...` and cron jobs use the real secret.
+# Loads PGBACKREST_REPO1_CIPHER_PASS from the Docker secret when unset so `docker compose exec db pgbackrest ...` and cron jobs use the real secret.
 set -eu
 
 KEY_FILE="/run/secrets/backup_encryption_key"

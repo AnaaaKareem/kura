@@ -1,16 +1,11 @@
-# ==============================================================================
 # Grafana Datasources Provisioning (datasources.yml)
-#
-# Automatically connects Grafana to Prometheus (metrics), Loki (logs) and
-# Alertmanager (active alerts and silences). All three are reached over the
-# internal observability network; none of them publishes a host port.
-# ==============================================================================
+# Automatically connects Grafana to Prometheus (metrics), Loki (logs) and Alertmanager (active alerts and silences).
+# All three are reached over the internal observability network; none of them publishes a host port.
 
 apiVersion: 1
 
 datasources:
-  # Prometheus Time-Series Metrics Datasource
-  # The uid is fixed so provisioned dashboards can reference it by uid.
+  # Prometheus Time-Series Metrics Datasource The uid is fixed so provisioned dashboards can reference it by uid.
   - name: Prometheus
     uid: prometheus
     type: prometheus

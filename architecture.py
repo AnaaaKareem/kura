@@ -39,16 +39,15 @@ from diagrams.onprem.security import Trivy, Vault
 from diagrams.programming.framework import Django
 from diagrams.saas.chat import Telegram
 
-# Where the picture is saved. The folder name matches the image link in the
-# specification, so the specification shows the new picture automatically.
+# Where the picture is saved.
+# The folder name matches the image link in the specification, so the specification shows the new picture automatically.
 OUTPUT_FOLDER = os.path.join("docs", "Kura Secure Learning Management System")
 OUTPUT_FILE = os.path.join(OUTPUT_FOLDER, "kuras_secure_architecture")
 
 # Create the folder if it does not exist yet (the diagrams package will not).
 os.makedirs(OUTPUT_FOLDER, exist_ok=True)
 
-# Settings for the whole picture: left-to-right layout, readable font sizes,
-# and straight-ish arrows ("ortho" lines can hide labels, so "spline" is used).
+# Settings for the whole picture: left-to-right layout, readable font sizes, and straight-ish arrows ("ortho" lines can hide labels, so "spline" is used).
 graph_settings = {
     "fontsize": "22",
     "pad": "0.6",
@@ -70,15 +69,11 @@ with Diagram(
     node_attr=node_settings,
     edge_attr=edge_settings,
 ):
-    # ------------------------------------------------------------------
     # People who use Kura.
-    # ------------------------------------------------------------------
     students_and_staff = Users("Students and staff\n(web browser)")
     admin = User("Admin laptop\n(Ed25519 SSH key)")
 
-    # ------------------------------------------------------------------
     # Development side: GitHub Actions checks every push.
-    # ------------------------------------------------------------------
     with Cluster("CI/CD: GitHub Actions (actions pinned to commit hashes)"):
         ci_pipeline = GithubActions(
             "ruff + pip-audit\nDjango tests (PostgreSQL 17)\nSemgrep SAST\nOWASP ZAP baseline"
@@ -86,9 +81,7 @@ with Diagram(
         image_scanner = Trivy("Docker build\n+ Trivy (fails on High\nor Critical)")
         ci_pipeline >> Edge(label="then") >> image_scanner
 
-    # ------------------------------------------------------------------
     # The server: an Ubuntu 24.04 Hyper-V virtual machine running Docker Compose.
-    # ------------------------------------------------------------------
     with Cluster("Ubuntu Server 24.04 VM (Hyper-V) running Docker Compose"):
         # Layer 1: the host firewall and CrowdSec.
         with Cluster("Layer 1: host firewall"):
@@ -136,19 +129,14 @@ with Diagram(
             alertmanager = Prometheus("Alertmanager\ngroup + route\n(no host port)")
             grafana = Grafana("Grafana\n127.0.0.1:3000\n3 dashboards,\nadmin + viewer")
 
-    # ------------------------------------------------------------------
     # Places outside the server.
-    # ------------------------------------------------------------------
     mail_provider = Server("Mail provider\n(planned: Mailgun sandbox,\nlogin not set)")
     telegram = Telegram("Telegram\n(critical alerts)")
     breach_service = Server("HaveIBeenPwned\n(k-anonymity range API)")
     offsite = Storage("Backblaze B2\n(planned off-site copy)")
 
-    # ------------------------------------------------------------------
     # Arrows: how a normal web request travels.
-    # ------------------------------------------------------------------
-    # Visitors connect straight to the VM: the host firewall lets 443 (and 80,
-    # which only redirects to HTTPS) through to nginx.
+    # Visitors connect straight to the VM: the host firewall lets 443 (and 80, which only redirects to HTTPS) through to nginx.
     students_and_staff >> Edge(label="HTTPS 443") >> host_firewall
     host_firewall >> Edge(label="443 / 80") >> nginx
     nginx >> Edge(label="mTLS") >> waf
@@ -163,8 +151,7 @@ with Diagram(
     database >> Edge(label="WAL archive") >> backups
     backups >> Edge(label="encrypted copy (planned)", style="dashed") >> offsite
 
-    # Breached-password check: Django -> proxy -> HaveIBeenPwned. TLS runs end
-    # to end, so the proxy only forwards encrypted bytes.
+    # Breached-password check: Django -> proxy -> HaveIBeenPwned. TLS runs end to end, so the proxy only forwards encrypted bytes.
     django_app >> Edge(label="5-char hash prefix,\nHTTPS tunnel") >> breach_proxy
     breach_proxy >> Edge(label="CONNECT :443 only") >> breach_service
 
@@ -188,9 +175,8 @@ with Diagram(
     crowdsec >> Edge(label="reads nginx, WAF,\nDjango logs\n(Docker API proxy)") >> nginx
     crowdsec >> Edge(label="pushes bans") >> host_firewall
 
-    # Admin access: an SSH tunnel from the admin's laptop to Grafana on the
-    # VM's loopback address. Prometheus, Loki and Alertmanager have no host
-    # port; the admin sees them only through Grafana.
+    # Admin access: an SSH tunnel from the admin's laptop to Grafana on the VM's loopback address.
+    # Prometheus, Loki and Alertmanager have no host port; the admin sees them only through Grafana.
     host_firewall >> Edge(label="TCP 22 from allowlist") >> sshd
     admin >> Edge(label="SSH tunnel") >> sshd
     sshd >> Edge(label="local forward") >> grafana

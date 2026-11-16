@@ -28,8 +28,7 @@ class Command(BaseCommand):
     def handle(self, *args, **options):
         moved_count = 0
 
-        # Only confirmed authenticators matter: unconfirmed ones get a fresh
-        # seed the next time the user opens the MFA setup page.
+        # Only confirmed authenticators matter: unconfirmed ones get a fresh seed the next time the user opens the MFA setup page.
         devices = TOTPDevice.objects.filter(confirmed=True).select_related("user")
         for device in devices:
             user = device.user
@@ -38,8 +37,7 @@ class Command(BaseCommand):
             if user.mfa_secret:
                 continue
 
-            # Encrypt the old seed and swap in a placeholder in one transaction,
-            # so a user can never end up with neither (or both) copies saved.
+            # Encrypt the old seed and swap in a placeholder in one transaction, so a user can never end up with neither (or both) copies saved.
             try:
                 with transaction.atomic():
                     user.mfa_secret = encrypt_mfa_secret(device.key)
@@ -47,7 +45,8 @@ class Command(BaseCommand):
                     device.key = random_hex(20)
                     device.save(update_fields=["key"])
             except ValidationError as error:
-                # Vault is down or sealed. Stop: nothing for this user was changed.
+                # Vault is down or sealed.
+                # Stop: nothing for this user was changed.
                 raise CommandError(
                     f"Vault could not encrypt the seeds. {moved_count} moved before the error."
                 ) from error

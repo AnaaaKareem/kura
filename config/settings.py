@@ -24,16 +24,11 @@ BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
 
-# Quick-start development settings - unsuitable for production
-# See https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
+# Review production settings against https://docs.djangoproject.com/en/6.1/howto/deployment/checklist/
 
 
-# Helper to read secrets from Docker secrets mount (/run/secrets/<name>) or environment variables
 def read_secret(name, fallback=""):
-    """
-    Reads a sensitive credential, checking Docker secrets mount (/run/secrets/<name>) first,
-    then falling back to environment variables.
-    """
+    """Read /run/secrets/<name>, falling back to the environment or the supplied default."""
     secret_file = Path(f"/run/secrets/{name}")
     if secret_file.is_file():
         try:
@@ -162,11 +157,8 @@ DATABASES = {
     }
 }
 
-# ==============================================================================
-# Database Mutual TLS (mTLS) Settings (Hop 2: Django -> PostgreSQL)
-# Security: defaults to verify-full when DEBUG is False and DATABASE_HOST is not
-# loopback; local development/test runners on localhost stay usable unless overridden.
-# ==============================================================================
+# Verify the PostgreSQL certificate and host name by default outside debug mode and loopback.
+# Local development and tests can override the TLS settings.
 DB_OPTIONS = {}
 _default_db_ssl_mode = "" if (DEBUG or DATABASES["default"]["HOST"] in ("localhost", "127.0.0.1", "::1")) else "verify-full"
 DB_SSL_MODE = os.environ.get("DB_SSL_MODE", _default_db_ssl_mode)
@@ -180,27 +172,21 @@ if DB_SSL_MODE:
         DB_OPTIONS["sslkey"] = os.environ.get("DB_SSL_KEY")
 
 # Send query values separately from the SQL text (psycopg 3 server-side binding).
-# PostgreSQL then sees "WHERE session_key = $1" instead of the real value, so
-# pgAudit (docker/postgres/pgaudit.conf, log_parameter = off) never writes
-# session keys, password hashes or token hashes into the logs.
+# pgAudit sees "WHERE session_key = $1"; log_parameter = off keeps bound secrets out of logs.
 DB_OPTIONS["server_side_binding"] = True
 DATABASES["default"]["OPTIONS"] = DB_OPTIONS
 
 # Temporary database users from Vault (production / Docker only).
-# When on, Django uses kura/base.py: Django's normal PostgreSQL
-# backend, except that each new connection logs in with a 15-minute user from
-# Vault instead of DATABASE_USER / DATABASE_PASSWORD. The TLS options above
-# (CA, client certificate and key) still apply. Off for local development and tests.
+# When on, Django uses kura/base.py: Django's normal PostgreSQL backend, except that each new connection logs in with a 15-minute user from Vault instead of DATABASE_USER / DATABASE_PASSWORD.
+# The TLS options above (CA, client certificate and key) still apply.
+# Off for local development and tests.
 VAULT_DATABASE_CREDENTIALS = os.environ.get("VAULT_DATABASE_CREDENTIALS", "False").lower() in ("true", "1")
 if VAULT_DATABASE_CREDENTIALS:
     DATABASES["default"]["ENGINE"] = "kura"
 
-# A second connection to the SAME database, used only to save quarantined
-# uploads (kura/views.py). Uploads often run inside transaction.atomic(); when
-# an infected file is rejected that transaction is rolled back, which would
-# also undo a quarantine record saved on the normal connection. This
-# connection commits on its own, so the record is kept. In tests it points at
-# the test database ("MIRROR").
+# Save quarantined uploads on a separate connection to the same database (kura/views.py).
+# Its independent commit keeps the quarantine record when the upload transaction rolls back.
+# In tests it points at the test database ("MIRROR").
 DATABASES["quarantine"] = dict(DATABASES["default"])
 DATABASES["quarantine"]["TEST"] = {"MIRROR": "default"}
 
@@ -227,8 +213,7 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 # The web password workflows in kura/views.py check HaveIBeenPwned over HTTPS.
-# In Docker the web container has no internet route, so it goes through the
-# breach-proxy container, which allows only api.pwnedpasswords.com.
+# In Docker the web container has no internet route, so it goes through the breach-proxy container, which allows only api.pwnedpasswords.com.
 # Empty (local development) means "connect directly".
 BREACH_CHECK_PROXY_URL = os.environ.get("BREACH_CHECK_PROXY_URL", "")
 # Public certificate authorities used to check HaveIBeenPwned's certificate.
@@ -256,12 +241,9 @@ STATIC_URL = "/static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
 STATIC_ROOT = BASE_DIR / "staticfiles"
 
-# collectstatic writes each file a second time with a hash of its content in
-# the name (kura.css becomes kura.<hash>.css) and {% static %} links to that
-# copy. Changing a file changes its name, so nginx can let browsers cache static
-# files for 30 days and a new stylesheet still reaches everyone right away.
-# {% static %} raises an error if collectstatic has not been run, so the
-# collectstatic service in docker-compose.yml runs before web starts.
+# collectstatic writes each file a second time with a hash of its content in the name (kura.css becomes kura.<hash>.css) and {% static %} links to that copy.
+# Changing a file changes its name, so nginx can let browsers cache static files for 30 days and a new stylesheet still reaches everyone right away.
+# {% static %} raises an error if collectstatic has not been run, so the collectstatic service in docker-compose.yml runs before web starts.
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.ManifestStaticFilesStorage"},
@@ -269,31 +251,26 @@ STORAGES = {
 MEDIA_URL = "/media/"
 
 
-# Email configuration
-# Kura assumes kura.edu is a real domain with normal email. Views only put
-# emails in the outbox (OutgoingEmail); the send_queued_emails command sends them.
-# Development prints emails to the console. In Docker, Django hands email to the
-# Postfix relay ("relay" service) on a private network; only the relay can reach
-# the internet and log in to the mail provider (docker/postfix/README.md).
+# Kura assumes kura.edu is a real domain with working email.
+# Views only put emails in the outbox (OutgoingEmail); the send_queued_emails command sends them.
+# Development prints emails to the console.
+# In Docker, Django hands email to the Postfix relay ("relay" service) on a private network; only the relay can reach the internet and log in to the mail provider (docker/postfix/README.md).
 if DEBUG:
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 else:
     EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-# Where the relay listens. STARTTLS is required; Django checks the relay's
-# certificate against Kura's internal CA (SSL_CERT_FILE in docker-compose.yml).
+# Configure the relay address and STARTTLS; Docker uses Kura's internal CA via SSL_CERT_FILE.
 EMAIL_HOST = os.environ.get("EMAIL_HOST", "localhost")
 EMAIL_PORT = int(os.environ.get("EMAIL_PORT", 587))
 EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "False").lower() in ("true", "1")
 EMAIL_TIMEOUT = 10
 # Every Kura email comes from this one address (the relay refuses any other).
 DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "Kura <noreply@kura.edu>")
-# Links in emails are built from this fixed address, never from the Host header
-# a visitor sent (which an attacker could choose: "password reset poisoning").
+# Links in emails are built from this fixed address, never from the Host header a visitor sent (which an attacker could choose: "password reset poisoning").
 SITE_URL = os.environ.get("SITE_URL", "http://localhost:8000").rstrip("/")
 
-# Use PostgreSQL for Registrar search limits and request rate limits so all
-# application workers share one counter (LocMemCache is per worker, so limits
-# otherwise multiply by the number of Gunicorn workers; AUTH-08).
+# Share search and request-limit counters through PostgreSQL across all workers (AUTH-08).
+# LocMemCache would give each Gunicorn worker its own allowance.
 CACHES = {
     "default": {"BACKEND": "django.core.cache.backends.locmem.LocMemCache"},
     "search_limits": {
@@ -331,24 +308,19 @@ AXES_COOLOFF_TIME = "kura.views.get_axes_cooloff_timedelta"
 AXES_RESET_ON_SUCCESS = True
 AXES_LOCKOUT_PARAMETERS = ["ip_address", ["username", "ip_address"]]
 AXES_LOCKOUT_CALLABLE = "kura.views.axes_lockout_callable"
-# Axes must lock out the real visitor's IP, not the WAF's, so it uses the same
-# client-IP function as the rest of Kura.
+# Axes must lock out the real visitor's IP, not the WAF's, so it uses the same client-IP function as the rest of Kura.
 AXES_CLIENT_IP_CALLABLE = "kura.views.get_client_ip"
 
 
 # Real client IP behind the proxies (Nginx -> Coraza WAF -> Gunicorn).
-# Every request reaches Django from the WAF, so REMOTE_ADDR is always the WAF's
-# address. The WAF sends the visitor's address in the X-Real-IP header.
-# Only set TRUST_PROXY_IP_HEADER=True where Gunicorn requires a client
-# certificate (docker-compose.yml), because then only the WAF can connect and
-# set that header. With runserver anyone could send X-Real-IP and fake their IP,
-# so it is off by default.
+# Every request reaches Django from the WAF, so REMOTE_ADDR is always the WAF's address.
+# The WAF sends the visitor's address in the X-Real-IP header.
+# Only set TRUST_PROXY_IP_HEADER=True where Gunicorn requires a client certificate (docker-compose.yml), because then only the WAF can connect and set that header.
+# With runserver anyone could send X-Real-IP and fake their IP, so it is off by default.
 TRUST_PROXY_IP_HEADER = os.environ.get("TRUST_PROXY_IP_HEADER", "False").lower() in ("true", "1")
 
 
-# ==========================================
 # Hardening & Security Settings
-# ==========================================
 
 # Cookie security attributes
 SESSION_COOKIE_SECURE = not DEBUG
@@ -357,8 +329,7 @@ SESSION_COOKIE_SAMESITE = "Lax"
 SESSION_COOKIE_AGE = 1800  # 30-minute sliding idle session timeout (refreshed on each request)
 SESSION_SAVE_EVERY_REQUEST = True
 # Hard cap on total session length regardless of activity (ACL-07):
-# SESSION_COOKIE_AGE + SESSION_SAVE_EVERY_REQUEST enforces sliding idle expiry,
-# while SESSION_ABSOLUTE_HOURS enforces an absolute deadline in UserSession.expires_at.
+# SESSION_COOKIE_AGE + SESSION_SAVE_EVERY_REQUEST enforces sliding idle expiry, while SESSION_ABSOLUTE_HOURS enforces an absolute deadline in UserSession.expires_at.
 SESSION_ABSOLUTE_HOURS = 12
 SESSION_EXPIRE_AT_BROWSER_CLOSE = True
 
@@ -373,22 +344,18 @@ X_FRAME_OPTIONS = "DENY"
 SECURE_CONTENT_TYPE_NOSNIFF = True
 SECURE_REFERRER_POLICY = "same-origin"
 
-# HTTP Strict Transport Security (HSTS) in production
-# The secure cookies above, HSTS and the HTTPS redirect all follow DEBUG.
-# DEBUG is off unless the environment says "True", and docker-compose.yml
-# sets it to "False" for web, so a missing variable keeps them on.
+# Secure cookies, HSTS and HTTPS redirects follow DEBUG.
+# DEBUG is off unless the environment says "True", and docker-compose.yml sets it to "False" for web, so a missing variable keeps them on.
 if not DEBUG:
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
-    # On by default. It may be turned off (SECURE_SSL_REDIRECT=False) only where
-    # nginx already redirects HTTP to HTTPS, as in docker-compose.yml, or for the
-    # plain-HTTP smoke test in CI.
+    # On by default.
+    # It may be turned off (SECURE_SSL_REDIRECT=False) only where nginx already redirects HTTP to HTTPS, as in docker-compose.yml, or for the plain-HTTP smoke test in CI.
     SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "True").lower() == "true"
 
 # Trust X-Forwarded-Proto header passed by the Nginx reverse proxy.
-# Safe because Django only accepts connections from the WAF over mutual TLS
-# (MTLS_ENABLED), so no visitor can send this header to Django directly.
+# Safe because Django only accepts connections from the WAF over mutual TLS (MTLS_ENABLED), so no visitor can send this header to Django directly.
 SECURE_PROXY_SSL_HEADER = ("HTTP_X_FORWARDED_PROTO", "https")
 USE_X_FORWARDED_HOST = True
 
@@ -406,8 +373,7 @@ CONTENT_SECURITY_POLICY = {
     }
 }
 
-# Security events go to the console so Docker can collect them without writing
-# files inside the read-only application container.
+# Security events go to the console so Docker can collect them without writing files inside the read-only application container.
 LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
@@ -439,10 +405,7 @@ LOGGING = {
     },
 }
 
-# ==============================================================================
-# ClamAV Antivirus Scanner Settings
-# Security: scans all uploaded files in memory via clamd INSTREAM protocol.
-# ==============================================================================
+# Scan uploads in memory using ClamAV's INSTREAM protocol.
 CLAMAV_HOST = os.environ.get("CLAMAV_HOST", "clamav")
 CLAMAV_PORT = int(os.environ.get("CLAMAV_PORT", "3310"))
 # Strict mode: in production (DEBUG=False) ClamAV failure fails closed (rejects uploads).
@@ -453,27 +416,21 @@ else:
     CLAMAV_REQUIRED = not DEBUG
 CLAMAV_TIMEOUT_SECONDS = int(os.environ.get("CLAMAV_TIMEOUT_SECONDS", "10"))
 
-# ==============================================================================
-# HashiCorp Vault Integration Settings
-# Security: Transit encryption for User.mfa_secret (authenticator seeds).
+# Encrypt authenticator seeds in User.mfa_secret with Vault Transit.
 # Django talks HTTPS to Vault and checks Vault's certificate with our internal CA.
-# It logs in with an AppRole (role ID + secret ID from Docker secrets) and gets
-# a 15-minute token that may only encrypt/decrypt with the kura-mfa key.
-# ==============================================================================
+# It logs in with an AppRole (role ID + secret ID from Docker secrets) and gets a 15-minute token that may only encrypt/decrypt with the kura-mfa key.
 VAULT_URL = os.environ.get("VAULT_URL", "https://vault:8200")
 VAULT_CA_CERT = os.environ.get("VAULT_CA_CERT", "/certs/internal/ca.crt")
 VAULT_ROLE_ID = read_secret("vault_role_id")
 VAULT_SECRET_ID = read_secret("vault_secret_id")
 
-# When False (default when DEBUG=True), Django gracefully falls back to direct
-# storage for local development unless VAULT_ENABLED=True is explicitly set.
+# Disabling Vault stores seeds directly for development; DEBUG=True disables it by default.
 if "VAULT_ENABLED" in os.environ:
     VAULT_ENABLED = os.environ["VAULT_ENABLED"].lower() in ("true", "1")
 else:
     VAULT_ENABLED = not DEBUG
 VAULT_TRANSIT_KEY = os.environ.get("VAULT_TRANSIT_KEY", "kura-mfa")
-# A separate Transit key encrypts exam answer keys (ExamAnswerKey.answer_key_json),
-# so the MFA key and the answer-key key can be managed and audited separately.
+# A separate Transit key encrypts exam answer keys (ExamAnswerKey.answer_key_json), so the MFA key and the answer-key key can be managed and audited separately.
 VAULT_ANSWER_KEYS_KEY = os.environ.get("VAULT_ANSWER_KEYS_KEY", "kura-answer-keys")
 # RSA-4096 Transit key used to wrap per-file AES-256-GCM data keys (FileContent.wrapped_key).
 VAULT_FILES_KEY = os.environ.get("VAULT_FILES_KEY", "kura-files")
@@ -485,16 +442,13 @@ VAULT_TRANSIT_MOUNT = os.environ.get("VAULT_TRANSIT_MOUNT", "transit")
 VAULT_DB_MOUNT = os.environ.get("VAULT_DB_MOUNT", "database")
 VAULT_DB_ROLE = os.environ.get("VAULT_DB_ROLE", "kura-app")
 
-# ==============================================================================
 # Multi-Factor Authentication (django-mfa2 / FIDO2 / WebAuthn Passkeys)
-# ==============================================================================
 MFA_SERVER_PATH = "mfa/"
 FIDO_SERVER_ID = os.environ.get("FIDO_SERVER_ID", "localhost")
 FIDO_SERVER_NAME = "Kura LMS"
 MFA_METHODS = ["FIDO2"]
 MFA_ALWAYS_RESTART = False
-# Ask for real passkeys (Windows Hello, Apple Passwords, phone, password managers)
-# first. A physical key still works; the browser lists it as one choice.
+# Ask for real passkeys (Windows Hello, Apple Passwords, phone, password managers) first. A physical key still works; the browser lists it as one choice.
 MFA_FIDO2_RESIDENT_KEY = ResidentKeyRequirement.PREFERRED
 MFA_FIDO2_USER_VERIFICATION = UserVerificationRequirement.PREFERRED
 MFA_REDIRECT_AFTER_REGISTRATION = "kura:passkey_manage"

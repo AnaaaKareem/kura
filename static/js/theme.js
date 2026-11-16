@@ -1,8 +1,6 @@
 // Kura UI v2 ("Ledger") Shared Interactions
 document.addEventListener("DOMContentLoaded", function () {
-    // -------------------------------------------------------------------------
     // 1. Office Room Filter by Building
-    // -------------------------------------------------------------------------
     const building = document.querySelector("[data-office-building]");
     const room = document.querySelector("[data-office-room]");
     const officeRooms = document.getElementById("office-rooms");
@@ -23,9 +21,7 @@ document.addEventListener("DOMContentLoaded", function () {
         updateRooms();
     }
 
-    // -------------------------------------------------------------------------
     // 2. Recovery Codes Copy & Print
-    // -------------------------------------------------------------------------
     const copyRecoveryCodes = document.querySelector("[data-copy-recovery-codes]");
     const recoveryStatus = document.querySelector("[data-recovery-status]");
     if (copyRecoveryCodes && recoveryStatus) {
@@ -140,9 +136,7 @@ document.addEventListener("DOMContentLoaded", function () {
         if (list) list.replaceChildren();
     });
 
-    // -------------------------------------------------------------------------
     // 3. Theme Management (Light "kura", Dark "kura-dark", System "kura-system")
-    // -------------------------------------------------------------------------
     const allowedThemes = ["light", "dark", "system"];
     const themeNames = { light: "kura", dark: "kura-dark", system: "kura-system" };
     let savedTheme = localStorage.getItem("kura-theme") || "system";
@@ -176,9 +170,7 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     });
 
-    // -------------------------------------------------------------------------
     // 4. Mobile Sidebar Close on Link Click
-    // -------------------------------------------------------------------------
     const sidebarToggle = document.getElementById("kura-sidebar-toggle");
     document.querySelectorAll("[data-close-sidebar]").forEach(function (link) {
         link.addEventListener("click", function () {
@@ -197,9 +189,7 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 
-    // -------------------------------------------------------------------------
     // 6. Accessible Confirmation Dialog (<dialog id="k-confirm">)
-    // -------------------------------------------------------------------------
     const confirmModal = document.getElementById("k-confirm");
     let pendingSubmitForm = null;
 
@@ -285,17 +275,13 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 
-    // -------------------------------------------------------------------------
     // 8. Focus Form Error Summary on Page Load
-    // -------------------------------------------------------------------------
     const errorSummary = document.querySelector("[data-form-error-summary]");
     if (errorSummary) {
         errorSummary.focus();
     }
 
-    // -------------------------------------------------------------------------
     // 9. Assessment Authoring Dynamic Groups
-    // -------------------------------------------------------------------------
     const delivery = document.getElementById("id_delivery_mode");
     if (!delivery) return;
 

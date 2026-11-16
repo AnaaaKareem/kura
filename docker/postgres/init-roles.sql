@@ -1,17 +1,13 @@
--- ==============================================================================
 -- Kura LMS - PostgreSQL Least-Privilege Roles & REVOKE Rules (init-roles.sql)
---
 -- Security:
 -- 1. Explicit REVOKE rules: Revokes CREATE on public schema from PUBLIC.
 -- 2. Scoped Role Accounts:
---    - kura_app: holds the runtime application permissions (SELECT, INSERT, UPDATE,
---      DELETE on tables; USAGE, SELECT, UPDATE on sequences; NO DDL / DROP / ALTER).
---      It is NOLOGIN: nobody logs in as kura_app. Vault creates short-lived
---      "kura_dyn_..." users that are members of it (docker/postgres/vault-roles.sql).
---    - kura_migrator: schema migration role (used for DDL / migrations only).
---    - kura_readonly: audit, reporting, and replica read-only role.
+-- - kura_app: holds the runtime application permissions (SELECT, INSERT, UPDATE, DELETE on tables; USAGE, SELECT, UPDATE on sequences; NO DDL / DROP / ALTER).
+-- It is NOLOGIN: nobody logs in as kura_app.
+-- Vault creates short-lived "kura_dyn_..." users that are members of it (docker/postgres/vault-roles.sql).
+-- - kura_migrator: schema migration role (used for DDL / migrations only).
+-- - kura_readonly: audit, reporting, and replica read-only role.
 -- 3. Enables pgAudit extension for tamper-resistant database audit trails.
--- ==============================================================================
 
 -- 1. Enable pgAudit extension
 CREATE EXTENSION IF NOT EXISTS pgaudit;
@@ -52,9 +48,8 @@ GRANT ALL PRIVILEGES ON SCHEMA public TO kura_migrator;
 GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO kura_migrator;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO kura_migrator;
 
--- 6. Grant read-only reporting permissions to kura_readonly
--- Sensitive tables (file_contents, exam_answer_keys, password_reset_tokens)
--- and users.mfa_secret are revoked in migration 0026 once tables exist (W4).
+-- Grant read-only reporting permissions to kura_readonly.
+-- Migration 0026 revokes access to file_contents, exam_answer_keys, password_reset_tokens and users.mfa_secret (W4).
 GRANT CONNECT ON DATABASE kura TO kura_readonly;
 GRANT USAGE ON SCHEMA public TO kura_readonly;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO kura_readonly;
