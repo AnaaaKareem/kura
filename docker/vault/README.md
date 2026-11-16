@@ -48,8 +48,9 @@ also refused.
 |---|---|
 | `config/vault.hcl` | Server settings: file storage, HTTPS only (TLS 1.3), no web UI |
 | `policies/kura-web.hcl` | Django's policy: **only** encrypt and decrypt with `kura-mfa` and `kura-answer-keys`, and `database/creds/kura-app` (read) |
-| `policies/kura-cert-issuer.hcl` | The renewal script's policy: **only** `pki_int/issue/kura-service` |
-| `init-vault.sh` | One-time setup, run on the host (see below) |
+| `policies/kura-cert-issuer.hcl` | The renewal step's policy (`./kura.sh renew-certs`): **only** `pki_int/issue/kura-service` |
+
+The one-time setup is `./kura.sh vault-init` in the project folder (see below).
 
 The container is read-only, runs as the image's `vault` user with no Linux
 capabilities, and mounts only `ca.crt`, `vault.crt` and `vault.key`.
@@ -58,11 +59,12 @@ capabilities, and mounts only `ca.crt`, `vault.crt` and `vault.key`.
 
 ```bash
 docker compose up -d vault
-sh docker/vault/init-vault.sh
+sudo ./kura.sh vault-init
 docker compose restart web
 ```
 
-`init-vault.sh` does the following:
+`./kura.sh setup` runs these steps for you on a new VM. `vault-init` skips itself
+when Vault is already initialised, so running it twice is safe. It does the following:
 
 1. Initialises Vault with one unseal key and **shows the key straight away, once**. It's never written to disk. Keep it in a password manager.
 2. Unseals Vault. The key goes in on standard input, so it isn't visible in the process list.
@@ -83,7 +85,7 @@ docker compose restart web
    Both private keys are created inside Vault and can't be exported.
 8. Creates the `kura-cert-issuer` AppRole (10-minute batch tokens) and writes its login to `secrets/vault_issuer_role_id.txt` and `secrets/vault_issuer_secret_id.txt` (mode `600`, host only).
 9. Revokes the root token. If you need an admin token later, make a new one with the unseal key (`vault operator generate-root`).
-10. Runs `certs/renew-certs-from-vault.sh`. Every service switches from the bootstrap openssl certificates to Vault-issued ones, and the bootstrap CA key is deleted.
+10. Runs `./kura.sh renew-certs`. Every service switches from the bootstrap openssl certificates to Vault-issued ones, and the bootstrap CA key is deleted.
 
 The PKI step prints a harmless warning about "authority information access
 (AIA)". That's where a public CA would publish its certificate and revocation
@@ -203,7 +205,7 @@ Vault's intermediate CA issues every internal mTLS certificate:
 - nginx, WAF, Django and PostgreSQL: 30 days
 - Vault's own certificate: 1 year, so a long sealed period can't let it expire
 
-`certs/renew-certs-from-vault.sh` renews them weekly and reloads each service
+`./kura.sh renew-certs` renews them weekly and reloads each service
 without downtime. On `SIGHUP`, Vault reloads its own HTTPS certificate without
 sealing. Django never issues certificates: its token gets `403` on
 `pki_int/issue/kura-service`. Details: `certs/README.md`.

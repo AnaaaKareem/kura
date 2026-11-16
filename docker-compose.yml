@@ -140,7 +140,7 @@ services:
     # Migrations use the separate "migrate" service below instead.
     secrets:
       - django_secret_key
-      # Django's AppRole login for Vault (written by docker/vault/init-vault.sh).
+      # Django's AppRole login for Vault (written by ./kura.sh vault-init).
       - vault_role_id
       - vault_secret_id
     environment:
@@ -1259,7 +1259,7 @@ services:
   # Secrets & Cryptographic Management (HashiCorp Vault)
   # Encrypts authenticator (TOTP) seeds with its Transit engine; Django only
   # ever stores the ciphertext. HTTPS only (certificate from our internal CA).
-  # Set up once with docker/vault/init-vault.sh, and unsealed by hand after
+  # Set up once with ./kura.sh vault-init, and unsealed by hand after
   # each restart (see docker/vault/README.md). Isolated on backend.
   # ============================================================================
   vault:
@@ -1278,7 +1278,7 @@ services:
       VAULT_CONFIG_DIR: "/vault/config"
     volumes:
       - ./docker/vault/config/vault.hcl:/vault/config/vault.hcl:ro
-      # The "kura-web" policy that init-vault.sh loads into Vault.
+      # The "kura-web" policy that ./kura.sh vault-init loads into Vault.
       - ./docker/vault/policies:/vault/policies:ro
       # Only Vault's own certificate and key, plus the CA certificate.
       - ./certs/internal/ca.crt:/vault/tls/ca.crt:ro

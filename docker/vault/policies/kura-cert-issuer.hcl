@@ -1,5 +1,5 @@
 # ==============================================================================
-# Vault policy "kura-cert-issuer": what certs/renew-certs-from-vault.sh may do.
+# Vault policy "kura-cert-issuer": what ./kura.sh renew-certs may do.
 #
 # Vault denies everything that is not listed here. The renewal script may ONLY
 # ask the intermediate CA for a new certificate with the "kura-service" role,

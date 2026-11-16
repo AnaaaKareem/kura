@@ -49,6 +49,6 @@ provider password.
 3. `docker compose up -d relay`, then check `docker compose logs relay`.
 
 The relay's certificate is issued and renewed with the others
-(`certs/renew-certs-from-vault.sh`, which runs `postfix reload`). The mail queue
+(`./kura.sh renew-certs`, which runs `postfix reload`). The mail queue
 is kept in the `kura_relay_queue` volume, so mail waiting for a slow provider
 survives a restart.
