@@ -1,7 +1,8 @@
 #!/usr/sbin/nft -f
 
-# Kura's host-only firewall. Do not apply until NetBird and recovery access
-# have been verified, and the operator has scheduled the rollback in README.md.
+# Kura's host-only firewall. Do not apply until SSH from an allowlisted address
+# and console recovery access have been verified, and the operator has
+# scheduled the rollback in README.md.
 # Replace only this table, never the whole ruleset or Docker's forwarding rules.
 # Reloading recreates the CrowdSec sets; the bouncer must repopulate them.
 table inet kura_host
@@ -10,6 +11,13 @@ table inet kura_host {
     # The host bouncer maintains these temporary IPv4 and IPv6 ban entries.
     set crowdsec_blacklists { type ipv4_addr; flags timeout; }
     set crowdsec6_blacklists { type ipv6_addr; flags timeout; }
+
+    # Addresses allowed to open SSH. 192.0.2.10 is a documentation placeholder:
+    # replace it with the admin's public or campus address (or subnet, for
+    # example 203.0.113.0/28) before applying, or nobody can log in over SSH.
+    set admin_allowlist { type ipv4_addr; flags interval; elements = { 192.0.2.10 } }
+    # Optional IPv6 admin addresses, for example: elements = { 2001:db8::10 }
+    set admin_allowlist6 { type ipv6_addr; flags interval; }
 
     # Filter traffic addressed to the host, not Docker's forwarded traffic.
     chain input {
@@ -29,15 +37,11 @@ table inet kura_host {
         # Permit limited IPv4 ping for diagnosis without opening TCP ports.
         ip protocol icmp icmp type echo-request limit rate 5/second accept
 
-        # Only authenticated NetBird peers may reach host administration.
-        iifname "wt0" accept
-        # NetBird client: WireGuard peer traffic between devices.
-        udp dport 51820 accept
-        # Self-hosted NetBird SERVER (docker/netbird/server): admins on the LAN
-        # reach https://netbird.kura.lan on TCP 443, and its STUN service on
-        # UDP 3478. Restricted to RFC1918 LAN ranges (narrow further to your
-        # specific campus/office subnet if needed).
-        ip saddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } tcp dport 443 accept
-        ip saddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } udp dport 3478 accept
+        # SSH only from the admin allowlist. Grafana is reached through this
+        # SSH connection (local port forward to 127.0.0.1:3000), so no other
+        # admin port is opened. Web traffic arrives through the outbound-only
+        # Cloudflare Tunnel, so 80 and 443 stay closed.
+        ip saddr @admin_allowlist tcp dport 22 accept
+        ip6 saddr @admin_allowlist6 tcp dport 22 accept
     }
 }
