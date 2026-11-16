@@ -25,8 +25,7 @@ def service_rls_context():
 
 
 def has_role(user, role_name):
-    """
-    Checks whether an active user has been assigned a specific system role.
+    """Check whether an active user has been assigned a specific system role.
     Returns False for anonymous or inactive accounts.
     """
     # Anonymous or inactive users cannot hold active roles.
@@ -38,16 +37,13 @@ def has_role(user, role_name):
 
 
 def is_admin_course_manager(user):
-    """
-    Checks whether the user has institution-wide course management authority (Admin role).
-    """
+    """Check whether the user has institution-wide course management authority (Admin role)."""
     # The system role, not Django's unrelated is_staff flag, grants this authority.
     return has_role(user, "Admin")
 
 
 def can_manage_quarantine(user):
-    """
-    Checks whether the user may see and delete quarantined uploads (files ClamAV rejected).
+    """Check whether the user may see and delete quarantined uploads (files ClamAV rejected).
     Rule: system security and maintenance belong to the Admin role only.
     """
     # Only the Admin system role may review infected uploads.
@@ -55,8 +51,7 @@ def can_manage_quarantine(user):
 
 
 def can_access_learning_records(user):
-    """
-    Checks whether the user is allowed to access learning records and grades.
+    """Check whether the user is allowed to access learning records and grades.
     Denies access when the user holds either the Admin or Registrar role.
     """
     # A restricted role still applies when the same user also has another role.
@@ -70,8 +65,7 @@ def can_access_learning_records(user):
 
 
 def has_permission(user, action, resource, scope):
-    """
-    Checks whether any of the user's assigned roles grant a system permission.
+    """Check whether any of the user's assigned roles grant a system permission.
     Admins and Registrars are blocked from instructional content and grades.
     """
     # Anonymous or inactive users have no permissions.
@@ -107,9 +101,7 @@ def has_permission(user, action, resource, scope):
 
 
 def is_department_head(user, department):
-    """
-    Checks whether the user is the appointed Department Head for the given department.
-    """
+    """Check whether the user is the appointed Department Head for the given department."""
     # Anonymous or inactive users cannot be department heads.
     if not user or not user.is_authenticated or not user.is_active:
         return False
@@ -122,9 +114,7 @@ def is_department_head(user, department):
 
 
 def is_course_staff(user, course):
-    """
-    Checks whether the user is assigned as staff (instructor or TA) on the course.
-    """
+    """Check whether the user is assigned as staff (instructor or TA) on the course."""
     # Anonymous or inactive users cannot be course staff.
     if not user or not user.is_authenticated or not user.is_active:
         return False
@@ -146,8 +136,7 @@ def is_course_staff(user, course):
 
 
 def is_course_instructor(user, course):
-    """
-    Checks whether the user is assigned as a lead or co-instructor on the course.
+    """Check whether the user is assigned as a lead or co-instructor on the course.
     Rule: teaching assistants may enter grades but cannot finalize them.
     """
     # Anonymous or inactive users cannot be course instructors.
@@ -166,9 +155,7 @@ def is_course_instructor(user, course):
 
 
 def is_lead_instructor(user, course):
-    """
-    Checks whether the user is assigned as the Lead Instructor for the course.
-    """
+    """Check whether the user is assigned as the Lead Instructor for the course."""
     # Anonymous or inactive users cannot be lead instructors.
     if not user or not user.is_authenticated or not user.is_active:
         return False
@@ -185,8 +172,7 @@ def is_lead_instructor(user, course):
 
 
 def can_release_grades(user, course):
-    """
-    Checks whether the user is allowed to release finalized grades for this course.
+    """Check whether the user is allowed to release finalized grades for this course.
     Requires the Instructor role and the can_release_grades flag on the course assignment.
     """
     # Anonymous or inactive users cannot release grades.
@@ -207,9 +193,7 @@ def can_release_grades(user, course):
 
 
 def is_enrolled(user, course):
-    """
-    Checks whether the user has an active student enrollment in the course.
-    """
+    """Check whether the user has an active student enrollment in the course."""
     # Anonymous or inactive users cannot be enrolled.
     if not user or not user.is_authenticated or not user.is_active:
         return False
@@ -223,8 +207,7 @@ def is_enrolled(user, course):
 
 
 def student_can_see_module(user, course, module):
-    """
-    Checks whether a student can access a module within a course.
+    """Check whether a student can access a module within a course.
     Enforces the coursework specification rule: students see only published courses,
     visible modules, and modules matching their own academic level.
     """
@@ -252,12 +235,11 @@ FRESH_SECOND_FACTOR_SECONDS = 300
 
 
 def has_fresh_second_factor(request):
-    """
-    Checks whether the signed-in user entered a second-factor code in the last
-    five minutes (AUTH-02, ACL-05). Sensitive actions such as changing passkeys,
-    changing roles, deactivating accounts and releasing results call this so a
-    stolen session cookie alone cannot perform them.
-    Users without MFA have no second factor to ask for, so they pass.
+    """Check for a second-factor code accepted in the last five minutes (AUTH-02, ACL-05).
+
+    Passkey changes, role changes, account deactivation and result releases use
+    this check so a stolen session cookie alone cannot authorize them.
+    Users without MFA pass because they have no second factor to check.
     """
     if not request.user.mfa_enabled:
         return True

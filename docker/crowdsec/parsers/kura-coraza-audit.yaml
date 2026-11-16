@@ -1,9 +1,6 @@
-# ==============================================================================
 # CrowdSec parser (stage s01-parse): Coraza WAF audit records (JSON).
-# The WAF container prints access lines AND JSON audit records; only the JSON
-# records (lines starting with "{") are parsed here. The client IP is the real
-# visitor (the WAF trusts X-Real-IP from nginx only).
-# ==============================================================================
+# The WAF container prints access lines AND JSON audit records; only the JSON records (lines starting with "{") are parsed here.
+# The client IP is the real visitor (the WAF trusts X-Real-IP from nginx only).
 filter: "evt.Parsed.program == 'coraza_audit' && evt.Parsed.message startsWith '{'"
 onsuccess: next_stage
 name: kura/coraza-audit

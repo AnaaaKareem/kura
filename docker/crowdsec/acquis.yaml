@@ -1,17 +1,10 @@
-# ==============================================================================
 # CrowdSec Log Acquisition Configuration (acquis.yaml)
-#
 # Specifies the log streams that CrowdSec continuously monitors for threats.
-# CrowdSec parses incoming log lines, applies behavioral detection scenarios,
-# and issues remediation bans for malicious actors.
-# ==============================================================================
+# CrowdSec parses incoming log lines, applies behavioral detection scenarios, and issues remediation bans for malicious actors.
 
-# 1. Nginx Reverse Proxy Access and Error Logs
-# Monitors all web requests hitting the Kura application edge.
+# 1. Nginx Reverse Proxy Access and Error Logs Monitors all web requests hitting the Kura application edge.
 # Detects: HTTP 4xx scanning, SQLi probes, path traversal, exploit payloads.
-# nginx writes its access and error logs to the container output (the image
-# links /var/log/nginx/*.log to /dev/stdout and /dev/stderr), so they are read
-# through the read-only Docker API proxy, like the WAF and Django logs below.
+# nginx writes its access and error logs to the container output (the image links /var/log/nginx/*.log to /dev/stdout and /dev/stderr), so they are read through the read-only Docker API proxy, like the WAF and Django logs below.
 source: docker
 docker_host: tcp://docker-api-proxy:2375
 container_name:
@@ -41,8 +34,7 @@ labels:
 
 ---
 # 4. The VM's SSH log (/var/log/auth.log, mounted read-only by docker-compose.yml).
-# The crowdsecurity/sshd collection parses it and bans SSH brute force; the
-# host bouncer then drops the address in nftables before the SSH rule.
+# The crowdsecurity/sshd collection parses it and bans SSH brute force; the host bouncer then drops the address in nftables before the SSH rule.
 source: file
 filenames:
   - /var/log/host/auth.log

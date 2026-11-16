@@ -1,9 +1,6 @@
-# ==============================================================================
-# CrowdSec scenario: More than 20 password-reset requests from one IP in 10 minutes
-# A "leaky bucket": each matching event adds one drop; drops leak out at a
-# steady rate. If the bucket overflows (more than 20 events faster than the
-# leak), an alert is raised and the remediation profile bans the IP.
-# ==============================================================================
+# Detect more than 20 password-reset requests from one IP in 10 minutes.
+# Each matching event adds a drop to a bucket that drains at a steady rate.
+# If the bucket overflows (more than 20 events faster than the leak), an alert is raised and the remediation profile bans the IP.
 type: leaky
 name: kura/reset-abuse
 description: "More than 20 password-reset requests from one IP in 10 minutes"

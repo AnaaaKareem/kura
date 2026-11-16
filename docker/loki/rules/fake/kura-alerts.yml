@@ -1,23 +1,12 @@
-# ==============================================================================
 # Kura LMS - Loki SIEM Security Detection & Alerting Rules
-#
-# LogQL alerting rules evaluated by Loki's Ruler against the `fake` tenant
-# (Loki authentication is disabled, so all rules live in the `fake` folder).
-# Each rule is grouped with `sum` or `sum by (...)` only, never per-user
-# labels, and alerts are sent to Alertmanager
-# (alertmanager_url is set in docker/loki/loki.yml).
-#
-# The events come from WP1's structured logging: the Django app (service
-# "web") writes key=value (logfmt) lines with event="auth.login.failed" and
-# friends, and every service's container name kura-<name> becomes the Loki
-# service label in Alloy.
-# ==============================================================================
+# LogQL alerting rules evaluated by Loki's Ruler against the `fake` tenant (Loki authentication is disabled, so all rules live in the `fake` folder).
+# Each rule is grouped with `sum` or `sum by (...)` only, never per-user labels, and alerts are sent to Alertmanager (alertmanager_url is set in docker/loki/loki.yml).
+# The events come from WP1's structured logging: the Django app (service "web") writes key=value (logfmt) lines with event="auth.login.failed" and friends, and every service's container name kura-<name> becomes the Loki service label in Alloy.
 
 groups:
   - name: kura-security-alerts
     rules:
-      # 1. Overall login brute force: many failed logins in 5 minutes,
-      #    whichever address they come from.
+      # 1. Overall login brute force: many failed logins in 5 minutes, whichever address they come from.
       - alert: BruteForceLogin
         expr: sum(count_over_time({service="web"} | logfmt | event="auth.login.failed" [5m])) > 20
         labels:
@@ -26,8 +15,7 @@ groups:
           summary: "Unusually many failed logins"
           description: "More than 20 login attempts failed within 5 minutes. This can be password guessing across many accounts; check the login pages and the broken-access log."
 
-      # 2. One address alone failing many logins: classic password guessing,
-      #    grouped per attacking IP address (never per user).
+      # 2. One address alone failing many logins: classic password guessing, grouped per attacking IP address (never per user).
       - alert: SingleIpBruteForce
         expr: sum by (ip) (count_over_time({service="web"} | logfmt | event="auth.login.failed" [5m])) > 10
         labels:
@@ -63,8 +51,7 @@ groups:
           summary: "Malware was found in an upload"
           description: "ClamAV flagged an uploaded file in the last 5 minutes and it was quarantined. The file cannot be downloaded; review the file and the uploader's account."
 
-      # 6. One address denied many times: probing URLs it is not allowed
-      #    to see (typical for IDOR experiments), grouped per address.
+      # 6. One address denied many times: probing URLs it is not allowed to see (typical for IDOR experiments), grouped per address.
       - alert: AccessDeniedSpike
         expr: sum by (ip) (count_over_time({service="web"} | logfmt | event="access.denied" [5m])) > 30
         labels:
@@ -73,8 +60,7 @@ groups:
           summary: "Access-denied storm from one address"
           description: "The address {{ $labels.ip }} received more than 30 permission denials within 5 minutes. This looks like probing other users' IDs (IDOR); check which paths were requested."
 
-      # 7. Many failed CSRF checks can mean an active cross-site request
-      #    forgery attempt (or a script without the token).
+      # 7. Many failed CSRF checks can mean an active cross-site request forgery attempt (or a script without the token).
       - alert: CsrfFailures
         expr: sum(count_over_time({service="web"} | logfmt | event="access.csrf_failed" [10m])) > 10
         labels:
@@ -83,8 +69,7 @@ groups:
           summary: "Many failed CSRF checks"
           description: "More than 10 requests failed the CSRF token check within 10 minutes, the signature of an attempted cross-site request forgery."
 
-      # 8. A grade-release MFA confirmation failed: nobody's grades move
-      #    without the instructor's second factor, so this is notable.
+      # 8. A grade-release MFA confirmation failed: nobody's grades move without the instructor's second factor, so this is notable.
       - alert: GradeReleaseMfaFailed
         expr: count_over_time({service="web"} | logfmt | event="grade.release_mfa_failed" [5m]) >= 1
         labels:
@@ -93,8 +78,7 @@ groups:
           summary: "Grade release MFA failed"
           description: "An instructor failed the second-factor check that guards releasing finalized grades within the last 5 minutes. Confirm it was the teacher making a typo."
 
-      # 9. The WAF blocked many requests: the JSON audit lines already only
-      #    record relevant (blocked or 5xx) transactions (SecAuditLogParts).
+      # 9. The WAF blocked many requests: the JSON audit lines already only record relevant (blocked or 5xx) transactions (SecAuditLogParts).
       - alert: WafBlockSpike
         expr: sum(count_over_time({service="waf"} | json | transaction_response_status="403" [5m])) > 50
         labels:
@@ -103,8 +87,7 @@ groups:
           summary: "Many requests blocked by the firewall"
           description: "The Coraza WAF returned 403 to more than 50 requests within 5 minutes. An attack pattern may be against the site; inspect the rule IDs in the audit log."
 
-      # 10. Vault logged error lines: encryption of MFA seeds or temporary
-      #     database users may be failing.
+      # 10. Vault logged error lines: encryption of MFA seeds or temporary database users may be failing.
       - alert: VaultErrors
         expr: sum(count_over_time({service="vault"} | json | error!="" [5m])) >= 1
         labels:
@@ -114,7 +97,7 @@ groups:
           description: "Vault produced at least one error line within 5 minutes. Without Vault, logins and grade release fail."
 
       # 11. PostgreSQL itself reported failed password authentication:
-      #     a credential guessing attack against the database port.
+      # a credential guessing attack against the database port.
       - alert: DbAuthFailures
         expr: count_over_time({service="db"} |= "password authentication failed" [5m]) > 5
         labels:
@@ -123,8 +106,7 @@ groups:
           summary: "Failed database password attempts"
           description: "PostgreSQL rejected more than 5 passwords within 5 minutes. mTLS should keep strangers out; check which client address got through to the port."
 
-      # 12. The mail relay bounced notification emails: recipients or the
-      #     upstream account are broken.
+      # 12. The mail relay bounced notification emails: recipients or the upstream account are broken.
       - alert: RelayBounces
         expr: count_over_time({service="relay"} |= "status=bounced" [10m]) >= 1
         labels:
@@ -142,8 +124,7 @@ groups:
           summary: "Virus scanner is unavailable"
           description: "The app could not reach ClamAV within the last 5 minutes, so it refused new uploads. Restart or fix the virus scanner container."
 
-      # 14. The breached-password check could not reach HaveIBeenPwned (through
-      #     the breach-check proxy), so new passwords were accepted without it.
+      # 14. The breached-password check could not reach HaveIBeenPwned (through the breach-check proxy), so new passwords were accepted without it.
       - alert: BreachCheckUnavailable
         expr: sum(count_over_time({service="web"} | logfmt | event="auth.breach_check.unavailable" [15m])) >= 1
         labels:
@@ -224,10 +205,10 @@ groups:
           summary: "Unexpected database audit or DDL discrepancy"
           description: "pgAudit recorded a destructive, schema, or role change against protected grade or audit tables within 5 minutes. Verify whether an authorized maintenance window is active."
 
-      # 23. Any successful SSH login to the VM. Only allowlisted admins can
-      #     reach SSH, so each login should be expected; grouped per user and
-      #     source address. Lines come from /var/log/auth.log (service="auth").
-      #     OpenSSH 9.8+ logs as "sshd-session", older versions as "sshd".
+      # 23. Any successful SSH login to the VM.
+      # Only allowlisted admins can reach SSH, so each login should be expected; grouped per user and source address.
+      # Lines come from /var/log/auth.log (service="auth").
+      # OpenSSH 9.8+ logs as "sshd-session", older versions as "sshd".
       - alert: SshLoginSucceeded
         expr: |-
           sum by (user, ip) (count_over_time({service="auth"} |~ `sshd(-session)?\[[0-9]+\]: Accepted ` | regexp `Accepted \S+ for (?P<user>\S+) from (?P<ip>[0-9a-fA-F.:]+)` [5m])) >= 1
@@ -237,8 +218,8 @@ groups:
           summary: "SSH login to the Kura VM"
           description: "{{ $labels.user }} logged in over SSH from {{ $labels.ip }} within the last 5 minutes. Confirm it was a planned admin session."
 
-      # 24. Burst of failed SSH logins from one address. CrowdSec's sshd
-      #     scenarios ban the address; this alert tells the admin it happened.
+      # 24. Burst of failed SSH logins from one address.
+      # CrowdSec's sshd scenarios ban the address; this alert tells the admin it happened.
       - alert: SshLoginFailureBurst
         expr: |-
           sum by (ip) (count_over_time({service="auth"} |~ `sshd(-session)?\[[0-9]+\]: (Failed \S+ for|Invalid user|Connection closed by authenticating user|Disconnected from authenticating user)` | regexp `from (?:invalid user \S+ |authenticating user \S+ )?(?P<ip>[0-9a-fA-F.:]+)` [10m])) > 5
@@ -248,11 +229,9 @@ groups:
           summary: "Failed SSH logins from one address"
           description: "More than 5 SSH login attempts from {{ $labels.ip }} failed within 10 minutes. Check that CrowdSec banned it and that the address is not on the admin allowlist."
 
-      # 25. The Grafana admin account was used. Day-to-day viewing uses the
-      #     read-only "viewer" account, so admin activity means a change or a
-      #     recovery. Grafana logs every request with the user name
-      #     (GF_SERVER_ROUTER_LOGGING); its successful login line has no user
-      #     name, so the admin's first request after logging in is the signal.
+      # 25. The Grafana admin account was used.
+      # Day-to-day viewing uses the read-only "viewer" account, so admin activity means a change or a recovery.
+      # Grafana logs every request with the user name (GF_SERVER_ROUTER_LOGGING); its successful login line has no user name, so the admin's first request after logging in is the signal.
       - alert: GrafanaAdminLogin
         expr: |-
           sum(count_over_time({service="grafana"} |= `msg="Request Completed"` |= ` uname=admin ` [5m])) >= 1
@@ -262,9 +241,8 @@ groups:
           summary: "Grafana admin account in use"
           description: "The Grafana admin account made requests within the last 5 minutes. It should only be used for configuration changes or recovery; confirm the session was planned."
 
-      # 26. Burst of failed Grafana logins (wrong user or password). Grafana's
-      #     brute-force protection locks an account after repeated failures;
-      #     this alert shows someone is guessing through the SSH tunnel.
+      # 26. Burst of failed Grafana logins (wrong user or password).
+      # Grafana's brute-force protection locks an account after repeated failures; this alert shows someone is guessing through the SSH tunnel.
       - alert: GrafanaLoginFailureBurst
         expr: |-
           sum(count_over_time({service="grafana"} |= `msg="Request Completed"` |= `path=/login` |= `status=401` [5m])) > 5

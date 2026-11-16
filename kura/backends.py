@@ -13,8 +13,7 @@ class KuraAuthBackend(ModelBackend):
     """
 
     def authenticate(self, request, username=None, password=None, **kwargs):
-        """
-        Checks a submitted email and password against an active, unlocked account.
+        """Check a submitted email and password against an active, unlocked account.
         Returns the user if credentials match, or None if authentication fails.
         """
         # The username parameter receives the submitted email address

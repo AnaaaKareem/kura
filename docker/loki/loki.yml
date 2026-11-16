@@ -1,11 +1,7 @@
-# ==============================================================================
 # Grafana Loki Configuration (loki.yml)
-#
 # High-efficiency, tamper-resistant log aggregator.
 # Security & Regulatory Compliance:
-# Enforces a mandatory 180-day retention period (4320h) in compliance with
-# the Egyptian Anti-Cybercrime Law (Law No. 175 of 2018, Art. 2) and LMS specification.
-# ==============================================================================
+# Enforces a mandatory 180-day retention period (4320h) in compliance with the Egyptian Anti-Cybercrime Law (Law No. 175 of 2018, Art. 2) and LMS specification.
 
 auth_enabled: false
 
@@ -54,10 +50,7 @@ compactor:
   retention_delete_worker_count: 150
   delete_request_store: filesystem
 
-# ==============================================================================
-# Loki Ruler (SIEM Alerting Engine)
-# Evaluates LogQL security alerting rules and forwards detections to Alertmanager
-# ==============================================================================
+# Loki Ruler (SIEM Alerting Engine) Evaluates LogQL security alerting rules and forwards detections to Alertmanager
 ruler:
   storage:
     type: local

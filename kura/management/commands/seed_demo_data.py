@@ -41,9 +41,7 @@ class Command(BaseCommand):
     help = "Seeds demo accounts and a sample course for testing all six Kura user roles."
 
     def handle(self, *args, **options):
-        """
-        Creates or updates local demo accounts, roles, and sample course content.
-        """
+        """Create or update local demo accounts, roles, and sample course content."""
         # Prevent demo accounts and credentials from being created in production.
         if not settings.DEBUG:
             raise CommandError("This command can only run when DEBUG=True.")
@@ -73,9 +71,7 @@ class Command(BaseCommand):
 
         # Create demo users without changing existing passwords or MFA settings.
         def setup_user(email, first_name, last_name, role_name):
-            """
-            Gets or creates a demo account and ensures it has the requested system role.
-            """
+            """Get or create a demo account and assign the requested system role."""
             user, created = User.objects.get_or_create(
                 email=email,
                 defaults={

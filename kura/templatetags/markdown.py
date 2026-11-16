@@ -11,8 +11,7 @@ register = template.Library()
 
 @register.simple_tag
 def render_markdown(source):
-    """
-    Renders Markdown into sanitized HTML for display in templates,
+    """Render Markdown into sanitized HTML for display in templates,
     keeping raw HTML disabled and cleaning the output with nh3.
     """
     # Treat HTML typed by an author as text rather than executable markup.

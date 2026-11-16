@@ -1,10 +1,7 @@
-# ==============================================================================
 # CrowdSec parser (stage s01-parse): Kura's Django security events.
-# Django writes one key=value line per event (log_security_event in
-# kura/views.py), e.g.
+# Django writes one key=value line per event (log_security_event in kura/views.py), e.g.
 #   time=... level=WARNING logger=kura.security event="auth.login.failed" ip="203.0.113.7" ...
 # The visitor IP is the real one (nginx -> WAF -> Django pass it on).
-# ==============================================================================
 filter: "evt.Parsed.program == 'kura_django'"
 onsuccess: next_stage
 name: kura/django-logfmt

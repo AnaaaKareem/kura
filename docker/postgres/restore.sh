@@ -1,14 +1,9 @@
 #!/usr/bin/env bash
-# ==============================================================================
 # Kura LMS - Disaster Recovery & Point-In-Time Recovery (PITR) Script
-#
-# Restores PostgreSQL to a specific timestamp in the past by decrypting the
-# base backup and replaying Write-Ahead Logs (WAL) up to the exact target time.
-#
+# Restores PostgreSQL to a specific timestamp in the past by decrypting the base backup and replaying Write-Ahead Logs (WAL) up to the exact target time.
 # Usage:
 #   ./restore.sh "2026-11-01 12:00:00"
 #   ./restore.sh latest
-# ==============================================================================
 
 set -euo pipefail
 

@@ -224,8 +224,7 @@ class PasswordChangeForm(forms.Form):
     )
 
     def __init__(self, user, *args, request=None, **kwargs):
-        """
-        Connects this password-change form to the account being updated.
+        """Connect this password-change form to the account being updated.
         The request is optional so direct form use still works; when present,
         django-axes can count a wrong current password.
         """
@@ -234,12 +233,8 @@ class PasswordChangeForm(forms.Form):
         super().__init__(*args, **kwargs)
 
     def clean_old_password(self):
-        """
-        Checks that the submitted current password matches this user's password.
-        """
-        # Verify the old password through authenticate() so django-axes records a
-        # wrong current password and locks the account after AXES_FAILURE_LIMIT
-        # attempts, instead of allowing unlimited guessing (AUTH-07).
+        """Check that the submitted current password matches this user's password."""
+        # Use authenticate() so django-axes counts wrong current passwords toward AXES_FAILURE_LIMIT (AUTH-07).
         old_password = self.cleaned_data.get("old_password")
         if self.request is not None:
             authenticated_user = authenticate(
@@ -253,9 +248,7 @@ class PasswordChangeForm(forms.Form):
         return old_password
 
     def clean(self):
-        """
-        Checks that both new-password entries match and meet configured password rules.
-        """
+        """Check that both new-password entries match and meet configured password rules."""
         cleaned_data = super().clean()
         new_password = cleaned_data.get("new_password")
         confirm_password = cleaned_data.get("confirm_password")
@@ -302,8 +295,7 @@ class PasswordResetConfirmForm(forms.Form):
     Form to set a new password after opening a valid reset link.
     """
 
-    # Second-factor code. The view requires it when the account has MFA, so a
-    # stolen inbox alone is not enough to take over the account (AUTH-03).
+    # MFA accounts also need this code, so access to the inbox alone cannot reset the password (AUTH-03).
     code = forms.CharField(
         label="Authenticator or recovery code",
         required=False,
@@ -341,16 +333,12 @@ class PasswordResetConfirmForm(forms.Form):
     )
 
     def __init__(self, user, *args, **kwargs):
-        """
-        Connects this password-reset form to the account receiving the new password.
-        """
+        """Connect this password-reset form to the account receiving the new password."""
         self.user = user
         super().__init__(*args, **kwargs)
 
     def clean(self):
-        """
-        Checks matching password entries and applies Django's configured validators.
-        """
+        """Check matching password entries and apply Django's configured validators."""
         cleaned_data = super().clean()
         new_password = cleaned_data.get("new_password")
         confirm_password = cleaned_data.get("confirm_password")
@@ -528,9 +516,7 @@ class StaffCreateForm(forms.Form):
         return cleaned
 
     def clean_email(self):
-        """
-        Normalizes a new staff member's email and rejects duplicates.
-        """
+        """Normalize a new staff member's email and reject duplicates."""
         # Ensure email is unique across the system.
         email = self.cleaned_data.get("email", "").strip().lower()
         if User.objects.filter(email=email).exists():
@@ -593,9 +579,7 @@ class StudentCreateForm(forms.Form):
     )
 
     def clean_email(self):
-        """
-        Normalizes a new student's email and rejects duplicates.
-        """
+        """Normalize a new student's email and reject duplicates."""
         # Ensure student email is unique.
         email = self.cleaned_data.get("email", "").strip().lower()
         if User.objects.filter(email=email).exists():
@@ -672,9 +656,7 @@ class AdminCourseForm(forms.ModelForm):
         }
 
     def clean_code(self):
-        """
-        Normalizes a course code before it is saved.
-        """
+        """Normalize a course code before it is saved."""
         # Keep course codes consistent with the existing course-creation form.
         return self.cleaned_data["code"].strip().upper()
 
@@ -767,9 +749,7 @@ class CourseCreateForm(forms.Form):
         return dept
 
     def clean_code(self):
-        """
-        Normalizes a new course code and checks that it is not already in use.
-        """
+        """Normalize a new course code and check that it is not already in use."""
         # Enforce unique course code.
         code = self.cleaned_data.get("code", "").strip().upper()
         if Course.objects.filter(code=code).exists():
@@ -958,17 +938,13 @@ class SectionItemForm(forms.Form):
     )
 
     def __init__(self, data=None, files=None, initial=None, existing_file=False):
-        """
-        Initializes the section-item form with its existing-attachment state.
-        """
+        """Initializes the section-item form with its existing-attachment state."""
         # An existing attachment also counts when editing a file-only item.
         super().__init__(data=data, files=files, initial=initial)
         self.existing_file = existing_file
 
     def clean(self):
-        """
-        Requires the section item to contain text, a new file, or an existing attachment.
-        """
+        """Requires the section item to contain text, a new file, or an existing attachment."""
         # Require something useful in the item, even though each field is optional.
         cleaned_data = super().clean()
         if not cleaned_data.get("content_body") and not cleaned_data.get("file") and not self.existing_file:
@@ -1039,9 +1015,7 @@ class ScheduleForm(forms.Form):
     )
 
     def clean(self):
-        """
-        Checks that a scheduled class ends after it starts.
-        """
+        """Check that a scheduled class ends after it starts."""
         cleaned_data = super().clean()
         start_time = cleaned_data.get("start_time")
         end_time = cleaned_data.get("end_time")
@@ -1126,9 +1100,7 @@ class ManualAttendanceForm(forms.Form):
     )
 
     def clean_override_reason(self):
-        """
-        Ensures a manual attendance change includes a written reason.
-        """
+        """Ensure a manual attendance change includes a written reason."""
         # Override reason is mandatory for manual roll records.
         reason = self.cleaned_data.get("override_reason", "").strip()
         if not reason:
@@ -1254,9 +1226,7 @@ class AssessmentCreateForm(forms.Form):
     )
 
     def clean(self):
-        """
-        Checks that an assessment opens before its due date.
-        """
+        """Check that an assessment opens before its due date."""
         cleaned_data = super().clean()
         # The closing time must be later than the opening time.
         opens_at = cleaned_data.get("opens_at")
@@ -1290,9 +1260,7 @@ class AssessmentQuestionForm(forms.Form):
     )
 
     def __init__(self, *args, **kwargs):
-        """
-        Builds the repeated question fields and display rows for one question form.
-        """
+        """Build the repeated question fields and display rows for one question form."""
         # Each row is a normal Django field, so every submitted value is validated.
         super().__init__(*args, **kwargs)
         for number in range(1, 9):
@@ -1309,9 +1277,7 @@ class AssessmentQuestionForm(forms.Form):
             self.pair_rows.append((self[f"left_{number}"], self[f"right_{number}"]))
 
     def clean(self):
-        """
-        Checks that the submitted question has enough valid answers for its type.
-        """
+        """Check that the submitted question has enough valid answers for its type."""
         # Require enough choices and a real answer; reject incomplete matching pairs.
         cleaned_data = super().clean()
         if cleaned_data.get("type") == "multiple_choice":
@@ -1408,9 +1374,7 @@ class AssessmentAnswerForm(forms.Form):
     response_text = forms.CharField(required=False, max_length=100000, strip=False)
 
     def __init__(self, data, question):
-        """
-        Builds answer fields from the actual question shown to the student.
-        """
+        """Build answer fields from the actual question shown to the student."""
         # Add only the matching-pair fields and choices that the question really contains.
         super().__init__(data)
         self.max_words = question.get("max_words", 500)
@@ -1424,9 +1388,7 @@ class AssessmentAnswerForm(forms.Form):
             self.fields[f"match_{pair['pair_id']}"] = forms.ChoiceField(required=False, choices=choices)
 
     def clean_response_text(self):
-        """
-        Checks that a written answer stays within the question's word limit.
-        """
+        """Check that a written answer stays within the question's word limit."""
         # A student cannot submit more words than the question allows.
         text = self.cleaned_data["response_text"]
         if len(text.split()) > self.max_words:
@@ -1453,9 +1415,7 @@ class ScannedPaperStaffUploadForm(forms.Form):
     file = forms.FileField()
 
 
-# ==========================================
 # Grades, appeals & change requests forms
-# ==========================================
 
 
 class GradeEntryForm(forms.Form):
@@ -1619,9 +1579,7 @@ class CourseGradeSchemeForm(forms.Form):
     """
 
     def __init__(self, *args, **kwargs):
-        """
-        Adds one percentage field per grade component, named weight_<component>.
-        """
+        """Add one percentage field per grade component, named weight_<component>."""
         super().__init__(*args, **kwargs)
         for component, label in GradeComponentType.choices:
             self.fields[f"weight_{component}"] = forms.DecimalField(
@@ -1635,9 +1593,7 @@ class CourseGradeSchemeForm(forms.Form):
             )
 
     def clean(self):
-        """
-        Treats an empty field as 0 and checks that the weights total exactly 100.
-        """
+        """Treat an empty field as 0 and check that the weights total exactly 100."""
         cleaned_data = super().clean()
         total = 0
         for component, _ in GradeComponentType.choices:
@@ -1702,9 +1658,7 @@ class CourseGradesFilterForm(forms.Form):
             self.fields["assessment"].queryset = assessments
 
 
-# ==========================================
 # Pure-Python JSONB Schema Validators
-# ==========================================
 
 
 def _is_number(value):
@@ -1712,7 +1666,7 @@ def _is_number(value):
 
 
 def validate_assessment_settings_json(doc):
-    """Validates Assessments.settings_json against the specification schema."""
+    """Validate Assessments.settings_json against the specification schema."""
     if not isinstance(doc, dict):
         raise ValidationError("Assessment settings must be a JSON object.")
     allowed_keys = {"shuffle_questions", "shuffle_options", "allow_backtracking", "autosave_interval_seconds"}
@@ -1730,7 +1684,7 @@ def validate_assessment_settings_json(doc):
 
 
 def validate_assessment_questions_json(questions):
-    """Validates Assessments.questions_json against the specification schema (no answer keys)."""
+    """Validate Assessments.questions_json against the specification schema (no answer keys)."""
     if not isinstance(questions, list):
         raise ValidationError("Assessment questions must be a JSON array.")
     seen_ids = set()
@@ -1780,7 +1734,7 @@ def validate_assessment_questions_json(questions):
 
 
 def validate_answer_key_json(answer_key_dict):
-    """Validates ExamAnswerKey.answer_key_json before encryption/storage."""
+    """Validate ExamAnswerKey.answer_key_json before encryption/storage."""
     if not isinstance(answer_key_dict, dict):
         raise ValidationError("Answer key must be a JSON object.")
     for q_id, entry in answer_key_dict.items():
@@ -1808,7 +1762,7 @@ def validate_answer_key_json(answer_key_dict):
 
 
 def validate_attempt_answers_json(answers):
-    """Validates AssessmentAttempt.answers_json against the specification schema."""
+    """Validate AssessmentAttempt.answers_json against the specification schema."""
     if not isinstance(answers, list):
         raise ValidationError("Attempt answers must be a JSON array.")
     for item in answers:
@@ -1838,7 +1792,7 @@ def validate_attempt_answers_json(answers):
 
 
 def validate_summary_score_json(summary):
-    """Validates AssessmentAttempt.summary_score_json before saving."""
+    """Validate AssessmentAttempt.summary_score_json before saving."""
     if summary is None:
         return None
     if not isinstance(summary, dict):

@@ -8,9 +8,7 @@ from django.core.validators import MinValueValidator, MaxValueValidator
 from django.db import DatabaseError, models
 
 
-# ==========================================
 # Custom PostgreSQL column types
-# ==========================================
 
 
 class FixedCharField(models.CharField):
@@ -20,16 +18,12 @@ class FixedCharField(models.CharField):
     """
 
     def db_type(self, connection):
-        """
-        Returns the PostgreSQL column type for this fixed-width character field.
-        """
+        """Return the PostgreSQL column type for this fixed-width character field."""
         return f"char({self.max_length})"
 
 
 def validate_cidr(value):
-    """
-    Checks that a value is a valid CIDR network address.
-    """
+    """Check that a value is a valid CIDR network address."""
     try:
         ipaddress.ip_network(str(value), strict=True)
     except ValueError:
@@ -45,39 +39,29 @@ class CIDRField(models.Field):
     description = "PostgreSQL CIDR network"
 
     def __init__(self, *args, **kwargs):
-        """
-        Initializes a CIDR database field with its maximum string length and validator.
-        """
+        """Initializes a CIDR database field with its maximum string length and validator."""
         kwargs.setdefault("max_length", 43)
         super().__init__(*args, **kwargs)
         self.validators.append(validate_cidr)
 
     def db_type(self, connection):
-        """
-        Returns the database column type used to store this network field.
-        """
+        """Return the database column type used to store this network field."""
         return "cidr"
 
     def from_db_value(self, value, expression, connection):
-        """
-        Converts a CIDR value loaded from the database into a Python string.
-        """
+        """Converts a CIDR value loaded from the database into a Python string."""
         if value is None:
             return None
         return str(value)
 
     def to_python(self, value):
-        """
-        Converts an assigned CIDR value into the field's Python representation.
-        """
+        """Converts an assigned CIDR value into the field's Python representation."""
         if value in (None, ""):
             return None
         return str(value)
 
     def get_prep_value(self, value):
-        """
-        Prepares a CIDR value for saving to PostgreSQL.
-        """
+        """Prepares a CIDR value for saving to PostgreSQL."""
         if value in (None, ""):
             return None
         return str(ipaddress.ip_network(str(value), strict=True))
@@ -113,9 +97,7 @@ ALLOWED_UPLOAD_MIME_TYPES = [
 MAX_UPLOAD_BYTES = 26214400
 
 
-# ==========================================
 # Enumerations
-# ==========================================
 
 
 class AcademicLevel(models.TextChoices):
@@ -293,9 +275,7 @@ class AppealStatus(models.TextChoices):
     REJECTED = "rejected", "Rejected"
 
 
-# ==========================================
 # User Manager & Custom User Model
-# ==========================================
 
 
 class UserManager(BaseUserManager):
@@ -305,9 +285,7 @@ class UserManager(BaseUserManager):
     """
 
     def create_user(self, email, password=None, **extra_fields):
-        """
-        Creates and saves a user account with a normalized email address.
-        """
+        """Create and save a user account with a normalized email address."""
         if not email:
             raise ValueError("The Email field must be set")
         email = self.normalize_email(email)
@@ -320,9 +298,7 @@ class UserManager(BaseUserManager):
         return user
 
     def create_superuser(self, email, password=None, **extra_fields):
-        """
-        Creates a user with active status and the Admin system role.
-        """
+        """Create a user with active status and the Admin system role."""
         extra_fields.setdefault("is_active", True)
         user = self.create_user(email, password, **extra_fields)
         admin_role, _ = Role.objects.get_or_create(
@@ -369,9 +345,7 @@ class User(AbstractBaseUser):
 
     @property
     def username(self):
-        """
-        Provides the email through Django integrations expecting a username property.
-        """
+        """Provides the email through Django integrations expecting a username property."""
         return self.email
 
     class Meta:
@@ -380,43 +354,31 @@ class User(AbstractBaseUser):
         verbose_name_plural = "Users"
 
     def __str__(self):
-        """
-        Formats this user's name and email for readable display.
-        """
+        """Formats this user's name and email for readable display."""
         return f"{self.first_name} {self.last_name} ({self.email})"
 
     @property
     def last_login_at(self):
-        """
-        Exposes Django's last_login value under the project's legacy property name.
-        """
+        """Exposes Django's last_login value under the project's legacy property name."""
         return self.last_login
 
     @last_login_at.setter
     def last_login_at(self, value):
-        """
-        Sets Django's last_login field through the legacy property name.
-        """
+        """Set Django's last_login field through the legacy property name."""
         self.last_login = value
 
     # Authorization runs through Kura's custom roles and permissions layer.
     # Standard Django model permissions default to False.
     def has_perm(self, perm, obj=None):
-        """
-        Denies Django model permissions for this custom user model.
-        """
+        """Denies Django model permissions for this custom user model."""
         return False
 
     def has_module_perms(self, app_label):
-        """
-        Denies Django module permissions for this custom user model.
-        """
+        """Denies Django module permissions for this custom user model."""
         return False
 
 
-# ==========================================
 # Departments & Roles & Permissions
-# ==========================================
 
 
 class Department(models.Model):
@@ -442,9 +404,7 @@ class Department(models.Model):
         db_table = "departments"
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.code} - {self.name}"
 
 
@@ -484,9 +444,7 @@ class Role(models.Model):
         db_table = "roles"
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return self.name
 
 
@@ -508,9 +466,7 @@ class UserRole(models.Model):
         db_table = "user_roles"
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.user} - {self.role}"
 
 
@@ -531,9 +487,7 @@ class SystemPermission(models.Model):
         unique_together = (("action", "resource", "scope"),)
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.action}:{self.resource}:{self.scope}"
 
 
@@ -551,15 +505,11 @@ class RolePermission(models.Model):
         db_table = "role_permissions"
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.role} -> {self.permission}"
 
 
-# ==========================================
 # Profiles
-# ==========================================
 
 
 class StudentProfile(models.Model):
@@ -584,9 +534,7 @@ class StudentProfile(models.Model):
         db_table = "student_profiles"
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"Student: {self.user} ({self.current_level})"
 
 
@@ -613,15 +561,11 @@ class StaffProfile(models.Model):
         db_table = "staff_profiles"
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"Staff: {self.user} - {self.staff_title}"
 
 
-# ==========================================
 # Auth Tokens, Sessions & Login Tracking
-# ==========================================
 
 
 class PasswordResetToken(models.Model):
@@ -641,9 +585,7 @@ class PasswordResetToken(models.Model):
         db_table = "password_reset_tokens"
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"ResetToken for {self.user} (Expires: {self.expires_at})"
 
 
@@ -666,15 +608,11 @@ class UserSession(models.Model):
         db_table = "user_sessions"
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"Session {self.id} - {self.user}"
 
 
-# ==========================================
 # Courses, Staff & Grading Schemes
-# ==========================================
 
 
 class Course(models.Model):
@@ -712,9 +650,7 @@ class Course(models.Model):
         ]
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.code} - {self.title}"
 
 
@@ -741,9 +677,7 @@ class CourseStaff(models.Model):
         unique_together = (("course", "user"),)
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.user} as {self.staff_role} in {self.course}"
 
 
@@ -772,9 +706,7 @@ class CourseGradeScheme(models.Model):
         ]
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.course} - {self.component_type}: {self.weight_percentage}%"
 
 
@@ -810,15 +742,11 @@ class Enrollment(models.Model):
         ]
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.student} in {self.course} ({self.status})"
 
 
-# ==========================================
 # Modules, Sections, and Content Items
-# ==========================================
 
 
 class Module(models.Model):
@@ -841,9 +769,7 @@ class Module(models.Model):
         db_table = "modules"
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.course.code} - Module: {self.title}"
 
 
@@ -861,9 +787,7 @@ class ModuleTargetLevel(models.Model):
         db_table = "module_target_levels"
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.module.title} -> {self.target_level}"
 
 
@@ -884,9 +808,7 @@ class ModuleSection(models.Model):
         db_table = "module_sections"
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.module.title} - Section: {self.title} ({self.section_type})"
 
 
@@ -908,15 +830,11 @@ class SectionItem(models.Model):
         db_table = "section_items"
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.section.title} - Item: {self.title}"
 
 
-# ==========================================
 # File Storage (Metadata & Binaries)
-# ==========================================
 
 
 class StoredFile(models.Model):
@@ -948,9 +866,7 @@ class StoredFile(models.Model):
         ]
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.original_filename} ({self.size_bytes} bytes)"
 
 
@@ -972,9 +888,7 @@ class FileContent(models.Model):
         db_table = "file_contents"
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"Binary Content for {self.file_id}"
 
 
@@ -1014,9 +928,7 @@ class OutgoingEmail(models.Model):
         db_table = "outgoing_emails"
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.event_key} ({self.status})"
 
 
@@ -1052,9 +964,7 @@ class QuarantinedFile(models.Model):
         ]
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"Quarantined {self.original_filename} ({self.detection})"
 
 
@@ -1075,15 +985,11 @@ class SectionItemFile(models.Model):
         db_table = "section_item_files"
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"File {self.file_id} attached to SectionItem {self.section_item_id}"
 
 
-# ==========================================
 # Schedules & Attendance
-# ==========================================
 
 
 class Schedule(models.Model):
@@ -1118,9 +1024,7 @@ class Schedule(models.Model):
         ]
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.course.code} - {self.day} {self.start_time}-{self.end_time} at {self.location}"
 
 
@@ -1150,9 +1054,7 @@ class ModuleAttendanceSession(models.Model):
         db_table = "module_attendance_sessions"
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.title} - Active: {self.is_active}"
 
 
@@ -1196,15 +1098,11 @@ class AttendanceRecord(models.Model):
         ]
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.student} - {self.session.title}: {self.status}"
 
 
-# ==========================================
 # Assessments, Answer Keys & Attempts
-# ==========================================
 
 
 class Assessment(models.Model):
@@ -1255,9 +1153,7 @@ class Assessment(models.Model):
         ]
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.title} ({self.component_type})"
 
 
@@ -1278,9 +1174,7 @@ class AssessmentFile(models.Model):
         db_table = "assessment_files"
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"File {self.file_id} attached to Assessment {self.assessment_id}"
 
 
@@ -1303,9 +1197,7 @@ class ExamAnswerKey(models.Model):
         db_table = "exam_answer_keys"
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"Answer Key for {self.assessment.title}"
 
 
@@ -1342,9 +1234,7 @@ class AssessmentAttempt(models.Model):
         ]
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.student} - {self.assessment.title} (Attempt #{self.attempt_no})"
 
 
@@ -1365,15 +1255,11 @@ class AttemptFile(models.Model):
         db_table = "attempt_files"
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"File {self.file_id} attached to Attempt {self.attempt_id}"
 
 
-# ==========================================
 # Grades, Grade History, Appeals & Results
-# ==========================================
 
 
 class Grade(models.Model):
@@ -1390,7 +1276,8 @@ class Grade(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="graded_grades"
     )
     score = models.DecimalField(max_digits=6, decimal_places=2, validators=[MinValueValidator(0)])
-    # Written comments from the marker. Students see them only once the grade is released.
+    # Written comments from the marker.
+    # Students see them only once the grade is released.
     feedback = models.TextField(blank=True, default="")
     status = models.CharField(max_length=20, choices=GradeStatus.choices, default=GradeStatus.DRAFT)
     graded_at = models.DateTimeField(auto_now_add=True)
@@ -1413,9 +1300,7 @@ class Grade(models.Model):
         ]
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.student} - {self.assessment.title}: {self.score} ({self.status})"
 
 
@@ -1457,9 +1342,7 @@ class GradeHistory(models.Model):
         ]
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"History #{self.id} for Grade {self.grade_id} ({self.old_score} -> {self.new_score})"
 
 
@@ -1495,9 +1378,7 @@ class GradeAppeal(models.Model):
         ]
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"Appeal on Grade {self.grade_id} ({self.status})"
 
 
@@ -1551,9 +1432,7 @@ class GradeChangeRequest(models.Model):
         ]
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"Change request on Grade {self.grade_id}: {self.current_score} -> {self.proposed_score} ({self.status})"
 
 
@@ -1590,9 +1469,7 @@ class CourseResult(models.Model):
         ]
 
     def __str__(self):
-        """
-        Formats this model's identifying fields for readable display.
-        """
+        """Formats this model's identifying fields for readable display."""
         return f"{self.student} in {self.course}: {self.final_score} ({self.status})"
 
 

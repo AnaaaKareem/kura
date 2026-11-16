@@ -364,11 +364,8 @@ def decrypt_file_content(file_content):
         raise ValidationError("File decryption failed.") from error
 
 
-# Filename extensions accepted for each MIME type that validate_and_save_upload
-# allows. A PDF renamed to .html would otherwise pass the MIME check and be
-# stored under a web-page extension, so the two must agree. libmagic sometimes
-# reports an Office or OpenDocument file as application/zip, so those
-# extensions are also listed there to keep legitimate uploads working.
+# Require matching MIME types and extensions so a PDF renamed to .html cannot pass as a web page.
+# Include Office and OpenDocument extensions under application/zip because libmagic can report them that way.
 ALLOWED_EXTENSIONS_BY_MIME = {
     "application/pdf": {".pdf"},
     "application/vnd.openxmlformats-officedocument.wordprocessingml.document": {".docx"},
@@ -395,8 +392,7 @@ ALLOWED_EXTENSIONS_BY_MIME = {
 
 
 def sanitize_filename(filename):
-    """
-    Strips directory traversal paths and leading/trailing whitespace from an uploaded filename.
+    """Strip directory traversal paths and leading/trailing whitespace from an uploaded filename.
     Returns 'download' if the name becomes empty.
     """
     clean_name = filename.replace("\\", "/").split("/")[-1].strip()
@@ -404,8 +400,7 @@ def sanitize_filename(filename):
 
 
 def scan_file_for_malware(content_bytes):
-    """
-    Streams file bytes to ClamAV over a TCP socket before saving anything.
+    """Stream file bytes to ClamAV over a TCP socket before saving anything.
     Raises ValidationError if malware is found or if the scanner is required but unreachable.
     When ClamAV rejects the file, the error has code "malware" and carries what
     ClamAV reported (params["detection"]), so validate_and_save_upload can quarantine it.
@@ -465,8 +460,7 @@ def scan_file_for_malware(content_bytes):
     # Convert the bytes response to text for inspection.
     scanner_response_text = scanner_response.decode("utf-8", errors="replace").strip("\x00\r\n ")
 
-    # If ClamAV rejects the file, the response ends with "FOUND", for example
-    # "stream: Eicar-Test-Signature FOUND" or "stream: Heuristics.Encrypted.Zip FOUND".
+    # If ClamAV rejects the file, the response ends with "FOUND", for example "stream: Eicar-Test-Signature FOUND" or "stream: Heuristics.Encrypted.Zip FOUND".
     # The words in between are the detection name; keep them for the quarantine record.
     if scanner_response_text.endswith("FOUND"):
         detection = scanner_response_text.removeprefix("stream:").removesuffix("FOUND").strip()
@@ -492,8 +486,7 @@ def scan_file_for_malware(content_bytes):
 
 
 def check_signature_age():
-    """
-    Asks ClamAV how old its virus signatures are and logs a warning when they
+    """Ask ClamAV how old its virus signatures are and log a warning when they
     are more than 3 days old (signature updates are probably failing).
     Kura policy: uploads continue with old signatures; this only warns.
     Any problem talking to ClamAV here is ignored: the scan itself already
@@ -527,15 +520,15 @@ def check_signature_age():
         log_security_event(None, "clamav.unavailable", {"error_type": "InvalidSignatureDate"}, level=logging.WARNING)
         return
 
-    # ClamAV reports the date in UTC. Warn when it is more than 3 days old.
+    # ClamAV reports the date in UTC.
+    # Warn when it is more than 3 days old.
     signature_age = datetime.now(datetime_timezone.utc).replace(tzinfo=None) - signature_date
     if signature_age > timedelta(days=3):
         log_security_event(None, "clamav.signatures_old", {"age_days": signature_age.days}, level=logging.WARNING)
 
 
 def validate_and_save_upload(uploaded_file, user, request=None, log_context=None):
-    """
-    Validates file size (up to 25 MiB), checks bytes for malware with ClamAV,
+    """Validate file size (up to 25 MiB), checks bytes for malware with ClamAV,
     detects real MIME type with python-magic, computes a SHA-256 digest,
     and stores the metadata and binary content in PostgreSQL.
     """
@@ -565,9 +558,7 @@ def validate_and_save_upload(uploaded_file, user, request=None, log_context=None
         content_sha256 = hashlib.sha256(content_bytes).hexdigest()
 
         # Keep the rejected file for 7 days so an Admin can investigate.
-        # .using("quarantine") saves on a separate database connection that
-        # commits immediately, so the record survives even though the upload's
-        # own transaction is about to be rolled back (see config/settings.py).
+        # .using("quarantine") saves on a separate database connection that commits immediately, so the record survives even though the upload's own transaction is about to be rolled back (see config/settings.py).
         QuarantinedFile.objects.using("quarantine").create(
             uploaded_by_id=user.id,
             original_filename=original_filename,
@@ -608,8 +599,7 @@ def validate_and_save_upload(uploaded_file, user, request=None, log_context=None
     # Calculate SHA-256 hash.
     content_sha256 = hashlib.sha256(content_bytes).hexdigest()
 
-    # The extension must match the detected type, so a valid PDF named .html
-    # cannot be stored and later downloaded under a web-page extension (INP-01).
+    # The extension must match the detected type, so a valid PDF named .html cannot be stored and later downloaded under a web-page extension (INP-01).
     original_filename = sanitize_filename(uploaded_file.name)
     extension = os.path.splitext(original_filename)[1].lower()
     if extension not in ALLOWED_EXTENSIONS_BY_MIME.get(detected_mime_type, set()):
@@ -650,8 +640,7 @@ def validate_and_save_upload(uploaded_file, user, request=None, log_context=None
 
 
 def create_download_response(stored_file):
-    """
-    Builds an HTTP download response with forced attachment disposition,
+    """Build an HTTP download response with forced attachment disposition,
     MIME type, nosniff, and no-store caching headers after decrypting and re-verifying SHA-256.
     """
     # Decrypt FileContent in memory and fail closed with a generic error on crypto failure.
@@ -673,9 +662,8 @@ def create_download_response(stored_file):
     response = HttpResponse(binary_content, content_type=stored_file.mime_type)
     safe_filename = sanitize_filename(stored_file.original_filename)
 
-    # Force browser download instead of inline execution. Django's helper quotes and
-    # escapes the name and adds filename*=UTF-8'' for non-ASCII names, so a stored
-    # filename containing a quote or semicolon cannot inject extra header parameters.
+    # Force browser download instead of inline execution.
+    # Django's helper quotes and escapes the name and adds filename*=UTF-8'' for non-ASCII names, so a stored filename containing a quote or semicolon cannot inject extra header parameters.
     response["Content-Disposition"] = content_disposition_header(True, safe_filename)
 
     # Prevent MIME confusion attacks.
@@ -705,8 +693,7 @@ DASHBOARD_CARDS_BY_ROLE = {
         },
         {
             "title": "Security log",
-            # Grafana listens only on the server's loopback address, so this link
-            # works only while the admin's SSH tunnel forwards localhost:3000.
+            # Grafana listens only on the server's loopback address, so this link works only while the admin's SSH tunnel forwards localhost:3000.
             "description": "Open the private Grafana dashboards (needs the SSH tunnel).",
             "url": "http://localhost:3000",
             "external": True,
@@ -763,8 +750,7 @@ def get_axes_cooloff_timedelta(request=None):
 
 
 def axes_lockout_callable(request, credentials=None):
-    """
-    Called by django-axes when an IP or account exceeds failure limits.
+    """Called by django-axes when an IP or account exceeds failure limits.
     Security: Returns a 429 response with Retry-After and generic messaging to prevent enumeration.
     """
     # Axes returns this lockout response directly, so log it here instead of relying on handler403.
@@ -827,13 +813,12 @@ def server_error_view(request):
     return HttpResponse(html_body, status=500)
 
 def queue_email(event_key, to_email, subject, body):
-    """
-    Puts one email in the outbox (OutgoingEmail) for send_queued_emails to send.
-    Used by the password reset and by every notification.
-    Security: event_key is unique in the database, so the same event (for
-    example "reminder-24h:<assessment>:<student>") is never emailed twice, even
-    if two requests or jobs try at the same moment. The subject is squeezed onto
-    one line, so text from a title can never add extra email headers.
+    """Queue a password-reset email or notification in OutgoingEmail.
+
+    send_queued_emails handles delivery. A unique event_key, such as
+    "reminder-24h:<assessment>:<student>", prevents duplicate rows even when
+    requests or jobs run concurrently. Keep the subject on one line so a
+    title cannot inject email headers.
     """
     # One line only, at most 200 characters.
     one_line_subject = " ".join(subject.split())[:200]
@@ -850,13 +835,12 @@ def queue_email(event_key, to_email, subject, body):
 
 
 def queue_assessment_notification(assessment, event_name, subject, opening_line):
-    """
-    Emails every actively enrolled student of the assessment's course about it.
-    Used for "new assessment" (create view and module made visible) and
-    "dates changed" (edit view).
-    Security: only when students can actually see the assessment (its section
-    and module are visible), never with scores or answers, and each student is
-    emailed at most once per event (event_key "<event_name>:<assessment>:<student>").
+    """Queue assessment notices for active students enrolled in its course.
+
+    Notify students when an assessment is created, its module becomes visible,
+    or its dates change. Require a visible section and module, and omit scores
+    and answers. The event_key "<event_name>:<assessment>:<student>" limits each
+    student to one email per event.
     """
     section = assessment.section
     module = section.module
@@ -866,8 +850,8 @@ def queue_assessment_notification(assessment, event_name, subject, opening_line)
     if not (section.is_visible and module.is_visible):
         return
 
-    # The same text for every student. The link uses the fixed SITE_URL, never
-    # the Host header of the request.
+    # The same text for every student.
+    # The link uses the fixed SITE_URL, never the Host header of the request.
     link = settings.SITE_URL + reverse("kura:assessment_detail", kwargs={"assessment_id": assessment.id})
     opens_text = timezone.localtime(assessment.opens_at).strftime("%d %b %Y, %H:%M")
     due_text = timezone.localtime(assessment.due_date).strftime("%d %b %Y, %H:%M")
@@ -895,25 +879,19 @@ def queue_assessment_notification(assessment, event_name, subject, opening_line)
 
 
 def verify_totp_code(device, user, code):
-    """
-    Checks a 6-digit authenticator-app code for one TOTP device.
-    Used in three places: the login MFA step, MFA setup and grade release.
-    Security:
-    - The real seed is read from User.mfa_secret and decrypted by Vault in
-      memory. TOTPDevice.key only holds a random placeholder, so the database
-      never contains a usable seed.
-    - Keeps django-otp's protections: throttling (a delay after wrong codes)
-      and replay protection (an accepted code cannot be used a second time).
-    - If Vault cannot be reached the code is refused (fail closed). Recovery
-      codes still work, because they do not need Vault (see hash_recovery_code).
+    """Check a 6-digit TOTP code for login, MFA setup or grade release.
+
+    Decrypt User.mfa_secret in memory through Vault; TOTPDevice.key holds a
+    random placeholder. Keep django-otp's delay after wrong guesses and its
+    protection against reusing accepted codes. Refuse the code if Vault is
+    unavailable; recovery codes work independently (see hash_recovery_code).
     """
     # django-otp throttling: after wrong codes, the user must wait before trying again.
     verify_allowed, _ = device.verify_is_allowed()
     if not verify_allowed:
         return False
 
-    # Ask Vault to decrypt the seed. A Vault failure is logged inside
-    # decrypt_mfa_secret and must not count as the user's mistake.
+    # decrypt_mfa_secret logs Vault failures; do not count them as wrong codes.
     try:
         seed_hex = decrypt_mfa_secret(user.mfa_secret)
     except ValidationError:
@@ -926,17 +904,14 @@ def verify_totp_code(device, user, code):
         device.throttle_increment(commit=True)
         return False
 
-    # Work out the expected code for the current 30-second window (and the
-    # allowed windows either side for clock drift) and compare. min_t is one
-    # past the last accepted window, so an old code cannot be replayed.
+    # Check the current 30-second window and allowed clock drift; min_t excludes previously accepted windows.
     totp = TOTP(bytes.fromhex(seed_hex), device.step, device.t0, device.digits, device.drift)
     totp.time = time.time()
     if not totp.verify(int(code), device.tolerance, device.last_t + 1):
         device.throttle_increment(commit=True)
         return False
 
-    # Correct code: remember this window (blocks replay), keep the clock drift,
-    # clear the wrong-code counter and record when the device was last used.
+    # Save the accepted window and drift, reset throttling and record the device's last use.
     device.last_t = totp.t()
     device.drift = totp.drift
     device.throttle_reset(commit=False)
@@ -946,31 +921,24 @@ def verify_totp_code(device, user, code):
 
 
 def hash_recovery_code(code):
-    """
-    Turns a recovery code into the value stored in StaticToken.token.
-    Used in three places: MFA setup (saving new codes), the login MFA step and
-    grade release (checking a typed code).
-    Security:
-    - The database never holds the codes themselves, only this keyed hash
-      (HMAC-SHA256 with Django's SECRET_KEY). A plain SHA-256 would not be
-      enough: codes are only 8 hex characters (about 4 billion options), so
-      someone with a copy of the database could try them all in seconds.
-      Without SECRET_KEY they cannot even start.
-    - It does not need Vault, so recovery codes still work when Vault is down
-      (that is what they are for).
-    - Changing SECRET_KEY makes every saved recovery code stop working; users
-      then create new codes on the MFA setup page.
+    """Hash a recovery code for storage in StaticToken.token.
+
+    MFA setup saves these hashes; login and grade release compare typed codes
+    against them. HMAC-SHA256 uses Django's SECRET_KEY to prevent testing the
+    roughly 4 billion possible 8-character hex codes against a stolen database.
+    Plain SHA-256 would allow those guesses without a secret.
+
+    Recovery codes work without Vault. Changing SECRET_KEY invalidates saved
+    codes, so users must generate replacements on the MFA setup page.
     """
     # Ignore spaces and letter case, so "abcd 1234" matches the code shown as "ABCD1234".
     normalized_code = code.replace(" ", "").upper()
 
-    # Django's salted_hmac computes HMAC-SHA256 with SECRET_KEY. The first
-    # argument (the "salt") keeps this hash different from Django's other uses
-    # of SECRET_KEY, such as session and password-reset signatures.
+    # Django's salted_hmac computes HMAC-SHA256 with SECRET_KEY.
+    # The first argument (the "salt") keeps this hash different from Django's other uses of SECRET_KEY, such as session and password-reset signatures.
     full_hash = salted_hmac("kura.recovery_code", normalized_code, algorithm="sha256").hexdigest()
 
-    # StaticToken.token holds at most 16 characters, so keep the first 16 hex
-    # characters (64 bits): far more than enough to tell 10 codes apart.
+    # StaticToken.token holds at most 16 characters, so keep the first 16 hex characters (64 bits): far more than enough to tell 10 codes apart.
     return full_hash[:16]
 
 
@@ -1020,8 +988,7 @@ def hash_session_token(session_key):
 
 # ACL-06: concurrent sessions are allowed by owner decision; users can see and revoke them at account/sessions/
 def create_user_session(request, user, method="password"):
-    """
-    Creates a new tracked UserSession record for an authenticated user.
+    """Create a new tracked UserSession record for an authenticated user.
     Records client IP address, browser user-agent, and the absolute expiry (ACL-07).
     """
     # Ensure Django has issued a session key and bind session_token_hash to it (W7).
@@ -1060,12 +1027,11 @@ def create_user_session(request, user, method="password"):
 @login_not_required
 @never_cache
 def login_view(request):
-    """
-    Authenticates users using email and password.
+    """Authenticate users using email and password.
     Who can use it: Public unauthenticated users.
     Security: Generic error messages, brute-force tracking via axes,
     lockout checks on locked_until and is_active, and redirect to MFA.
-"""
+    """
     # Redirect already-logged-in users straight to the dashboard.
     if request.user.is_authenticated:
         return redirect("kura:home")
@@ -1080,11 +1046,9 @@ def login_view(request):
             # Authenticate credentials against configured backends and axes.
             user = authenticate(request, email=email, password=password)
 
-            # AUTH-01 / AUTH-04: every failed sign-in gets the same message and
-            # costs the same work. Kura does not check the password a second
-            # time to explain a lock or deactivation, because that told an
-            # attacker the password was right and made known emails slower to
-            # answer than unknown ones. The real reason goes to the log only.
+            # AUTH-01 / AUTH-04: every failed sign-in gets the same message and costs the same work.
+            # Kura does not check the password a second time to explain a lock or deactivation, because that told an attacker the password was right and made known emails slower to answer than unknown ones.
+            # The real reason goes to the log only.
             if user is None:
                 reason = "bad_credentials"
                 known_user = User.objects.filter(email__iexact=email).first()
@@ -1103,8 +1067,8 @@ def login_view(request):
                 messages.error(request, "Invalid email or password.")
                 return render(request, "kura/accounts/login.html", {"form": form}, status=400)
 
-            # Catch an account status change that happened just after
-            # authentication. Same generic message as above.
+            # Catch an account status change that happened just after authentication.
+            # Same generic message as above.
             locked_now = user.locked_until and user.locked_until > timezone.now()
             if not user.is_active or locked_now:
                 log_security_event(
@@ -1150,12 +1114,11 @@ def login_view(request):
 @login_not_required
 @never_cache
 def mfa_verify_view(request):
-    """
-    Verifies the TOTP code, backup code, or WebAuthn/FIDO2 Passkey during two-factor login.
+    """Verify the TOTP code, backup code, or WebAuthn/FIDO2 Passkey during two-factor login.
     Who can use it: Users who successfully passed password authentication.
     Security: Validates one-time code or WebAuthn assertion challenge against enrolled credentials.
     Recovery codes are compared by keyed hash and deleted after one use.
-"""
+    """
     # Retrieve user ID stored during step 1 authentication and verify 5-minute window.
     user_id = request.session.get("pre_mfa_user_id")
     if not user_id or not has_valid_pre_mfa_window(request):
@@ -1196,9 +1159,7 @@ def mfa_verify_view(request):
         # Check static recovery backup codes if TOTP did not match.
         if not verified:
             verification_method = "recovery_code"
-            # Codes are saved only as keyed hashes, so hash the typed code and look
-            # for that. django-otp's verify_token still deletes the used code (single
-            # use) and slows down repeated wrong guesses (throttling).
+            # Codes are saved only as keyed hashes, so hash the typed code and look for that. django-otp's verify_token still deletes the used code (single use) and slows down repeated wrong guesses (throttling).
             code_hash = hash_recovery_code(code)
             for static_device in StaticDevice.objects.filter(user=user, confirmed=True):
                 if static_device.verify_token(code_hash):
@@ -1250,8 +1211,7 @@ def mfa_verify_view(request):
 
 @login_not_required
 def mfa_login_callback(request, username):
-    """
-    Callback executed by django-mfa2 upon successful FIDO2 / Passkey authentication.
+    """Callback executed by django-mfa2 upon successful FIDO2 / Passkey authentication.
     Who can use it: System internal auth callback.
     Security: Establishes session for the authenticated user and cleans up pre-mfa markers.
     Refuses the login unless the passkey belongs to the same user who passed the
@@ -1259,10 +1219,9 @@ def mfa_login_callback(request, username):
     """
     user = get_object_or_404(User, email=username)
 
-    # django-mfa2 works out the user from the passkey itself, and its sign-in
-    # endpoints are public. Without this check a passkey alone could sign in
-    # (skipping the password step), or sign in as a different user than the one
-    # who typed their password. The spec requires password plus second factor.
+    # django-mfa2 works out the user from the passkey itself, and its sign-in endpoints are public.
+    # Without this check a passkey alone could sign in (skipping the password step), or sign in as a different user than the one who typed their password.
+    # The spec requires password plus second factor.
     pre_mfa_user_id = request.session.get("pre_mfa_user_id")
     locked = user.locked_until and user.locked_until > timezone.now()
     if pre_mfa_user_id != str(user.id) or not has_valid_pre_mfa_window(request) or not user.is_active or locked:
@@ -1296,8 +1255,7 @@ def mfa_login_callback(request, username):
 
 
 def redirect_to_reauth(request, next_url):
-    """
-    Sends the user to the "confirm your identity" page, then back to next_url.
+    """Send the user to the "confirm your identity" page, then back to next_url.
     Used by every view that needs a fresh second factor (AUTH-02, ACL-05).
     """
     messages.info(request, "Confirm your identity to continue.")
@@ -1306,8 +1264,7 @@ def redirect_to_reauth(request, next_url):
 
 @login_required
 def mfa_reauth_view(request):
-    """
-    Asks a signed-in user for a fresh authenticator or recovery code before a
+    """Ask a signed-in user for a fresh authenticator or recovery code before a
     sensitive action, then sends them back to the page they came from.
     Who can use it: Any authenticated user.
     Security: POST with CSRF; the code is checked by verify_second_factor; the
@@ -1339,12 +1296,11 @@ def mfa_reauth_view(request):
 
 @login_required
 def passkey_manage_view(request):
-    """
-    Displays the user's enrolled WebAuthn / FIDO2 passkeys and allows enrolling new ones.
+    """Show the user's WebAuthn / FIDO2 passkeys and allow new enrollments.
     Who can use it: Any authenticated user.
     Security: Strictly filters User_Keys by request.user.email. Requires a fresh
     second factor (AUTH-02), because adding a passkey gives a new way to sign in.
-"""
+    """
     if not has_fresh_second_factor(request):
         return redirect_to_reauth(request, reverse("kura:passkey_manage"))
 
@@ -1380,8 +1336,7 @@ def normalize_fido2_response(response, generic_error_message):
 
 @login_required
 def passkey_register_complete_view(request):
-    """
-    Finishes adding a new passkey, then records it in the security log.
+    """Finish adding a new passkey, then record it in the security log.
     Who can use it: Any authenticated user adding a passkey to their own account.
     Security: all the real checks (the FIDO2 challenge kept in the session and
     the authenticator's signature) are done by django-mfa2's own
@@ -1391,8 +1346,7 @@ def passkey_register_complete_view(request):
     from mfa import FIDO2
     from mfa.models import User_Keys
 
-    # AUTH-02: the passkeys page already asked for a fresh second factor;
-    # check again here because this address can be called directly.
+    # AUTH-02: the passkeys page already asked for a fresh second factor; check again here because this address can be called directly.
     if not has_fresh_second_factor(request):
         return JsonResponse({"status": "ERR", "message": "Confirm your identity first."}, status=403)
 
@@ -1417,8 +1371,7 @@ def passkey_register_complete_view(request):
 @login_not_required
 @csrf_exempt
 def passkey_auth_complete_view(request):
-    """
-    Completes FIDO2 / WebAuthn passkey authentication through django-mfa2.
+    """Complete FIDO2 / WebAuthn passkey authentication through django-mfa2.
     Who can use it: Users completing step 2 passkey login.
     Security: Kept csrf_exempt to match django-mfa2's JS; normalizes None/ERR
     responses to 400 or 500 JSON without exposing exception text.
@@ -1431,11 +1384,10 @@ def passkey_auth_complete_view(request):
 
 @login_required
 def passkey_delete_view(request, key_id):
-    """
-    Deletes an enrolled passkey (FIDO2 / WebAuthn key).
+    """Delete an enrolled passkey (FIDO2 / WebAuthn key).
     Who can use it: The owner of the passkey.
     Security: Checks key belongs to request.user.email, POST only with CSRF.
-"""
+    """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
@@ -1454,11 +1406,10 @@ def passkey_delete_view(request, key_id):
 
 @login_required
 def logout_view(request):
-    """
-    Logs out the user and revokes their active session record.
+    """Log out the user and revoke their active session record.
     Who can use it: Authenticated users.
     Security: POST only with CSRF token to prevent forced logout attacks.
-"""
+    """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
@@ -1481,7 +1432,7 @@ def logout_view(request):
 
 
 def paginate_queryset(request, queryset, per_page=25):
-    """Paginates a queryset and preserves active GET filters without the page param."""
+    """Paginate a queryset and preserve active GET filters without the page parameter."""
     paginator = Paginator(queryset, per_page)
     page_obj = paginator.get_page(request.GET.get("page"))
     params = request.GET.copy()
@@ -1602,8 +1553,7 @@ def build_dashboard_attention(user, role_names, head_departments):
 
 @login_required
 def home_view(request):
-    """
-    Main dashboard displaying the work areas available to the user's roles.
+    """Main dashboard displaying the work areas available to the user's roles.
     Who can use it: All authenticated users.
     Security: Requires login and active MFA.
     """
@@ -1673,9 +1623,7 @@ def home_view(request):
 
 
 def dashboard_home_data(user, role_names, head_departments):
-    """
-    Builds dashboard summaries and recent activity allowed for the user's roles.
-    """
+    """Build dashboard summaries and recent activity allowed for the user's roles."""
     now = timezone.now()
     activity = []
     summaries = []
@@ -1949,16 +1897,12 @@ def dashboard_home_data(user, role_names, head_departments):
 
 
 def add_dashboard_activity(activity, label, happened_at):
-    """
-    Adds a short activity label without including sensitive record details.
-    """
+    """Add a short activity label without including sensitive record details."""
     activity.append({"label": label, "date": happened_at})
 
 
 def count_upcoming_classes(course_ids, now):
-    """
-    Counts course meetings scheduled to occur in the next seven days.
-    """
+    """Counts course meetings scheduled to occur in the next seven days."""
     today = timezone.localdate(now)
     last_day = today + timezone.timedelta(days=7)
     weekday_names = ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"]
@@ -1986,11 +1930,10 @@ def count_upcoming_classes(course_ids, now):
 
 @login_required
 def password_change_view(request):
-    """
-    Allows a user to rotate their password.
+    """Allow a user to rotate their password.
     Who can use it: All authenticated users (mandatory on first login).
     Security: Validates current password, checks minimum 12 chars and breaches.
-"""
+    """
     form = PasswordChangeForm(request.user, request.POST or None, request=request)
 
     # Check the chosen password before changing the account or its sessions.
@@ -2021,8 +1964,7 @@ def password_change_view(request):
             request.user.password_changed_at = timezone.now()
             request.user.save()
 
-        # Keep current session logged in after password hash changes, update its token hash
-        # after cycle_key(), and revoke all other sessions (W7).
+        # Keep current session logged in after password hash changes, update its token hash after cycle_key(), and revoke all other sessions (W7).
         update_session_auth_hash(request, request.user)
         current_session_id = request.session.get("user_session_id")
         if current_session_id and request.session.session_key:
@@ -2076,8 +2018,7 @@ def password_change_view(request):
 
 
 def verify_second_factor(user, code):
-    """
-    Checks a typed authenticator-app code or recovery code for one user.
+    """Check a typed authenticator-app code or recovery code for one user.
     Used by the password reset page. Returns "totp", "recovery_code", or None.
     Security: same checks as the login MFA step. django-otp throttles repeated
     wrong guesses, and a used recovery code is deleted (single use).
@@ -2093,8 +2034,7 @@ def verify_second_factor(user, code):
 
 
 def create_reset_token(user):
-    """
-    Makes a single-use password reset token valid for 30 minutes.
+    """Make a single-use password reset token valid for 30 minutes.
     Used by both reset methods (email link and authenticator code).
     Returns (raw_token, token_record). Only the SHA-256 hash is saved.
     """
@@ -2116,21 +2056,20 @@ def create_reset_token(user):
 @login_not_required
 @never_cache
 def password_reset_request_view(request):
-    """
-    Starts a password reset by emailing a single-use, 30-minute link.
+    """Start a password reset by emailing a single-use, 30-minute link.
     Who can use it: Public unauthenticated users.
     Security: Unknown and known emails get the same generic answer, so the page
     cannot be used to find out which accounts exist. Accounts with MFA must also
     give a second-factor code on the confirm page (AUTH-03).
-"""
+    """
     form = PasswordResetRequestForm(request.POST or None)
 
     if request.method == "POST" and form.is_valid():
         email = form.cleaned_data["email"].strip().lower()
         user = User.objects.filter(email=email, is_active=True).first()
 
-        # At most 2 reset emails per account every 5 minutes, so nobody can flood
-        # someone's inbox. Extra requests are ignored without telling the visitor.
+        # At most 2 reset emails per account every 5 minutes, so nobody can flood someone's inbox.
+        # Extra requests are ignored without telling the visitor.
         recent_requests = 0
         if user:
             recent_requests = PasswordResetToken.objects.filter(
@@ -2142,9 +2081,8 @@ def password_reset_request_view(request):
         if user and recent_requests < 2:
             raw_token, reset_token = create_reset_token(user)
 
-            # Put the email in the outbox instead of sending it here, so the page
-            # answers just as fast whether or not the account exists. The link
-            # uses the fixed SITE_URL, never the Host header the visitor sent.
+            # Put the email in the outbox instead of sending it here, so the page answers just as fast whether or not the account exists.
+            # The link uses the fixed SITE_URL, never the Host header the visitor sent.
             reset_url = settings.SITE_URL + reverse("kura:password_reset_confirm", kwargs={"token": raw_token})
             queued = queue_email(
                 f"password-reset:{reset_token.id}",
@@ -2181,14 +2119,13 @@ def password_reset_request_view(request):
 @login_not_required
 @never_cache
 def password_reset_confirm_view(request, token):
-    """
-    Completes password reset using a token from the email.
+    """Complete password reset using a token from the email.
     Who can use it: Public users with a valid token.
     Security: Validates SHA-256 hash, 30-min window, single-use, and revokes all user sessions.
     Accounts with MFA must also give a valid authenticator or recovery code, so
     the emailed link alone cannot take over the account (AUTH-03). A wrong code
     uses up the link, which stops guessing codes against one link.
-"""
+    """
     token_hash = hashlib.sha256(token.encode("utf-8")).hexdigest()
 
     # Look up unused, unexpired reset token.
@@ -2236,8 +2173,7 @@ def password_reset_confirm_view(request, token):
 
             user = reset_record.user
 
-            # Second factor: required for accounts with MFA. A wrong code spends
-            # the link inside the locked transaction so concurrent guesses cannot race.
+            # Second factor: required for accounts with MFA. A wrong code spends the link inside the locked transaction so concurrent guesses cannot race.
             if user.mfa_enabled:
                 method_used = verify_second_factor(user, form.cleaned_data["code"].strip())
                 if not method_used:
@@ -2307,8 +2243,7 @@ def password_reset_confirm_view(request, token):
 
 @login_required
 def mfa_setup_view(request):
-    """
-    Configures TOTP authenticator app and generates backup recovery codes.
+    """Set up a TOTP authenticator app and generate recovery codes.
     Who can use it: Authenticated users.
     Security:
     - If MFA is already enabled, requires fresh step-up authentication within 300 seconds
@@ -2344,8 +2279,8 @@ def mfa_setup_view(request):
 
     form = MFAVerifyForm(request.POST or None)
 
-    # Fetch or create the TOTP device. It keeps django-otp's confirmed flag,
-    # throttling and replay state; its own "key" is a random placeholder.
+    # Fetch or create the TOTP device.
+    # It keeps django-otp's confirmed flag, throttling and replay state; its own "key" is a random placeholder.
     device, _ = TOTPDevice.objects.get_or_create(
         user=request.user,
         name="default",
@@ -2362,12 +2297,10 @@ def mfa_setup_view(request):
         # Decrypt the seed in memory only, to draw the QR code.
         seed_hex = decrypt_mfa_secret(request.user.mfa_secret)
     except ValidationError:
-        # Vault is down or sealed: show the page with a warning instead of a
-        # QR code (the template shows it), and answer 503 "Service Unavailable".
+        # Vault is down or sealed: show the page with a warning instead of a QR code (the template shows it), and answer 503 "Service Unavailable".
         return render(request, "kura/accounts/mfa_setup.html", {"form": form, "qr_code_url": None}, status=503)
 
-    # Build the standard "otpauth://" link that authenticator apps read from the
-    # QR code (Base32 seed, SHA1, 6 digits, 30-second period, issuer "Kura").
+    # Build the standard "otpauth://" link that authenticator apps read from the QR code (Base32 seed, SHA1, 6 digits, 30-second period, issuer "Kura").
     secret_b32 = b32encode(bytes.fromhex(seed_hex)).decode("ascii")
     manual_key = " ".join(secret_b32[i : i + 4] for i in range(0, len(secret_b32), 4))
     otpauth_query = urllib.parse.urlencode(
@@ -2408,8 +2341,8 @@ def mfa_setup_view(request):
             # Remove any previous recovery tokens.
             StaticToken.objects.filter(device=static_device).delete()
 
-            # Generate 10 new random 8-character recovery codes. The user sees the
-            # codes once; the database only gets their keyed hashes.
+            # Generate 10 new random 8-character recovery codes.
+            # The user sees the codes once; the database only gets their keyed hashes.
             recovery_codes = []
             for _ in range(10):
                 token_val = secrets.token_hex(4).upper()
@@ -2439,11 +2372,10 @@ def mfa_setup_view(request):
 
 @login_required
 def mfa_setup_complete_view(request):
-    """
-    Displays the 10 static recovery codes once after MFA setup.
+    """Show the 10 static recovery codes once after MFA setup.
     Who can use it: Authenticated users who just completed MFA setup.
     Security: Clears codes from session immediately after display.
-"""
+    """
     recovery_codes = request.session.pop("recovery_codes", None)
     if not recovery_codes:
         return redirect("kura:home")
@@ -2457,8 +2389,7 @@ def mfa_setup_complete_view(request):
 
 @login_required
 def user_sessions_view(request):
-    """
-    Shows the logged-in user their active sessions so they can review and end them.
+    """Show the logged-in user their active sessions so they can review and end them.
     Who can use it: Any authenticated user.
     Security: Queries are strictly scoped to request.user (ACL-02). Never exposes
     session_token_hash; shows only device, IP address, start time and expiry.
@@ -2487,8 +2418,7 @@ def user_sessions_view(request):
 
 @login_required
 def user_session_revoke_view(request, session_id):
-    """
-    Revokes one of the logged-in user's own sessions.
+    """Revoke one of the logged-in user's own sessions.
     Who can use it: Any authenticated user, for their own sessions only.
     Security: POST only with CSRF protection. Uses get_object_or_404 filtered by
     user=request.user so another user's session ID returns 404 (IDOR guard, ACL-02).
@@ -2526,8 +2456,7 @@ def user_session_revoke_view(request, session_id):
 
 @login_not_required
 def privacy_notice_view(request):
-    """
-    Displays Kura's GDPR / PDPL / FERPA privacy notice and data-subject rights summary.
+    """Show Kura's GDPR / PDPL / FERPA privacy notice and data-subject rights summary.
     Who can use it: Anyone (publicly accessible without signing in).
     Security: Read-only GET page; contains no user-specific or sensitive data.
     """
@@ -2538,8 +2467,7 @@ def privacy_notice_view(request):
 
 @login_required
 def privacy_dashboard_view(request):
-    """
-    Shows the signed-in user's personal data summary and GDPR self-service controls.
+    """Show the signed-in user's personal data summary and GDPR self-service controls.
     Who can use it: Any authenticated user, for their own account only.
     Security: Strictly scoped to request.user; shows no secrets or unreleased grades.
     """
@@ -2569,8 +2497,7 @@ def privacy_dashboard_view(request):
 
 @login_required
 def privacy_export_view(request):
-    """
-    Exports the signed-in user's own personal and released academic data as JSON.
+    """Export the signed-in user's own personal and released academic data as JSON.
     Who can use it: Any authenticated user (own data only).
     Security: Strictly scoped to request.user; excludes password hashes, MFA secrets,
     session token hashes, exam answer keys, and unreleased draft/finalized grades.
@@ -2695,8 +2622,7 @@ def privacy_export_view(request):
 
 @login_required
 def privacy_restrict_view(request):
-    """
-    Toggles the GDPR Art. 18 processing restriction flag on the signed-in user.
+    """Toggle the GDPR Art. 18 processing restriction flag on the signed-in user.
     Who can use it: Any authenticated user, for their own account only.
     Security: POST only with CSRF protection; logs privacy.restriction_updated.
     """
@@ -2719,8 +2645,7 @@ def privacy_restrict_view(request):
 
 @login_required
 def privacy_erasure_view(request):
-    """
-    Processes a GDPR Art. 17 erasure request with academic and legal retention exceptions.
+    """Process a GDPR Art. 17 erasure request with academic and legal retention exceptions.
     Who can use it: Any authenticated user, for their own account only.
     Security: POST only with CSRF and explicit confirmation; clears non-exempt auxiliary
     session/reset/directory metadata while retaining academic records and audit trails.
@@ -2777,8 +2702,7 @@ def privacy_erasure_view(request):
 
 @login_required
 def quarantine_list_view(request):
-    """
-    Lists uploads that ClamAV rejected and quarantined, newest first.
+    """List uploads that ClamAV rejected and quarantined, newest first.
     Who can use it: Admins only.
     Security: checks the Admin role first; shows only details (who, when, file
     name, size, SHA-256, detection), never the file itself. There is no download.
@@ -2803,8 +2727,7 @@ def quarantine_list_view(request):
 
 @login_required
 def quarantine_delete_view(request, quarantined_file_id):
-    """
-    Permanently deletes one quarantined upload after an Admin has looked at it.
+    """Permanently deletes one quarantined upload after an Admin has looked at it.
     Who can use it: Admins only.
     Security: POST only with CSRF token, Admin role check, explicit confirmation
     checkbox (DeleteConfirmationForm), and the deletion is written to the security log.
@@ -2837,11 +2760,10 @@ def quarantine_delete_view(request, quarantined_file_id):
 
 @login_required
 def admin_sessions_view(request):
-    """
-    Lists and filters session records across the university.
+    """List and filter session records across the university.
     Who can use it: Administrators only.
     Security: Validates filters with a Django form and never displays session tokens.
-"""
+    """
     # Check the role before loading any other user's session records.
     if not has_role(request.user, "Admin"):
         raise PermissionDenied
@@ -2892,11 +2814,10 @@ def admin_sessions_view(request):
 
 @login_required
 def admin_sessions_revoke_view(request):
-    """
-    Ends one session or all active sessions belonging to a selected user.
+    """Ends one session or all active sessions belonging to a selected user.
     Who can use it: Administrators only.
     Security: Requires POST, CSRF, validated identifiers, and logs every revoked session.
-"""
+    """
     # Only administrators may end sessions, and only POST can change them.
     if not has_role(request.user, "Admin"):
         raise PermissionDenied
@@ -2941,18 +2862,15 @@ def admin_sessions_revoke_view(request):
     return redirect("kura:admin_sessions")
 
 
-# ==========================================
 # Admin features (staff & roles)
-# ==========================================
 
 
 @login_required
 def staff_list_view(request):
-    """
-    Displays the list of staff accounts for administrative management.
+    """Show the list of staff accounts for administrative management.
     Who can use it: System administrators.
     Security: Strictly restricted to users holding the Admin role.
-"""
+    """
     # Verify the current user is an administrator.
     if not has_role(request.user, "Admin"):
         raise PermissionDenied
@@ -3015,8 +2933,7 @@ def staff_list_view(request):
 
 @login_required
 def admin_users_view(request):
-    """
-    Displays all user accounts (staff and students) for administrative lock/deactivation/role management.
+    """Show all user accounts (staff and students) for administrative lock/deactivation/role management.
     Who can use it: System administrators only.
     Security: Restricted to Admin role; exposes account status and roles only, never grades or academic content.
     """
@@ -3059,11 +2976,10 @@ def admin_users_view(request):
 
 @login_required
 def staff_create_view(request):
-    """
-    Creates a new staff account and profile with an auto-generated temporary password.
+    """Create a new staff account and profile with an auto-generated temporary password.
     Who can use it: System administrators.
     Security: Restricted to Admin role; enforces must_change_password=True on first login.
-"""
+    """
     # Check administrator permission.
     if not has_role(request.user, "Admin"):
         raise PermissionDenied
@@ -3106,9 +3022,8 @@ def staff_create_view(request):
                 office_location=office_location,
             )
 
-            # The title list holds the five staff role names, so the chosen title
-            # is also the account's first system role. Without it the new account
-            # could not open any staff page until an Admin assigned a role by hand.
+            # The title list holds the five staff role names, so the chosen title is also the account's first system role.
+            # Without it the new account could not open any staff page until an Admin assigned a role by hand.
             staff_role = Role.objects.get(name=staff_title)
             UserRole.objects.create(user=new_user, role=staff_role, assigned_by=request.user)
 
@@ -3136,8 +3051,7 @@ def staff_create_view(request):
 
 @login_required
 def security_policy_view(request):
-    """
-    Shows and lets Administrators update the configurable SecurityPolicy rules.
+    """Let Administrators review and update SecurityPolicy rules.
     Who can use it: Admins only.
     Security: Enforces Admin role, safe bounded form validation, CSRF protection,
     and a fresh second factor (step-up MFA) before saving changes; logs
@@ -3258,7 +3172,7 @@ def staff_settings_view(request):
 
 
 def safe_admin_return_url(request):
-    """Returns a validated in-site redirect target for admin account actions."""
+    """Return a validated in-site redirect target for admin account actions."""
     next_url = request.POST.get("next") or request.GET.get("next") or ""
     if next_url and url_has_allowed_host_and_scheme(
         next_url, allowed_hosts={request.get_host()}, require_https=request.is_secure()
@@ -3269,12 +3183,11 @@ def safe_admin_return_url(request):
 
 @login_required
 def user_deactivate_view(request, user_id):
-    """
-    Deactivates a user account and immediately revokes all active sessions.
+    """Deactivates a user account and immediately revokes all active sessions.
     Who can use it: System administrators.
     Security: Admin only; POST only; fresh second factor (ACL-05); administrators
     cannot deactivate themselves.
-"""
+    """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
@@ -3324,11 +3237,10 @@ def user_deactivate_view(request, user_id):
 
 @login_required
 def user_lock_toggle_view(request, user_id):
-    """
-    Toggles administrative lockout for a user account.
+    """Toggle administrative lockout for a user account.
     Who can use it: System administrators.
     Security: Admin only; POST only; administrators cannot lock themselves.
-"""
+    """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
@@ -3364,13 +3276,12 @@ def user_lock_toggle_view(request, user_id):
 
 @login_required
 def user_roles_view(request, user_id):
-    """
-    Manages assigned system roles for a user.
+    """Manage assigned system roles for a user.
     Who can use it: System administrators.
     Security: Admin only; fresh second factor before any change (ACL-05); validates
     the action and role through a Django form, and enforces strict separation of
     duty between Admin and grading roles.
-"""
+    """
     # Check administrator permission.
     if not has_role(request.user, "Admin"):
         raise PermissionDenied
@@ -3469,18 +3380,15 @@ def user_roles_view(request, user_id):
     )
 
 
-# ==========================================
 # Registrar features (students & enrollment)
-# ==========================================
 
 
 @login_required
 def student_create_view(request):
-    """
-    Creates a new student account and profile with an auto-generated temporary password.
+    """Create a new student account and profile with an auto-generated temporary password.
     Who can use it: Academic registrar.
     Security: Restricted to Registrar role; assigns Student role automatically.
-"""
+    """
     # Check registrar permission.
     if not has_role(request.user, "Registrar"):
         raise PermissionDenied
@@ -3555,11 +3463,10 @@ def student_create_view(request):
 
 @login_required
 def student_list_view(request):
-    """
-    Lists student accounts and their status for the registrar.
+    """List student accounts and their status for the registrar.
     Who can use it: Registrars.
     Security: Checks the Registrar role and validates all search filters.
-"""
+    """
     # Other roles must not browse institutional student records.
     if not has_role(request.user, "Registrar"):
         raise PermissionDenied
@@ -3608,11 +3515,10 @@ def student_list_view(request):
 
 @login_required
 def student_profile_view(request, student_id):
-    """
-    Shows a student's account details and enrollments without grades.
+    """Show a student's account details and enrollments without grades.
     Who can use it: Registrars.
     Security: Checks the role before looking up the requested student.
-"""
+    """
     # A guessed student ID must not expose a profile to other roles.
     if not has_role(request.user, "Registrar"):
         raise PermissionDenied
@@ -3633,11 +3539,10 @@ def student_profile_view(request, student_id):
 
 @login_required
 def enrollment_search_view(request):
-    """
-    Finds eligible students or published courses for enrollment.
+    """Find eligible students or published courses for enrollment.
     Who can use it: Registrars.
     Security: Checks the role, validates input, limits results, and rate-limits user and IP.
-"""
+    """
     # Only registrars may search, and the search must not change data.
     if not has_role(request.user, "Registrar"):
         raise PermissionDenied
@@ -3696,11 +3601,10 @@ def enrollment_search_view(request):
 
 @login_required
 def enrollment_list_view(request):
-    """
-    Lists course enrollments across the institution.
+    """List course enrollments across the institution.
     Who can use it: Academic registrar.
     Security: Registrar only; no grade content or course material is exposed.
-"""
+    """
     # Check registrar permission.
     if not has_role(request.user, "Registrar"):
         raise PermissionDenied
@@ -3742,11 +3646,10 @@ def enrollment_list_view(request):
 
 @login_required
 def enrollment_create_view(request):
-    """
-    Enrolls an active student into a published course.
+    """Enrolls an active student into a published course.
     Who can use it: Academic registrar.
     Security: Registrar only; sets enrolled_by to preserve registration audit trail.
-"""
+    """
     # Check registrar permission.
     if not has_role(request.user, "Registrar"):
         raise PermissionDenied
@@ -3806,11 +3709,10 @@ def enrollment_create_view(request):
 
 @login_required
 def enrollment_drop_view(request, enrollment_id):
-    """
-    Drops a student from a course, recording who dropped them and preserving history.
+    """Drop a student from a course, recording who dropped them and preserving history.
     Who can use it: Academic registrar.
     Security: Registrar only; POST only; records dropped_by and dropped_at.
-"""
+    """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
@@ -3835,18 +3737,15 @@ def enrollment_drop_view(request, enrollment_id):
     return redirect("kura:enrollment_list")
 
 
-# ==========================================
 # Courses & content management
-# ==========================================
 
 
 @login_required
 def course_list_view(request):
-    """
-    Displays the course catalog according to the user's role.
+    """Show the course catalog according to the user's role.
     Who can use it: Students (enrolled published), Staff (assigned), Department heads (departmental).
     Security: Filtered by user permissions; students only see published courses they are enrolled in.
-"""
+    """
     # Administrators manage course metadata across all departments, including drafts.
     is_admin = is_admin_course_manager(request.user)
     if is_admin:
@@ -3919,11 +3818,10 @@ def course_list_view(request):
 
 @login_required
 def admin_course_create_view(request):
-    """
-    Creates a draft course in any department.
+    """Create a draft course in any department.
     Who can use it: Administrators.
     Security: Checks the Admin role and validates all fields with a Django form.
-"""
+    """
     # Do not let other roles use this institution-wide course form.
     if not is_admin_course_manager(request.user):
         raise PermissionDenied
@@ -3948,11 +3846,10 @@ def admin_course_create_view(request):
 
 @login_required
 def admin_course_edit_view(request, course_id):
-    """
-    Edits course details in any department.
+    """Edits course details in any department.
     Who can use it: Administrators.
     Security: Checks the Admin role and limits changes to the form's allowed fields.
-"""
+    """
     # The Admin role is required before looking up the course.
     if not is_admin_course_manager(request.user):
         raise PermissionDenied
@@ -3975,8 +3872,7 @@ def admin_course_edit_view(request, course_id):
 
 @login_required
 def course_create_view(request):
-    """
-    Allows a Department Head to draft a new course in one of their departments (P13).
+    """Allow a Department Head to draft a new course in one of their departments (P13).
     Who can use it: Department Heads.
     Security: Checks Department Head role and restricts course department choices to
     departments headed by request.user.
@@ -4017,11 +3913,10 @@ def course_create_view(request):
 
 @login_required
 def course_detail_view(request, course_id):
-    """
-    Displays course curriculum modules, sections, and learning materials.
+    """Show course curriculum modules, sections, and learning materials.
     Who can use it: Enrolled students (published only, matching target level), assigned staff, department heads.
     Security: checks course access and filters students to visible modules and released items at their level.
-"""
+    """
     # Registrars cannot open instructional content, even with another role.
     if has_role(request.user, "Registrar"):
         raise PermissionDenied
@@ -4176,11 +4071,10 @@ def course_detail_view(request, course_id):
 
 @login_required
 def course_publish_toggle_view(request, course_id):
-    """
-    Publishes or unpublishes a course in the department catalog.
+    """Publish or unpublish a course in the department catalog.
     Who can use it: Department Heads.
     Security: Restricts action to Department Head of the course's department; POST only.
-"""
+    """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
@@ -4212,11 +4106,10 @@ def course_publish_toggle_view(request, course_id):
 
 @login_required
 def course_staff_assign_view(request, course_id):
-    """
-    Assigns a lead instructor or co-instructor to a departmental course.
+    """Assigns a lead instructor or co-instructor to a departmental course.
     Who can use it: Department Heads.
     Security: Department Head of the course's department only; auto-grants grade release for lead.
-"""
+    """
     course = get_object_or_404(Course, id=course_id)
 
     if not is_department_head(request.user, course.department):
@@ -4266,11 +4159,10 @@ def course_staff_assign_view(request, course_id):
 
 @login_required
 def course_ta_assign_view(request, course_id):
-    """
-    Assigns a teaching assistant to an instructor's course.
+    """Assigns a teaching assistant to an instructor's course.
     Who can use it: Instructors assigned to the course and Department Heads.
     Security: TAs never receive can_release_grades authority.
-"""
+    """
     course = get_object_or_404(Course, id=course_id)
 
     # Only an assigned instructor or the department head may assign teaching assistants.
@@ -4311,11 +4203,10 @@ def course_ta_assign_view(request, course_id):
 
 @login_required
 def module_create_view(request, course_id):
-    """
-    Creates a curriculum module with optional academic target levels.
+    """Create a curriculum module with optional academic target levels.
     Who can use it: Course instructors and Department Heads.
     Security: Restricted to authorized course staff and department head.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -4363,11 +4254,10 @@ def module_create_view(request, course_id):
 
 @login_required
 def module_delete_view(request, module_id):
-    """
-    Deletes a module only when it has no student attempts or attendance records.
+    """Delete a module only when it has no student attempts or attendance records.
     Who can use it: Assigned staff and the department head, except Admins.
     Security: POST, confirmation, course permission, row locks, and deletion logging.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -4404,11 +4294,10 @@ def module_delete_view(request, module_id):
 
 @login_required
 def module_edit_view(request, module_id):
-    """
-    Edits a module and its target levels.
+    """Edit a module and its target levels.
     Who can use it: Assigned staff and the department head, except Admins.
     Security: Checks the exact course and validates changes before saving atomically.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -4459,11 +4348,10 @@ def module_edit_view(request, module_id):
 
 @login_required
 def section_edit_view(request, section_id):
-    """
-    Edits a section's title and type.
+    """Edits a section's title and type.
     Who can use it: Assigned staff and the department head, except Admins.
     Security: Checks the exact course and accepts changes only from a validated POST.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -4499,11 +4387,10 @@ def section_edit_view(request, section_id):
 
 @login_required
 def section_create_view(request, module_id):
-    """
-    Creates a section grouping within a curriculum module.
+    """Create a section grouping within a curriculum module.
     Who can use it: Course instructors and Department Heads.
     Security: Checks course staff assignment on the module's course.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -4543,11 +4430,10 @@ def section_create_view(request, module_id):
 
 @login_required
 def section_delete_view(request, section_id):
-    """
-    Deletes an empty section or hides one containing assessment attempts.
+    """Delete an empty section or hide one containing assessment attempts.
     Who can use it: Assigned course staff and the department head, except Admins.
     Security: POST, confirmation, course permission, row locks, and an audit log.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -4584,11 +4470,10 @@ def section_delete_view(request, section_id):
 
 @login_required
 def section_visibility_toggle_view(request, section_id):
-    """
-    Hides or releases a section without deleting its contents.
+    """Hide or release a section without deleting its contents.
     Who can use it: Assigned course staff and the department head, except Admins.
     Security: POST only, checks the exact course and preserves assessment attempts.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -4612,11 +4497,10 @@ def section_visibility_toggle_view(request, section_id):
 
 @login_required
 def item_edit_view(request, item_id):
-    """
-    Edits a learning item while preserving existing attachments.
+    """Edits a learning item while preserving existing attachments.
     Who can use it: Assigned staff and the department head, except Admins.
     Security: Checks the course, cleans Markdown, and validates optional uploads atomically.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -4673,11 +4557,10 @@ def item_edit_view(request, item_id):
 
 @login_required
 def item_delete_view(request, item_id):
-    """
-    Deletes a learning item after confirmation.
+    """Delete a learning item after confirmation.
     Who can use it: Assigned staff and the department head, except Admins.
     Security: POST only, checks course permission and confirmation, and logs deletion.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -4703,11 +4586,10 @@ def item_delete_view(request, item_id):
 
 @login_required
 def item_create_view(request, section_id):
-    """
-    Authors a section item, sanitizes rich text via nh3, and attaches an optional file.
+    """Create a section item, sanitize its rich text with nh3 and attach an optional file.
     Who can use it: Assigned Instructors and Teaching Assistants, and the course's Department Head.
     Security: checks course access, sanitizes rich text against XSS, and validates uploaded files.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -4783,11 +4665,10 @@ def item_create_view(request, section_id):
 
 @login_required
 def item_preview_view(request, section_id):
-    """
-    Previews Markdown for an item in a course section.
+    """Previews Markdown for an item in a course section.
     Who can use it: Assigned instructors and TAs, and the department head.
     Security: Requires POST and CSRF, validates text, checks course access, and cleans HTML.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -4815,11 +4696,10 @@ def item_preview_view(request, section_id):
 
 @login_required
 def item_visibility_toggle_view(request, item_id):
-    """
-    Hides a section item or releases it for students.
+    """Hide a section item or release it for students.
     Who can use it: Instructors and Teaching Assistants assigned to the course, and its Department Head.
     Security: POST only; checks staff assignment or department ownership for this exact item.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -4861,11 +4741,10 @@ def item_visibility_toggle_view(request, item_id):
 
 @login_required
 def file_download_view(request, course_id, file_id):
-    """
-    Permission-checked view for downloading course material files.
+    """Permission-checked view for downloading course material files.
     Who can use it: Enrolled students with matching academic level, assigned staff, department heads.
     Security: checks course and item release access, prevents IDOR, and uses safe download headers.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -4912,18 +4791,15 @@ def file_download_view(request, course_id, file_id):
     return create_download_response(stored_file)
 
 
-# ==========================================
 # Schedules & attendance
-# ==========================================
 
 
 @login_required
 def schedule_list_view(request):
-    """
-    Displays the academic meeting schedule and timetable.
+    """Show the academic meeting schedule and timetable.
     Who can use it: Students (enrolled courses), Staff (assigned courses), Department Heads.
     Security: Only shows meeting slots for courses the user is permitted to see.
-"""
+    """
     if has_role(request.user, "Department head"):
         dept_ids = Department.objects.filter(head_user=request.user).values_list("id", flat=True)
         schedules = Schedule.objects.filter(course__department_id__in=dept_ids)
@@ -4998,11 +4874,10 @@ def schedule_list_view(request):
 
 @login_required
 def schedule_create_view(request, course_id):
-    """
-    Creates a recurring meeting schedule for a course.
+    """Create a recurring meeting schedule for a course.
     Who can use it: Course instructors and Department Heads.
     Security: Enforces instructor or department head authority; validates end_time > start_time.
-"""
+    """
     course = get_object_or_404(Course, id=course_id)
 
     if not (is_course_instructor(request.user, course) or is_department_head(request.user, course.department)):
@@ -5041,11 +4916,10 @@ def schedule_create_view(request, course_id):
 
 @login_required
 def schedule_edit_view(request, schedule_id):
-    """
-    Edits a recurring course schedule.
+    """Edits a recurring course schedule.
     Who can use it: Course instructors and the department head, except Admins.
     Security: Checks instructor/head authority on the exact course and validates every field before saving.
-"""
+    """
     # Only course instructors or the department head may edit this course's schedule.
     if is_admin_course_manager(request.user):
         raise PermissionDenied
@@ -5092,11 +4966,10 @@ def schedule_edit_view(request, schedule_id):
 
 @login_required
 def schedule_delete_view(request, schedule_id):
-    """
-    Deletes a schedule without deleting attendance sessions.
+    """Delete a schedule without deleting attendance sessions.
     Who can use it: Course instructors and the department head, except Admins.
     Security: Requires POST, confirmation, instructor/head permission, and deletion logging.
-"""
+    """
     # Verify permission and require confirmation before changing the schedule.
     if is_admin_course_manager(request.user):
         raise PermissionDenied
@@ -5118,11 +4991,10 @@ def schedule_delete_view(request, schedule_id):
 
 @login_required
 def attendance_session_start_view(request, module_id):
-    """
-    Launches a live attendance check-in session with a rotating passcode and QR code.
+    """Start a live attendance check-in session with a rotating passcode and QR code.
     Who can use it: Course instructors and Teaching Assistants (not Department Heads).
     Security: Server generates random 6-character passcode and stores only its keyed HMAC-SHA256 digest.
-"""
+    """
     module = get_object_or_404(Module.objects.select_related("course"), id=module_id)
     course = module.course
 
@@ -5171,11 +5043,10 @@ def attendance_session_start_view(request, module_id):
 
 @login_required
 def attendance_session_detail_view(request, session_id):
-    """
-    Displays live attendance roll for staff, including active passcode and QR code.
+    """Show live attendance roll for staff, including active passcode and QR code.
     Who can use it: Course staff and Department Heads.
     Security: Live roll monitor displaying real-time check-in records.
-"""
+    """
     session = get_object_or_404(
         ModuleAttendanceSession.objects.select_related("module__course__department"),
         id=session_id,
@@ -5242,11 +5113,10 @@ def attendance_session_detail_view(request, session_id):
 
 @login_required
 def attendance_session_close_view(request, session_id):
-    """
-    Closes an active attendance check-in session immediately.
+    """Close an active attendance check-in session immediately.
     Who can use it: Course instructors and Teaching Assistants (not Department Heads).
     Security: POST only; marks is_active=False.
-"""
+    """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
@@ -5270,11 +5140,10 @@ def attendance_session_close_view(request, session_id):
 
 @login_required
 def student_checkin_view(request, session_id):
-    """
-    Student attendance check-in using a dynamic passcode or QR scan.
+    """Student attendance check-in using a dynamic passcode or QR scan.
     Who can use it: Enrolled students.
     Security: Validates passcode hash, expiry, enrollment, single check-in, and sets method on server.
-"""
+    """
     session = get_object_or_404(
         ModuleAttendanceSession.objects.select_related("module__course"),
         id=session_id,
@@ -5378,11 +5247,10 @@ def student_checkin_view(request, session_id):
 
 @login_required
 def attendance_manual_record_view(request, session_id):
-    """
-    Manually logs or adjusts an attendance entry with a required written justification.
+    """Record or adjust attendance manually with a required written reason.
     Who can use it: Course instructors and Teaching Assistants (not Department Heads).
     Security: Server sets method=manual, records staff ID, and enforces non-empty override_reason.
-"""
+    """
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
@@ -5444,11 +5312,10 @@ def attendance_manual_record_view(request, session_id):
 
 @login_required
 def attendance_history_view(request):
-    """
-    Displays attendance records.
+    """Show attendance records.
     Who can use it: Students (own records only), Staff (assigned courses).
     Security: IDOR protection; students are strictly restricted to their own attendance entries.
-"""
+    """
     attendance_stats = None
     filter_form = None
     open_sessions = []
@@ -5559,14 +5426,11 @@ def attendance_history_view(request):
     )
 
 
-# ==========================================
 # Assessments, attempts & grading
-# ==========================================
 
 
 def compute_submission_hash(attempt):
-    """
-    Computes the SHA-256 integrity digest for a submitted attempt, including
+    """Compute the SHA-256 integrity digest for a submitted attempt, including
     canonical answers, submission timestamp, and sorted attached file hashes.
     """
     file_hashes = list(
@@ -5580,8 +5444,7 @@ def compute_submission_hash(attempt):
 
 
 def evaluate_attempt(attempt):
-    """
-    Evaluates student assessment responses against the isolated exam answer key.
+    """Evaluate student assessment responses against the isolated exam answer key.
     Auto-grades multiple choice and matching questions; flags essays for manual grading.
     Updates summary_score_json, status, and creates/updates a draft Grade record.
     """
@@ -5594,8 +5457,7 @@ def evaluate_attempt(attempt):
         attempt.save(update_fields=["status", "summary_score_json", "submitted_at", "submission_hash"])
         return
 
-    # Load the answer key inside service_rls_context so student submits can grade
-    # without granting students direct RLS access to exam_answer_keys (W5).
+    # Load the answer key inside service_rls_context so student submits can grade without granting students direct RLS access to exam_answer_keys (W5).
     with service_rls_context():
         answer_key_obj = ExamAnswerKey.objects.filter(assessment=attempt.assessment).first()
     answer_key_dict = {}
@@ -5703,8 +5565,7 @@ def evaluate_attempt(attempt):
         attempt.submission_hash = compute_submission_hash(attempt)
     attempt.save()
 
-    # If fully auto-graded, create or update the draft grade for this attempt only
-    # so retakes never overwrite an earlier attempt's finalized or released grade (W1).
+    # If fully auto-graded, create or update the draft grade for this attempt only so retakes never overwrite an earlier attempt's finalized or released grade (W1).
     if is_fully_graded:
         existing_grade = Grade.objects.select_for_update().filter(attempt=attempt).first()
         old_score = existing_grade.score if existing_grade else None
@@ -5732,11 +5593,10 @@ def evaluate_attempt(attempt):
 
 @login_required
 def assessment_create_view(request, section_id=None, assessment_id=None):
-    """
-    Creates or edits an assessment and separates questions from its answer key.
+    """Create or edit an assessment and keep its questions separate from the answer key.
     Who can use it: Assigned course staff and the department head, but not Admins.
     Security: Checks the course, locks edits after attempts, and saves the question and key together.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -5789,8 +5649,7 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
             "autosave_interval_seconds": assessment.settings_json.get("autosave_interval_seconds", 15),
         }
         # Decrypt the saved answer key (in memory only) so the form can show it.
-        # If Vault cannot be reached the edit page is not shown, because saving
-        # it without the old key would wipe the correct answers.
+        # If Vault cannot be reached the edit page is not shown, because saving it without the old key would wipe the correct answers.
         answer_key = ExamAnswerKey.objects.filter(assessment=assessment).first()
         existing_keys = {}
         if answer_key:
@@ -5968,8 +5827,8 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
             old_dates = None
             if assessment:
                 old_dates = (assessment.opens_at, assessment.due_date)
-            # Encrypt the answer key with Vault before saving anything. If Vault is
-            # down, nothing is saved and the form is shown again with what was typed.
+            # Encrypt the answer key with Vault before saving anything.
+            # If Vault is down, nothing is saved and the form is shown again with what was typed.
             stored_answer_keys = {}
             if not question_editing_disabled:
                 try:
@@ -6073,11 +5932,10 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
 
 @login_required
 def assessment_question_form_view(request, section_id):
-    """
-    Returns one blank question card for the assessment builder.
+    """Return one blank question card for the assessment builder.
     Who can use it: Assigned course staff and the department head, but not Admins.
     Security: Checks access to the exact section and validates the form index and type.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -6114,11 +5972,10 @@ def assessment_question_form_view(request, section_id):
 
 @login_required
 def assessment_delete_view(request, assessment_id):
-    """
-    Deletes an assessment only if no student has started it.
+    """Delete an assessment only if no student has started it.
     Who can use it: Assigned course staff and the department head, except Admins.
     Security: Requires POST, confirmation, course permission, and a lock against new attempts.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -6156,11 +6013,10 @@ def assessment_delete_view(request, assessment_id):
 
 @login_required
 def assessment_detail_view(request, assessment_id):
-    """
-    Displays assessment overview, materials, and student attempt status.
+    """Show assessment overview, materials, and student attempt status.
     Who can use it: Enrolled students, Course staff, Department Heads.
     Security: Restricts view to authorized course members; shows student only their own attempts.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -6239,11 +6095,10 @@ def assessment_detail_view(request, assessment_id):
 
 @login_required
 def scanned_paper_staff_upload_view(request, assessment_id):
-    """
-    Submits a scanned script on behalf of an enrolled student for manual marking.
+    """Submit a scanned script on behalf of an enrolled student for manual marking.
     Who can use it: Assigned course staff and the course's department head, not Admins.
     Security: POST and CSRF, validates student enrollment and scanned file type, and saves atomically.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -6331,11 +6186,10 @@ def scanned_paper_staff_upload_view(request, assessment_id):
 
 @login_required
 def attempt_file_download_view(request, attempt_id, file_id):
-    """
-    Downloads a file attached to an assessment attempt.
+    """Downloads a file attached to an assessment attempt.
     Who can use it: The student who submitted it, assigned staff, and the department head.
     Security: Denies Admins and checks the file belongs to this exact authorized attempt.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -6373,11 +6227,10 @@ def attempt_file_download_view(request, attempt_id, file_id):
 
 @login_required
 def assessment_file_upload_view(request, assessment_id):
-    """
-    Uploads course material files attached to an assessment.
+    """Upload course material files attached to an assessment.
     Who can use it: Course staff and Department Heads.
     Security: POST only; validates file magic bytes, MIME type, size cap, and hashes.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -6422,11 +6275,10 @@ def assessment_file_upload_view(request, assessment_id):
 
 @login_required
 def assessment_file_download_view(request, assessment_id, file_id):
-    """
-    Downloads files attached to an assessment.
+    """Downloads files attached to an assessment.
     Who can use it: Course staff and enrolled students.
     Security: For exams, students can download only during an active In_Progress attempt.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -6482,11 +6334,10 @@ def assessment_file_download_view(request, assessment_id, file_id):
 
 @login_required
 def assessment_attempt_start_view(request, assessment_id):
-    """
-    Initiates a new assessment attempt for an enrolled student.
+    """Start a new assessment attempt for an enrolled student.
     Who can use it: Enrolled students with remaining attempt allowances.
     Security: Validates opening window, max attempts, lab CIDR subnet, and whiteboard proctor code.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -6599,11 +6450,10 @@ def assessment_attempt_start_view(request, assessment_id):
 
 @login_required
 def assessment_take_view(request, attempt_id):
-    """
-    Renders the live exam interface with server timer countdown and autosave.
+    """Render the live exam interface with server timer countdown and autosave.
     Who can use it: The attempting student.
     Security: Verifies attempt ownership and never changes an attempt on GET.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -6675,11 +6525,10 @@ def assessment_take_view(request, attempt_id):
 
 @login_required
 def assessment_autosave_view(request, attempt_id):
-    """
-    Receives periodic background response autosaves via HTMX.
+    """Receive periodic background response autosaves via HTMX.
     Who can use it: The attempting student.
     Security: Enforces server-side deadline; rejects updates if expires_at is passed; tracks focus loss.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -6769,11 +6618,10 @@ def assessment_autosave_view(request, attempt_id):
 
 @login_required
 def assessment_attempt_file_upload_view(request, attempt_id):
-    """
-    Uploads a student coursework submission file for an in-progress attempt.
+    """Upload a student coursework submission file for an in-progress attempt.
     Who can use it: The attempting student.
     Security: Validates attempt is active and unexpired; database trigger also locks files on submit.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -6824,8 +6672,7 @@ def assessment_attempt_file_upload_view(request, attempt_id):
 
 @login_required
 def assessment_attempt_file_delete_view(request, attempt_id, file_id):
-    """
-    Removes a student submission file from an in-progress assessment attempt.
+    """Remove a student submission file from an in-progress assessment attempt.
     Who can use it: The attempting student.
     Security: POST only; locks attempt and permits deletion only while In_Progress and unexpired.
     """
@@ -6859,11 +6706,10 @@ def assessment_attempt_file_delete_view(request, attempt_id, file_id):
 
 @login_required
 def assessment_submit_view(request, attempt_id):
-    """
-    Submits an assessment attempt, computes submission hash, and triggers auto-grading.
+    """Submit an assessment attempt, compute its submission hash and start auto-grading.
     Who can use it: The attempting student.
     Security: POST only; computes SHA-256 submission hash; locks further changes.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -6896,8 +6742,8 @@ def assessment_submit_view(request, attempt_id):
         attempt.submitted_at = min(timezone.now(), attempt.expires_at)
         evaluate_attempt(attempt)
 
-        # Email a receipt: when it was submitted, its integrity hash and the
-        # SHA-256 of each attached file. The student can use it as proof later.
+        # Email a receipt: when it was submitted, its integrity hash and the SHA-256 of each attached file.
+        # The student can use it as proof later.
         receipt_lines = [
             "Hello,",
             "",
@@ -6959,8 +6805,7 @@ def build_question_reviews(attempt):
 
 @login_required
 def attempt_detail_view(request, attempt_id):
-    """
-    Displays completed assessment attempt review and score telemetry.
+    """Show completed assessment attempt review and score telemetry.
     Who can use it: The attempting student, Course staff, Department Heads.
     Security: IDOR protection ensures students cannot inspect other students' attempts.
     """
@@ -7022,18 +6867,15 @@ def attempt_detail_view(request, attempt_id):
     return render(request, "kura/assessments/attempt_detail.html", context)
 
 
-# ==========================================
 # Grades, appeals & transcripts
-# ==========================================
 
 
 @login_required
 def course_grades_view(request, course_id):
-    """
-    Displays grade rosters and status for course staff and instructors.
+    """Show grade rosters and status for course staff and instructors.
     Who can use it: Course staff and Department Heads (Admins are strictly denied).
     Security: Admins forbidden; restricts access to assigned course staff.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -7090,8 +6932,8 @@ def course_grades_view(request, course_id):
         if filter_form.cleaned_data["status"]:
             grades = grades.filter(status=filter_form.cleaned_data["status"])
 
-    # Appeals waiting for a verdict on this course. Only instructors and the
-    # department head may inspect appeals (teaching assistants are excluded).
+    # Appeals waiting for a verdict on this course.
+    # Only instructors and the department head may inspect appeals (teaching assistants are excluded).
     can_view_appeals = is_course_instructor(request.user, course) or is_department_head(
         request.user, course.department
     )
@@ -7107,8 +6949,7 @@ def course_grades_view(request, course_id):
             .order_by("created_at")
         )
 
-    # Post-release change requests are decided only by this department's head,
-    # and never by the person who raised them (specification: no self-approval).
+    # Post-release change requests are decided only by this department's head, and never by the person who raised them (specification: no self-approval).
     pending_change_requests = GradeChangeRequest.objects.none()
     if is_department_head(request.user, course.department):
         pending_change_requests = (
@@ -7146,8 +6987,7 @@ def course_grades_view(request, course_id):
 
 @login_required
 def course_grade_scheme_view(request, course_id):
-    """
-    Sets how much each grade component (coursework, quiz, exam, ...) counts
+    """Set how much each grade component (coursework, quiz, exam, ...) counts
     towards the final course result.
     Who can use it: lead or co-instructors of the course and its department head.
     Security: Admins and Registrars are refused; teaching assistants are refused
@@ -7160,8 +7000,7 @@ def course_grade_scheme_view(request, course_id):
 
     course = get_object_or_404(Course.objects.select_related("department"), id=course_id)
 
-    # Only an instructor of this course or its department head may change the
-    # weights. A TA assignment is not enough (is_course_instructor checks that).
+    # Only an instructor of this course or its department head may change the weights. A TA assignment is not enough (is_course_instructor checks that).
     if not (is_course_instructor(request.user, course) or is_department_head(request.user, course.department)):
         raise PermissionDenied
 
@@ -7172,8 +7011,7 @@ def course_grade_scheme_view(request, course_id):
     form = CourseGradeSchemeForm(request.POST or None, initial=current_weights)
 
     if request.method == "POST" and form.is_valid():
-        # Replace the whole scheme in one transaction so the weights never
-        # add up to anything but 100 in the database.
+        # Replace the whole scheme in one transaction so the weights never add up to anything but 100 in the database.
         with transaction.atomic():
             for component, _ in GradeComponentType.choices:
                 weight = form.cleaned_data[f"weight_{component}"]
@@ -7199,11 +7037,10 @@ def course_grade_scheme_view(request, course_id):
 
 @login_required
 def grade_entry_view(request, attempt_id):
-    """
-    Enters or edits draft grading scores and feedback for an assessment attempt.
+    """Enter or edit draft scores and feedback for an assessment attempt.
     Who can use it: Teaching Assistants and Course Instructors.
     Security: Creates draft grade and logs modification in GradeHistory audit ledger.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -7317,11 +7154,10 @@ def grade_entry_view(request, attempt_id):
 
 @login_required
 def grade_finalize_view(request, grade_id):
-    """
-    Finalizes a draft grade in preparation for student release.
+    """Finalize a draft grade in preparation for student release.
     Who can use it: Instructors assigned to the course.
     Security: Checks the instructor role and course, locks the draft, and logs the change.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -7390,12 +7226,11 @@ def grade_finalize_view(request, grade_id):
 
 @login_required
 def grade_release_view(request, grade_id):
-    """
-    Releases a finalized grade to the student with step-up MFA verification.
+    """Release a finalized grade to the student with step-up MFA verification.
     Who can use it: Instructors assigned to the course with can_release_grades=True.
     Security: Checks permission; enforces step-up OTP token (or a recovery code, compared
     by keyed hash and used once); grade must be finalized.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -7456,7 +7291,8 @@ def grade_release_view(request, grade_id):
                 reason="Grade released to student with MFA verification.",
             )
 
-            # Tell the student a grade is ready. No score in the email: they log in to see it.
+            # Tell the student a grade is ready.
+            # No score in the email: they log in to see it.
             grades_link = settings.SITE_URL + reverse("kura:student_grades")
             queue_email(
                 f"grade-released:{grade.id}",
@@ -7492,11 +7328,10 @@ def grade_release_view(request, grade_id):
 
 @login_required
 def student_grades_view(request):
-    """
-    Displays released assessment grades for the logged-in student.
+    """Show released assessment grades for the logged-in student.
     Who can use it: Students.
     Security: Strictly filters by status=RELEASED and student=request.user (IDOR defense).
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -7530,11 +7365,10 @@ def student_grades_view(request):
 
 @login_required
 def grade_appeal_create_view(request, grade_id):
-    """
-    Files a formal student appeal disputing an assessment score.
+    """File a formal student appeal disputing an assessment score.
     Who can use it: The evaluated student on a released grade.
     Security: Verifies grade.student == request.user and grade is RELEASED (prevents IDOR).
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -7584,8 +7418,7 @@ def grade_appeal_create_view(request, grade_id):
 
 @login_required
 def grade_appeal_review_view(request, appeal_id):
-    """
-    Reviews a student grade appeal and writes a formal verdict.
+    """Review a student grade appeal and record a formal verdict.
     Who can use it: Course instructors (read and decide) and Department Heads (read-only).
     Security: Enforces specification appeal authority (Instructors decide; Teaching
     assistants denied; Department Heads may inspect read-only on GET but cannot decide on POST).
@@ -7663,11 +7496,10 @@ def grade_appeal_review_view(request, appeal_id):
 
 @login_required
 def grade_change_request_create_view(request, grade_id):
-    """
-    Submits a formal request to alter an already released grade.
+    """Submit a formal request to alter an already released grade.
     Who can use it: Course instructors.
     Security: Restricted to released grades; enforces one pending request per grade.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -7734,12 +7566,11 @@ def grade_change_request_create_view(request, grade_id):
 
 @login_required
 def grade_change_request_review_view(request, request_id):
-    """
-    Department Head decision on a post-release grade change request.
+    """Department Head decision on a post-release grade change request.
     Who can use it: Department Head of the course's department.
     Security: Enforces no self-approval; a decision needs a fresh second factor
     (ACL-05); on approval, updates grade and logs GradeHistory.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -7772,8 +7603,7 @@ def grade_change_request_review_view(request, request_id):
     if change_request.status != ChangeRequestStatus.PENDING:
         raise Http404
 
-    # ACL-05: changing a released grade needs a fresh second factor, the same
-    # as releasing it, so a stolen session cookie alone cannot change it.
+    # ACL-05: changing a released grade needs a fresh second factor, the same as releasing it, so a stolen session cookie alone cannot change it.
     if request.method == "POST" and not has_fresh_second_factor(request):
         return redirect_to_reauth(
             request, reverse("kura:grade_change_request_review", kwargs={"request_id": change_request.id})
@@ -7858,7 +7688,7 @@ def grade_change_request_review_view(request, request_id):
 
 
 def calculate_student_course_score(course, student):
-    """Computes a student's weighted percentage score from released grades in a course."""
+    """Compute a student's weighted percentage score from released grades in a course."""
     schemes = CourseGradeScheme.objects.filter(course=course)
     cumulative_score = Decimal("0.00")
 
@@ -7881,11 +7711,10 @@ def calculate_student_course_score(course, student):
 
 @login_required
 def course_result_calculate_view(request, course_id):
-    """
-    Calculates cumulative course results from released grades and grading schemes.
+    """Calculate cumulative course results from released grades and grading schemes.
     Who can use it: Course instructors and Department Heads.
     Security: Only aggregates released grades; enforces final_score 0 to 100 constraint.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -7937,12 +7766,11 @@ def course_result_calculate_view(request, course_id):
 
 @login_required
 def course_result_release_view(request, course_id):
-    """
-    Releases cumulative course results to students.
+    """Release cumulative course results to students.
     Who can use it: Instructors with can_release_grades=True.
     Security: Requires grade release authorization and a fresh second factor
     (ACL-05); marks results as released.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -7955,8 +7783,7 @@ def course_result_release_view(request, course_id):
     if not can_release_grades(request.user, course):
         raise PermissionDenied
 
-    # ACL-05: releasing a whole course's results needs a fresh second factor,
-    # the same as releasing a single grade.
+    # ACL-05: releasing a whole course's results needs a fresh second factor, the same as releasing a single grade.
     if not has_fresh_second_factor(request):
         return redirect_to_reauth(request, reverse("kura:course_grades", kwargs={"course_id": course.id}))
 
@@ -7981,11 +7808,10 @@ def course_result_release_view(request, course_id):
 
 @login_required
 def student_transcript_view(request):
-    """
-    Displays the official academic transcript for the student.
+    """Show the official academic transcript for the student.
     Who can use it: Students.
     Security: Strictly filters CourseResult by student=request.user and status=RELEASED.
-"""
+    """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -8025,8 +7851,7 @@ def safe_csv_cell(value):
 
 @login_required
 def department_reports_view(request, department_id):
-    """
-    Institutional reporting dashboard for Department Heads, with CSV export.
+    """Institutional reporting dashboard for Department Heads, with CSV export.
     Who can use it: Department Heads for their own department.
     Security: Cross-department access strictly forbidden; CSV cells neutralize formula prefixes.
     """

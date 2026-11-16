@@ -1,17 +1,13 @@
-# ==============================================================================
 # HashiCorp Vault server configuration for Kura
-# ==============================================================================
 
-# Encrypted data is kept in files on the kura_vault_data volume. Everything
-# Vault writes there is encrypted with its master key, which only exists in
-# memory after an operator unseals Vault with the unseal key.
+# Encrypted data is kept in files on the kura_vault_data volume.
+# Everything Vault writes there is encrypted with its master key, which only exists in memory after an operator unseals Vault with the unseal key.
 storage "file" {
   path = "/vault/file"
 }
 
-# HTTPS only. The certificate is signed by Kura's internal CA
-# (./kura.sh mtls-bootstrap), and Django checks it with ca.crt,
-# so nothing on the Docker network can pretend to be Vault.
+# HTTPS only.
+# The certificate is signed by Kura's internal CA (./kura.sh mtls-bootstrap), and Django checks it with ca.crt, so nothing on the Docker network can pretend to be Vault.
 listener "tcp" {
   address         = "0.0.0.0:8200"
   tls_cert_file   = "/vault/tls/vault.crt"
@@ -43,5 +39,6 @@ telemetry {
   disable_hostname          = true
 }
 
-# Allow "vault operator generate-root" (needs the unseal key). Vault 2.x turned it off by default.
+# Allow "vault operator generate-root" (needs the unseal key).
+# Vault 2.x turned it off by default.
 enable_unauthenticated_access = ["generate-root"]
