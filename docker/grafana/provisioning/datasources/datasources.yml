@@ -1,7 +1,9 @@
 # ==============================================================================
 # Grafana Datasources Provisioning (datasources.yml)
 #
-# Automatically connects Grafana to Prometheus (metrics) and Loki (logs).
+# Automatically connects Grafana to Prometheus (metrics), Loki (logs) and
+# Alertmanager (active alerts and silences). All three are reached over the
+# internal observability network; none of them publishes a host port.
 # ==============================================================================
 
 apiVersion: 1
@@ -29,4 +31,16 @@ datasources:
     editable: false
     jsonData:
       maxLines: 1000
+
+  # Alertmanager: shows the alerts that Loki and Prometheus are firing.
+  - name: Alertmanager
+    uid: alertmanager
+    type: alertmanager
+    access: proxy
+    url: http://alertmanager:9093
+    isDefault: false
+    editable: false
+    jsonData:
+      implementation: prometheus
+      handleGrafanaManagedAlerts: false
 
