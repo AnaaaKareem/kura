@@ -41,6 +41,7 @@ INTERNAL_CERTS="nginx waf web db vault relay alloy migrator"
 
 DRY_RUN=0
 FORCE=0
+RESET_PASSWORD=0
 
 # ------------------------------------------------------------------------------
 # Small helpers
@@ -163,6 +164,8 @@ Setup
                      then switch every service to Vault-issued certificates
   vault-add-name N   Add service name N to Vault's kura-service certificate role
   renew-certs        Renew internal certificates from Vault and reload services (weekly cron)
+  grafana-users      Check the Grafana admin login and create the read-only "viewer" account
+                     (--reset-password resets both passwords to the secret files)
 
 Checks
   preflight          Read-only production checks; ends with PASS or FAIL
@@ -176,7 +179,8 @@ Operations
 
 Destructive steps (ask for YES, or pass --force):
   mtls-bootstrap after Vault exists (replaces the trusted CA),
-  certs when a certificate exists (replaces it).
+  certs when a certificate exists (replaces it),
+  grafana-users --reset-password.
 EOF
 }
 
@@ -909,6 +913,129 @@ write_cert_metrics() {
 }
 
 # ------------------------------------------------------------------------------
+# grafana-users
+# ------------------------------------------------------------------------------
+
+# Keep the built-in "admin" account for setup and recovery, and make sure one
+# personal read-only account "viewer" exists with the Viewer role. Uses the
+# Grafana HTTP API on 127.0.0.1:3000. Basic auth is off (docker-compose.yml),
+# so the script logs in through the login form like a browser and keeps the
+# session cookie in a private folder. Passwords go from the secret files into
+# that folder and to Grafana, never onto the command line or the screen.
+# Safe to rerun: an existing viewer is kept; only a wrong role is corrected.
+# --reset-password (asks for YES) sets both passwords back to the secret files.
+cmd_grafana_users() {
+    need_root grafana-users
+    if planned "check the admin login and create or check the 'viewer' account through http://127.0.0.1:3000"; then
+        if [ "$RESET_PASSWORD" = 1 ]; then
+            planned "ask for YES, then reset the admin and viewer passwords to the secret files"
+        fi
+        return 0
+    fi
+    curl -fsS -o /dev/null http://127.0.0.1:3000/api/health || die "Grafana is not answering on 127.0.0.1:3000."
+    [ -s "$SECRETS_DIR/grafana_viewer_password.txt" ] || die "secrets/grafana_viewer_password.txt is missing. Run ./kura.sh secrets."
+
+    # Private working folder for the session cookies and API answers.
+    GRAFANA_WORK=$(mktemp -d)
+    chmod 700 "$GRAFANA_WORK"
+    trap 'rm -rf "$GRAFANA_WORK"' EXIT
+
+    if [ "$RESET_PASSWORD" = 1 ]; then
+        confirm "This resets the Grafana admin and viewer passwords to the values in secrets/."
+        # The admin password is reset inside the container, read from standard input.
+        read_secret grafana_admin_password | docker compose exec -T grafana grafana cli admin reset-admin-password --password-from-stdin > /dev/null
+        say "admin password reset to secrets/grafana_admin_password.txt"
+    fi
+
+    # 1. The admin login must work, or nothing else can be checked.
+    code=$(grafana_login admin grafana_admin_password)
+    if [ "$code" != "200" ]; then
+        die "The admin password in secrets/grafana_admin_password.txt does not log in (HTTP $code). Run: sudo ./kura.sh grafana-users --reset-password"
+    fi
+    skip "admin account works (kept for setup and recovery)"
+
+    # 2. Create "viewer" if it does not exist yet. The JSON body (with the
+    #    password) is built from the secret file inside the private folder.
+    code=$(grafana_api admin GET "/api/users/lookup?loginOrEmail=viewer")
+    if [ "$code" = "404" ]; then
+        python3 -c 'import json, sys; print(json.dumps({"name": "Viewer", "login": "viewer", "email": "viewer@localhost", "password": sys.stdin.read().strip(), "OrgId": 1}))' \
+            < "$SECRETS_DIR/grafana_viewer_password.txt" > "$GRAFANA_WORK/body.json"
+        code=$(grafana_api admin POST /api/admin/users "$GRAFANA_WORK/body.json")
+        rm -f "$GRAFANA_WORK/body.json"
+        [ "$code" = "200" ] || die "Could not create the viewer account (HTTP $code)."
+        say "created the 'viewer' account"
+        grafana_api admin GET "/api/users/lookup?loginOrEmail=viewer" > /dev/null
+    elif [ "$code" = "200" ]; then
+        skip "'viewer' account already exists"
+    else
+        die "Could not look up the viewer account (HTTP $code)."
+    fi
+    viewer_id=$(python3 -c 'import json, sys; print(json.load(open(sys.argv[1]))["id"])' "$GRAFANA_WORK/answer.json")
+
+    # 3. The viewer's role in the main organisation must be Viewer.
+    grafana_api admin GET /api/org/users > /dev/null
+    role=$(python3 -c 'import json, sys; print(next((u["role"] for u in json.load(open(sys.argv[1])) if u["login"] == "viewer"), ""))' "$GRAFANA_WORK/answer.json")
+    if [ "$role" = "Viewer" ]; then
+        skip "'viewer' already has the Viewer role"
+    else
+        echo '{"role": "Viewer"}' > "$GRAFANA_WORK/role.json"
+        code=$(grafana_api admin PATCH "/api/org/users/$viewer_id" "$GRAFANA_WORK/role.json")
+        [ "$code" = "200" ] || die "Could not set the viewer role (HTTP $code)."
+        say "set the 'viewer' role to Viewer (was: ${role:-none})"
+    fi
+
+    # 4. Reset the viewer password only when asked (already confirmed above).
+    if [ "$RESET_PASSWORD" = 1 ]; then
+        python3 -c 'import json, sys; print(json.dumps({"password": sys.stdin.read().strip()}))' \
+            < "$SECRETS_DIR/grafana_viewer_password.txt" > "$GRAFANA_WORK/body.json"
+        code=$(grafana_api admin PUT "/api/admin/users/$viewer_id/password" "$GRAFANA_WORK/body.json")
+        rm -f "$GRAFANA_WORK/body.json"
+        [ "$code" = "200" ] || die "Could not reset the viewer password (HTTP $code)."
+        say "viewer password reset to secrets/grafana_viewer_password.txt"
+    fi
+
+    # 5. The viewer password in the secret file must log in.
+    code=$(grafana_login viewer grafana_viewer_password)
+    if [ "$code" = "200" ]; then
+        skip "viewer login works"
+    else
+        die "The viewer password in secrets/ does not log in (HTTP $code). Run: sudo ./kura.sh grafana-users --reset-password"
+    fi
+    rm -rf "$GRAFANA_WORK"
+    trap - EXIT
+}
+
+# Log in to Grafana through the login form as "admin" or "viewer", with the
+# password from the named secret file. Keeps the session cookie in
+# $GRAFANA_WORK/<login>.cookies and prints only the HTTP status.
+grafana_login() {
+    login=$1
+    secret=$2
+    python3 -c 'import json, sys; print(json.dumps({"user": sys.argv[1], "password": sys.stdin.read().strip()}))' "$login" \
+        < "$SECRETS_DIR/$secret.txt" > "$GRAFANA_WORK/login.json"
+    curl -sS -c "$GRAFANA_WORK/$login.cookies" -X POST -H "Content-Type: application/json" \
+        --data-binary "@$GRAFANA_WORK/login.json" -o /dev/null -w '%{http_code}' http://localhost:3000/login
+    rm -f "$GRAFANA_WORK/login.json"
+}
+
+# Call the Grafana API with the session of "admin" or "viewer". Prints only
+# the HTTP status; the answer body goes to $GRAFANA_WORK/answer.json. An
+# optional fourth argument is a JSON file sent as the request body.
+grafana_api() {
+    login=$1
+    method=$2
+    path=$3
+    body=${4:-}
+    if [ -n "$body" ]; then
+        curl -sS -b "$GRAFANA_WORK/$login.cookies" -X "$method" -H "Content-Type: application/json" \
+            --data-binary "@$body" -o "$GRAFANA_WORK/answer.json" -w '%{http_code}' "http://localhost:3000$path"
+    else
+        curl -sS -b "$GRAFANA_WORK/$login.cookies" -X "$method" \
+            -o "$GRAFANA_WORK/answer.json" -w '%{http_code}' "http://localhost:3000$path"
+    fi
+}
+
+# ------------------------------------------------------------------------------
 # preflight
 # ------------------------------------------------------------------------------
 
@@ -1221,6 +1348,7 @@ cmd_setup() {
         docker compose up -d --wait
     fi
 
+    cmd_grafana_users
     if ! planned "run the health checks"; then
         cmd_health
     fi
@@ -1345,6 +1473,7 @@ for word in "$@"; do
     case "$word" in
         --dry-run) DRY_RUN=1 ;;
         --force) FORCE=1 ;;
+        --reset-password) RESET_PASSWORD=1 ;;
         -h|--help) COMMAND=help ;;
         -*) die "Unknown option: $word (see ./kura.sh help)" ;;
         *)
@@ -1366,6 +1495,7 @@ case "$COMMAND" in
     vault-init) cmd_vault_init ;;
     vault-add-name) cmd_vault_add_name "$ARGUMENT" ;;
     renew-certs) cmd_renew_certs ;;
+    grafana-users) cmd_grafana_users ;;
     preflight) cmd_preflight ;;
     health) cmd_health ;;
     app-metrics) cmd_app_metrics ;;
