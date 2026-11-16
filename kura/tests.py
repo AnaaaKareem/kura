@@ -441,7 +441,7 @@ class BaseTemplateAndHomeTests(TestCase):
         self.assertEqual(cards_by_title["Users"]["url"], reverse("kura:admin_users"))
         self.assertEqual(cards_by_title["Courses"]["url"], reverse("kura:course_list"))
         self.assertEqual(cards_by_title["Active sessions"]["url"], "/admin/sessions/")
-        self.assertEqual(cards_by_title["Security log"]["url"], "http://kura-server.netbird.cloud:3000")
+        self.assertEqual(cards_by_title["Security log"]["url"], "http://localhost:3000")
 
         # Check only the header so the dashboard's own cards do not affect this assertion.
         header_html = response.content.decode("utf-8").split("</nav>", maxsplit=1)[0]
@@ -12230,15 +12230,13 @@ class AuditGroup7InfraAndConfigTests(TestCase):
         self.assertIn("backup-offsite", crontab_text)
         self.assertIn("--repo=2", crontab_text)
 
-        # Grafana, netbird-dashboard, and netbird client run with read_only: true and cap_drop: ALL.
-        grafana_block = compose_text.split("  grafana:\n", 1)[1].split("  netbird:\n", 1)[0]
+        # Grafana runs with read_only: true and cap_drop: ALL, published on loopback only.
+        grafana_block = compose_text.split("  grafana:\n", 1)[1].split("\n  vault:\n", 1)[0]
         self.assertIn("read_only: true", grafana_block)
         self.assertIn("cap_drop:\n      - ALL", grafana_block)
-        nb_dash_block = compose_text.split("  netbird-dashboard:\n", 1)[1].split("  # Mail Relay", 1)[0]
-        self.assertIn("read_only: true", nb_dash_block)
-        self.assertIn("cap_drop:\n      - ALL", nb_dash_block)
-        nb_client_block = compose_text.split("  netbird:\n", 1)[1].split("  vault:\n", 1)[0]
-        self.assertIn("read_only: true", nb_client_block)
+        self.assertIn('"127.0.0.1:3000:3000"', grafana_block)
+        # NetBird was replaced by an SSH tunnel to Grafana.
+        self.assertNotIn("netbird", compose_text.lower())
 
         self.assertIn("ip saddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } tcp dport 443 accept", nft_text)
         self.assertIn("ip saddr { 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16 } udp dport 3478 accept", nft_text)

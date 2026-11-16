@@ -194,8 +194,10 @@ DASHBOARD_CARDS_BY_ROLE = {
         },
         {
             "title": "Security log",
-            "description": "Open the private Grafana security and audit dashboards.",
-            "url": "http://kura-server.netbird.cloud:3000",
+            # Grafana listens only on the server's loopback address, so this link
+            # works only while the admin's SSH tunnel forwards localhost:3000.
+            "description": "Open the private Grafana dashboards (needs the SSH tunnel).",
+            "url": "http://localhost:3000",
             "external": True,
         },
     ],
