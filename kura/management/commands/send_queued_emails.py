@@ -67,6 +67,8 @@ class Command(BaseCommand):
             log_security_event(None, "email.expired", {"email_id": expired_email_id, "error_type": "Expired"}, level=logging.WARNING)
 
         # 2. Send the pending emails, oldest first (at most 200 per run).
+        # shortcut: takes the 200 oldest pending emails before skipping ones whose backoff is not due, so newer emails
+        # can wait behind them; revisit when enrollment or burst email volume exceeds 200 emails per outage window.
         pending_ids = list(
             OutgoingEmail.objects.filter(status=OutgoingEmailStatus.PENDING)
             .order_by("created_at")
