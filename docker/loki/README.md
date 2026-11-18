@@ -2,12 +2,11 @@
 
 This directory configures Grafana Loki as the central log aggregation engine for Kura LMS.
 
-> **Ingestion limitation:** The current Alloy configuration tails only Nginx log
-> files from the shared `nginx_logs` volume. It does not collect Django or
-> PostgreSQL logs. The alert rules below are installed, but rules that depend on
-> application or database messages cannot fire until those logs are also sent to
-> Loki. Treat these rules as configured expressions, not as proof of end-to-end
-> alerting for every listed event.
+> **Ingestion:** Alloy discovers `kura-*` containers in the `kura` Compose
+> project through the Docker API proxy and collects their output, including
+> nginx, Django and PostgreSQL logs. It also collects host cron and SSH logs.
+> Check that the expected streams reach Loki and that alerts are delivered on
+> the target deployment; a configured rule alone does not prove either.
 
 ## Compliance: 180-Day Log Retention
 
@@ -25,15 +24,16 @@ In `loki.yml`, this is enforced through two linked settings:
 
 ## Security Information & Event Management (SIEM) Alerting
 
-Loki's internal **Ruler** continuously evaluates LogQL alerting rules from `/etc/loki/rules` against live log streams. When an attack pattern is matched, Loki dispatches an alert directly to Alertmanager (`http://alertmanager:9093`), which immediately forwards a formatted alert to the security administrator's Telegram channel.
+Loki's internal **Ruler** continuously evaluates LogQL rules from `/etc/loki/rules` against live log streams. When a rule matches, Loki sends an alert to Alertmanager (`http://alertmanager:9093`), which groups alerts and routes them to the configured Telegram chat. Delivery depends on the provider and deployment configuration.
 
 ### Active Detection Rules (`kura-alerts.yml`)
-1. **`KuraBruteForceAttack`**: Triggers when >5 failed login attempts occur within 2 minutes.
-2. **`KuraAxesLockoutTriggered`**: Triggers when django-axes engages an automated account or IP lockout.
-3. **`KuraLockedAccountAccessAttempt`**: Triggers on access attempts against administratively locked accounts.
-4. **`KuraWAFAttackBlocked`**: Triggers when Coraza WAF blocks active injection or exploit payloads (SQLi, XSS, RCE).
-5. **`KuraMalwareUploadDetected`**: Triggers when ClamAV blocks malware in student/staff file uploads.
-6. **`KuraUnauthorizedDatabaseQuery`**: Matches ingested messages containing PostgreSQL table/schema permission-denied text. It does not detect every Row-Level Security rejection.
-7. **`KuraDatabaseRoleTampering`**: Triggers when database roles or permissions are modified (logged by pgAudit).
-8. **`KuraPasskeyVerificationAnomaly`**: Triggers on repeated failed WebAuthn signature or challenge mismatches.
+1. **`BruteForceLogin`**: More than 20 failed logins in 5 minutes.
+2. **`SingleIpBruteForce`**: More than 10 failed logins from one IP in 5 minutes.
+3. **`MfaFailuresSpike`**: More than 10 failed MFA attempts in 10 minutes.
+4. **`AdminRoleChanged`**: A user's role change recorded within 5 minutes.
+5. **`MalwareUploaded`**: A file quarantine event recorded within 5 minutes.
+6. **`DbAuthFailures`**: More than 5 database password authentication failures in 5 minutes.
+7. **`FileDecryptFailed`**: A file decryption failure recorded within 5 minutes.
+8. **`AuditDiscrepancy`**: A pgAudit entry matching one of the configured schema, role or grade-table operations within 5 minutes.
 
+These are examples; see `kura-alerts.yml` for the complete set and exact expressions.
