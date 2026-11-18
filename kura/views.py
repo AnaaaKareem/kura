@@ -7699,11 +7699,12 @@ def calculate_student_course_score(course, student):
             student=student,
             status=GradeStatus.RELEASED,
         ).select_related("assessment")
+        comp_grades = list(comp_grades)
 
-        if comp_grades.exists():
+        if comp_grades:
             # Calculate average percentage for this component.
             total_pct = sum((g.score / g.assessment.max_score * 100) for g in comp_grades)
-            avg_pct = total_pct / comp_grades.count()
+            avg_pct = total_pct / len(comp_grades)
             cumulative_score += avg_pct * (scheme.weight_percentage / 100)
 
     return min(Decimal("100.00"), max(Decimal("0.00"), cumulative_score.quantize(Decimal("0.01"))))
