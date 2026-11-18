@@ -7,8 +7,10 @@ Run it every minute (host crontab):
 For each run:
   1. Emails that waited too long are given up on: password-reset emails after
      30 minutes (their link has expired), everything else after 3 days.
-  2. Each pending email is sent through the Postfix relay. A failure is
-     retried on the next run, up to 5 attempts in total.
+  2. Each pending email is sent through the Postfix relay. A failed email is
+     retried with growing gaps: after N failures it waits until 2**N minutes
+     after it was queued (2, 4, 8 ... minutes), up to 12 attempts in total.
+     So a relay outage of a few hours does not lose the queue.
   3. The body is wiped as soon as an email is sent or given up on, because it
      may contain a password-reset link.
 Running two copies at once is safe: each email is locked while it is sent
@@ -26,8 +28,10 @@ from django.utils import timezone
 from kura.logging_utils import log_security_event
 from kura.models import OutgoingEmail, OutgoingEmailStatus
 
-# How many times to try one email before giving up.
-MAX_ATTEMPTS = 5
+# How many times to try one email before giving up. The retry gaps double
+# (2**attempts minutes after creation), so the last try is about 34 hours
+# after queueing, inside the 3-day expiry.
+MAX_ATTEMPTS = 12
 
 
 class Command(BaseCommand):
@@ -82,6 +86,10 @@ class Command(BaseCommand):
                     .first()
                 )
                 if email is None:
+                    continue
+                # Back off: a previously failed email waits until 2**attempts minutes after it was queued.
+                retry_at = email.created_at + timezone.timedelta(minutes=2**email.attempts)
+                if email.attempts > 0 and now < retry_at:
                     continue
 
                 email.attempts += 1

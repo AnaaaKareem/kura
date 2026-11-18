@@ -7040,6 +7040,7 @@ def grade_entry_view(request, attempt_id):
     """Enter or edit draft scores and feedback for an assessment attempt.
     Who can use it: Teaching Assistants and Course Instructors.
     Security: Creates draft grade and logs modification in GradeHistory audit ledger.
+    Attempts still in progress cannot be graded (any delivery mode).
     """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
@@ -7064,9 +7065,13 @@ def grade_entry_view(request, attempt_id):
     if attempt.student_id == request.user.id:
         raise PermissionDenied
 
+    # Staff can only mark a submitted attempt; marking one still in progress would be overwritten when it is submitted.
+    if attempt.status == AttemptStatus.IN_PROGRESS:
+        raise PermissionDenied
+
     # A scanned paper must be submitted with a file before staff can mark it.
     if attempt.assessment.delivery_mode == AssessmentDeliveryMode.PAPER_SCANNED:
-        if attempt.status == AttemptStatus.IN_PROGRESS or not AttemptFile.objects.filter(attempt=attempt).exists():
+        if not AttemptFile.objects.filter(attempt=attempt).exists():
             raise PermissionDenied
 
     existing_grade = Grade.objects.filter(attempt=attempt).first()
@@ -7770,7 +7775,7 @@ def course_result_release_view(request, course_id):
     """Release cumulative course results to students.
     Who can use it: Instructors with can_release_grades=True.
     Security: Requires grade release authorization and a fresh second factor
-    (ACL-05); marks results as released.
+    (ACL-05); recalculates unreleased results from released grades, then marks them released.
     """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
@@ -7791,6 +7796,20 @@ def course_result_release_view(request, course_id):
     # Use the same course lock as calculation so the two actions cannot race.
     with transaction.atomic():
         Course.objects.select_for_update().get(id=course.id)
+        # Recalculate drafts so grades released since the last calculation are included.
+        enrollments = Enrollment.objects.filter(course=course, status=EnrollmentStatus.ACTIVE).select_related("student")
+        for enr in enrollments:
+            # Released results are already on transcripts and must never be overwritten.
+            if CourseResult.objects.filter(course=course, student=enr.student, status=GradeStatus.RELEASED).exists():
+                continue
+            CourseResult.objects.update_or_create(
+                course=course,
+                student=enr.student,
+                defaults={
+                    "final_score": calculate_student_course_score(course, enr.student),
+                    "status": GradeStatus.DRAFT,
+                },
+            )
         now = timezone.now()
         released_count = CourseResult.objects.filter(course=course).exclude(status=GradeStatus.RELEASED).update(
             status=GradeStatus.RELEASED,

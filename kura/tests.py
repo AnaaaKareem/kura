@@ -41,6 +41,7 @@ from unittest.mock import MagicMock, call, patch
 from .forms import PasswordChangeForm
 from .base import get_vault_client
 from .views import (
+    calculate_student_course_score,
     check_signature_age,
     create_download_response,
     scan_file_for_malware,
@@ -3562,7 +3563,8 @@ class AssessmentEditLockTests(TransactionTestCase):
         self.assertEqual(responses[0].status_code, 302)
         result.refresh_from_db()
         self.assertEqual(result.status, GradeStatus.RELEASED)
-        self.assertEqual(result.final_score, Decimal("75.00"))
+        # Release recalculates the draft, so the stored 75.00 is replaced by the real score.
+        self.assertEqual(result.final_score, calculate_student_course_score(course, student))
 
     def test_edit_waiting_for_first_attempt_cannot_change_questions(self):
         # Keep the assessment row locked while an edit request reaches the same lock.
@@ -5124,6 +5126,24 @@ class CourseResultsAndTranscriptsTests(TestCase):
         self.assertEqual(transcript_resp.status_code, 200)
         self.assertContains(transcript_resp, "PHYS201")
         self.assertContains(transcript_resp, "86.00%")
+
+    def test_release_recalculates_results_with_grades_released_after_calculation(self):
+        # A grade released between calculation and release must reach the transcript.
+        login_with_session(self.client, self.instructor)
+        confirm_second_factor(self.client)
+        self.client.post(reverse("kura:course_result_calculate", kwargs={"course_id": self.course.id}))
+        self.assertEqual(CourseResult.objects.get(course=self.course, student=self.student).final_score, Decimal("86.00"))
+
+        # Change the exam score after the results were calculated.
+        exam = Assessment.objects.get(title="Final Exam")
+        Grade.objects.filter(assessment=exam, student=self.student).update(score=Decimal("50.00"))
+        expected = calculate_student_course_score(self.course, self.student)
+        self.assertNotEqual(expected, Decimal("86.00"))
+
+        self.client.post(reverse("kura:course_result_release", kwargs={"course_id": self.course.id}))
+        result = CourseResult.objects.get(course=self.course, student=self.student)
+        self.assertEqual(result.status, GradeStatus.RELEASED)
+        self.assertEqual(result.final_score, expected)
 
 
 class DepartmentReportsTests(TestCase):
@@ -7704,18 +7724,37 @@ class EmailNotificationTests(TestCase):
         self.assertEqual(email.status, OutgoingEmailStatus.SENT)
         self.assertEqual(email.body, "")
 
-    def test_failed_sends_are_retried_then_given_up_after_five(self):
+    def test_short_outage_does_not_lose_the_email(self):
         import smtplib
 
-        queue_email("test-send:2", self.student.email, "Subject", "Body")
+        queue_email("test-send:3", self.student.email, "Subject", "Body")
+        # Six one-minute cron runs while the relay is down.
         with patch("kura.management.commands.send_queued_emails.EmailMessage.send", side_effect=smtplib.SMTPException):
-            for _ in range(4):
+            for _ in range(6):
                 call_command("send_queued_emails", stdout=StringIO())
-            email = OutgoingEmail.objects.get(event_key="test-send:2")
-            self.assertEqual((email.status, email.attempts), (OutgoingEmailStatus.PENDING, 4))
+        email = OutgoingEmail.objects.get(event_key="test-send:3")
+        self.assertEqual((email.status, email.body), (OutgoingEmailStatus.PENDING, "Body"))
+        # Relay is back and the next retry is due, so the email goes out.
+        OutgoingEmail.objects.filter(id=email.id).update(created_at=timezone.now() - timezone.timedelta(days=1))
+        with patch("kura.management.commands.send_queued_emails.EmailMessage.send"):
             call_command("send_queued_emails", stdout=StringIO())
         email.refresh_from_db()
-        self.assertEqual((email.status, email.attempts, email.body), (OutgoingEmailStatus.FAILED, 5, ""))
+        self.assertEqual((email.status, email.body), (OutgoingEmailStatus.SENT, ""))
+
+    def test_failed_sends_are_given_up_after_max_attempts(self):
+        import smtplib
+
+        from kura.management.commands.send_queued_emails import MAX_ATTEMPTS
+
+        queue_email("test-send:2", self.student.email, "Subject", "Body")
+        # Started one attempt short of the limit, with the retry due.
+        OutgoingEmail.objects.filter(event_key="test-send:2").update(
+            attempts=MAX_ATTEMPTS - 1, created_at=timezone.now() - timezone.timedelta(days=2)
+        )
+        with patch("kura.management.commands.send_queued_emails.EmailMessage.send", side_effect=smtplib.SMTPException):
+            call_command("send_queued_emails", stdout=StringIO())
+        email = OutgoingEmail.objects.get(event_key="test-send:2")
+        self.assertEqual((email.status, email.attempts, email.body), (OutgoingEmailStatus.FAILED, MAX_ATTEMPTS, ""))
         self.assertEqual(email.last_error, "SMTPException")
 
     @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
@@ -9529,6 +9568,17 @@ class GradeFeedbackTests(TestCase):
         self.data["grade"].refresh_from_db()
         self.assertEqual(self.data["grade"].feedback, self.feedback)
         self.assertNotIn("worked example", "\n".join(logs.output))
+
+    def test_staff_cannot_grade_in_progress_online_attempt(self):
+        # Marking an attempt before it is submitted would be overwritten at submit.
+        attempt = self.data["attempt"]
+        attempt.status = AttemptStatus.IN_PROGRESS
+        attempt.save()
+        Grade.objects.filter(attempt=attempt).delete()
+        login_with_session(self.client, self.data["instructor"])
+        response = self.client.post(self.entry_url, {"score": "72", "feedback": self.feedback})
+        self.assertEqual(response.status_code, 403)
+        self.assertFalse(Grade.objects.filter(attempt=attempt).exists())
 
     def test_entry_page_shows_saved_feedback(self):
         self.data["grade"].feedback = self.feedback
