@@ -217,7 +217,6 @@ services:
       test: ["CMD", "python", "-c", "import os, ssl, urllib.request; mtls = os.environ.get('MTLS_ENABLED', 'False').lower() in ('true', '1'); ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile='/certs/internal/ca.crt') if mtls else None; ctx.load_cert_chain('/certs/internal/web.crt', '/certs/internal/web.key') if mtls else None; ctx.check_hostname = False if mtls else None; urllib.request.urlopen('https://127.0.0.1:8443/login/' if mtls else 'http://127.0.0.1:8000/login/', context=ctx)"]
       interval: 15s
       timeout: 5s
-      retries: 3
       start_period: 15s
 
   # Collect static files on every "docker compose up" into the shared static_data volume.
@@ -356,9 +355,7 @@ services:
           memory: 32M
     healthcheck:
       test: ["CMD", "postfix", "status"]
-      interval: 30s
       timeout: 5s
-      retries: 3
       start_period: 10s
 
   # Breach-check proxy (tinyproxy, built from docker/breach-proxy on a pinned Alpine image).
@@ -392,9 +389,7 @@ services:
     # Healthy when tinyproxy is listening on its port.
     healthcheck:
       test: ["CMD", "nc", "-z", "127.0.0.1", "8888"]
-      interval: 30s
       timeout: 5s
-      retries: 3
       start_period: 5s
 
   # Nginx Alpine accepts TLS 1.3 only, with HSTS, rate limits, a 25MB body limit and hidden server tokens.
@@ -459,7 +454,6 @@ services:
       test: ["CMD-SHELL", "wget -q --no-check-certificate --spider https://127.0.0.1:443/login/ || exit 1"]
       interval: 10s
       timeout: 5s
-      retries: 3
       start_period: 5s
 
   # Web Application Firewall Service (Coraza WAF with OWASP Core Rule Set v4) Request path: Nginx --mTLS--> WAF --mTLS--> Django.
@@ -514,7 +508,6 @@ services:
       test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8081/healthz"]
       interval: 10s
       timeout: 5s
-      retries: 3
       start_period: 10s
 
   # The official multi-architecture ClamAV image scans uploads in memory over INSTREAM on port 3310.
@@ -636,7 +629,6 @@ services:
       test: ["CMD", "cscli", "lapi", "status"]
       interval: 15s
       timeout: 5s
-      retries: 3
       start_period: 15s
 
   # NOTE: the CrowdSec nftables firewall bouncer is NOT a container.
@@ -716,7 +708,6 @@ services:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9090/-/healthy || exit 1"]
       interval: 15s
       timeout: 5s
-      retries: 3
       start_period: 15s
 
   # Alertmanager groups operational alerts for Telegram using Docker secrets.
@@ -757,7 +748,6 @@ services:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:9093/-/healthy || exit 1"]
       interval: 15s
       timeout: 5s
-      retries: 3
       start_period: 10s
 
   # Alloy collects Nginx logs and telemetry for Loki and Prometheus.
@@ -816,9 +806,7 @@ services:
     # The image has bash but no curl or wget, so bash's /dev/tcp sends the request.
     healthcheck:
       test: ["CMD", "bash", "-c", "exec 3<>/dev/tcp/127.0.0.1/12345 && printf 'GET /-/ready HTTP/1.0\\r\\n\\r\\n' >&3 && head -n 1 <&3 | grep -q ' 200 '"]
-      interval: 30s
       timeout: 5s
-      retries: 3
       start_period: 20s
     mem_limit: 256m
     cpus: 0.5
@@ -915,7 +903,6 @@ services:
       test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:2375/_ping"]
       interval: 15s
       timeout: 5s
-      retries: 3
       start_period: 10s
 
   # Grafana binds to 127.0.0.1 with provisioned dashboards and an admin password from a Docker secret.
@@ -985,7 +972,6 @@ services:
       test: ["CMD-SHELL", "wget -q --spider http://127.0.0.1:3000/api/health || exit 1"]
       interval: 15s
       timeout: 5s
-      retries: 3
       start_period: 15s
 
   # Secrets & Cryptographic Management (HashiCorp Vault) Encrypts authenticator (TOTP) seeds with its Transit engine; Django only ever stores the ciphertext. HTTPS only (certificate from our internal CA).
@@ -1036,7 +1022,6 @@ services:
       test: ["CMD-SHELL", "vault status > /dev/null; [ $$? -le 2 ]"]
       interval: 15s
       timeout: 5s
-      retries: 3
       start_period: 10s
 
 # frontend receives external traffic through Nginx.

@@ -52,18 +52,13 @@ class Command(BaseCommand):
             .exclude(id__in=expired_reset_ids)
             .values_list("id", flat=True)
         )
-        expired_resets = OutgoingEmail.objects.filter(
-            status=OutgoingEmailStatus.PENDING,
-            event_key__startswith="password-reset:",
-            created_at__lt=now - timezone.timedelta(minutes=30),
-        ).update(status=OutgoingEmailStatus.FAILED, body="", last_error="Expired before it could be sent.")
-        expired_others = OutgoingEmail.objects.filter(
-            status=OutgoingEmailStatus.PENDING,
-            created_at__lt=now - timezone.timedelta(days=3),
-        ).update(status=OutgoingEmailStatus.FAILED, body="", last_error="Expired before it could be sent.")
+        expired_ids = expired_reset_ids + expired_other_ids
+        # Only touch still-pending rows so a concurrent run cannot overwrite a SENT email.
+        OutgoingEmail.objects.filter(id__in=expired_ids, status=OutgoingEmailStatus.PENDING).update(
+            status=OutgoingEmailStatus.FAILED, body="", last_error="Expired before it could be sent."
+        )
 
         # Report expired messages by ID only; never log their addresses or reset links.
-        expired_ids = expired_reset_ids + expired_other_ids
         for expired_email_id in expired_ids:
             log_security_event(None, "email.expired", {"email_id": expired_email_id, "error_type": "Expired"}, level=logging.WARNING)
 
@@ -106,19 +101,12 @@ class Command(BaseCommand):
                     if email.attempts >= MAX_ATTEMPTS:
                         email.status = OutgoingEmailStatus.FAILED
                         email.body = ""
-                        log_security_event(
-                            None,
-                            "email.failed",
-                            {"email_id": email.id, "error_type": type(error).__name__},
-                            level=logging.WARNING,
-                        )
-                    else:
-                        log_security_event(
-                            None,
-                            "email.failed",
-                            {"email_id": email.id, "error_type": type(error).__name__},
-                            level=logging.WARNING,
-                        )
+                    log_security_event(
+                        None,
+                        "email.failed",
+                        {"email_id": email.id, "error_type": type(error).__name__},
+                        level=logging.WARNING,
+                    )
                 else:
                     # Sent: wipe the body and remember when.
                     email.status = OutgoingEmailStatus.SENT
@@ -132,5 +120,5 @@ class Command(BaseCommand):
 
         # Print only counts, never addresses or contents.
         self.stdout.write(
-            f"Sent {sent_count}, failed {failed_count}, expired {expired_resets + expired_others}."
+            f"Sent {sent_count}, failed {failed_count}, expired {len(expired_ids)}."
         )
