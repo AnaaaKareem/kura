@@ -19,8 +19,7 @@ How to read the picture:
     - Each arrow is a connection. Its label says the protocol and, where it
       matters, the security on it (TLS, mTLS, AppRole, ...).
     - Solid arrows show configured traffic; deployments still need valid
-      credentials and live delivery checks. Dashed arrows are planned, such
-      as the off-site Backblaze B2 backup.
+      credentials and live delivery checks. Dashed arrows are planned.
 """
 
 import os
@@ -133,7 +132,6 @@ with Diagram(
     mail_provider = Server("Gmail SMTP\n(application email)")
     telegram = Telegram("Telegram\n(operational alerts)")
     breach_service = Server("HaveIBeenPwned\n(k-anonymity range API)")
-    offsite = Storage("Backblaze B2\n(planned off-site copy)")
 
     # Arrows: how a normal web request travels.
     # Visitors connect straight to the VM: the host firewall lets 443 (and 80, which only redirects to HTTPS) through to nginx.
@@ -149,7 +147,6 @@ with Diagram(
     vault >> Edge(label="creates 15-minute users") >> database
     django_app >> Edge(label="scan upload") >> clamav
     database >> Edge(label="WAL archive") >> backups
-    backups >> Edge(label="encrypted copy (planned)", style="dashed") >> offsite
 
     # Breached-password check: Django -> proxy -> HaveIBeenPwned. TLS runs end to end, so the proxy only forwards encrypted bytes.
     django_app >> Edge(label="5-char hash prefix,\nHTTPS tunnel") >> breach_proxy
