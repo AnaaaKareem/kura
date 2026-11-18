@@ -12271,9 +12271,17 @@ class AuditGroup7InfraAndConfigTests(TestCase):
         self.assertIn("limit_conn conn_limit 30;", nginx_site)
         self.assertIn("- alert: AuditDiscrepancy", loki_rules)
         self.assertIn('receiver: telegram-alerts', alertmanager)
-        self.assertIn('receiver: breach-alerts', alertmanager)
-        self.assertIn('receiver: email-alerts', alertmanager)
+        self.assertIn('receiver: breach-telegram-alerts', alertmanager)
+        self.assertIn('[BREACH TRIAGE - 72H CLOCK]', alertmanager)
+        self.assertNotIn('email_configs:', alertmanager)
         self.assertNotIn("127.0.0.1:9999", alertmanager)
+
+    def test_application_relay_uses_gmail_with_verified_tls(self):
+        """Application mail uses the selected provider without disabling TLS checks."""
+        postfix = (Path(settings.BASE_DIR) / "docker" / "postfix" / "main.cf").read_text(encoding="utf-8")
+        self.assertIn("relayhost = [smtp.gmail.com]:587", postfix)
+        self.assertIn("smtp_tls_security_level = secure", postfix)
+        self.assertIn("smtp_sasl_password_maps = texthash:/run/secrets/smtp_relay_credentials", postfix)
 
     def test_offsite_backup_repo2_and_container_hardening_and_nftables_lan_scope(self):
         pgbackrest_conf = (Path(settings.BASE_DIR) / "docker" / "postgres" / "pgbackrest.conf").read_text(
@@ -12528,14 +12536,14 @@ class AuditGroup8FinalFixesTests(TestCase):
         grade.refresh_from_db()
         self.assertEqual(grade.status, GradeStatus.RELEASED)
 
-        # M4, M10, M12 artifacts exist and Alertmanager includes breach-alerts route.
+        # M4, M10, M12 artifacts exist and Alertmanager includes the breach Telegram route.
         ir_text = (Path(settings.BASE_DIR) / "docs" / "INCIDENT_RESPONSE.md").read_text(encoding="utf-8")
         guidance_text = (Path(settings.BASE_DIR) / "docs" / "DEPLOYMENT.md").read_text(encoding="utf-8")
         am_text = (Path(settings.BASE_DIR) / "docker" / "alertmanager" / "alertmanager.yml").read_text(encoding="utf-8")
         self.assertIn("72-Hour Regulatory Breach Notification", ir_text)
         self.assertIn("Asset Classification Register", guidance_text)
         self.assertIn("FERPA", guidance_text)
-        self.assertIn("breach-alerts", am_text)
+        self.assertIn("breach-telegram-alerts", am_text)
         notice_resp = self.client.get(reverse("kura:privacy_notice"))
         self.assertContains(notice_resp, "FERPA")
 
@@ -12814,3 +12822,69 @@ class StackTestFindingsTests(TestCase):
         waf_block = self.compose_text.split("\n  waf:\n")[1].split("\n  clamav:\n")[0]
         self.assertIn("mem_limit: 768m", waf_block)
         self.assertIn("memory: 768M", waf_block)
+
+    def test_restore_drill_uses_key_wrapper_during_wal_recovery(self):
+        # PostgreSQL must use the wrapper too, not just the initial backup extraction.
+        body = self.kura_sh_text.split("cmd_restore_drill() {")[1].split("\n}\n")[0]
+        self.assertIn("restore_command=/usr/local/bin/pgbackrest --repo=1", body)
+        self.assertIn("-c logging_collector=off", body)
+        self.assertNotIn('|| echo "?"', body)
+
+    def test_restore_drill_reports_recovery_and_query_failures(self):
+        # Exercise the real shell function with a fake Docker function: no containers or data are touched.
+        body = self.kura_sh_text.split("cmd_restore_drill() {")[1].split("\n}\n")[0]
+        fake_commands = r'''
+need_root() { :; }
+planned() { return 1; }
+say() { echo "$*"; }
+die() { echo "$*" >&2; exit 1; }
+sleep() { :; }
+docker() {
+    case "$*" in
+        "container inspect "*)
+            [ "$SCENARIO" = duplicate ] && return 0
+            return 1 ;;
+        "compose config --images db") echo synthetic-image ;;
+        *"pg_is_in_recovery"*)
+            case "$SCENARIO" in crash|timeout) return 1 ;; esac
+            echo f ;;
+        "inspect --format "*)
+            if [ "$SCENARIO" = crash ]; then echo false; else echo true; fi ;;
+        *"SELECT count"*)
+            if [ "$1" = exec ]; then
+                [ "$SCENARIO" = query_failure ] && return 1
+                [ "$SCENARIO" = mismatch ] && { echo 2; return 0; }
+            fi
+            echo 1 ;;
+        *) return 0 ;;
+    esac
+}
+'''
+        for scenario in ("success", "crash", "timeout", "query_failure", "mismatch", "duplicate"):
+            with self.subTest(scenario=scenario):
+                script = "set -eu\nSCENARIO=" + scenario + "\n" + fake_commands
+                script += "\ncmd_restore_drill() {" + body + "\n}\ncmd_restore_drill latest\n"
+                result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=10)
+                if scenario == "success":
+                    self.assertEqual(result.returncode, 0, result.stderr)
+                    self.assertIn("PASS: restored database", result.stdout)
+                else:
+                    self.assertNotEqual(result.returncode, 0, scenario)
+                    self.assertNotIn("PASS:", result.stdout)
+
+    def test_crowdsec_bouncer_key_comes_from_secret_file(self):
+        # BOUNCER_KEY_* is read literally by the image, so a file path there became the key itself.
+        crowdsec_block = self.compose_text.split("\n  crowdsec:\n")[1].split("\n  loki:\n")[0]
+        self.assertNotRegex(crowdsec_block, r"(?m)^\s+BOUNCER_KEY_\w+:")
+        self.assertIn("source: crowdsec_bouncer_key", crowdsec_block)
+        self.assertIn("target: bouncer_key_firewall", crowdsec_block)
+
+    def test_nginx_sends_one_hsts_header_and_a_fallback_csp(self):
+        nginx_site = (Path(settings.BASE_DIR) / "docker" / "nginx" / "conf.d" / "kura.conf").read_text(encoding="utf-8")
+        https_server = nginx_site.split("listen 443 ssl;")[1]
+        # Django also sends HSTS; nginx hides that copy so the response has exactly one.
+        self.assertIn("proxy_hide_header Strict-Transport-Security;", https_server)
+        # nginx's own responses (429, 404) get a strict CSP; Django's pages keep their own.
+        self.assertIn("map $upstream_http_content_security_policy $kura_fallback_csp", nginx_site)
+        self.assertIn("add_header Content-Security-Policy $kura_fallback_csp always;", https_server)
+        self.assertIn('add_header Cross-Origin-Resource-Policy "same-origin" always;', https_server)
