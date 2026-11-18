@@ -6238,6 +6238,15 @@ class IncidentResponseRunbookTests(TestCase):
         self.assertIn("NIST SP 800-61", content)
         self.assertIn("Law No. 175 of 2018", content)
 
+    def test_runbook_uses_current_login_events_and_explains_evidence_limits(self):
+        # The old login model was removed; checksums alone do not establish provenance.
+        content = self.runbook_path.read_text(encoding="utf-8")
+        self.assertNotIn("from kura.models import LoginAttempt", content)
+        self.assertIn("event=\"auth.login.failed\"", content)
+        self.assertIn("login_identifier_hash", content)
+        self.assertIn("checksums alone do not establish who", content)
+        self.assertIn("sha256sum loki_logs.json pgaudit_trail.log", content)
+
 
 class SemesterValueMigrationTests(TestCase):
     """Verify semester values migrate forward and have a documented rollback mapping."""
@@ -12282,6 +12291,31 @@ class AuditGroup7InfraAndConfigTests(TestCase):
         self.assertIn("relayhost = [smtp.gmail.com]:587", postfix)
         self.assertIn("smtp_tls_security_level = secure", postfix)
         self.assertIn("smtp_sasl_password_maps = texthash:/run/secrets/smtp_relay_credentials", postfix)
+
+    def test_log_and_backup_secret_guides_match_their_configuration(self):
+        # The guides must describe the actual log source and passphrase loading path.
+        loki = (Path(settings.BASE_DIR) / "docker" / "loki" / "README.md").read_text(encoding="utf-8")
+        secrets = (Path(settings.BASE_DIR) / "secrets" / "README.md").read_text(encoding="utf-8")
+        alloy = (Path(settings.BASE_DIR) / "docker" / "alloy" / "config.alloy").read_text(encoding="utf-8")
+        rules = (
+            Path(settings.BASE_DIR) / "docker" / "loki" / "rules" / "fake" / "kura-alerts.yml"
+        ).read_text(encoding="utf-8")
+        wrapper = (
+            Path(settings.BASE_DIR) / "docker" / "postgres" / "pgbackrest-wrapper.sh"
+        ).read_text(encoding="utf-8")
+        self.assertIn("Docker API proxy", loki)
+        self.assertIn('loki.source.docker "containers"', alloy)
+        self.assertIn("`BruteForceLogin`", loki)
+        for alert in (
+            "BruteForceLogin", "SingleIpBruteForce", "MfaFailuresSpike", "AdminRoleChanged",
+            "MalwareUploaded", "DbAuthFailures", "FileDecryptFailed", "AuditDiscrepancy",
+        ):
+            self.assertIn(f"- alert: {alert}", rules)
+        self.assertNotIn("tails only Nginx", loki)
+        self.assertIn("PGBACKREST_REPO1_CIPHER_PASS", secrets)
+        self.assertIn("PGBACKREST_REPO1_CIPHER_PASS", wrapper)
+        self.assertIn("does not support `file:` passphrase indirection", secrets)
+        self.assertNotIn("repo1-cipher-pass=file:", secrets)
 
     def test_offsite_backup_repo2_and_container_hardening_and_nftables_lan_scope(self):
         pgbackrest_conf = (Path(settings.BASE_DIR) / "docker" / "postgres" / "pgbackrest.conf").read_text(
