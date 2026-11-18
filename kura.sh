@@ -223,7 +223,7 @@ cmd_secrets() {
         case "$name" in
             telegram_bot_token) source="Telegram @BotFather" ;;
             telegram_chat_id) source="the Telegram chat that receives alerts" ;;
-            smtp_relay_credentials) source="your mail provider. One line: [smtp.example.com]:587 username:password" ;;
+            smtp_relay_credentials) source="your Gmail account and app password. One line: [smtp.gmail.com]:587 username@gmail.com:app-password" ;;
             *) source="Vault. ./kura.sh vault-init writes it for you" ;;
         esac
         if [ -s "$file" ]; then
@@ -1349,6 +1349,9 @@ cmd_restore_drill() {
     IMAGE=$(docker compose config --images db | head -1)
     DRILL_VOLUME="kura_restore_drill_$(date +%Y%m%d%H%M%S)"
     DRILL_CONTAINER="kura-restore-drill"
+    if docker container inspect "$DRILL_CONTAINER" > /dev/null 2>&1; then
+        die "$DRILL_CONTAINER already exists. Inspect it, then rename or remove it before another drill."
+    fi
     START_SECONDS=$(date +%s)
 
     # The tables compared between live and restored databases (counts only).
@@ -1376,7 +1379,9 @@ cmd_restore_drill() {
         --entrypoint /usr/local/bin/pgbackrest "$IMAGE" \
         --stanza=kura --pg1-path=/restore --lock-path=/tmp "$@" restore > /dev/null
 
-    # 3. Start PostgreSQL on the restored copy: no network, no archiving, and the default settings from the restored folder (so it never touches the repo).
+    # Use the key-loading wrapper for WAL recovery; pgBackRest otherwise writes /usr/bin/pgbackrest into the restored config.
+    # Send startup errors to Docker logs instead of hiding them inside the restored data folder.
+    # The restored copy has no network and cannot write to the read-only backup repository.
     say "[2/3] Starting the restored copy and replaying WAL..."
     docker run -d --name "$DRILL_CONTAINER" --network none --tmpfs /tmp --tmpfs /var/run/postgresql:mode=1777 --tmpfs /var/log/pgbackrest:mode=1777 \
         -v "$DRILL_VOLUME":/restore \
@@ -1387,25 +1392,43 @@ cmd_restore_drill() {
         -v "$PWD/secrets/db_password.txt":/run/secrets/db_password:ro \
         --entrypoint postgres "$IMAGE" \
         -D /restore -c listen_addresses='' -c archive_mode=off -c shared_preload_libraries='' \
+        -c 'restore_command=/usr/local/bin/pgbackrest --repo=1 --lock-path=/tmp --pg1-path=/restore --stanza=kura archive-get %f "%p"' \
+        -c logging_collector=off \
         -c unix_socket_directories=/var/run/postgresql > /dev/null
 
     # Wait until recovery is finished and the copy accepts queries (at most 2 minutes).
+    RECOVERED=0
     for _ in $(seq 1 60); do
         if docker exec "$DRILL_CONTAINER" sh -c 'PGPASSWORD="$(tr -d "\r\n" < /run/secrets/db_password)" psql -h /var/run/postgresql -U kura-admin -d kura -X -q -t -A -c "SELECT pg_is_in_recovery();"' 2>/dev/null | grep -q '^f$'; then
+            RECOVERED=1
             break
+        fi
+        if [ "$(docker inspect --format '{{.State.Running}}' "$DRILL_CONTAINER")" != "true" ]; then
+            die "Restored database exited before recovery finished. Inspect: docker logs $DRILL_CONTAINER"
         fi
         sleep 2
     done
+    [ "$RECOVERED" = 1 ] || die "Restored database did not finish recovery within 120 seconds. Inspect: docker logs $DRILL_CONTAINER"
     END_SECONDS=$(date +%s)
 
     # 4. Compare row counts, live vs restored.
+    COUNTS_MATCH=1
     say "[3/3] Comparing row counts (live -> restored):"
     for TABLE in $TABLES; do
-        LIVE=$(docker compose exec -T db sh -c 'PGPASSWORD="$(tr -d "\r\n" < /run/secrets/db_password)" psql -U kura-admin -d kura -X -q -t -A -c "SELECT count(*) FROM '"$TABLE"';"' 2>/dev/null || echo "?")
-        RESTORED=$(docker exec "$DRILL_CONTAINER" sh -c 'PGPASSWORD="$(tr -d "\r\n" < /run/secrets/db_password)" psql -h /var/run/postgresql -U kura-admin -d kura -X -q -t -A -c "SELECT count(*) FROM '"$TABLE"';"' 2>/dev/null || echo "?")
+        LIVE=$(docker compose exec -T db sh -c 'PGPASSWORD="$(tr -d "\r\n" < /run/secrets/db_password)" psql -v ON_ERROR_STOP=1 -U kura-admin -d kura -X -q -t -A -c "SELECT count(*) FROM '"$TABLE"';"') || die "Could not query $TABLE in the source database."
+        RESTORED=$(docker exec "$DRILL_CONTAINER" sh -c 'PGPASSWORD="$(tr -d "\r\n" < /run/secrets/db_password)" psql -v ON_ERROR_STOP=1 -h /var/run/postgresql -U kura-admin -d kura -X -q -t -A -c "SELECT count(*) FROM '"$TABLE"';"') || die "Could not query $TABLE in the restored database."
         printf '  %-16s %6s -> %s\n' "$TABLE" "$LIVE" "$RESTORED"
+        [ "$LIVE" = "$RESTORED" ] || COUNTS_MATCH=0
     done
-    echo "Restore + recovery took $((END_SECONDS - START_SECONDS)) seconds (RTO for this database size)."
+    if [ "$TARGET_TIME" = "latest" ] && [ "$COUNTS_MATCH" != 1 ]; then
+        die "Row counts differ. Recovery completed, but latest-restore verification failed. Source writes or unarchived WAL may explain the difference."
+    fi
+    echo "Restore + recovery completed in $((END_SECONDS - START_SECONDS)) seconds for this database size."
+    if [ "$TARGET_TIME" = "latest" ]; then
+        echo "PASS: restored database accepts queries and all compared row counts match."
+    else
+        echo "Recovery completed; verify the intended historical records separately. Current row counts may differ."
+    fi
     echo ""
     echo "The restored copy is still running for inspection:"
     echo "  docker exec -it $DRILL_CONTAINER psql -h /var/run/postgresql -U kura-admin -d kura"

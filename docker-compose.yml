@@ -579,7 +579,6 @@ services:
       # crowdsecurity/linux adds the base parsers the others depend on.
       # crowdsecurity/sshd bans SSH brute force found in the VM's auth log.
       COLLECTIONS: "crowdsecurity/linux crowdsecurity/sshd crowdsecurity/nginx crowdsecurity/http-cve crowdsecurity/base-http-scenarios"
-      BOUNCER_KEY_FIREWALL_FILE: /run/secrets/crowdsec_bouncer_key
     volumes:
       - ./docker/crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml:ro
       - ./docker/crowdsec/profiles.yaml:/etc/crowdsec/profiles.yaml:ro
@@ -599,8 +598,12 @@ services:
       - ./docker/crowdsec/scenarios/reset-abuse.yaml:/etc/crowdsec/scenarios/kura-reset-abuse.yaml:ro
       - crowdsec_data:/var/lib/crowdsec/data
       - crowdsec_config:/etc/crowdsec
+    # The image registers a bouncer from each /run/secrets/bouncer_key_<name> file, so the
+    # host bouncer is "firewall" with the generated key. A BOUNCER_KEY_* variable is taken
+    # literally, so pointing one at a file path made the path itself the key.
     secrets:
-      - crowdsec_bouncer_key
+      - source: crowdsec_bouncer_key
+        target: bouncer_key_firewall
     # No "frontend": CrowdSec reads every log through the Docker API proxy and needs no access to nginx or the WAF over the network.
     networks:
       - observability
@@ -716,8 +719,8 @@ services:
       retries: 3
       start_period: 15s
 
-  # Alertmanager groups critical alerts for Telegram using bot credentials from Docker secrets.
-  # Keep it on the internal observability network.
+  # Alertmanager groups operational alerts for Telegram using Docker secrets.
+  # The observability network supplies its route to Telegram.
   alertmanager:
     image: prom/alertmanager:v0.34.2@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b
     logging: *default-logging
@@ -728,15 +731,11 @@ services:
       - --storage.path=/alertmanager
     volumes:
       - ./docker/alertmanager/alertmanager.yml:/etc/alertmanager/alertmanager.yml:ro
-      # Only the CA certificate, to check the mail relay's certificate.
-      - ./certs/internal/ca.crt:/certs/ca.crt:ro
     secrets:
       - telegram_bot_token
       - telegram_chat_id
     networks:
       - observability
-      # Alert emails go to the Postfix relay here (it accepts 172.28.30.0/24).
-      - mail
     read_only: true
     tmpfs:
       - /alertmanager:size=32M,mode=1777

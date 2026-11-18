@@ -18,9 +18,9 @@ How to read the picture:
     - Each box with a title (a "cluster") is one layer of the system.
     - Each arrow is a connection. Its label says the protocol and, where it
       matters, the security on it (TLS, mTLS, AppRole, ...).
-    - Solid arrows are live traffic. Dashed arrows are designed but not active
-      yet (off-site backups need a Backblaze B2 account; the mail relay
-      needs the provider's login).
+    - Solid arrows show configured traffic; deployments still need valid
+      credentials and live delivery checks. Dashed arrows are planned, such
+      as the off-site Backblaze B2 backup.
 """
 
 import os
@@ -130,8 +130,8 @@ with Diagram(
             grafana = Grafana("Grafana\n127.0.0.1:3000\n3 dashboards,\nadmin + viewer")
 
     # Places outside the server.
-    mail_provider = Server("Mail provider\n(planned: Mailgun sandbox,\nlogin not set)")
-    telegram = Telegram("Telegram\n(critical alerts)")
+    mail_provider = Server("Gmail SMTP\n(application email)")
+    telegram = Telegram("Telegram\n(operational alerts)")
     breach_service = Server("HaveIBeenPwned\n(k-anonymity range API)")
     offsite = Storage("Backblaze B2\n(planned off-site copy)")
 
@@ -157,7 +157,7 @@ with Diagram(
 
     # Outgoing email: outbox -> relay -> provider.
     django_app >> Edge(label="outbox job, TLS") >> relay
-    relay >> Edge(label="verified TLS (planned)", style="dashed") >> mail_provider
+    relay >> Edge(label="verified STARTTLS") >> mail_provider
 
     # Monitoring: logs and metrics flow in, alerts flow out.
     alloy >> Edge(label="container logs") >> loki
@@ -165,8 +165,7 @@ with Diagram(
     alloy >> Edge(label="pg metrics (cert login)") >> database
     loki >> Edge(label="SIEM alerts") >> alertmanager
     prometheus >> Edge(label="metric alerts") >> alertmanager
-    alertmanager >> Edge(label="all alerts, email") >> relay
-    alertmanager >> Edge(label="critical only") >> telegram
+    alertmanager >> Edge(label="all alerts") >> telegram
     grafana >> Edge(label="queries") >> loki
     grafana >> Edge(label="queries") >> prometheus
     grafana >> Edge(label="alerts view") >> alertmanager
