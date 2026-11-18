@@ -3,7 +3,7 @@
 
 compatibility_level = 3.11
 
-# Kura's mail identity. kura.edu is assumed to be a real domain whose mail provider (relayhost below) is allowed to send for it (SPF/DKIM at the provider).
+# Kura's internal mail identity. Gmail may rewrite the visible sender.
 myhostname = mail.kura.edu
 mydomain = kura.edu
 myorigin = kura.edu
@@ -33,13 +33,13 @@ smtpd_tls_security_level = encrypt
 smtpd_tls_mandatory_protocols = >=TLSv1.2
 
 # Set the provider's SMTP host and port below; square brackets disable MX lookup.
-relayhost = [smtp.example.com]:587
+relayhost = [smtp.gmail.com]:587
 # Always use TLS to the provider AND check its certificate against the public CAs and its host name ("secure"), so nobody in between can read or change mail.
 smtp_tls_security_level = secure
 smtp_tls_mandatory_protocols = >=TLSv1.2
 smtp_tls_CAfile = /etc/ssl/certs/ca-certificates.crt
 # Log in to the provider.
-# The username and password come from the Docker secret smtp_relay_credentials, one line: [smtp.example.com]:587 username:password
+# The username and app password come from the Docker secret smtp_relay_credentials, one line: [smtp.gmail.com]:587 username:password
 smtp_sasl_auth_enable = yes
 smtp_sasl_password_maps = texthash:/run/secrets/smtp_relay_credentials
 smtp_sasl_security_options = noanonymous
