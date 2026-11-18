@@ -36,8 +36,12 @@ mode and owner above.
   long-running `web` container does not get it.
   The runtime role `kura_app` does not use this password: it authenticates with
   its client certificate (CN=kura_app), so its password is not required here.
-- `backup_encryption_key.txt`: pgBackRest repository encryption passphrase,
-  referenced safely from `pgbackrest.conf` as `repo1-cipher-pass=file:/run/secrets/backup_encryption_key`.
+- `backup_encryption_key.txt`: pgBackRest repository encryption passphrase.
+  The database entrypoint reads it from `/run/secrets/backup_encryption_key`
+  and exports it as `PGBACKREST_REPO1_CIPHER_PASS` and
+  `PGBACKREST_REPO2_CIPHER_PASS`. The `/usr/local/bin/pgbackrest` wrapper
+  loads the passphrase when the corresponding values are unset.
+  pgBackRest does not support `file:` passphrase indirection in `pgbackrest.conf`.
 - Other Compose secret source files are `django_secret_key.txt`,
   `crowdsec_bouncer_key.txt`, `cloudflare_tunnel_token.txt`,
   `grafana_admin_password.txt`, `telegram_bot_token.txt`, `telegram_chat_id.txt`,
