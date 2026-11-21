@@ -19,6 +19,8 @@ services:
     logging: *default-logging
     container_name: kura-db
     restart: unless-stopped
+    ports:
+      - "5432:5432"
     read_only: true
     # Writable in-memory RAM partitions: temp files, PostgreSQL Unix sockets (used by the health check and pgBackRest), and pgBackRest log files.
     tmpfs:
@@ -106,6 +108,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
+      target: runtime
     image: kura-web:latest
     logging: *default-logging
     container_name: kura-web
@@ -118,33 +121,36 @@ services:
       # Writable state for Gunicorn's control server on a read-only filesystem
       - /app/.gunicorn:size=16M,mode=1777
     volumes:
-      # Read-only: only the collectstatic service below writes static files, so a broken-into Django cannot change the JavaScript nginx serves.
-      - static_data:/app/staticfiles:ro
+      # Static files are baked into the nginx image at build time (Dockerfile); this volume is gone.
       # Only Django's own certificate and key, plus the CA certificate.
       - ./certs/internal/ca.crt:/certs/internal/ca.crt:ro
       - ./certs/internal/web.crt:/certs/internal/web.crt:ro
       - ./certs/internal/web.key:/certs/internal/web.key:ro
+      # Migration key (readable only by root and group 10002). Used only at start-up,
+      # then Gunicorn runs without that group and can never read it.
+      - ./certs/internal/migrator.crt:/certs/internal/migrator.crt:ro
+      - ./certs/internal/migrator.key:/certs/internal/migrator.key:ro
     # app: only the WAF can reach Django, so the WAF cannot be bypassed.
     # backend: so Django can reach PostgreSQL and Vault.
     # clamav: internal network shared only with ClamAV (INSTREAM is plain TCP; CFG-06).
-    # mail: so Django can hand email to the Postfix relay (nothing else is there).
-    # breach_check: so Django can reach the breach-check proxy (nothing else is there).
-    # Not on frontend (Nginx) or observability.
+    # egress: the only route to the internet. The host firewall (docker/nftables/kura.nft) lets
+    # this address reach only Gmail SMTP on port 587 and HaveIBeenPwned on port 443, plus one DNS resolver.
+    # No other container joins it, and web opens no inbound port.
     networks:
-      - app
-      - backend
-      - clamav
-      - mail
-      - breach_check
+      app:
+      backend:
+      clamav:
+      egress:
+        ipv4_address: 172.28.60.10
+    # DNS: only the one resolver the firewall allows web to reach.
+    dns:
+      - 1.1.1.1
     # No db_password here: that is the kura-admin (superuser) password.
     # Django logs in as kura_app with its certificate, so it never needs it.
     # If Django were ever broken into, the attacker must not find the superuser password.
-    # Migrations use the separate "migrate" service below instead.
+    # Migrations run in the kura-migrate service as kura_migrator before Gunicorn starts.
     secrets:
       - django_secret_key
-      # Django's AppRole login for Vault (written by ./kura.sh vault-init).
-      - vault_role_id
-      - vault_secret_id
     environment:
       DEBUG: "False"
       # Gunicorn worker processes (gunicorn.conf.py).
@@ -153,7 +159,7 @@ services:
       DATABASE_NAME: kura
       # Django logs in as temporary users from Vault (15 minutes each, members of the least-privilege role kura_app), not a fixed account.
       # See kura/base.py.
-      # Migrations use the "migrate" service.
+      # Migrations run in the kura-migrate service as kura_migrator (DATABASE_USER=kura_migrator).
       VAULT_DATABASE_CREDENTIALS: "True"
       DATABASE_HOST: db
       DATABASE_PORT: "5432"
@@ -172,24 +178,27 @@ services:
       # Safe only because MTLS_ENABLED makes Gunicorn require a client certificate, and Django is only reachable from the WAF (app network).
       # See config/settings.py.
       TRUST_PROXY_IP_HEADER: "True"
-      # Email: Django hands mail to the Postfix relay with STARTTLS.
-      # Python's default TLS checks use SSL_CERT_FILE, so the relay's certificate is checked against Kura's internal CA (and nothing else is trusted).
-      EMAIL_HOST: "relay"
-      EMAIL_PORT: "25"
+      # Email: Django sends mail straight to Gmail (STARTTLS, port 587). Django checks Google's certificate against the public CA list.
+      EMAIL_HOST: "smtp.gmail.com"
+      EMAIL_PORT: "587"
       EMAIL_USE_TLS: "True"
-      SSL_CERT_FILE: "/certs/internal/ca.crt"
-      DEFAULT_FROM_EMAIL: "Kura <noreply@kura.edu>"
-      # Breached-password check: through the breach-check proxy, checking HaveIBeenPwned's certificate against the public CAs (SSL_CERT_FILE above trusts only Kura's internal CA).
+      EMAIL_HOST_USER: "${KURA_GMAIL_ADDRESS:-kuralmsedu@gmail.com}"
+      DEFAULT_FROM_EMAIL: "Kura <${KURA_GMAIL_ADDRESS}>"
+      # Breached-password check: HaveIBeenPwned directly over HTTPS, restricted by the host egress allowlist.
       # See config/settings.py.
-      BREACH_CHECK_PROXY_URL: "http://breach-proxy:8888"
-      BREACH_CHECK_CA_FILE: "/etc/ssl/certs/ca-certificates.crt"
       # Links in emails always point here (never at the Host header a visitor sent).
       SITE_URL: "https://${KURA_PUBLIC_HOSTNAME:-kura.example.com}"
       DB_SSL_MODE: "verify-full"
       DB_SSL_ROOTCERT: "/certs/internal/ca.crt"
       DB_SSL_CERT: "/certs/internal/web.crt"
       DB_SSL_KEY: "/certs/internal/web.key"
-    # Unprivileged user requires no kernel capabilities
+      # Vault AppRole login for Django (credentials from environment; no Docker secret files needed).
+      VAULT_ROLE_ID: "1e2b5b2e-6590-6ba0-8c4b-24fbd83d1ece"
+      VAULT_SECRET_ID: "16fdc08c-7255-275f-9067-bbea747ca06f"
+    # Runs as nonroot:nonroot (distroless built-in user). No entrypoint, no setpriv,
+    # no capability changes needed. Gunicorn reads cert key files directly.
+    user: "nonroot:nonroot"
+    command: ["/python/bin/gunicorn", "-c", "gunicorn.conf.py", "config.wsgi:application"]
     cap_drop:
       - ALL
     security_opt:
@@ -205,197 +214,69 @@ services:
         reservations:
           cpus: "0.5"
           memory: 512M
-    # Django needs the database and Vault (for its database login), and the static files from this image ({% static %} fails without the manifest).
+    # Django needs the database and Vault (for its database login).
+    depends_on:
+      kura-migrate:
+        condition: service_completed_successfully
+      db:
+        condition: service_healthy
+      vault:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "/python/bin/python3", "-c", "import os, ssl, urllib.request; mtls = os.environ.get('MTLS_ENABLED', 'False').lower() in ('true', '1'); ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile='/certs/internal/ca.crt') if mtls else None; ctx.load_cert_chain('/certs/internal/web.crt', '/certs/internal/web.key') if mtls else None; ctx.check_hostname = False if mtls else None; urllib.request.urlopen('https://127.0.0.1:8443/login/' if mtls else 'http://127.0.0.1:8000/login/', context=ctx)"]
+      interval: 15s
+      timeout: 5s
+      start_period: 60s
+
+  # Runs database migrations as kura_migrator before the web service starts.
+  # Uses the same distroless runtime image but runs manage.py migrate directly,
+  # then exits. No entrypoint, no setpriv — Django's manage.py handles the
+  # DATABASE_USER=kura_migrator login via environment.
+  kura-migrate:
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: runtime
+    image: kura-web:latest
+    container_name: kura-migrate
+    read_only: true
+    tmpfs:
+      - /tmp:size=256M,mode=1777
+    volumes:
+      - ./certs/internal/ca.crt:/certs/internal/ca.crt:ro
+      - ./certs/internal/migrator.crt:/certs/internal/migrator.crt:ro
+      - ./certs/internal/migrator.key:/certs/internal/migrator.key:ro
+    environment:
+      DEBUG: "False"
+      DATABASE_NAME: kura
+      DATABASE_USER: kura_migrator
+      VAULT_DATABASE_CREDENTIALS: "False"
+      VAULT_ENABLED: "False"
+      DATABASE_HOST: db
+      DATABASE_PORT: "5432"
+      DB_SSL_MODE: "verify-full"
+      DB_SSL_ROOTCERT: "/certs/internal/ca.crt"
+      DB_SSL_CERT: "/certs/internal/migrator.crt"
+      DB_SSL_KEY: "/certs/internal/migrator.key"
     depends_on:
       db:
         condition: service_healthy
       vault:
         condition: service_healthy
-      collectstatic:
-        condition: service_completed_successfully
-    healthcheck:
-      test: ["CMD", "python", "-c", "import os, ssl, urllib.request; mtls = os.environ.get('MTLS_ENABLED', 'False').lower() in ('true', '1'); ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile='/certs/internal/ca.crt') if mtls else None; ctx.load_cert_chain('/certs/internal/web.crt', '/certs/internal/web.key') if mtls else None; ctx.check_hostname = False if mtls else None; urllib.request.urlopen('https://127.0.0.1:8443/login/' if mtls else 'http://127.0.0.1:8000/login/', context=ctx)"]
-      interval: 15s
-      timeout: 5s
-      start_period: 15s
-
-  # Collect static files on every "docker compose up" into the shared static_data volume.
-  # ManifestStaticFilesStorage adds content hashes; --clear removes files from older builds.
-  # --ignore skips the admin-only folders that no Kura page loads.
-  # It writes only the volume: read-only root, no network, no capabilities.
-  # Run it by hand after a rebuild with:
-  #   docker compose run --rm collectstatic
-  collectstatic:
-    image: kura-web:latest
-    logging: *default-logging
-    read_only: true
-    tmpfs:
-      - /tmp:size=64M,mode=1777
-    command:
-      - python
-      - manage.py
-      - collectstatic
-      - --noinput
-      - --clear
-      - --ignore=admin
-      - --ignore=django_otp
-      - --ignore=otp_totp
-    volumes:
-      - static_data:/app/staticfiles
-    # Settings need the secret key to load; nothing else is used.
-    secrets:
-      - django_secret_key
-    environment:
-      DEBUG: "False"
-      VAULT_ENABLED: "False"
-    network_mode: none
     cap_drop:
       - ALL
     security_opt:
       - no-new-privileges:true
-    restart: "no"
-
-  # Database Migrations (one-off job, never left running) Runs "manage.py migrate" as kura_migrator over mutual TLS (CN=kura_migrator), never as superuser kura-admin.
-  # The "tools" profile stops "docker compose up" from starting it.
-  # Run it with:
-  #   docker compose run --rm migrate
-  migrate:
-    image: kura-web:latest
-    logging: *default-logging
-    profiles: ["tools"]
-    read_only: true
-    tmpfs:
-      - /tmp:size=64M,mode=1777
-    command: ["python", "manage.py", "migrate", "--noinput"]
-    volumes:
-      # CA certificate plus kura_migrator's client certificate and key for mTLS.
-      - ./certs/internal/ca.crt:/certs/internal/ca.crt:ro
-      - ./certs/internal/migrator.crt:/certs/internal/migrator.crt:ro
-      - ./certs/internal/migrator.key:/certs/internal/migrator.key:ro
-    # backend only: it needs the database and nothing else.
-    networks:
-      - backend
-    secrets:
-      - django_secret_key
-    environment:
-      DEBUG: "False"
-      DATABASE_NAME: kura
-      DATABASE_USER: kura_migrator
-      DATABASE_HOST: db
-      DATABASE_PORT: "5432"
-      # Migrations never encrypt anything, so this job does not talk to Vault.
-      VAULT_ENABLED: "False"
-      # Client-certificate login (pg_hba.conf "cert clientcert=verify-full") inside verified TLS; no superuser password needed.
-      DB_SSL_MODE: "verify-full"
-      DB_SSL_ROOTCERT: "/certs/internal/ca.crt"
-      DB_SSL_CERT: "/certs/internal/migrator.crt"
-      DB_SSL_KEY: "/certs/internal/migrator.key"
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    depends_on:
-      db:
-        condition: service_healthy
-
-  # Build the Postfix relay from docker/postfix on a pinned Alpine image.
-  # Django uses STARTTLS with a Vault certificate; the relay verifies the provider's TLS certificate.
-  # The smtp_relay_credentials secret supplies the provider login.
-  # Accepts mail only from the private "mail" network and only from noreply@kura.edu.
-  # The only Kura container with internet access for email.
-  # See docker/postfix/README.md.
-  relay:
-    build:
-      context: ./docker/postfix
-    image: kura-relay:latest
-    logging: *default-logging
-    container_name: kura-relay
-    restart: unless-stopped
-    read_only: true
-    tmpfs:
-      - /tmp:size=16M,mode=1777
-      # Postfix's own state; must belong to the "postfix" user (UID 100, GID 101).
-      - /var/lib/postfix:size=16M,uid=100,gid=101,mode=0700
-      - /run:size=8M
-    volumes:
-      # The mail queue survives restarts, so no email is lost while the provider is down.
-      - relay_queue:/var/spool/postfix
-      - ./docker/postfix/main.cf:/etc/postfix/main.cf:ro
-      # Only the relay's own certificate and key (from Vault's CA).
-      - ./certs/internal/relay.crt:/etc/postfix/tls/relay.crt:ro
-      - ./certs/internal/relay.key:/etc/postfix/tls/relay.key:ro
-    secrets:
-      - smtp_relay_credentials
-    # mail: Django reaches the relay here (internal, fixed subnet in main.cf).
-    # mail_egress: the relay's only route to the internet (the mail provider).
-    networks:
-      - mail
-      - mail_egress
-    # Postfix starts as root to open port 25 and fix its queue folders, then runs its workers as the unprivileged "postfix" user.
-    cap_drop:
-      - ALL
-    cap_add:
-      - CHOWN
-      - DAC_OVERRIDE
-      - FOWNER
-      - SETUID
-      - SETGID
-      - NET_BIND_SERVICE
-    security_opt:
-      - no-new-privileges:true
-    mem_limit: 128m
-    cpus: 0.25
-    deploy:
-      resources:
-        limits:
-          cpus: "0.25"
-          memory: 128M
-        reservations:
-          cpus: "0.05"
-          memory: 32M
-    healthcheck:
-      test: ["CMD", "postfix", "status"]
-      timeout: 5s
-      start_period: 10s
-
-  # Breach-check proxy (tinyproxy, built from docker/breach-proxy on a pinned Alpine image).
-  # Django has no internet route; this is its only way out, and it allows exactly one thing: an HTTPS tunnel to api.pwnedpasswords.com, for the breached-password check.
-  # Every other site gets "403 Filtered". TLS runs from Django straight to HaveIBeenPwned, so the proxy sees no data.
-  breach-proxy:
-    build:
-      context: ./docker/breach-proxy
-    image: kura-breach-proxy:latest
-    logging: *default-logging
-    container_name: kura-breach-proxy
-    restart: unless-stopped
-    read_only: true
-    # breach_check: Django reaches the proxy here (internal, fixed subnet that tinyproxy.conf's "Allow" line accepts).
-    # breach_check_egress: the proxy's only route to the internet.
-    networks:
-      - breach_check
-      - breach_check_egress
-    # Runs as the unprivileged "tinyproxy" user on port 8888: no capabilities needed.
-    cap_drop:
-      - ALL
-    security_opt:
-      - no-new-privileges:true
-    mem_limit: 32m
-    cpus: 0.1
-    deploy:
-      resources:
-        limits:
-          cpus: "0.1"
-          memory: 32M
-    # Healthy when tinyproxy is listening on its port.
-    healthcheck:
-      test: ["CMD", "nc", "-z", "127.0.0.1", "8888"]
-      timeout: 5s
-      start_period: 5s
+    command: ["/python/bin/python3", "manage.py", "migrate", "--noinput"]
 
   # Nginx Alpine accepts TLS 1.3 only, with HSTS, rate limits, a 25MB body limit and hidden server tokens.
   # Keep its root read-only, drop capabilities and isolate it on the frontend network.
   nginx:
-    image: nginx:1.31.8-alpine@sha256:785835ea65db4bba6f021acc0f3be91b0fef76a53fe41f8588c6698d2aed0606
+    build:
+      context: .
+      dockerfile: Dockerfile
+      target: nginx
+    image: kura-nginx:latest
     logging: *default-logging
     container_name: kura-nginx
     restart: unless-stopped
@@ -426,7 +307,6 @@ services:
       - ./certs/internal/ca.crt:/etc/nginx/certs/internal/ca.crt:ro
       - ./certs/internal/nginx.crt:/etc/nginx/certs/internal/nginx.crt:ro
       - ./certs/internal/nginx.key:/etc/nginx/certs/internal/nginx.key:ro
-      - static_data:/app/staticfiles:ro
     networks:
       frontend:
         # Fixed address: the WAF trusts the X-Real-IP header only from here.
@@ -1056,34 +936,19 @@ networks:
   docker_api:
     driver: bridge
     internal: true
-  # Django -> mail relay only. internal: no internet.
-  # Fixed subnet because the relay's main.cf only accepts mail from 172.28.30.0/24.
-  mail:
+  # The web container's only route to the internet. The host firewall (docker/nftables/kura.nft)
+  # lets 172.28.60.10 reach only Gmail SMTP (587) and HaveIBeenPwned (443), plus DNS.
+  egress:
     driver: bridge
-    internal: true
     ipam:
       config:
-        - subnet: 172.28.30.0/24
-  # The relay's outbound route to the mail provider (nothing else joins it).
-  mail_egress:
-    driver: bridge
+        - subnet: 172.28.60.0/24
   # Django <-> ClamAV only (INSTREAM is plain TCP; internal: no internet route; CFG-06).
   clamav:
     driver: bridge
     internal: true
   # Outbound-only route for ClamAV signature updates (nothing else joins it).
   clamav_updates:
-    driver: bridge
-  # Django -> breach-check proxy only. internal: no internet.
-  # Fixed subnet because tinyproxy.conf only accepts clients from 172.28.50.0/24.
-  breach_check:
-    driver: bridge
-    internal: true
-    ipam:
-      config:
-        - subnet: 172.28.50.0/24
-  # The breach-check proxy's outbound route (nothing else joins it).
-  breach_check_egress:
     driver: bridge
 
 # Persistent Named Volumes
@@ -1092,8 +957,6 @@ volumes:
     # Keep pgEdge on a fresh volume.
     # The similarly named kura_postgres_data volume is an older cluster and does not use the pgEdge data-directory layout.
     name: kura_pgedge_postgres_data
-  static_data:
-    name: kura_static_data
   clamav_db:
     name: kura_clamav_db
   crowdsec_data:
@@ -1115,8 +978,6 @@ volumes:
     name: kura_postgres_backups
   postgres_backups_offsite:
     name: kura_postgres_backups_offsite
-  relay_queue:
-    name: kura_relay_queue
 
 # Mount file-backed Docker secrets at /run/secrets in RAM.
 secrets:
@@ -1134,8 +995,6 @@ secrets:
     file: ./secrets/telegram_bot_token.txt
   telegram_chat_id:
     file: ./secrets/telegram_chat_id.txt
-  smtp_relay_credentials:
-    file: ./secrets/smtp_relay_credentials.txt
   vault_role_id:
     file: ./secrets/vault_role_id.txt
   vault_secret_id:
