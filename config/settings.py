@@ -17,6 +17,8 @@ from django.core.exceptions import ImproperlyConfigured
 from dotenv import load_dotenv
 from fido2.webauthn import ResidentKeyRequirement, UserVerificationRequirement
 
+from kura.vault_secrets import get_gmail_app_password
+
 # Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
@@ -213,13 +215,8 @@ AUTH_PASSWORD_VALIDATORS = [
 ]
 
 # The web password workflows in kura/views.py check HaveIBeenPwned over HTTPS.
-# In Docker the web container has no internet route, so it goes through the breach-proxy container, which allows only api.pwnedpasswords.com.
+# It calls api.pwnedpasswords.com directly; the host firewall allows only that address (docker/nftables/kura.nft).
 # Empty (local development) means "connect directly".
-BREACH_CHECK_PROXY_URL = os.environ.get("BREACH_CHECK_PROXY_URL", "")
-# Public certificate authorities used to check HaveIBeenPwned's certificate.
-# Needed in Docker because SSL_CERT_FILE there points at Kura's internal CA only.
-# Empty means "use Python's normal certificate store".
-BREACH_CHECK_CA_FILE = os.environ.get("BREACH_CHECK_CA_FILE", "")
 
 
 # Internationalization
@@ -243,7 +240,7 @@ STATIC_ROOT = BASE_DIR / "staticfiles"
 
 # collectstatic writes each file a second time with a hash of its content in the name (kura.css becomes kura.<hash>.css) and {% static %} links to that copy.
 # Changing a file changes its name, so nginx can let browsers cache static files for 30 days and a new stylesheet still reaches everyone right away.
-# {% static %} raises an error if collectstatic has not been run, so the collectstatic service in docker-compose.yml runs before web starts.
+# {% static %} raises an error if collectstatic has not been run, so collectstatic runs when the web image is built (Dockerfile).
 STORAGES = {
     "default": {"BACKEND": "django.core.files.storage.FileSystemStorage"},
     "staticfiles": {"BACKEND": "django.contrib.staticfiles.storage.ManifestStaticFilesStorage"},
@@ -254,18 +251,21 @@ MEDIA_URL = "/media/"
 # Kura assumes kura.edu is a real domain with working email.
 # Views only put emails in the outbox (OutgoingEmail); the send_queued_emails command sends them.
 # Development prints emails to the console.
-# In Docker, Django hands email to the Postfix relay ("relay" service) on a private network; only the relay can reach the internet and log in to the mail provider (docker/postfix/README.md).
+# In production Django sends mail straight to Gmail over STARTTLS and checks Google's certificate against the public CA list.
+# The Gmail address is not secret (EMAIL_HOST_USER). The app password is read
+# from Vault KV (secret gmail-app-password) at runtime, not from a Docker secret file.
 if DEBUG:
     EMAIL_BACKEND = "django.core.mail.backends.console.EmailBackend"
 else:
     EMAIL_BACKEND = "django.core.mail.backends.smtp.EmailBackend"
-# Configure the relay address and STARTTLS; Docker uses Kura's internal CA via SSL_CERT_FILE.
-EMAIL_HOST = os.environ.get("EMAIL_HOST", "localhost")
+EMAIL_HOST = os.environ.get("EMAIL_HOST", "smtp.gmail.com")
 EMAIL_PORT = int(os.environ.get("EMAIL_PORT", 587))
-EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "False").lower() in ("true", "1")
+EMAIL_USE_TLS = os.environ.get("EMAIL_USE_TLS", "True").lower() in ("true", "1")
+EMAIL_HOST_USER = os.environ.get("EMAIL_HOST_USER", "")
 EMAIL_TIMEOUT = 10
-# Every Kura email comes from this one address (the relay refuses any other).
-DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "Kura <noreply@kura.edu>")
+# Every Kura email comes from this one address. Gmail rewrites any other sender to the authenticated account,
+# so compose sets DEFAULT_FROM_EMAIL to the Gmail address.
+DEFAULT_FROM_EMAIL = os.environ.get("DEFAULT_FROM_EMAIL", "Kura <kuralmsedu@gmail.com>")
 # Links in emails are built from this fixed address, never from the Host header a visitor sent (which an attacker could choose: "password reset poisoning").
 SITE_URL = os.environ.get("SITE_URL", "http://localhost:8000").rstrip("/")
 
@@ -423,6 +423,11 @@ VAULT_URL = os.environ.get("VAULT_URL", "https://vault:8200")
 VAULT_CA_CERT = os.environ.get("VAULT_CA_CERT", "/certs/internal/ca.crt")
 VAULT_ROLE_ID = read_secret("vault_role_id")
 VAULT_SECRET_ID = read_secret("vault_secret_id")
+# Gmail app password comes from Vault KV (no Docker secret file). Falls back to
+# empty string if Vault is unavailable; SMTP auth fails at send time and mail
+# stays queued, which is acceptable. VAULT_ENABLED=False (collectstatic build)
+# skips Vault entirely so settings still load.
+EMAIL_HOST_PASSWORD = get_gmail_app_password()
 
 # Disabling Vault stores seeds directly for development; DEBUG=True disables it by default.
 if "VAULT_ENABLED" in os.environ:
@@ -430,8 +435,6 @@ if "VAULT_ENABLED" in os.environ:
 else:
     VAULT_ENABLED = not DEBUG
 VAULT_TRANSIT_KEY = os.environ.get("VAULT_TRANSIT_KEY", "kura-mfa")
-# A separate Transit key encrypts exam answer keys (ExamAnswerKey.answer_key_json), so the MFA key and the answer-key key can be managed and audited separately.
-VAULT_ANSWER_KEYS_KEY = os.environ.get("VAULT_ANSWER_KEYS_KEY", "kura-answer-keys")
 # RSA-4096 Transit key used to wrap per-file AES-256-GCM data keys (FileContent.wrapped_key).
 VAULT_FILES_KEY = os.environ.get("VAULT_FILES_KEY", "kura-files")
 ALLOW_LEGACY_UNENCRYPTED_FILE_READS = os.environ.get("ALLOW_LEGACY_UNENCRYPTED_FILE_READS", "False").lower() in (

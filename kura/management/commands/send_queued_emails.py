@@ -7,10 +7,10 @@ Run it every minute (host crontab):
 For each run:
   1. Emails that waited too long are given up on: password-reset emails after
      30 minutes (their link has expired), everything else after 3 days.
-  2. Each pending email is sent through the Postfix relay. A failed email is
+  2. Each pending email is sent through Gmail SMTP. A failed email is
      retried with growing gaps: after N failures it waits until 2**N minutes
      after it was queued (2, 4, 8 ... minutes), up to 12 attempts in total.
-     So a relay outage of a few hours does not lose the queue.
+     So a Gmail outage of a few hours does not lose the queue.
   3. The body is wiped as soon as an email is sent or given up on, because it
      may contain a password-reset link.
 Running two copies at once is safe: each email is locked while it is sent
@@ -35,7 +35,7 @@ MAX_ATTEMPTS = 12
 
 
 class Command(BaseCommand):
-    help = "Sends pending emails from the outbox through the mail relay."
+    help = "Sends pending emails from the outbox through Gmail SMTP."
 
     def handle(self, *args, **options):
         now = timezone.now()

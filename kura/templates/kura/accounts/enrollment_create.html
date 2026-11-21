@@ -3,95 +3,32 @@
 {% block title %}Enroll student - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li><a href="{% url 'kura:enrollment_list' %}" class="k-muted hover:text-primary">Enrollments</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">Enroll student</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'kura:enrollment_list' %}">Enrollments</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Enroll student</li>
 </ol>
 {% endblock %}
 
 {% block form_errors %}{% endblock %}
 
 {% block content %}
-<div class="max-w-2xl mx-auto space-y-6">
-    <header class="space-y-1">
-        <p class="k-eyebrow">Records</p>
-        <h1 class="text-2xl font-bold">Enroll a student</h1>
-        <p class="text-sm k-muted">Search for a published course and an active student to register them.</p>
+<div class="k-max-2xl mx-auto vstack gap-4">
+    <header>
+        <p class="text-uppercase small fw-semibold text-body-secondary mb-1">Records</p>
+        <h1 class="fs-3 fw-bold">Enroll a student</h1>
+        <p class="small text-body-secondary mb-0">Choose a published course and an active student to register them.</p>
     </header>
 
-    <div class="k-card">
-        <form method="post" class="space-y-5">
-            {% csrf_token %}
-            {% include "kura/_form_errors.html" %}
-
-            <div class="space-y-2" data-pick-container data-pick-select="id_course">
-                <label for="course-search" class="label py-0">
-                    <span class="label-text font-medium text-sm text-base-content">Search published courses</span>
-                </label>
-                <div class="relative">
-                    <input id="course-search" name="q" type="search" class="input input-bordered w-full"
-                           placeholder="Type code or course title..."
-                           hx-get="{% url 'kura:enrollment_search' %}?kind=course"
-                           hx-trigger="input changed delay:400ms"
-                           hx-target="#course-results"
-                           hx-indicator="#course-loading"
-                           autocomplete="off">
-                    <span id="course-loading" class="htmx-indicator absolute right-3 top-3 loading loading-spinner loading-xs text-primary"></span>
-                </div>
-                <div id="course-results" role="region" aria-live="polite"></div>
-                <p class="text-xs" data-picked-display hidden>
-                    Selected: <span class="badge badge-primary badge-outline badge-sm font-medium" data-picked-label></span>
-                </p>
-                <div class="pt-1">
-                    {{ form.course }}
-                </div>
-                {% if form.course.errors %}
-                <div class="text-error text-xs font-medium space-y-0.5 pt-0.5" role="alert">
-                    {% for error in form.course.errors %}
-                    <p>{{ error }}</p>
-                    {% endfor %}
-                </div>
-                {% endif %}
-            </div>
-
-            <div class="space-y-2" data-pick-container data-pick-select="id_student">
-                <label for="student-search" class="label py-0">
-                    <span class="label-text font-medium text-sm text-base-content">Search active students</span>
-                </label>
-                <div class="relative">
-                    <input id="student-search" name="q" type="search" class="input input-bordered w-full"
-                           placeholder="Type student name or email..."
-                           hx-get="{% url 'kura:enrollment_search' %}?kind=student"
-                           hx-trigger="input changed delay:400ms"
-                           hx-target="#student-results"
-                           hx-indicator="#student-loading"
-                           autocomplete="off">
-                    <span id="student-loading" class="htmx-indicator absolute right-3 top-3 loading loading-spinner loading-xs text-primary"></span>
-                </div>
-                <div id="student-results" role="region" aria-live="polite"></div>
-                <p class="text-xs" data-picked-display hidden>
-                    Selected: <span class="badge badge-primary badge-outline badge-sm font-medium" data-picked-label></span>
-                </p>
-                <div class="pt-1">
-                    {{ form.student }}
-                </div>
-                {% if form.student.errors %}
-                <div class="text-error text-xs font-medium space-y-0.5 pt-0.5" role="alert">
-                    {% for error in form.student.errors %}
-                    <p>{{ error }}</p>
-                    {% endfor %}
-                </div>
-                {% endif %}
-            </div>
-
-            <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
-                <a href="{% url 'kura:enrollment_list' %}" class="btn btn-ghost">Cancel</a>
-                <button type="submit" class="btn btn-primary">Enroll student</button>
-            </div>
-        </form>
-    </div>
+    <form method="post" class="card card-body vstack gap-3">
+        {% csrf_token %}
+        {% include "kura/_form_errors.html" %}
+        {% include "kura/_field.html" with field=form.course %}
+        {% include "kura/_field.html" with field=form.student %}
+        <div class="border-top pt-3 d-flex flex-column-reverse flex-sm-row justify-content-sm-end gap-2">
+            <a href="{% url 'kura:enrollment_list' %}" class="btn btn-outline-secondary">Cancel</a>
+            <button type="submit" class="btn btn-primary">Enroll student</button>
+        </div>
+    </form>
 </div>
 {% endblock %}

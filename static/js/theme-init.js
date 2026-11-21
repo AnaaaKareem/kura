@@ -1,18 +1,15 @@
-// Apply the saved theme before the first paint to prevent a light flash.
+// Apply the saved colour theme before the first paint so there is no flash of the wrong theme.
+// Bootstrap reads the data-bs-theme attribute, which is either "light" or "dark".
 (function () {
-  var themeMap = {
-    light: "kura",
-    dark: "kura-dark",
-    system: "kura-system",
-    kura: "kura",
-    "kura-dark": "kura-dark",
-    "kura-system": "kura-system",
-  };
+  var saved = "system";
   try {
-    var saved = localStorage.getItem("kura-theme") || "system";
-    var resolved = themeMap[saved] || "kura-system";
-    document.documentElement.setAttribute("data-theme", resolved);
+    saved = localStorage.getItem("kura-theme") || "system";
   } catch (e) {
-    document.documentElement.setAttribute("data-theme", "kura-system");
+    saved = "system";
   }
+  var resolved = saved;
+  if (saved !== "light" && saved !== "dark") {
+    resolved = window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+  }
+  document.documentElement.setAttribute("data-bs-theme", resolved);
 })();

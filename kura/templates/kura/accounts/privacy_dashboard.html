@@ -3,76 +3,75 @@
 {% block title %}Privacy and data - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">Privacy &amp; data</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Privacy &amp; data</li>
 </ol>
 {% endblock %}
 
 {% block content %}
-<div class="max-w-3xl mx-auto space-y-6">
-    <header class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3">
-        <div class="space-y-1">
-            <p class="k-eyebrow">Your data rights</p>
-            <h1 class="text-2xl font-bold">Privacy &amp; personal data</h1>
-            <p class="text-sm k-muted">Export your records, restrict optional processing, or request erasure with academic exceptions.</p>
+<div class="k-max-3xl mx-auto vstack gap-4">
+    <header class="d-flex flex-column flex-sm-row align-items-sm-center justify-content-sm-between gap-2">
+        <div class="vstack gap-1">
+            <p class="text-uppercase small fw-semibold text-body-secondary">Your data rights</p>
+            <h1 class="fs-3 fw-bold">Privacy &amp; personal data</h1>
+            <p class="small text-body-secondary">Export your records, restrict optional processing, or request erasure with academic exceptions.</p>
         </div>
-        <a href="{% url 'kura:privacy_notice' %}" class="btn btn-outline btn-sm">Read privacy notice</a>
+        <a href="{% url 'kura:privacy_notice' %}" class="btn btn-outline-secondary btn-sm">Read privacy notice</a>
     </header>
 
-    <section class="k-card space-y-4">
-        <h2 class="text-base font-semibold border-b border-base-300 pb-2">Download my data</h2>
-        <p class="text-sm k-muted">
+    <section class="card card-body mb-3 vstack gap-3">
+        <h2 class="fw-semibold border-bottom pb-2">Download my data</h2>
+        <p class="small text-body-secondary">
             Download a JSON archive of your account profile, roles, enrollments, attendance, released grades, submitted attempts, and active session history.
         </p>
-        <div class="grid grid-cols-2 sm:grid-cols-5 gap-3 text-center text-xs">
-            <div class="p-2 rounded-box bg-base-200"><p class="k-muted">Sessions</p><p class="text-base font-bold k-num">{{ counts.sessions }}</p></div>
-            <div class="p-2 rounded-box bg-base-200"><p class="k-muted">Enrollments</p><p class="text-base font-bold k-num">{{ counts.enrollments }}</p></div>
-            <div class="p-2 rounded-box bg-base-200"><p class="k-muted">Attendance</p><p class="text-base font-bold k-num">{{ counts.attendance }}</p></div>
-            <div class="p-2 rounded-box bg-base-200"><p class="k-muted">Attempts</p><p class="text-base font-bold k-num">{{ counts.attempts }}</p></div>
-            <div class="p-2 rounded-box bg-base-200"><p class="k-muted">Released grades</p><p class="text-base font-bold k-num">{{ counts.released_grades }}</p></div>
+        <div class="k-grid gap-2 text-center small">
+            <div class="p-2 rounded bg-body-tertiary"><p class="text-body-secondary">Sessions</p><p class="fw-bold text-nowrap">{{ counts.sessions }}</p></div>
+            <div class="p-2 rounded bg-body-tertiary"><p class="text-body-secondary">Enrollments</p><p class="fw-bold text-nowrap">{{ counts.enrollments }}</p></div>
+            <div class="p-2 rounded bg-body-tertiary"><p class="text-body-secondary">Attendance</p><p class="fw-bold text-nowrap">{{ counts.attendance }}</p></div>
+            <div class="p-2 rounded bg-body-tertiary"><p class="text-body-secondary">Attempts</p><p class="fw-bold text-nowrap">{{ counts.attempts }}</p></div>
+            <div class="p-2 rounded bg-body-tertiary"><p class="text-body-secondary">Released grades</p><p class="fw-bold text-nowrap">{{ counts.released_grades }}</p></div>
         </div>
         <div>
             <a href="{% url 'kura:privacy_export' %}" class="btn btn-primary btn-sm">Download my data (JSON)</a>
         </div>
     </section>
 
-    <section class="k-card space-y-3">
-        <div class="flex items-center justify-between gap-2 border-b border-base-300 pb-2">
-            <h2 class="text-base font-semibold">Restrict optional processing (GDPR Art. 18)</h2>
-            <span class="badge {% if user.is_processing_restricted %}badge-warning{% else %}badge-ghost{% endif %}">
+    <section class="card card-body mb-3 vstack gap-2">
+        <div class="d-flex align-items-center justify-content-between gap-2 border-bottom pb-2">
+            <h2 class="fw-semibold">Restrict optional processing (GDPR Art. 18)</h2>
+            <span class="badge {% if user.is_processing_restricted %}text-bg-warning{% else %}text-bg-secondary{% endif %}">
                 {% if user.is_processing_restricted %}Restricted{% else %}Normal{% endif %}
             </span>
         </div>
-        <p class="text-sm k-muted">
+        <p class="small text-body-secondary">
             When enabled, Kura stops sending optional notifications (such as 24-hour due-date reminders) while retaining core academic integrity and security controls.
         </p>
         <form method="post" action="{% url 'kura:privacy_restrict' %}">
             {% csrf_token %}
-            <button type="submit" class="btn btn-outline btn-sm">
+            <button type="submit" class="btn btn-outline-secondary btn-sm">
                 {% if user.is_processing_restricted %}Lift processing restriction{% else %}Restrict optional processing{% endif %}
             </button>
         </form>
     </section>
 
-    <section class="k-card space-y-4">
-        <div class="border-b border-base-300 pb-2">
-            <h2 class="text-base font-semibold">Request erasure (GDPR Art. 17)</h2>
+    <section class="card card-body mb-3 vstack gap-3">
+        <div class="border-bottom pb-2">
+            <h2 class="fw-semibold">Request erasure (GDPR Art. 17)</h2>
             {% if user.erasure_requested_at %}
-            <p class="text-xs k-muted mt-1">Last requested on {{ user.erasure_requested_at|date:"j M Y, H:i" }}.</p>
+            <p class="small text-body-secondary mt-1">Last requested on {{ user.erasure_requested_at|date:"j M Y, H:i" }}.</p>
             {% endif %}
         </div>
-        <p class="text-sm k-muted">
+        <p class="small text-body-secondary">
             Clears non-exempt auxiliary metadata (other active/historical session IPs and user-agents, pending password reset tokens, and optional office location) and restricts optional processing. Academic records (enrollments, attempts, released/finalized grades, grade history, transcripts) and security logs remain retained under statutory and educational-record exceptions.
         </p>
-        <form method="post" action="{% url 'kura:privacy_erasure' %}" class="space-y-3">
+        <form method="post" action="{% url 'kura:privacy_erasure' %}" class="vstack gap-2">
             {% csrf_token %}
-            <label class="flex items-start gap-2 text-sm cursor-pointer">
+            <label class="d-flex align-items-start gap-2 small">
                 {{ erasure_form.confirm }}
                 <span>{{ erasure_form.confirm.label }}</span>
             </label>
-            <button type="submit" class="btn btn-outline btn-error btn-sm">Submit erasure request</button>
+            <button type="submit" class="btn btn-outline-danger btn-sm">Submit erasure request</button>
         </form>
     </section>
 </div>

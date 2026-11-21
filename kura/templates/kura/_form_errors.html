@@ -1,9 +1,9 @@
 {# Show form-level validation errors and a focusable summary of field errors inside the form card. #}
 {% if form.errors or form.non_field_errors %}
-<div role="alert" class="alert alert-error text-sm" data-form-error-summary tabindex="-1">
-    <div class="space-y-1">
+<div role="alert" class="alert alert-danger small" data-form-error-summary tabindex="-1">
+    <div class="vstack gap-1">
         {% if form.non_field_errors %}
-        <ul class="list-disc pl-5 space-y-0.5">
+        <ul class="ps-4 vstack gap-1">
             {% for error in form.non_field_errors %}
             <li>{{ error }}</li>
             {% endfor %}
@@ -11,11 +11,11 @@
         {% endif %}
         {% for field in form %}
         {% if forloop.first and not form.non_field_errors %}
-        <p class="font-semibold">Fix the highlighted fields below:</p>
+        <p class="fw-semibold">Fix the highlighted fields below:</p>
         {% endif %}
         {% if field.errors %}
-        <p class="text-xs">
-            <a href="#{{ field.id_for_label }}" class="underline font-medium">{{ field.label|default:field.name }}</a>: {{ field.errors.0 }}
+        <p class="small">
+            <a href="#{{ field.id_for_label }}" class="text-decoration-underline fw-medium">{{ field.label|default:field.name }}</a>: {{ field.errors.0 }}
         </p>
         {% endif %}
         {% endfor %}

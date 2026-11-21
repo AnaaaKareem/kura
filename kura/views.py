@@ -2,13 +2,10 @@ import csv
 import base64
 import hashlib
 import hmac
-import html
 import io
-import ipaddress
 import json
 import logging
 import os
-import random
 import secrets
 import socket
 import ssl
@@ -21,7 +18,6 @@ from base64 import b32encode
 from datetime import datetime, timedelta, timezone as datetime_timezone
 from decimal import Decimal
 import magic
-import nh3
 import qrcode
 import qrcode.image.svg
 from cryptography.exceptions import InvalidTag
@@ -31,10 +27,9 @@ from django.contrib import messages
 from django.contrib.auth import authenticate, login, logout, update_session_auth_hash
 from django.contrib.auth.decorators import login_not_required, login_required
 from django.core.exceptions import PermissionDenied, ValidationError
-from django.core.cache import caches
 from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
-from django.db.models import Avg, Count, Prefetch, Q, Value
+from django.db.models import Avg, Count, Q, Value
 from django.db.models.functions import Concat
 from django.http import Http404, HttpResponse, HttpResponseNotAllowed, JsonResponse
 from django.shortcuts import get_object_or_404, redirect, render
@@ -58,25 +53,17 @@ from .forms import (
     AdminUserFilterForm,
     AdminSessionFilterForm,
     AdminSessionRevokeForm,
-    AssessmentAttemptStartForm,
-    AssessmentAnswerForm,
-    AssessmentAutosaveForm,
     AssessmentCreateForm,
     AssessmentFileUploadForm,
-    AssessmentQuestionAddForm,
-    AssessmentQuestionFormSet,
     AttendanceHistoryFilterForm,
     AttendanceSessionStartForm,
     CourseCreateForm,
-    CourseGradeSchemeForm,
+    CourseFileForm,
     CourseGradesFilterForm,
     CourseStaffAssignForm,
     DeleteConfirmationForm,
     EnrollmentForm,
     EnrollmentFilterForm,
-    EnrollmentSearchForm,
-    GradeAppealForm,
-    GradeAppealReviewForm,
     GradeChangeRequestForm,
     GradeChangeRequestReviewForm,
     GradeEntryForm,
@@ -84,17 +71,12 @@ from .forms import (
     LoginForm,
     MFAVerifyForm,
     ManualAttendanceForm,
-    MarkdownPreviewForm,
-    ModuleForm,
-    ModuleSectionForm,
     PasswordChangeForm,
     PasswordResetConfirmForm,
     PasswordResetRequestForm,
     PrivacyErasureForm,
     ScheduleFilterForm,
     ScheduleForm,
-    ScannedPaperStaffUploadForm,
-    SectionItemForm,
     SecurityPolicyForm,
     StaffCreateForm,
     DepartmentForm,
@@ -106,11 +88,6 @@ from .forms import (
     StudentFilterForm,
     TAAssignForm,
     UserRoleChangeForm,
-    validate_answer_key_json,
-    validate_assessment_questions_json,
-    validate_assessment_settings_json,
-    validate_attempt_answers_json,
-    validate_summary_score_json,
 )
 from .logging_utils import get_client_ip, hash_login_identifier, log_invalid_form, log_security_event
 from .models import (
@@ -118,10 +95,8 @@ from .models import (
     MAX_UPLOAD_BYTES,
     OutgoingEmail,
     QuarantinedFile,
-    AppealStatus,
     Assessment,
     AssessmentAttempt,
-    AssessmentDeliveryMode,
     AssessmentFile,
     AttemptFile,
     AttemptStatus,
@@ -130,7 +105,7 @@ from .models import (
     AttendanceStatus,
     ChangeRequestStatus,
     Course,
-    CourseGradeScheme,
+    CourseFile,
     CourseResult,
     CourseStaff,
     CourseStaffRole,
@@ -141,23 +116,15 @@ from .models import (
     Enrollment,
     EnrollmentStatus,
     FileContent,
-    ExamAnswerKey,
     Grade,
-    GradeAppeal,
     GradeChangeRequest,
-    GradeComponentType,
     GradeHistory,
     GradeStatus,
-    Module,
     ModuleAttendanceSession,
-    ModuleSection,
-    ModuleTargetLevel,
     PasswordHistory,
     PasswordResetToken,
     Role,
     Schedule,
-    SectionItem,
-    SectionItemFile,
     SecurityPolicy,
     StaffProfile,
     StoredFile,
@@ -180,10 +147,8 @@ from .permissions import (
     is_department_head,
     is_enrolled,
     is_lead_instructor,
-    service_rls_context,
-    student_can_see_module,
+    student_can_see_course,
 )
-from .templatetags.markdown import render_markdown
 from .base import get_vault_client
 
 
@@ -203,17 +168,13 @@ def check_breached_password(password):
         headers={"User-Agent": "Kura-LMS-BreachedPasswordValidator"},
     )
     try:
-        # Use public certificate authorities and the restricted proxy when configured.
-        if settings.BREACH_CHECK_CA_FILE:
-            tls_context = ssl.create_default_context(cafile=settings.BREACH_CHECK_CA_FILE)
-        else:
-            tls_context = ssl.create_default_context()
-        handlers = [urllib.request.HTTPSHandler(context=tls_context)]
-        if settings.BREACH_CHECK_PROXY_URL:
-            handlers.append(urllib.request.ProxyHandler({"https": settings.BREACH_CHECK_PROXY_URL}))
-        else:
-            handlers.append(urllib.request.ProxyHandler({}))
-        opener = urllib.request.build_opener(*handlers)
+        # Check HaveIBeenPwned's certificate against Python's normal public CA list.
+        # An empty ProxyHandler stops proxy variables in the environment from redirecting the request.
+        tls_context = ssl.create_default_context()
+        opener = urllib.request.build_opener(
+            urllib.request.HTTPSHandler(context=tls_context),
+            urllib.request.ProxyHandler({}),
+        )
         with opener.open(request, timeout=2.5) as response:
             for line in response.read().decode("utf-8").splitlines():
                 if line.split(":", 1)[0].strip() == password_hash[5:]:
@@ -264,43 +225,6 @@ def decrypt_mfa_secret(ciphertext):
         log_security_event(None, "vault.error", {"operation": "decrypt_mfa_secret"}, level=logging.ERROR)
         raise ValidationError("MFA secret decryption failed. The security vault is unreachable.") from error
 
-
-def encrypt_answer_key(answer_key_dict):
-    """Encrypt an exam answer key with Vault before saving it."""
-    if not getattr(settings, "VAULT_ENABLED", False):
-        return answer_key_dict
-    try:
-        client = get_vault_client()
-        plaintext = json.dumps(answer_key_dict, sort_keys=True).encode("utf-8")
-        response = client.secrets.transit.encrypt_data(
-            name=settings.VAULT_ANSWER_KEYS_KEY,
-            mount_point=settings.VAULT_TRANSIT_MOUNT,
-            plaintext=base64.b64encode(plaintext).decode("utf-8"),
-        )
-        return {"ciphertext": response["data"]["ciphertext"]}
-    except Exception as error:
-        log_security_event(None, "vault.error", {"operation": "encrypt_answer_key"}, level=logging.ERROR)
-        raise ValidationError("Answer key encryption failed. The security vault is unreachable.") from error
-
-
-def decrypt_answer_key(stored_json):
-    """Decrypt an exam answer key in memory and reject unencrypted keys."""
-    if not getattr(settings, "VAULT_ENABLED", False):
-        return stored_json
-    ciphertext = stored_json.get("ciphertext", "")
-    if not isinstance(ciphertext, str) or not ciphertext.startswith("vault:"):
-        log_security_event(None, "vault.error", {"operation": "decrypt_answer_key_not_encrypted"}, level=logging.ERROR)
-        raise ValidationError("Answer key is not encrypted.")
-    try:
-        client = get_vault_client()
-        response = client.secrets.transit.decrypt_data(
-            name=settings.VAULT_ANSWER_KEYS_KEY, mount_point=settings.VAULT_TRANSIT_MOUNT, ciphertext=ciphertext,
-        )
-        plaintext = base64.b64decode(response["data"]["plaintext"].encode("utf-8")).decode("utf-8")
-        return json.loads(plaintext)
-    except Exception as error:
-        log_security_event(None, "vault.error", {"operation": "decrypt_answer_key"}, level=logging.ERROR)
-        raise ValidationError("Answer key decryption failed. The security vault is unreachable.") from error
 
 def encrypt_file_content(content_bytes, stored_file_id):
     """Encrypt a file with AES-GCM and wrap its data key with Vault."""
@@ -837,17 +761,14 @@ def queue_email(event_key, to_email, subject, body):
 def queue_assessment_notification(assessment, event_name, subject, opening_line):
     """Queue assessment notices for active students enrolled in its course.
 
-    Notify students when an assessment is created, its module becomes visible,
-    or its dates change. Require a visible section and module, and omit scores
-    and answers. The event_key "<event_name>:<assessment>:<student>" limits each
-    student to one email per event.
+    Notify students when an assessment is created or its dates change.
+    Require a published course, and omit scores. The event_key
+    "<event_name>:<assessment>:<student>" limits each student to one email per event.
     """
-    section = assessment.section
-    module = section.module
-    course = module.course
+    course = assessment.course
 
-    # Hidden work stays hidden: no email until students can see it.
-    if not (section.is_visible and module.is_visible):
+    # Hidden work stays hidden: no email until the course is published.
+    if not course.is_published:
         return
 
     # The same text for every student.
@@ -949,21 +870,6 @@ def hash_attendance_passcode(code):
         (code or "").strip().upper(),
         algorithm="sha256",
     ).hexdigest()
-
-
-def hash_proctor_code(code):
-    """Return a version-prefixed 64-character keyed HMAC-SHA256 digest for a proctor code."""
-    digest = salted_hmac(
-        "kura.assessment.proctor_code",
-        (code or "").strip(),
-        algorithm="sha256",
-    ).hexdigest()
-    return "v2:" + digest[:61]
-
-
-def is_legacy_proctor_code_hash(stored_hash):
-    """Return True if a stored proctor code hash uses the legacy unsalted SHA-256 format."""
-    return bool(stored_hash) and not str(stored_hash).startswith("v2:")
 
 
 PRE_MFA_WINDOW_SECONDS = 300
@@ -1451,16 +1357,16 @@ def build_dashboard_attention(user, role_names, head_departments):
     if "Department head" in role_names and head_departments.exists():
         pending_changes = (
             GradeChangeRequest.objects.filter(
-                grade__assessment__section__module__course__department__in=head_departments,
+                grade__assessment__course__department__in=head_departments,
                 status=ChangeRequestStatus.PENDING,
             )
             .exclude(requested_by=user)
             .exclude(grade__student=user)
-            .select_related("grade__assessment__section__module__course")
+            .select_related("grade__assessment__course")
             .order_by("created_at")[:3]
         )
         for req in pending_changes:
-            course = req.grade.assessment.section.module.course
+            course = req.grade.assessment.course
             items.append(
                 {
                     "text": f"Grade change request waiting in {course.code} ({req.grade.assessment.title})",
@@ -1481,15 +1387,15 @@ def build_dashboard_attention(user, role_names, head_departments):
         )
         needs_marking = (
             AssessmentAttempt.objects.filter(
-                assessment__section__module__course_id__in=assigned_course_ids,
+                assessment__course_id__in=assigned_course_ids,
                 status=AttemptStatus.REQUIRES_MANUAL_GRADING,
             )
             .exclude(student=user)
-            .select_related("assessment__section__module__course")
+            .select_related("assessment__course")
             .order_by("submitted_at")[: 3 - len(items)]
         )
         for attempt in needs_marking:
-            course = attempt.assessment.section.module.course
+            course = attempt.assessment.course
             items.append(
                 {
                     "text": f"Attempt needs marking in {course.code} ({attempt.assessment.title})",
@@ -1505,40 +1411,36 @@ def build_dashboard_attention(user, role_names, head_departments):
         )
         open_sessions = (
             ModuleAttendanceSession.objects.filter(
-                module__course_id__in=enrolled_course_ids,
-                module__course__is_published=True,
-                module__is_visible=True,
+                course_id__in=enrolled_course_ids,
+                course__is_published=True,
                 is_active=True,
                 expires_at__gt=now,
             )
             .exclude(records__student=user)
-            .select_related("module__course")
+            .select_related("course")
             .order_by("expires_at")[: 3 - len(items)]
         )
         for att_session in open_sessions:
-            if student_can_see_module(user, att_session.module.course, att_session.module):
-                items.append(
-                    {
-                        "text": f"Attendance open in {att_session.module.course.code}: {att_session.title}",
-                        "url": reverse("kura:student_checkin", args=[att_session.id]),
-                        "action_label": "Check in",
-                    }
-                )
+            items.append(
+                {
+                    "text": f"Attendance open in {att_session.course.code}: {att_session.title}",
+                    "url": reverse("kura:student_checkin", args=[att_session.id]),
+                    "action_label": "Check in",
+                }
+            )
         closing_soon = (
             Assessment.objects.filter(
-                section__module__course_id__in=enrolled_course_ids,
-                section__module__course__is_published=True,
-                section__module__is_visible=True,
-                section__is_visible=True,
+                course_id__in=enrolled_course_ids,
+                course__is_published=True,
                 opens_at__lte=now,
                 due_date__gte=now,
                 due_date__lte=now + timezone.timedelta(hours=48),
             )
-            .select_related("section__module__course")
+            .select_related("course")
             .order_by("due_date")[: 3 - len(items)]
         )
         for assessment in closing_soon:
-            course = assessment.section.module.course
+            course = assessment.course
             due_local = timezone.localtime(assessment.due_date).strftime("%-d %b, %H:%M")
             items.append(
                 {
@@ -1722,7 +1624,7 @@ def dashboard_home_data(user, role_names, head_departments):
         course_ids = department_courses.values_list("id", flat=True)
         department_enrollments = Enrollment.objects.filter(course_id__in=course_ids)
         pending_requests = GradeChangeRequest.objects.filter(
-            grade__assessment__section__module__course_id__in=course_ids,
+            grade__assessment__course_id__in=course_ids,
             status=ChangeRequestStatus.PENDING,
         )
         result_average = CourseResult.objects.filter(
@@ -1765,7 +1667,7 @@ def dashboard_home_data(user, role_names, head_departments):
         for request_record in pending_requests.select_related("grade__assessment").order_by("-created_at")[:5]:
             add_dashboard_activity(activity, "Grade-change request submitted", request_record.created_at)
         for approved_request in GradeChangeRequest.objects.filter(
-            grade__assessment__section__module__course_id__in=course_ids,
+            grade__assessment__course_id__in=course_ids,
             reviewed_at__isnull=False,
         ).order_by("-reviewed_at")[:5]:
             add_dashboard_activity(activity, "Grade-change request reviewed", approved_request.reviewed_at)
@@ -1780,15 +1682,15 @@ def dashboard_home_data(user, role_names, head_departments):
         assignments = CourseStaff.objects.filter(user=user, staff_role__in=staff_roles)
         assigned_course_ids = assignments.values_list("course_id", flat=True)
         upcoming_assessments = Assessment.objects.filter(
-            section__module__course_id__in=assigned_course_ids,
+            course_id__in=assigned_course_ids,
             due_date__gte=now,
         )
         draft_grades = Grade.objects.filter(
-            assessment__section__module__course_id__in=assigned_course_ids,
+            assessment__course_id__in=assigned_course_ids,
             status=GradeStatus.DRAFT,
         )
         attendance_sessions = ModuleAttendanceSession.objects.filter(
-            module__course_id__in=assigned_course_ids,
+            course_id__in=assigned_course_ids,
             is_active=True,
             expires_at__gt=now,
         )
@@ -1836,7 +1738,7 @@ def dashboard_home_data(user, role_names, head_departments):
         active_enrollments = Enrollment.objects.filter(student=user, status=EnrollmentStatus.ACTIVE)
         enrolled_course_ids = active_enrollments.values_list("course_id", flat=True)
         upcoming_assessments = Assessment.objects.filter(
-            section__module__course_id__in=enrolled_course_ids,
+            course_id__in=enrolled_course_ids,
             due_date__gte=now,
         )
         student_attendance = AttendanceRecord.objects.filter(student=user)
@@ -2500,7 +2402,7 @@ def privacy_export_view(request):
     """Export the signed-in user's own personal and released academic data as JSON.
     Who can use it: Any authenticated user (own data only).
     Security: Strictly scoped to request.user; excludes password hashes, MFA secrets,
-    session token hashes, exam answer keys, and unreleased draft/finalized grades.
+    session token hashes, and unreleased draft/finalized grades.
     """
     if request.method != "GET":
         return HttpResponseNotAllowed(["GET"])
@@ -2551,13 +2453,13 @@ def privacy_export_view(request):
         ],
         "attendance_records": [
             {
-                "course_code": rec.session.module.course.code,
+                "course_code": rec.session.course.code,
                 "session_title": rec.session.title,
                 "status": rec.status,
                 "method": rec.method,
                 "verified_at": rec.verified_at.isoformat(),
             }
-            for rec in AttendanceRecord.objects.filter(student=user).select_related("session__module__course")
+            for rec in AttendanceRecord.objects.filter(student=user).select_related("session__course")
         ],
         "sessions": [
             {
@@ -2600,16 +2502,6 @@ def privacy_export_view(request):
                 "submission_hash": att.submission_hash,
             }
             for att in AssessmentAttempt.objects.filter(student=user).select_related("assessment")
-        ]
-        payload["grade_appeals"] = [
-            {
-                "assessment": ap.grade.assessment.title,
-                "status": ap.status,
-                "reason": ap.reason,
-                "response": ap.response,
-                "created_at": ap.created_at.isoformat(),
-            }
-            for ap in GradeAppeal.objects.filter(grade__student=user).select_related("grade__assessment")
         ]
 
     log_security_event(request, "privacy.data_exported", {})
@@ -3538,68 +3430,6 @@ def student_profile_view(request, student_id):
 
 
 @login_required
-def enrollment_search_view(request):
-    """Find eligible students or published courses for enrollment.
-    Who can use it: Registrars.
-    Security: Checks the role, validates input, limits results, and rate-limits user and IP.
-    """
-    # Only registrars may search, and the search must not change data.
-    if not has_role(request.user, "Registrar"):
-        raise PermissionDenied
-    if request.method != "GET":
-        return HttpResponseNotAllowed(["GET"])
-    form = EnrollmentSearchForm(request.GET)
-    if not form.is_valid():
-        return HttpResponse("Unable to search.", status=400)
-    # Separate shared limits stop both one account and one IP from excessive searches.
-    cache = caches["search_limits"]
-    window = int(timezone.now().timestamp() // 60)
-    for value in (f"user:{request.user.id}", f"ip:{get_client_ip(request)}"):
-        key = "enrollment-search:" + hashlib.sha256(value.encode()).hexdigest() + f":{window}"
-        # A short-lived lock makes the database cache's non-atomic increment safe.
-        lock = key + ":lock"
-        if not cache.add(lock, 1, timeout=120):
-            # Log only the kind of limit; do not include the search term.
-            log_security_event(request, "ratelimit.hit", {"bucket": "enrollment_search"}, logging.WARNING)
-            response = HttpResponse("Too many searches. Please try again later.", status=429)
-            response["Retry-After"] = "60"
-            return response
-        try:
-            count = cache.get(key, 0) + 1
-            cache.set(key, count, timeout=120)
-            # Do not allow a search if the shared counter could not be saved.
-            if cache.get(key) != count:
-                return HttpResponse("Search is temporarily unavailable.", status=503)
-        finally:
-            cache.delete(lock)
-        if count > 60:
-            # Keep the query out of logs because it may contain personal information.
-            log_security_event(request, "ratelimit.hit", {"bucket": "enrollment_search"}, logging.WARNING)
-            response = HttpResponse("Too many searches. Please try again later.", status=429)
-            response["Retry-After"] = "60"
-            return response
-    query = form.cleaned_data["q"]
-    kind = form.cleaned_data["kind"]
-    results = []
-    if query and kind == "course":
-        results = (
-            Course.objects.filter(is_published=True)
-            .filter(Q(code__icontains=query) | Q(title__icontains=query))
-            .order_by("code")[:10]
-        )
-    elif query:
-        matches = Q(first_name__icontains=query) | Q(last_name__icontains=query) | Q(email__icontains=query)
-        try:
-            matches |= Q(id=uuid.UUID(query))
-        except ValueError:
-            pass
-        results = (
-            User.objects.filter(student_profile__isnull=False, is_active=True).filter(matches).order_by("email")[:10]
-        )
-    return render(request, "kura/accounts/_enrollment_search.html", {"results": results, "kind": kind})
-
-
-@login_required
 def enrollment_list_view(request):
     """List course enrollments across the institution.
     Who can use it: Academic registrar.
@@ -3913,9 +3743,9 @@ def course_create_view(request):
 
 @login_required
 def course_detail_view(request, course_id):
-    """Show course curriculum modules, sections, and learning materials.
-    Who can use it: Enrolled students (published only, matching target level), assigned staff, department heads.
-    Security: checks course access and filters students to visible modules and released items at their level.
+    """Show a course's materials, assessments, schedule, people and grade summary.
+    Who can use it: Enrolled students (published courses only), assigned staff, department heads.
+    Security: checks course access; students see only visible materials.
     """
     # Registrars cannot open instructional content, even with another role.
     if has_role(request.user, "Registrar"):
@@ -3923,7 +3753,7 @@ def course_detail_view(request, course_id):
 
     course = get_object_or_404(Course.objects.select_related("department"), id=course_id)
 
-    # Administrators see course metadata, schedules, and staff, never curriculum content or grades.
+    # Administrators see course metadata, schedules, and staff, never course content or grades.
     if is_admin_course_manager(request.user):
         active_tab = request.GET.get("tab", "people")
         if active_tab in ("content", "grades"):
@@ -3960,44 +3790,11 @@ def course_detail_view(request, course_id):
     if active_tab not in ("content", "schedule", "people", "grades"):
         active_tab = "content"
 
-    # Load modules and target levels, then fetch only released items for students.
-    modules_qs = Module.objects.filter(course=course).prefetch_related("target_levels")
-
-    # If user is a student, enforce visibility and academic level restrictions.
+    # Staff see every material file and assessment so they can manage them; students see only visible files.
+    course_files = CourseFile.objects.filter(course=course).select_related("file").order_by("title")
     if not (is_head or is_staff):
-        modules_qs = modules_qs.filter(is_visible=True)
-        released_item_times = Q(released_at__isnull=True) | Q(released_at__lte=timezone.now())
-        student_items = (
-            SectionItem.objects.filter(
-                is_visible=True,
-            )
-            .filter(released_item_times)
-            .prefetch_related("item_files__file")
-        )
-        student_sections = ModuleSection.objects.filter(is_visible=True).prefetch_related(
-            Prefetch("items", queryset=student_items),
-            "assessments",
-        )
-        modules_qs = modules_qs.prefetch_related(Prefetch("sections", queryset=student_sections))
-
-        # Find the student's current academic level for the existing module restrictions.
-        student_profile = StudentProfile.objects.filter(user=request.user).first()
-        if student_profile:
-            student_level = student_profile.current_level
-        else:
-            student_level = None
-
-        # Filter out modules restricted to levels that do not match the student's level.
-        allowed_modules = []
-        for mod in modules_qs:
-            target_levels = list(mod.target_levels.values_list("target_level", flat=True))
-            if not target_levels or (student_level and student_level in target_levels):
-                allowed_modules.append(mod)
-        modules_list = allowed_modules
-    else:
-        # Staff must see hidden and scheduled items so they can manage the release state.
-        modules_qs = modules_qs.prefetch_related("sections__items__item_files__file", "sections__assessments")
-        modules_list = list(modules_qs)
+        course_files = course_files.filter(is_visible=True)
+    assessments = Assessment.objects.filter(course=course).order_by("due_date")
 
     # Load course staff assignments.
     staff_assignments = CourseStaff.objects.filter(course=course).select_related("user")
@@ -4015,42 +3812,31 @@ def course_detail_view(request, course_id):
     open_attendance_sessions = []
     now = timezone.now()
     if is_head or is_staff:
-        course_grades_qs = Grade.objects.filter(assessment__section__module__course=course).exclude(student=request.user)
+        course_grades_qs = Grade.objects.filter(assessment__course=course).exclude(student=request.user)
         grade_summary = {
             "drafts": course_grades_qs.filter(status=GradeStatus.DRAFT).count(),
             "finalized": course_grades_qs.filter(status=GradeStatus.FINALIZED).count(),
             "released": course_grades_qs.filter(status=GradeStatus.RELEASED).count(),
             "needs_marking": AssessmentAttempt.objects.filter(
-                assessment__section__module__course=course,
+                assessment__course=course,
                 status=AttemptStatus.REQUIRES_MANUAL_GRADING,
             )
             .exclude(student=request.user)
             .count(),
         }
-        attendance_sessions = list(
-            ModuleAttendanceSession.objects.filter(module__course=course)
-            .select_related("module")
-            .order_by("-created_at")[:10]
-        )
+        attendance_sessions = list(ModuleAttendanceSession.objects.filter(course=course).order_by("-created_at")[:10])
     elif enrolled:
-        candidate_sessions = (
-            ModuleAttendanceSession.objects.filter(
-                module__course=course,
-                module__is_visible=True,
-                is_active=True,
-                expires_at__gt=now,
-            )
+        open_attendance_sessions = list(
+            ModuleAttendanceSession.objects.filter(course=course, is_active=True, expires_at__gt=now)
             .exclude(records__student=request.user)
-            .select_related("module")
             .order_by("expires_at")
         )
-        for att_session in candidate_sessions:
-            if student_can_see_module(request.user, course, att_session.module):
-                open_attendance_sessions.append(att_session)
 
     context = {
         "course": course,
-        "modules": modules_list,
+        "course_files": course_files,
+        "file_form": CourseFileForm(),
+        "assessments": assessments,
         "staff_assignments": staff_assignments,
         "course_schedules": course_schedules,
         "enrolled_count": enrolled_count,
@@ -4202,548 +3988,10 @@ def course_ta_assign_view(request, course_id):
 
 
 @login_required
-def module_create_view(request, course_id):
-    """Create a curriculum module with optional academic target levels.
-    Who can use it: Course instructors and Department Heads.
-    Security: Restricted to authorized course staff and department head.
-    """
-    # Admins and Registrars cannot access instructional content or grades.
-    if not can_access_learning_records(request.user):
-        raise PermissionDenied
-
-    # Admins manage course metadata only, not instructional content.
-    if is_admin_course_manager(request.user):
-        raise PermissionDenied
-    course = get_object_or_404(Course, id=course_id)
-
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
-        raise PermissionDenied
-
-    form = ModuleForm(request.POST or None)
-
-    if request.method == "POST" and form.is_valid():
-        title = form.cleaned_data["title"]
-        description = form.cleaned_data["description"]
-        is_visible = form.cleaned_data["is_visible"]
-        target_levels = form.cleaned_data.get("target_levels", [])
-
-        with transaction.atomic():
-            module = Module.objects.create(
-                course=course,
-                title=title,
-                description=description,
-                is_visible=is_visible,
-                created_by=request.user,
-            )
-
-            # Save target academic levels for access control.
-            for level in target_levels:
-                ModuleTargetLevel.objects.create(module=module, target_level=level)
-
-        log_security_event(request, "course.module.created", {"module_id": module.id, "course_id": course.id})
-        messages.success(request, f"Module '{title}' created successfully.")
-        return redirect("kura:course_detail", course_id=course.id)
-
-    return render(
-        request,
-        "kura/courses/module_create.html",
-        {"form": form, "course": course},
-        status=400 if request.method == "POST" else 200,
-    )
-
-
-@login_required
-def module_delete_view(request, module_id):
-    """Delete a module only when it has no student attempts or attendance records.
-    Who can use it: Assigned staff and the department head, except Admins.
-    Security: POST, confirmation, course permission, row locks, and deletion logging.
-    """
-    # Admins and Registrars cannot access instructional content or grades.
-    if not can_access_learning_records(request.user):
-        raise PermissionDenied
-
-    # Check the exact course and require an explicit POST confirmation.
-    if is_admin_course_manager(request.user):
-        raise PermissionDenied
-    if request.method != "POST":
-        return HttpResponseNotAllowed(["POST"])
-    module = get_object_or_404(Module.objects.select_related("course__department"), id=module_id)
-    course = module.course
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
-        raise PermissionDenied
-    if not DeleteConfirmationForm(request.POST).is_valid():
-        messages.error(request, "Confirm module deletion first.")
-        return redirect("kura:course_detail", course_id=course.id)
-    # Lock child rows before checking so new attempts or attendance cannot race deletion.
-    with transaction.atomic():
-        module = Module.objects.select_for_update().get(id=module.id)
-        sections = list(ModuleSection.objects.filter(module=module).order_by("id").select_for_update())
-        assessments = list(Assessment.objects.filter(section__in=sections).order_by("id").select_for_update())
-        sessions = list(ModuleAttendanceSession.objects.filter(module=module).order_by("id").select_for_update())
-        if (
-            AssessmentAttempt.objects.filter(assessment__in=assessments).exists()
-            or AttendanceRecord.objects.filter(session__in=sessions).exists()
-        ):
-            messages.error(request, "This module contains student records and cannot be deleted. Hide it instead.")
-            return redirect("kura:course_detail", course_id=course.id)
-        module.delete()
-        log_security_event(request, "course.module.deleted", {"module_id": module_id})
-    messages.success(request, "Module deleted.")
-    return redirect("kura:course_detail", course_id=course.id)
-
-
-@login_required
-def module_edit_view(request, module_id):
-    """Edit a module and its target levels.
-    Who can use it: Assigned staff and the department head, except Admins.
-    Security: Checks the exact course and validates changes before saving atomically.
-    """
-    # Admins and Registrars cannot access instructional content or grades.
-    if not can_access_learning_records(request.user):
-        raise PermissionDenied
-
-    # Reject unrelated users before processing the form.
-    if is_admin_course_manager(request.user):
-        raise PermissionDenied
-    module = get_object_or_404(Module.objects.select_related("course__department"), id=module_id)
-    course = module.course
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
-        raise PermissionDenied
-    initial = {
-        "title": module.title,
-        "description": module.description,
-        "is_visible": module.is_visible,
-        "target_levels": list(module.target_levels.values_list("target_level", flat=True)),
-    }
-    form = ModuleForm(request.POST or None, initial=initial)
-    if request.method == "POST" and form.is_valid():
-        # Keep module details and target-level rows consistent.
-        with transaction.atomic():
-            module.title = form.cleaned_data["title"]
-            module.description = form.cleaned_data["description"]
-            module.is_visible = form.cleaned_data["is_visible"]
-            module.save(update_fields=["title", "description", "is_visible"])
-            ModuleTargetLevel.objects.filter(module=module).delete()
-            for level in form.cleaned_data["target_levels"]:
-                ModuleTargetLevel.objects.create(module=module, target_level=level)
-
-        # If the module is visible now, tell students about its assessments.
-        # Students already told (event_key) are not emailed again.
-        if module.is_visible:
-            for assessment in Assessment.objects.filter(section__module=module).select_related("section__module__course"):
-                queue_assessment_notification(
-                    assessment, "assessment-new", f"New {assessment.get_component_type_display()}: {assessment.title}",
-                    "A new assessment has been published in one of your courses.",
-                )
-        log_security_event(request, "course.module.edited", {"module_id": module.id, "course_id": course.id})
-        messages.success(request, "Module updated.")
-        return redirect("kura:course_detail", course_id=course.id)
-    return render(
-        request,
-        "kura/courses/module_create.html",
-        {"form": form, "course": course, "editing": True},
-        status=400 if request.method == "POST" else 200,
-    )
-
-
-@login_required
-def section_edit_view(request, section_id):
-    """Edits a section's title and type.
-    Who can use it: Assigned staff and the department head, except Admins.
-    Security: Checks the exact course and accepts changes only from a validated POST.
-    """
-    # Admins and Registrars cannot access instructional content or grades.
-    if not can_access_learning_records(request.user):
-        raise PermissionDenied
-
-    # Check the section's actual course rather than trusting the URL alone.
-    if is_admin_course_manager(request.user):
-        raise PermissionDenied
-    section = get_object_or_404(ModuleSection.objects.select_related("module__course__department"), id=section_id)
-    course = section.module.course
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
-        raise PermissionDenied
-    form = ModuleSectionForm(
-        request.POST or None, initial={"title": section.title, "section_type": section.section_type}
-    )
-    if request.method == "POST" and form.is_valid():
-        section.title = form.cleaned_data["title"]
-        section.section_type = form.cleaned_data["section_type"]
-        section.save(update_fields=["title", "section_type"])
-        log_security_event(
-            request,
-            "course.section.edited",
-            {"section_id": section.id, "module_id": section.module_id},
-        )
-        messages.success(request, "Section updated.")
-        return redirect("kura:course_detail", course_id=course.id)
-    return render(
-        request,
-        "kura/courses/section_create.html",
-        {"form": form, "module": section.module, "editing": True},
-        status=400 if request.method == "POST" else 200,
-    )
-
-
-@login_required
-def section_create_view(request, module_id):
-    """Create a section grouping within a curriculum module.
-    Who can use it: Course instructors and Department Heads.
-    Security: Checks course staff assignment on the module's course.
-    """
-    # Admins and Registrars cannot access instructional content or grades.
-    if not can_access_learning_records(request.user):
-        raise PermissionDenied
-
-    # Admins must not access instructional content through another assignment.
-    if is_admin_course_manager(request.user):
-        raise PermissionDenied
-    module = get_object_or_404(Module.objects.select_related("course"), id=module_id)
-    course = module.course
-
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
-        raise PermissionDenied
-
-    form = ModuleSectionForm(request.POST or None)
-
-    if request.method == "POST" and form.is_valid():
-        section = ModuleSection.objects.create(
-            module=module,
-            title=form.cleaned_data["title"],
-            section_type=form.cleaned_data["section_type"],
-        )
-        log_security_event(
-            request,
-            "course.section.created",
-            {"section_id": section.id, "module_id": module.id},
-        )
-        messages.success(request, f"Section '{form.cleaned_data['title']}' created.")
-        return redirect("kura:course_detail", course_id=course.id)
-
-    return render(
-        request,
-        "kura/courses/section_create.html",
-        {"form": form, "module": module},
-        status=400 if request.method == "POST" else 200,
-    )
-
-
-@login_required
-def section_delete_view(request, section_id):
-    """Delete an empty section or hide one containing assessment attempts.
-    Who can use it: Assigned course staff and the department head, except Admins.
-    Security: POST, confirmation, course permission, row locks, and an audit log.
-    """
-    # Admins and Registrars cannot access instructional content or grades.
-    if not can_access_learning_records(request.user):
-        raise PermissionDenied
-
-    # Verify the request method and the user's permission for this section's course.
-    if is_admin_course_manager(request.user):
-        raise PermissionDenied
-    if request.method != "POST":
-        return HttpResponseNotAllowed(["POST"])
-    section = get_object_or_404(ModuleSection.objects.select_related("module__course__department"), id=section_id)
-    course = section.module.course
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
-        raise PermissionDenied
-    if not DeleteConfirmationForm(request.POST).is_valid():
-        messages.error(request, "Confirm section deletion first.")
-        return redirect("kura:course_detail", course_id=course.id)
-
-    # Lock the section and its assessments so an attempt cannot race with deletion.
-    with transaction.atomic():
-        section = ModuleSection.objects.select_for_update().get(id=section.id)
-        assessments = list(Assessment.objects.filter(section=section).order_by("id").select_for_update())
-        if AssessmentAttempt.objects.filter(assessment__in=assessments).exists():
-            section.is_visible = False
-            section.save(update_fields=["is_visible"])
-            messages.warning(request, "Section hidden because it contains student attempts.")
-            log_security_event(request, "course.section.hidden", {"section_id": section.id})
-        else:
-            section_id = section.id
-            section.delete()
-            log_security_event(request, "course.section.deleted", {"section_id": section_id})
-            messages.success(request, "Section deleted.")
-    return redirect("kura:course_detail", course_id=course.id)
-
-
-@login_required
-def section_visibility_toggle_view(request, section_id):
-    """Hide or release a section without deleting its contents.
-    Who can use it: Assigned course staff and the department head, except Admins.
-    Security: POST only, checks the exact course and preserves assessment attempts.
-    """
-    # Admins and Registrars cannot access instructional content or grades.
-    if not can_access_learning_records(request.user):
-        raise PermissionDenied
-
-    # Reject administrators and non-POST requests before changing anything.
-    if is_admin_course_manager(request.user):
-        raise PermissionDenied
-    if request.method != "POST":
-        return HttpResponseNotAllowed(["POST"])
-    section = get_object_or_404(ModuleSection.objects.select_related("module__course__department"), id=section_id)
-    course = section.module.course
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
-        raise PermissionDenied
-    # Keep the section and its attempts while changing only its visibility.
-    section.is_visible = not section.is_visible
-    section.save(update_fields=["is_visible"])
-    log_security_event(request, "course.section.visibility_changed", {"section_id": section.id})
-    messages.success(request, "Section visibility updated.")
-    return redirect("kura:course_detail", course_id=course.id)
-
-
-@login_required
-def item_edit_view(request, item_id):
-    """Edits a learning item while preserving existing attachments.
-    Who can use it: Assigned staff and the department head, except Admins.
-    Security: Checks the course, cleans Markdown, and validates optional uploads atomically.
-    """
-    # Admins and Registrars cannot access instructional content or grades.
-    if not can_access_learning_records(request.user):
-        raise PermissionDenied
-
-    # Load the item only for an authorized course author.
-    if is_admin_course_manager(request.user):
-        raise PermissionDenied
-    item = get_object_or_404(SectionItem.objects.select_related("section__module__course__department"), id=item_id)
-    section = item.section
-    course = section.module.course
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
-        raise PermissionDenied
-    initial = {"title": item.title, "content_body": html.unescape(item.content_body), "released_at": item.released_at}
-    form = SectionItemForm(
-        request.POST or None, request.FILES or None, initial=initial, existing_file=item.item_files.exists()
-    )
-    if request.method == "POST" and form.is_valid():
-        try:
-            # Roll back the item update if the new attachment is rejected.
-            with transaction.atomic():
-                item.title = form.cleaned_data["title"]
-                item.content_body = nh3.clean(html.escape(form.cleaned_data["content_body"]), tags=set(), attributes={})
-                item.released_at = form.cleaned_data["released_at"]
-                item.save(update_fields=["title", "content_body", "released_at"])
-                if form.cleaned_data["file"]:
-                    stored = validate_and_save_upload(
-                        form.cleaned_data["file"],
-                        request.user,
-                        request=request,
-                        log_context={"context": "section_item", "item_id": item.id},
-                    )
-                    SectionItemFile.objects.create(section_item=item, file=stored)
-        except ValidationError as error:
-            if hasattr(error, "message"):
-                error_message = str(error.message)
-            else:
-                error_message = str(error)
-            messages.error(request, error_message)
-        else:
-            log_security_event(
-                request,
-                "course.item.edited",
-                {"item_id": item.id, "section_id": section.id, "is_visible": item.is_visible},
-            )
-            messages.success(request, "Item updated.")
-            return redirect("kura:course_detail", course_id=course.id)
-    return render(
-        request,
-        "kura/courses/item_create.html",
-        {"form": form, "section": section, "editing": True},
-        status=400 if request.method == "POST" else 200,
-    )
-
-
-@login_required
-def item_delete_view(request, item_id):
-    """Delete a learning item after confirmation.
-    Who can use it: Assigned staff and the department head, except Admins.
-    Security: POST only, checks course permission and confirmation, and logs deletion.
-    """
-    # Admins and Registrars cannot access instructional content or grades.
-    if not can_access_learning_records(request.user):
-        raise PermissionDenied
-
-    # Require the exact course permission and an explicit confirmation.
-    if is_admin_course_manager(request.user):
-        raise PermissionDenied
-    if request.method != "POST":
-        return HttpResponseNotAllowed(["POST"])
-    item = get_object_or_404(SectionItem.objects.select_related("section__module__course__department"), id=item_id)
-    course = item.section.module.course
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
-        raise PermissionDenied
-    if not DeleteConfirmationForm(request.POST).is_valid():
-        messages.error(request, "Confirm item deletion first.")
-        return redirect("kura:course_detail", course_id=course.id)
-    # Delete only the requested item and record who made the change.
-    item.delete()
-    log_security_event(request, "course.item.deleted", {"item_id": item_id})
-    messages.success(request, "Item deleted.")
-    return redirect("kura:course_detail", course_id=course.id)
-
-
-@login_required
-def item_create_view(request, section_id):
-    """Create a section item, sanitize its rich text with nh3 and attach an optional file.
-    Who can use it: Assigned Instructors and Teaching Assistants, and the course's Department Head.
-    Security: checks course access, sanitizes rich text against XSS, and validates uploaded files.
-    """
-    # Admins and Registrars cannot access instructional content or grades.
-    if not can_access_learning_records(request.user):
-        raise PermissionDenied
-
-    # Admins manage course metadata, not teaching materials.
-    if is_admin_course_manager(request.user):
-        raise PermissionDenied
-    section = get_object_or_404(ModuleSection.objects.select_related("module__course"), id=section_id)
-    course = section.module.course
-
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
-        raise PermissionDenied
-
-    form = SectionItemForm(request.POST or None, request.FILES or None)
-
-    if request.method == "POST" and form.is_valid():
-        # Read the validated item details and optional release time from the form.
-        title = form.cleaned_data["title"]
-        raw_body = form.cleaned_data["content_body"]
-        released_at = form.cleaned_data["released_at"]
-        uploaded_file = form.cleaned_data.get("file")
-
-        # Encode HTML as text and clean the Markdown source before storing it.
-        clean_body = nh3.clean(html.escape(raw_body), tags=set(), attributes={})
-
-        # Roll back the item if its attachment cannot be saved.
-        upload_error = None
-        with transaction.atomic():
-            item = SectionItem.objects.create(
-                section=section,
-                title=title,
-                content_body=clean_body,
-                released_at=released_at,
-            )
-
-            # If a file was attached, validate and save it.
-            if uploaded_file:
-                try:
-                    stored_file = validate_and_save_upload(
-                        uploaded_file,
-                        request.user,
-                        request=request,
-                        log_context={"context": "section_item", "item_id": item.id},
-                    )
-                    SectionItemFile.objects.create(section_item=item, file=stored_file)
-                except ValidationError as e:
-                    if hasattr(e, "message"):
-                        upload_error = str(e.message)
-                    else:
-                        upload_error = str(e)
-                    transaction.set_rollback(True)
-
-        # Show the error after leaving the rolled-back transaction.
-        if upload_error:
-            messages.error(request, upload_error)
-            return render(request, "kura/courses/item_create.html", {"form": form, "section": section}, status=400)
-
-        log_security_event(
-            request,
-            "course.item.created",
-            {"item_id": item.id, "section_id": section.id, "is_visible": item.is_visible},
-        )
-        messages.success(request, f"Item '{title}' created hidden. Release it when ready.")
-        return redirect("kura:course_detail", course_id=course.id)
-
-    return render(
-        request,
-        "kura/courses/item_create.html",
-        {"form": form, "section": section},
-        status=400 if request.method == "POST" else 200,
-    )
-
-
-@login_required
-def item_preview_view(request, section_id):
-    """Previews Markdown for an item in a course section.
-    Who can use it: Assigned instructors and TAs, and the department head.
-    Security: Requires POST and CSRF, validates text, checks course access, and cleans HTML.
-    """
-    # Admins and Registrars cannot access instructional content or grades.
-    if not can_access_learning_records(request.user):
-        raise PermissionDenied
-
-    # Admins cannot inspect teaching materials, even if they have another assignment.
-    if is_admin_course_manager(request.user):
-        raise PermissionDenied
-    if request.method != "POST":
-        return HttpResponseNotAllowed(["POST"])
-
-    # Check access to the exact section before rendering submitted text.
-    section = get_object_or_404(ModuleSection.objects.select_related("module__course__department"), id=section_id)
-    course = section.module.course
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
-        raise PermissionDenied
-
-    # Preview with the same sanitized renderer used for saved items.
-    form = MarkdownPreviewForm(request.POST)
-    if not form.is_valid():
-        return HttpResponse("Unable to preview this content.", status=400)
-    # Use the same source encoding as saving, so literal entities preview accurately.
-    clean_body = nh3.clean(html.escape(form.cleaned_data["content_body"]), tags=set(), attributes={})
-    return HttpResponse(render_markdown(clean_body))
-
-
-@login_required
-def item_visibility_toggle_view(request, item_id):
-    """Hide a section item or release it for students.
-    Who can use it: Instructors and Teaching Assistants assigned to the course, and its Department Head.
-    Security: POST only; checks staff assignment or department ownership for this exact item.
-    """
-    # Admins and Registrars cannot access instructional content or grades.
-    if not can_access_learning_records(request.user):
-        raise PermissionDenied
-
-    # Admins cannot change teaching materials, even with another course assignment.
-    if is_admin_course_manager(request.user):
-        raise PermissionDenied
-
-    # Only POST requests may change an item's visibility.
-    if request.method != "POST":
-        return HttpResponseNotAllowed(["POST"])
-
-    # Load the item's course so access is checked against the resource being changed.
-    item = get_object_or_404(
-        SectionItem.objects.select_related("section__module__course"),
-        id=item_id,
-    )
-    course = item.section.module.course
-
-    # Only assigned course staff or this course's department head may change visibility.
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
-        raise PermissionDenied
-
-    # Flip the saved state and tell the staff member what happened.
-    item.is_visible = not item.is_visible
-    item.save(update_fields=["is_visible"])
-    log_security_event(
-        request,
-        "course.item.visibility_changed",
-        {"item_id": item.id, "section_id": item.section_id, "is_visible": item.is_visible},
-    )
-    if item.is_visible:
-        status_message = "released"
-    else:
-        status_message = "hidden"
-    messages.success(request, f"Item '{item.title}' is now {status_message}.")
-    return redirect("kura:course_detail", course_id=course.id)
-
-
-@login_required
 def file_download_view(request, course_id, file_id):
     """Permission-checked view for downloading course material files.
-    Who can use it: Enrolled students with matching academic level, assigned staff, department heads.
-    Security: checks course and item release access, prevents IDOR, and uses safe download headers.
+    Who can use it: Enrolled students (published course, visible file), assigned staff, department heads.
+    Security: checks course access and file visibility, prevents IDOR, and uses safe download headers.
     """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
@@ -4755,32 +4003,20 @@ def file_download_view(request, course_id, file_id):
     course = get_object_or_404(Course, id=course_id)
     stored_file = get_object_or_404(StoredFile, id=file_id)
 
-    # Verify this file is attached to an item in this course.
-    item_file = get_object_or_404(
-        SectionItemFile.objects.select_related("section_item__section__module"),
-        file=stored_file,
-        section_item__section__module__course=course,
-    )
-    # Keep the parent item so the student release state can be checked before sending its file.
-    section_item = item_file.section_item
-    module = item_file.section_item.section.module
+    # Verify this file is a material of this course (blocks IDOR across courses).
+    course_file = get_object_or_404(CourseFile, file=stored_file, course=course)
 
     is_head = is_department_head(request.user, course.department)
     is_staff = is_course_staff(request.user, course)
     enrolled = is_enrolled(request.user, course)
 
-    # Access check: staff/head or actively enrolled student meeting module visibility rules.
-    if not (is_head or is_staff or (enrolled and student_can_see_module(request.user, course, module))):
+    # Access check: staff/head, or an actively enrolled student of a published course.
+    if not (is_head or is_staff or (enrolled and student_can_see_course(request.user, course))):
         raise PermissionDenied
 
-    # Students can download an item's file only after the item is visible and its release time passes.
-    if not (is_head or is_staff):
-        if not section_item.section.is_visible:
-            raise PermissionDenied
-        if not section_item.is_visible:
-            raise PermissionDenied
-        if section_item.released_at and section_item.released_at > timezone.now():
-            raise PermissionDenied
+    # Students can download a file only after staff made it visible.
+    if not (is_head or is_staff) and not course_file.is_visible:
+        raise PermissionDenied
 
     # Record the permitted course-file download without logging its filename or contents.
     log_security_event(
@@ -4789,6 +4025,109 @@ def file_download_view(request, course_id, file_id):
         {"file_id": stored_file.id, "sha256": stored_file.sha256_hash, "context": "course"},
     )
     return create_download_response(stored_file)
+
+
+@login_required
+def course_file_upload_view(request, course_id):
+    """Upload a material file (slides, notes) to a course.
+    Who can use it: Course staff and the course's Department Head, except Admins.
+    Security: POST only; validates magic bytes, allowlist, size, malware scan and SHA-256.
+    """
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+    if is_admin_course_manager(request.user):
+        raise PermissionDenied
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    course = get_object_or_404(Course.objects.select_related("department"), id=course_id)
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+
+    form = CourseFileForm(request.POST, request.FILES)
+    if form.is_valid():
+        try:
+            # Same upload checks as every other file in Kura.
+            stored_file = validate_and_save_upload(
+                form.cleaned_data["file"],
+                request.user,
+                request=request,
+                log_context={"context": "course", "course_id": course.id},
+            )
+            CourseFile.objects.create(
+                course=course,
+                file=stored_file,
+                title=form.cleaned_data["title"],
+                is_visible=form.cleaned_data["is_visible"],
+            )
+            messages.success(request, f"Added {stored_file.original_filename} to the course.")
+        except ValidationError as error:
+            messages.error(request, str(getattr(error, "message", error)))
+    else:
+        messages.error(request, "Enter a title and choose a file.")
+    return redirect("kura:course_detail", course_id=course.id)
+
+
+@login_required
+def course_file_visibility_toggle_view(request, course_file_id):
+    """Hide a course material file or release it for students.
+    Who can use it: Course staff and the course's Department Head, except Admins.
+    Security: POST only; checks staff assignment or department ownership for this exact file.
+    """
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+    if is_admin_course_manager(request.user):
+        raise PermissionDenied
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    # Load the file's course so access is checked against the resource being changed.
+    course_file = get_object_or_404(CourseFile.objects.select_related("course__department"), id=course_file_id)
+    course = course_file.course
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+
+    course_file.is_visible = not course_file.is_visible
+    course_file.save(update_fields=["is_visible"])
+    log_security_event(
+        request,
+        "course.file.visibility_changed",
+        {"course_file_id": course_file.id, "is_visible": course_file.is_visible},
+    )
+    messages.success(request, f"'{course_file.title}' is now {'released' if course_file.is_visible else 'hidden'}.")
+    return redirect("kura:course_detail", course_id=course.id)
+
+
+@login_required
+def course_file_delete_view(request, course_file_id):
+    """Delete a course material file after confirmation.
+    Who can use it: Course staff and the course's Department Head, except Admins.
+    Security: POST only, checks course permission and confirmation, and logs the deletion.
+    """
+    # Admins and Registrars cannot access instructional content or grades.
+    if not can_access_learning_records(request.user):
+        raise PermissionDenied
+    if is_admin_course_manager(request.user):
+        raise PermissionDenied
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    course_file = get_object_or_404(CourseFile.objects.select_related("course__department", "file"), id=course_file_id)
+    course = course_file.course
+    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
+        raise PermissionDenied
+    if not DeleteConfirmationForm(request.POST).is_valid():
+        messages.error(request, "Confirm file deletion first.")
+        return redirect("kura:course_detail", course_id=course.id)
+
+    # Deleting the stored file also removes the course file row and the encrypted content.
+    stored_file_id = course_file.file_id
+    course_file.file.delete()
+    log_security_event(request, "course.file.deleted", {"file_id": stored_file_id, "course_id": course.id})
+    messages.success(request, "File deleted.")
+    return redirect("kura:course_detail", course_id=course.id)
 
 
 # Schedules & attendance
@@ -4990,13 +4329,12 @@ def schedule_delete_view(request, schedule_id):
 
 
 @login_required
-def attendance_session_start_view(request, module_id):
+def attendance_session_start_view(request, course_id):
     """Start a live attendance check-in session with a rotating passcode and QR code.
     Who can use it: Course instructors and Teaching Assistants (not Department Heads).
     Security: Server generates random 6-character passcode and stores only its keyed HMAC-SHA256 digest.
     """
-    module = get_object_or_404(Module.objects.select_related("course"), id=module_id)
-    course = module.course
+    course = get_object_or_404(Course, id=course_id)
 
     # Only assigned course instructors or teaching assistants may launch attendance (O1).
     if not is_course_staff(request.user, course):
@@ -5014,7 +4352,7 @@ def attendance_session_start_view(request, module_id):
         expires_at = timezone.now() + timezone.timedelta(minutes=duration)
 
         session = ModuleAttendanceSession.objects.create(
-            module=module,
+            course=course,
             created_by=request.user,
             title=title,
             passcode_hash=passcode_hash,
@@ -5028,7 +4366,7 @@ def attendance_session_start_view(request, module_id):
         log_security_event(
             request,
             "attendance.session_started",
-            {"session_id": session.id, "module_id": module.id},
+            {"session_id": session.id, "course_id": course.id},
         )
         messages.success(request, f"Attendance roll started for {title}.")
         return redirect("kura:attendance_session_detail", session_id=session.id)
@@ -5036,7 +4374,7 @@ def attendance_session_start_view(request, module_id):
     return render(
         request,
         "kura/attendance/session_start.html",
-        {"form": form, "module": module},
+        {"form": form, "course": course},
         status=400 if request.method == "POST" else 200,
     )
 
@@ -5048,10 +4386,10 @@ def attendance_session_detail_view(request, session_id):
     Security: Live roll monitor displaying real-time check-in records.
     """
     session = get_object_or_404(
-        ModuleAttendanceSession.objects.select_related("module__course__department"),
+        ModuleAttendanceSession.objects.select_related("course__department"),
         id=session_id,
     )
-    course = session.module.course
+    course = session.course
 
     if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
         raise PermissionDenied
@@ -5080,12 +4418,6 @@ def attendance_session_detail_view(request, session_id):
         .select_related("student", "recorded_by")
         .order_by("-verified_at")
     )
-    if request.GET.get("fragment") == "1":
-        return render(
-            request,
-            "kura/attendance/_session_roll.html",
-            {"session": session, "is_live": is_live, "records": records},
-        )
     manual_form = ManualAttendanceForm()
     manual_form.fields["student"].queryset = (
         User.objects.filter(
@@ -5120,8 +4452,8 @@ def attendance_session_close_view(request, session_id):
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    session = get_object_or_404(ModuleAttendanceSession.objects.select_related("module__course"), id=session_id)
-    course = session.module.course
+    session = get_object_or_404(ModuleAttendanceSession.objects.select_related("course"), id=session_id)
+    course = session.course
 
     if not is_course_staff(request.user, course):
         raise PermissionDenied
@@ -5132,7 +4464,7 @@ def attendance_session_close_view(request, session_id):
     log_security_event(
         request,
         "attendance.session_closed",
-        {"session_id": session.id, "module_id": session.module_id},
+        {"session_id": session.id, "course_id": session.course_id},
     )
     messages.success(request, f"Attendance roll closed for {session.title}.")
     return redirect("kura:attendance_session_detail", session_id=session.id)
@@ -5145,15 +4477,15 @@ def student_checkin_view(request, session_id):
     Security: Validates passcode hash, expiry, enrollment, single check-in, and sets method on server.
     """
     session = get_object_or_404(
-        ModuleAttendanceSession.objects.select_related("module__course"),
+        ModuleAttendanceSession.objects.select_related("course"),
         id=session_id,
     )
-    course = session.module.course
+    course = session.course
 
-    # Verify student is actively enrolled and permitted to see this module.
+    # Verify student is actively enrolled and permitted to see this course.
     if not is_enrolled(request.user, course):
         raise PermissionDenied
-    if not student_can_see_module(request.user, course, session.module):
+    if not student_can_see_course(request.user, course):
         raise PermissionDenied
 
     # Check if passcode was provided in QR code URL query parameter.
@@ -5254,8 +4586,8 @@ def attendance_manual_record_view(request, session_id):
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    session = get_object_or_404(ModuleAttendanceSession.objects.select_related("module__course"), id=session_id)
-    course = session.module.course
+    session = get_object_or_404(ModuleAttendanceSession.objects.select_related("course"), id=session_id)
+    course = session.course
 
     if not is_course_staff(request.user, course):
         raise PermissionDenied
@@ -5327,7 +4659,7 @@ def attendance_history_view(request):
             AttendanceRecord.objects.filter(
                 student=request.user,
             )
-            .select_related("session__module__course")
+            .select_related("session__course")
             .order_by("-verified_at")
         )
         enrolled_course_ids = Enrollment.objects.filter(
@@ -5335,19 +4667,16 @@ def attendance_history_view(request):
         ).values_list("course_id", flat=True)
         candidate_sessions = (
             ModuleAttendanceSession.objects.filter(
-                module__course_id__in=enrolled_course_ids,
-                module__course__is_published=True,
-                module__is_visible=True,
+                course_id__in=enrolled_course_ids,
+                course__is_published=True,
                 is_active=True,
                 expires_at__gt=now,
             )
             .exclude(records__student=request.user)
-            .select_related("module__course")
+            .select_related("course")
             .order_by("expires_at")
         )
-        for att_session in candidate_sessions:
-            if student_can_see_module(request.user, att_session.module.course, att_session.module):
-                open_sessions.append(att_session)
+        open_sessions.extend(candidate_sessions)
         total_count = records.count()
         present_count = records.filter(status=AttendanceStatus.PRESENT).count()
         late_count = records.filter(status=AttendanceStatus.LATE).count()
@@ -5376,9 +4705,9 @@ def attendance_history_view(request):
         )
         records = (
             AttendanceRecord.objects.filter(
-                session__module__course_id__in=staff_courses,
+                session__course_id__in=staff_courses,
             )
-            .select_related("student", "session__module__course", "recorded_by")
+            .select_related("student", "session__course", "recorded_by")
             .order_by("-verified_at")
         )
         filter_form = AttendanceHistoryFilterForm(
@@ -5394,7 +4723,7 @@ def attendance_history_view(request):
                     | Q(student__email__icontains=search)
                 )
             if filter_form.cleaned_data["course"]:
-                records = records.filter(session__module__course=filter_form.cleaned_data["course"])
+                records = records.filter(session__course=filter_form.cleaned_data["course"])
             if filter_form.cleaned_data["status"]:
                 records = records.filter(status=filter_form.cleaned_data["status"])
             if filter_form.cleaned_data["date_from"]:
@@ -5402,8 +4731,8 @@ def attendance_history_view(request):
             if filter_form.cleaned_data["date_to"]:
                 records = records.filter(verified_at__date__lte=filter_form.cleaned_data["date_to"])
         course_attendance_sessions = list(
-            ModuleAttendanceSession.objects.filter(module__course_id__in=staff_courses)
-            .select_related("module__course")
+            ModuleAttendanceSession.objects.filter(course_id__in=staff_courses)
+            .select_related("course")
             .order_by("-created_at")[:15]
         )
         is_staff_view = True
@@ -5431,171 +4760,20 @@ def attendance_history_view(request):
 
 def compute_submission_hash(attempt):
     """Compute the SHA-256 integrity digest for a submitted attempt, including
-    canonical answers, submission timestamp, and sorted attached file hashes.
+    the submission timestamp and the sorted hashes of the attached files.
     """
     file_hashes = list(
         AttemptFile.objects.filter(attempt=attempt).order_by("file_id").values_list("file__sha256_hash", flat=True)
     )
-    payload = (
-        f"{attempt.id}:{json.dumps(attempt.answers_json, sort_keys=True)}:"
-        f"{attempt.submitted_at.isoformat()}:{json.dumps(file_hashes)}"
-    )
+    payload = f"{attempt.id}:{attempt.submitted_at.isoformat()}:{json.dumps(file_hashes)}"
     return hashlib.sha256(payload.encode("utf-8")).hexdigest()
 
 
-def evaluate_attempt(attempt):
-    """Evaluate student assessment responses against the isolated exam answer key.
-    Auto-grades multiple choice and matching questions; flags essays for manual grading.
-    Updates summary_score_json, status, and creates/updates a draft Grade record.
-    """
-    # Scanned papers are never automatically marked as a zero-point online exam.
-    if attempt.assessment.delivery_mode == AssessmentDeliveryMode.PAPER_SCANNED:
-        attempt.status = AttemptStatus.REQUIRES_MANUAL_GRADING
-        attempt.summary_score_json = None
-        if not attempt.submission_hash:
-            attempt.submission_hash = compute_submission_hash(attempt)
-        attempt.save(update_fields=["status", "summary_score_json", "submitted_at", "submission_hash"])
-        return
-
-    # Load the answer key inside service_rls_context so student submits can grade without granting students direct RLS access to exam_answer_keys (W5).
-    with service_rls_context():
-        answer_key_obj = ExamAnswerKey.objects.filter(assessment=attempt.assessment).first()
-    answer_key_dict = {}
-    if answer_key_obj:
-        try:
-            answer_key_dict = decrypt_answer_key(answer_key_obj.answer_key_json)
-        except ValidationError:
-            log_security_event(None, "assessment.answer_key_unavailable", {"attempt_id": attempt.id}, logging.ERROR)
-            attempt.status = AttemptStatus.REQUIRES_MANUAL_GRADING
-            attempt.summary_score_json = None
-            if not attempt.submission_hash:
-                attempt.submission_hash = compute_submission_hash(attempt)
-            attempt.save(update_fields=["status", "summary_score_json", "submitted_at", "submission_hash"])
-            return
-
-    auto_graded_points = Decimal("0.00")
-    total_max_points = Decimal("0.00")
-    has_manual_questions = False
-
-    answers = attempt.answers_json or []
-    answers_by_id = {ans.get("question_id"): ans for ans in answers}
-
-    updated_answers = []
-    questions = attempt.assessment.questions_json or []
-
-    for q in questions:
-        q_id = q.get("question_id")
-        q_type = q.get("type")
-        q_points = Decimal(str(q.get("points", 0)))
-        total_max_points += q_points
-
-        student_ans = answers_by_id.get(q_id, {"question_id": q_id, "type": q_type})
-        student_ans.setdefault("type", q_type)
-        key_data = answer_key_dict.get(q_id, {})
-
-        if q_type == "multiple_choice":
-            correct_opts = set(key_data.get("correct_option_ids", []))
-            selected_opts = set(student_ans.get("selected_option_ids", []))
-            is_correct = bool(correct_opts and correct_opts == selected_opts)
-            points_awarded = Decimal("0.00")
-            if is_correct:
-                points_awarded = q_points
-            auto_graded_points += points_awarded
-
-            student_ans["auto_evaluation"] = {
-                "is_correct": is_correct,
-                "points_awarded": float(points_awarded),
-            }
-            updated_answers.append(student_ans)
-
-        elif q_type == "matching":
-            correct_pairs = key_data.get("correct_pairs", {})
-            submitted_matches = student_ans.get("submitted_matches", [])
-            total_pairs = len(correct_pairs)
-
-            matched_count = 0
-            counted_pairs = set()
-            for item in submitted_matches:
-                p_id = item.get("pair_id")
-                chosen_val = item.get("selected_match")
-                # Old attempts may contain duplicate or unknown pair IDs; count each correct pair once.
-                if p_id in correct_pairs and p_id not in counted_pairs and correct_pairs[p_id] == chosen_val:
-                    matched_count += 1
-                    counted_pairs.add(p_id)
-
-            if total_pairs > 0:
-                fraction = Decimal(matched_count) / Decimal(total_pairs)
-                points_awarded = (q_points * fraction).quantize(Decimal("0.01"))
-            else:
-                points_awarded = Decimal("0.00")
-
-            auto_graded_points += points_awarded
-            student_ans["auto_evaluation"] = {
-                "matched_count": matched_count,
-                "total_pairs": total_pairs,
-                "points_awarded": float(points_awarded),
-            }
-            updated_answers.append(student_ans)
-
-        else:
-            # Long essay or written response requires manual instructor grading.
-            has_manual_questions = True
-            updated_answers.append(student_ans)
-
-    attempt.answers_json = updated_answers
-
-    if has_manual_questions:
-        attempt.status = AttemptStatus.REQUIRES_MANUAL_GRADING
-        is_fully_graded = False
-    else:
-        attempt.status = AttemptStatus.FULLY_GRADED
-        is_fully_graded = True
-
-    attempt.summary_score_json = {
-        "auto_graded_points": float(auto_graded_points),
-        "manual_graded_points": 0.0,
-        "total_score": float(auto_graded_points),
-        "max_possible_points": float(total_max_points),
-        "is_fully_graded": is_fully_graded,
-    }
-    validate_attempt_answers_json(attempt.answers_json)
-    validate_summary_score_json(attempt.summary_score_json)
-    # Compute submission_hash after answers_json is finalized so stored data verifies cleanly (W6).
-    if not attempt.submission_hash:
-        attempt.submission_hash = compute_submission_hash(attempt)
-    attempt.save()
-
-    # If fully auto-graded, create or update the draft grade for this attempt only so retakes never overwrite an earlier attempt's finalized or released grade (W1).
-    if is_fully_graded:
-        existing_grade = Grade.objects.select_for_update().filter(attempt=attempt).first()
-        old_score = existing_grade.score if existing_grade else None
-        old_status = existing_grade.status if existing_grade else None
-        grade, created = Grade.objects.update_or_create(
-            attempt=attempt,
-            defaults={
-                "assessment": attempt.assessment,
-                "student": attempt.student,
-                "score": auto_graded_points,
-                "status": GradeStatus.DRAFT,
-            },
-        )
-        if created or old_score != auto_graded_points or old_status != GradeStatus.DRAFT:
-            GradeHistory.objects.create(
-                grade=grade,
-                old_score=old_score,
-                new_score=auto_graded_points,
-                old_status=old_status,
-                new_status=GradeStatus.DRAFT,
-                changed_by=attempt.student,
-                reason="Automatic evaluation upon submission.",
-            )
-
-
 @login_required
-def assessment_create_view(request, section_id=None, assessment_id=None):
-    """Create or edit an assessment and keep its questions separate from the answer key.
-    Who can use it: Assigned course staff and the department head, but not Admins.
-    Security: Checks the course, locks edits after attempts, and saves the question and key together.
+def assessment_create_view(request, course_id=None, assessment_id=None):
+    """Create or edit a coursework assessment that students answer by uploading files.
+    Who can use it: Assigned course instructors and the department head, but not Admins.
+    Security: Checks the course; edits are blocked from changing the category once students have submitted.
     """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
@@ -5605,368 +4783,94 @@ def assessment_create_view(request, section_id=None, assessment_id=None):
     if has_role(request.user, "Admin"):
         raise PermissionDenied
 
-    # An edit belongs to its existing section; a new assessment uses the requested section.
+    # An edit belongs to its existing course; a new assessment uses the requested course.
     assessment = None
     if assessment_id:
-        assessment = get_object_or_404(
-            Assessment.objects.select_related("section__module__course__department"),
-            id=assessment_id,
-        )
-        section = assessment.section
+        assessment = get_object_or_404(Assessment.objects.select_related("course__department"), id=assessment_id)
+        course = assessment.course
     else:
-        section = get_object_or_404(
-            ModuleSection.objects.select_related("module__course__department"),
-            id=section_id,
-        )
-    course = section.module.course
+        course = get_object_or_404(Course.objects.select_related("department"), id=course_id)
 
     if not (is_course_instructor(request.user, course) or is_department_head(request.user, course.department)):
         raise PermissionDenied
 
-    legacy_proctor_code = bool(assessment and is_legacy_proctor_code_hash(assessment.proctor_code_hash))
-    # Prepare ordinary form fields from the existing assessment and its separate key.
     initial = {}
-    initial_questions = [{"type": "multiple_choice", "max_words": 500}]
-    existing_keys = {}
-    builder_unavailable = False
-    questions_locked = False
     if assessment:
-        questions_locked = AssessmentAttempt.objects.filter(assessment=assessment).exists()
         initial = {
             "title": assessment.title,
             "description": assessment.description,
             "component_type": assessment.component_type,
-            "delivery_mode": assessment.delivery_mode,
             "max_score": assessment.max_score,
             "max_attempts": assessment.max_attempts,
             "opens_at": assessment.opens_at,
             "due_date": assessment.due_date,
-            "duration_minutes": assessment.duration_minutes,
-            "lab_cidr_allowed": assessment.lab_cidr_allowed,
-            "shuffle_questions": assessment.settings_json.get("shuffle_questions", False),
-            "shuffle_options": assessment.settings_json.get("shuffle_options", False),
-            "allow_backtracking": assessment.settings_json.get("allow_backtracking", False),
-            "autosave_interval_seconds": assessment.settings_json.get("autosave_interval_seconds", 15),
         }
-        # Decrypt the saved answer key (in memory only) so the form can show it.
-        # If Vault cannot be reached the edit page is not shown, because saving it without the old key would wipe the correct answers.
-        answer_key = ExamAnswerKey.objects.filter(assessment=assessment).first()
-        existing_keys = {}
-        if answer_key:
-            try:
-                existing_keys = decrypt_answer_key(answer_key.answer_key_json)
-            except ValidationError:
-                messages.error(request, "This assessment cannot be edited right now. Please try again later.")
-                return redirect("kura:assessment_detail", assessment_id=assessment.id)
-        initial_questions = []
-        if len(assessment.questions_json) > 20:
-            builder_unavailable = True
-        for question in assessment.questions_json:
-            key = existing_keys.get(question.get("question_id"), {})
-            question_type = question.get("type")
-            if question_type == "essay":
-                question_type = "long_text"
-            values = {
-                "type": question_type,
-                "prompt": question.get("prompt", ""),
-                "points": question.get("points"),
-                "max_words": question.get("max_words", 500),
-            }
-            if question_type == "multiple_choice":
-                options = question.get("options", [])
-                if len(options) > 8:
-                    builder_unavailable = True
-                for number, option in enumerate(options[:8], start=1):
-                    values[f"option_{number}"] = option.get("text", "")
-                    values[f"correct_{number}"] = option.get("option_id") in key.get("correct_option_ids", [])
-                values["explanation"] = key.get("explanation", "")
-            elif question_type == "matching":
-                pairs = question.get("left_prompts", [])
-                if len(pairs) > 8:
-                    builder_unavailable = True
-                used_matches = []
-                for number, pair in enumerate(pairs[:8], start=1):
-                    match = key.get("correct_pairs", {}).get(pair.get("pair_id"), "")
-                    values[f"left_{number}"] = pair.get("text", "")
-                    values[f"right_{number}"] = match
-                    used_matches.append(match)
-                extra_matches = []
-                for match in question.get("available_matches", []):
-                    if match not in used_matches:
-                        extra_matches.append(match)
-                values["extra_matches"] = "\n".join(extra_matches)
-            elif question_type == "long_text":
-                criteria = key.get("tutor_rubric", {}).get("criteria", [])
-                descriptions = []
-                for criterion in criteria:
-                    descriptions.append(criterion.get("criterion") or criterion.get("name", ""))
-                values["rubric"] = "\n".join(descriptions)
-            else:
-                builder_unavailable = True
-            initial_questions.append(values)
-
-    question_editing_disabled = questions_locked or builder_unavailable
-
-    # The locked page accepts only title, instructions, and dates, even for forged POSTs.
     form = AssessmentCreateForm(request.POST or None, initial=initial)
-    if question_editing_disabled:
-        for name, field in form.fields.items():
-            if name not in ("title", "description", "opens_at", "due_date"):
-                field.disabled = True
-    question_data = None
-    if request.method == "POST" and not question_editing_disabled:
-        question_data = request.POST
-    question_forms = AssessmentQuestionFormSet(question_data, prefix="questions", initial=initial_questions)
+
+    # Once a student has submitted, score and attempt limits are locked so marks stay comparable.
+    scoring_locked = bool(assessment) and AssessmentAttempt.objects.filter(assessment=assessment).exists()
+    if scoring_locked:
+        for name in ("component_type", "max_score", "max_attempts"):
+            form.fields[name].disabled = True
+
     if request.method == "POST" and form.is_valid():
-        delivery_mode = form.cleaned_data["delivery_mode"] or AssessmentDeliveryMode.ONLINE
-        if question_editing_disabled:
-            questions_valid = True
-        elif delivery_mode == AssessmentDeliveryMode.PAPER_SCANNED:
-            questions_valid = True
-        else:
-            questions_valid = question_forms.is_valid()
+        # Remember whether this is new, and the old dates, for the notifications below.
+        is_new_assessment = assessment is None
+        old_dates = None
+        if assessment:
+            old_dates = (assessment.opens_at, assessment.due_date)
 
-        if questions_valid and not question_editing_disabled and delivery_mode == AssessmentDeliveryMode.ONLINE:
-            has_active_question = False
-            total_points = Decimal("0")
-            for data in question_forms.cleaned_data:
-                if data and not data.get("DELETE"):
-                    has_active_question = True
-                    total_points += data["points"]
-
-            if not has_active_question:
-                form.add_error(None, "Add at least one online question.")
-                questions_valid = False
-            elif total_points > form.cleaned_data["max_score"]:
-                # The combined question points must not exceed the assessment's maximum score.
-                form.add_error("max_score", "Maximum score cannot be less than the total question points.")
-                questions_valid = False
-        if questions_valid:
-            # Build separate documents; only explicitly chosen fields enter student-visible questions.
-            questions = []
-            answer_keys = {}
-            if not question_editing_disabled and delivery_mode == AssessmentDeliveryMode.ONLINE:
-                for question_form in question_forms.ordered_forms:
-                    index = question_forms.forms.index(question_form)
-                    question_data = question_form.cleaned_data
-                    if not question_data or question_data.get("DELETE"):
-                        continue
-                    question_id = f"q_{uuid.uuid4().hex}"
-                    question = {
-                        "question_id": question_id,
-                        "type": question_data["type"],
-                        "prompt": question_data["prompt"],
-                        "points": float(question_data["points"]),
-                    }
-                    if question_data["type"] == "multiple_choice":
-                        question["options"] = []
-                        correct_options = []
-                        for number in range(1, 9):
-                            option = question_data.get(f"option_{number}")
-                            if option:
-                                option_id = f"opt_{number}"
-                                question["options"].append({"option_id": option_id, "text": option})
-                                if question_data.get(f"correct_{number}"):
-                                    correct_options.append(option_id)
-                        answer_keys[question_id] = {
-                            "correct_option_ids": correct_options,
-                            "explanation": question_data.get("explanation", ""),
-                        }
-                    elif question_data["type"] == "matching":
-                        question["left_prompts"] = []
-                        question["available_matches"] = []
-                        correct_pairs = {}
-                        for number in range(1, 9):
-                            if question_data.get(f"left_{number}"):
-                                pair_id = f"pair_{number}"
-                                question["left_prompts"].append({"pair_id": pair_id, "text": question_data[f"left_{number}"]})
-                                if question_data[f"right_{number}"] not in question["available_matches"]:
-                                    question["available_matches"].append(question_data[f"right_{number}"])
-                                correct_pairs[pair_id] = question_data[f"right_{number}"]
-                        for match in question_data.get("extra_matches", "").splitlines():
-                            match = match.strip()
-                            if match and match not in question["available_matches"]:
-                                question["available_matches"].append(match)
-                        # Alphabetical order does not reveal which left item matches which answer.
-                        question["available_matches"].sort()
-                        answer_keys[question_id] = {"correct_pairs": correct_pairs}
-                    else:
-                        question["max_words"] = question_data["max_words"]
-                        criteria = []
-                        for line in question_data["rubric"].splitlines():
-                            if line.strip():
-                                criteria.append({"criterion": line.strip()})
-                        # Preserve existing detailed marking criteria when their text was not changed.
-                        rubric = {}
-                        if (
-                            assessment
-                            and index < len(initial_questions)
-                            and question_data["rubric"] == initial_questions[index].get("rubric", "")
-                        ):
-                            old_id = assessment.questions_json[index].get("question_id")
-                            old_rubric = existing_keys.get(old_id, {}).get("tutor_rubric", {})
-                            rubric = old_rubric.copy()
-                            criteria = old_rubric.get("criteria", criteria)
-                        rubric["max_words"] = question_data["max_words"]
-                        rubric["criteria"] = criteria
-                        answer_keys[question_id] = {"tutor_rubric": rubric}
-                    questions.append(question)
-
-            # Save both documents together so an assessment never has a half-written key.
-            raw_proctor = form.cleaned_data["proctor_code"]
-            settings_doc = {}
-            for name in (
-                "shuffle_questions",
-                "shuffle_options",
-                "allow_backtracking",
-                "autosave_interval_seconds",
-            ):
-                settings_doc[name] = form.cleaned_data[name]
-            # Remember whether this is new, and the old dates, for the notifications below.
-            is_new_assessment = assessment is None
-            old_dates = None
+        with transaction.atomic():
             if assessment:
-                old_dates = (assessment.opens_at, assessment.due_date)
-            # Encrypt the answer key with Vault before saving anything.
-            # If Vault is down, nothing is saved and the form is shown again with what was typed.
-            stored_answer_keys = {}
-            if not question_editing_disabled:
-                try:
-                    validate_assessment_settings_json(settings_doc)
-                    validate_assessment_questions_json(questions)
-                    validate_answer_key_json(answer_keys)
-                    stored_answer_keys = encrypt_answer_key(answer_keys)
-                except ValidationError:
-                    form.add_error(None, "The answer key could not be saved securely right now. Please try again later.")
-                    return render(
-                        request,
-                        "kura/assessments/assessment_create.html",
-                        {
-                            "form": form,
-                            "section": section,
-                            "question_forms": question_forms,
-                            "assessment": assessment,
-                            "questions_locked": questions_locked,
-                            "builder_unavailable": builder_unavailable,
-                            "legacy_proctor_code": legacy_proctor_code,
-                        },
-                        status=400,
-                    )
-            with transaction.atomic():
-                if assessment:
-                    # A student start takes this same lock, so an attempt cannot slip past this check.
-                    assessment = Assessment.objects.select_for_update().get(id=assessment.id)
-                    if not questions_locked and AssessmentAttempt.objects.filter(assessment=assessment).exists():
-                        messages.error(request, "Questions are locked because students have started.")
-                        return redirect("kura:assessment_edit", assessment_id=assessment.id)
-                else:
-                    assessment = Assessment(section=section, created_by=request.user)
-                assessment.title = form.cleaned_data["title"]
-                assessment.description = form.cleaned_data["description"]
-                assessment.opens_at = form.cleaned_data["opens_at"]
-                assessment.due_date = form.cleaned_data["due_date"]
-                if not question_editing_disabled:
-                    assessment.component_type = form.cleaned_data["component_type"]
-                    assessment.delivery_mode = delivery_mode
-                    assessment.max_score = form.cleaned_data["max_score"]
-                    assessment.max_attempts = form.cleaned_data["max_attempts"]
-                    assessment.duration_minutes = form.cleaned_data["duration_minutes"]
-                    assessment.settings_json = settings_doc
-                    assessment.questions_json = questions
-                    assessment.lab_cidr_allowed = form.cleaned_data["lab_cidr_allowed"] or None
-                    if raw_proctor:
-                        assessment.proctor_code_hash = hash_proctor_code(raw_proctor)
-                assessment.save()
-                if not question_editing_disabled:
-                    ExamAnswerKey.objects.update_or_create(
-                        assessment=assessment,
-                        defaults={"answer_key_json": stored_answer_keys},
-                        create_defaults={"answer_key_json": stored_answer_keys, "created_by": request.user},
-                    )
-            # Email the enrolled students: a new assessment, or its dates moved.
-            # The dates are part of the event name, so each change is emailed once.
-            new_dates = (assessment.opens_at, assessment.due_date)
-            if is_new_assessment:
-                event_name = "assessment.created"
+                # A student start takes this same lock, so an attempt cannot slip past this check.
+                assessment = Assessment.objects.select_for_update().get(id=assessment.id)
             else:
-                event_name = "assessment.edited"
-            log_security_event(
-                request,
-                event_name,
-                {
-                    "assessment_id": assessment.id,
-                    "component_type": assessment.component_type,
-                    "dates_changed": old_dates != new_dates if old_dates else False,
-                },
+                assessment = Assessment(course=course, created_by=request.user)
+            assessment.title = form.cleaned_data["title"]
+            assessment.description = form.cleaned_data["description"]
+            assessment.opens_at = form.cleaned_data["opens_at"]
+            assessment.due_date = form.cleaned_data["due_date"]
+            if not scoring_locked:
+                assessment.component_type = form.cleaned_data["component_type"]
+                assessment.max_score = form.cleaned_data["max_score"]
+                assessment.max_attempts = form.cleaned_data["max_attempts"]
+            assessment.save()
+
+        # Email the enrolled students: a new assessment, or its dates moved.
+        # The dates are part of the event name, so each change is emailed once.
+        new_dates = (assessment.opens_at, assessment.due_date)
+        event_name = "assessment.created" if is_new_assessment else "assessment.edited"
+        log_security_event(
+            request,
+            event_name,
+            {
+                "assessment_id": assessment.id,
+                "component_type": assessment.component_type,
+                "dates_changed": old_dates != new_dates if old_dates else False,
+            },
+        )
+        if is_new_assessment:
+            queue_assessment_notification(
+                assessment,
+                "assessment-new",
+                f"New {assessment.get_component_type_display()}: {assessment.title}",
+                "A new assessment has been published in one of your courses.",
             )
-            if is_new_assessment:
-                queue_assessment_notification(
-                    assessment, "assessment-new", f"New {assessment.get_component_type_display()}: {assessment.title}",
-                    "A new assessment has been published in one of your courses.",
-                )
-            elif old_dates != new_dates:
-                queue_assessment_notification(
-                    assessment,
-                    f"assessment-dates-{int(new_dates[0].timestamp())}-{int(new_dates[1].timestamp())}",
-                    f"Dates changed: {assessment.title}",
-                    "The opening or due date of an assessment has changed. The new dates are below.",
-                )
-            messages.success(request, "Assessment saved.")
-            return redirect("kura:assessment_detail", assessment_id=assessment.id)
+        elif old_dates != new_dates:
+            queue_assessment_notification(
+                assessment,
+                f"assessment-dates-{int(new_dates[0].timestamp())}-{int(new_dates[1].timestamp())}",
+                f"Dates changed: {assessment.title}",
+                "The opening or due date of an assessment has changed. The new dates are below.",
+            )
+        messages.success(request, "Assessment saved.")
+        return redirect("kura:assessment_detail", assessment_id=assessment.id)
 
     return render(
         request,
         "kura/assessments/assessment_create.html",
-        {
-            "form": form,
-            "section": section,
-            "question_forms": question_forms,
-            "assessment": assessment,
-            "questions_locked": questions_locked,
-            "builder_unavailable": builder_unavailable,
-            "legacy_proctor_code": legacy_proctor_code,
-        },
+        {"form": form, "course": course, "assessment": assessment, "scoring_locked": scoring_locked},
         status=400 if request.method == "POST" else 200,
-    )
-
-
-@login_required
-def assessment_question_form_view(request, section_id):
-    """Return one blank question card for the assessment builder.
-    Who can use it: Assigned course staff and the department head, but not Admins.
-    Security: Checks access to the exact section and validates the form index and type.
-    """
-    # Admins and Registrars cannot access instructional content or grades.
-    if not can_access_learning_records(request.user):
-        raise PermissionDenied
-
-    # Prevent Admins and unrelated users from accessing assessment authoring.
-    if has_role(request.user, "Admin"):
-        raise PermissionDenied
-    section = get_object_or_404(ModuleSection.objects.select_related("module__course__department"), id=section_id)
-    course = section.module.course
-    if not (is_course_instructor(request.user, course) or is_department_head(request.user, course.department)):
-        raise PermissionDenied
-    if request.method != "GET":
-        return HttpResponseNotAllowed(["GET"])
-
-    # Limit both the selected type and index before rendering a new card.
-    add_form = AssessmentQuestionAddForm(
-        {"type": request.GET.get("type"), "index": request.GET.get("questions-TOTAL_FORMS")}
-    )
-    if not add_form.is_valid():
-        return HttpResponse("Unable to add another question.", status=400)
-    index = add_form.cleaned_data["index"]
-    initial = [{} for unused in range(index)]
-    initial.append({"type": add_form.cleaned_data["type"], "max_words": 500})
-    question_form = AssessmentQuestionFormSet(prefix="questions", initial=initial).forms[index]
-    return render(
-        request,
-        "kura/assessments/_question_form.html",
-        {
-            "question_form": question_form,
-            "new_total": index + 1,
-        },
     )
 
 
@@ -5986,9 +4890,9 @@ def assessment_delete_view(request, assessment_id):
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
     assessment = get_object_or_404(
-        Assessment.objects.select_related("section__module__course__department"), id=assessment_id
+        Assessment.objects.select_related("course__department"), id=assessment_id
     )
-    course = assessment.section.module.course
+    course = assessment.course
     if not (is_course_instructor(request.user, course) or is_department_head(request.user, course.department)):
         raise PermissionDenied
     if not DeleteConfirmationForm(request.POST).is_valid():
@@ -6026,11 +4930,10 @@ def assessment_detail_view(request, assessment_id):
         raise PermissionDenied
 
     assessment = get_object_or_404(
-        Assessment.objects.select_related("section__module__course__department"),
+        Assessment.objects.select_related("course__department"),
         id=assessment_id,
     )
-    course = assessment.section.module.course
-    module = assessment.section.module
+    course = assessment.course
 
     is_head = is_department_head(request.user, course.department)
     is_staff = is_course_staff(request.user, course)
@@ -6039,10 +4942,8 @@ def assessment_detail_view(request, assessment_id):
     if not (is_head or is_staff or enrolled):
         raise PermissionDenied
     if not (is_head or is_staff):
-        # Students see only published courses, visible modules and their own academic level.
-        if not student_can_see_module(request.user, course, module):
-            raise PermissionDenied
-        if not assessment.section.is_visible:
+        # Students see only published courses.
+        if not student_can_see_course(request.user, course):
             raise PermissionDenied
 
     now = timezone.now()
@@ -6062,21 +4963,7 @@ def assessment_detail_view(request, assessment_id):
 
     # Load attached files.
     attached_files = AssessmentFile.objects.filter(assessment=assessment).select_related("file")
-    start_form = AssessmentAttemptStartForm()
     file_upload_form = AssessmentFileUploadForm()
-    scanned_upload_form = ScannedPaperStaffUploadForm()
-    if is_head or is_staff:
-        # Only active students enrolled in this course may be selected for a scanned script.
-        scanned_upload_form.fields["student"].queryset = (
-            User.objects.filter(
-                is_active=True,
-                enrollments__course=course,
-                enrollments__status=EnrollmentStatus.ACTIVE,
-                user_roles__role__name="Student",
-            )
-            .exclude(user_roles__role__name="Admin")
-            .distinct()
-        )
 
     context = {
         "assessment": assessment,
@@ -6086,102 +4973,9 @@ def assessment_detail_view(request, assessment_id):
         "attempts": attempts,
         "attached_files": attached_files,
         "can_start_attempt": can_start_attempt,
-        "start_form": start_form,
         "file_upload_form": file_upload_form,
-        "scanned_upload_form": scanned_upload_form,
     }
     return render(request, "kura/assessments/assessment_detail.html", context)
-
-
-@login_required
-def scanned_paper_staff_upload_view(request, assessment_id):
-    """Submit a scanned script on behalf of an enrolled student for manual marking.
-    Who can use it: Assigned course staff and the course's department head, not Admins.
-    Security: POST and CSRF, validates student enrollment and scanned file type, and saves atomically.
-    """
-    # Admins and Registrars cannot access instructional content or grades.
-    if not can_access_learning_records(request.user):
-        raise PermissionDenied
-
-    # Reject administrators and non-POST requests before accessing assessment content.
-    if has_role(request.user, "Admin"):
-        raise PermissionDenied
-    if request.method != "POST":
-        return HttpResponseNotAllowed(["POST"])
-    assessment = get_object_or_404(
-        Assessment.objects.select_related("section__module__course__department"), id=assessment_id
-    )
-    course = assessment.section.module.course
-    if not (is_course_staff(request.user, course) or is_department_head(request.user, course.department)):
-        raise PermissionDenied
-    if assessment.delivery_mode != AssessmentDeliveryMode.PAPER_SCANNED:
-        raise PermissionDenied
-
-    # Restrict the submitted student ID to active, enrolled non-admin students.
-    form = ScannedPaperStaffUploadForm(request.POST, request.FILES)
-    form.fields["student"].queryset = (
-        User.objects.filter(
-            is_active=True,
-            enrollments__course=course,
-            enrollments__status=EnrollmentStatus.ACTIVE,
-            user_roles__role__name="Student",
-        )
-        .exclude(user_roles__role__name="Admin")
-        .distinct()
-    )
-    if not form.is_valid():
-        messages.error(request, "Select an enrolled student and a scanned file.")
-        return redirect("kura:assessment_detail", assessment_id=assessment.id)
-
-    # Lock the assessment while choosing the student's existing or next attempt.
-    try:
-        with transaction.atomic():
-            assessment = Assessment.objects.select_for_update().get(id=assessment.id)
-            # The delivery mode may have changed while this request waited for the lock.
-            if assessment.delivery_mode != AssessmentDeliveryMode.PAPER_SCANNED:
-                raise PermissionDenied
-            attempts = AssessmentAttempt.objects.filter(assessment=assessment, student=form.cleaned_data["student"])
-            attempt = attempts.filter(status=AttemptStatus.IN_PROGRESS).select_for_update().first()
-            if not attempt:
-                attempt_count = attempts.count()
-                if attempt_count >= assessment.max_attempts:
-                    raise ValidationError("This student has no attempts remaining.")
-                attempt = AssessmentAttempt.objects.create(
-                    assessment=assessment,
-                    student=form.cleaned_data["student"],
-                    attempt_no=attempt_count + 1,
-                    expires_at=timezone.now() + timezone.timedelta(minutes=assessment.duration_minutes),
-                    ip_address=get_client_ip(request),
-                )
-
-            # Inspect and attach only a PDF or image before sealing the attempt.
-            stored_file = validate_and_save_upload(
-                form.cleaned_data["file"],
-                request.user,
-                request=request,
-                log_context={"context": "scanned_paper", "attempt_id": attempt.id},
-            )
-            if stored_file.mime_type not in {"application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp"}:
-                raise ValidationError("Upload a PDF or image of the scanned paper.")
-            AttemptFile.objects.create(attempt=attempt, file=stored_file)
-            attempt.submitted_at = timezone.now()
-            evaluate_attempt(attempt)
-    except ValidationError as error:
-        if hasattr(error, "message"):
-            error_message = str(error.message)
-        else:
-            error_message = str(error)
-        messages.error(request, error_message)
-        return redirect("kura:assessment_detail", assessment_id=assessment.id)
-
-    # Record the action without logging the submitted file or its contents.
-    log_security_event(
-        request,
-        "attempt.submitted",
-        {"attempt_id": attempt.id, "submission_hash": attempt.submission_hash},
-    )
-    messages.success(request, "Scanned paper submitted for manual marking.")
-    return redirect("kura:assessment_detail", assessment_id=assessment.id)
 
 
 @login_required
@@ -6194,23 +4988,18 @@ def attempt_file_download_view(request, attempt_id, file_id):
     if not can_access_learning_records(request.user):
         raise PermissionDenied
 
-    # Administrators cannot access attempts or scanned scripts.
+    # Administrators cannot access submissions.
     if has_role(request.user, "Admin"):
         raise PermissionDenied
     attempt = get_object_or_404(
-        AssessmentAttempt.objects.select_related("assessment__section__module__course__department"),
+        AssessmentAttempt.objects.select_related("assessment__course__department"),
         id=attempt_id,
     )
-    course = attempt.assessment.section.module.course
+    course = attempt.assessment.course
     if not (
         attempt.student_id == request.user.id
         or is_course_staff(request.user, course)
         or is_department_head(request.user, course.department)
-    ):
-        raise PermissionDenied
-    if (
-        not (is_course_staff(request.user, course) or is_department_head(request.user, course.department))
-        and not attempt.assessment.section.is_visible
     ):
         raise PermissionDenied
 
@@ -6243,10 +5032,10 @@ def assessment_file_upload_view(request, assessment_id):
         return HttpResponseNotAllowed(["POST"])
 
     assessment = get_object_or_404(
-        Assessment.objects.select_related("section__module__course__department"),
+        Assessment.objects.select_related("course__department"),
         id=assessment_id,
     )
-    course = assessment.section.module.course
+    course = assessment.course
 
     if not (is_course_instructor(request.user, course) or is_department_head(request.user, course.department)):
         raise PermissionDenied
@@ -6277,7 +5066,7 @@ def assessment_file_upload_view(request, assessment_id):
 def assessment_file_download_view(request, assessment_id, file_id):
     """Downloads files attached to an assessment.
     Who can use it: Course staff and enrolled students.
-    Security: For exams, students can download only during an active In_Progress attempt.
+    Security: Students need an active enrollment in a published course and can download only after it opens.
     """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
@@ -6288,11 +5077,10 @@ def assessment_file_download_view(request, assessment_id, file_id):
         raise PermissionDenied
 
     assessment = get_object_or_404(
-        Assessment.objects.select_related("section__module__course__department"),
+        Assessment.objects.select_related("course__department"),
         id=assessment_id,
     )
-    course = assessment.section.module.course
-    module = assessment.section.module
+    course = assessment.course
     stored_file = get_object_or_404(StoredFile, id=file_id)
 
     # Verify file is attached to this assessment.
@@ -6304,24 +5092,12 @@ def assessment_file_download_view(request, assessment_id, file_id):
     if not (is_head or is_staff):
         if not is_enrolled(request.user, course):
             raise PermissionDenied
-        # Students see only published courses, visible modules and their own academic level.
-        if not student_can_see_module(request.user, course, module):
-            raise PermissionDenied
-        if not assessment.section.is_visible:
+        # Students see only published courses.
+        if not student_can_see_course(request.user, course):
             raise PermissionDenied
         # Students cannot download before the assessment opens.
         if timezone.now() < assessment.opens_at:
             raise PermissionDenied
-        # For exams or proctored assessments, verify student has an active In_Progress attempt.
-        if assessment.component_type == "exam" or assessment.proctor_code_hash or assessment.lab_cidr_allowed:
-            has_active_attempt = AssessmentAttempt.objects.filter(
-                assessment=assessment,
-                student=request.user,
-                status=AttemptStatus.IN_PROGRESS,
-                expires_at__gt=timezone.now(),
-            ).exists()
-            if not has_active_attempt:
-                raise PermissionDenied
 
     # Record the authorized assessment-file download without logging its contents.
     log_security_event(
@@ -6334,9 +5110,9 @@ def assessment_file_download_view(request, assessment_id, file_id):
 
 @login_required
 def assessment_attempt_start_view(request, assessment_id):
-    """Start a new assessment attempt for an enrolled student.
+    """Start a submission for an enrolled student.
     Who can use it: Enrolled students with remaining attempt allowances.
-    Security: Validates opening window, max attempts, lab CIDR subnet, and whiteboard proctor code.
+    Security: Validates enrollment, published course, opening window and max attempts under a row lock.
     """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
@@ -6349,18 +5125,14 @@ def assessment_attempt_start_view(request, assessment_id):
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    # Lock the assessment before reading its settings and creating the first attempt.
-    # The edit view uses the same lock, so a concurrent edit cannot change started questions.
+    # Lock the assessment before counting attempts, so two quick clicks cannot exceed the limit.
     with transaction.atomic():
         assessment = get_object_or_404(Assessment.objects.select_for_update(), id=assessment_id)
-        course = assessment.section.module.course
-        module = assessment.section.module
+        course = assessment.course
         if not is_enrolled(request.user, course):
             raise PermissionDenied
-        # Students see only published courses, visible modules and their own academic level.
-        if not student_can_see_module(request.user, course, module):
-            raise PermissionDenied
-        if not assessment.section.is_visible:
+        # Students see only published courses.
+        if not student_can_see_course(request.user, course):
             raise PermissionDenied
 
         now = timezone.now()
@@ -6384,63 +5156,13 @@ def assessment_attempt_start_view(request, assessment_id):
             messages.error(request, "You have reached the maximum allowed attempts for this assessment.")
             return redirect("kura:assessment_detail", assessment_id=assessment.id)
 
-        # Check the current lab restriction and the submitted proctor code while locked.
-        client_ip = get_client_ip(request)
-        if assessment.lab_cidr_allowed:
-            try:
-                allowed_network = ipaddress.ip_network(str(assessment.lab_cidr_allowed), strict=False)
-                if ipaddress.ip_address(client_ip) not in allowed_network:
-                    log_security_event(
-                        request,
-                        "attempt.start_blocked",
-                        {"assessment_id": assessment.id, "reason": "lab_cidr"},
-                        logging.WARNING,
-                    )
-                    messages.error(request, "Attempt must be initiated from an authorized university lab subnet.")
-                    return redirect("kura:assessment_detail", assessment_id=assessment.id)
-            except ValueError:
-                log_security_event(
-                    request,
-                    "attempt.start_blocked",
-                    {"assessment_id": assessment.id, "reason": "lab_cidr_invalid"},
-                    logging.WARNING,
-                )
-                messages.error(request, "Network verification failure.")
-                return redirect("kura:assessment_detail", assessment_id=assessment.id)
-        form = AssessmentAttemptStartForm(request.POST)
-        if assessment.proctor_code_hash:
-            if not form.is_valid():
-                log_security_event(
-                    request,
-                    "attempt.start_blocked",
-                    {"assessment_id": assessment.id, "reason": "proctor_code_missing"},
-                    logging.WARNING,
-                )
-                messages.error(request, "Proctor code is required.")
-                return redirect("kura:assessment_detail", assessment_id=assessment.id)
-            submitted_code = form.cleaned_data.get("proctor_code", "").strip()
-            expected_hash = hash_proctor_code(submitted_code)
-            if is_legacy_proctor_code_hash(assessment.proctor_code_hash) or not hmac.compare_digest(
-                expected_hash, assessment.proctor_code_hash
-            ):
-                log_security_event(
-                    request,
-                    "attempt.start_blocked",
-                    {"assessment_id": assessment.id, "reason": "proctor_code_invalid"},
-                    logging.WARNING,
-                )
-                messages.error(request, "Invalid whiteboard proctor code.")
-                return redirect("kura:assessment_detail", assessment_id=assessment.id)
-
         # Create the attempt before releasing the row lock.
-        timer_expires = now + timezone.timedelta(minutes=assessment.duration_minutes)
         attempt = AssessmentAttempt.objects.create(
             assessment=assessment,
             student=request.user,
             attempt_no=existing_count + 1,
             status=AttemptStatus.IN_PROGRESS,
-            expires_at=min(assessment.due_date, timer_expires),
-            ip_address=client_ip,
+            ip_address=get_client_ip(request),
             user_agent=request.META.get("HTTP_USER_AGENT", "")[:255],
         )
         # Record the new attempt only after it is safely stored.
@@ -6450,177 +5172,42 @@ def assessment_attempt_start_view(request, assessment_id):
 
 @login_required
 def assessment_take_view(request, attempt_id):
-    """Render the live exam interface with server timer countdown and autosave.
-    Who can use it: The attempting student.
+    """Show the submission page where a student uploads and removes files before submitting.
+    Who can use it: The student who started the attempt.
     Security: Verifies attempt ownership and never changes an attempt on GET.
     """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
 
-    # Administrators cannot take assessments, even if enrolled in the course.
+    # Administrators cannot submit work, even if enrolled in the course.
     if has_role(request.user, "Admin"):
         raise PermissionDenied
 
     attempt = get_object_or_404(
-        AssessmentAttempt.objects.select_related("assessment__section__module__course"),
+        AssessmentAttempt.objects.select_related("assessment__course"),
         id=attempt_id,
         student=request.user,
     )
-    # A hidden section cannot be accessed through a previously started attempt.
-    if not attempt.assessment.section.is_visible:
-        raise PermissionDenied
 
-    # GET must never submit an attempt; the scheduled job handles expired attempts.
-    if attempt.status != AttemptStatus.IN_PROGRESS or timezone.now() >= attempt.expires_at:
+    # GET must never submit an attempt; a submitted or late attempt shows its detail page instead.
+    if attempt.status != AttemptStatus.IN_PROGRESS or timezone.now() >= attempt.assessment.due_date:
         return redirect("kura:attempt_detail", attempt_id=attempt.id)
-
-    answers_map = {ans.get("question_id"): ans for ans in (attempt.answers_json or [])}
-    attempt_files = AttemptFile.objects.filter(attempt=attempt).select_related("file")
-
-    # Pair each displayed question with this student's saved response, never the answer key.
-    settings_doc = attempt.assessment.settings_json or {}
-    shuffle_questions = bool(settings_doc.get("shuffle_questions", False))
-    shuffle_options = bool(settings_doc.get("shuffle_options", False))
-    allow_backtracking = bool(settings_doc.get("allow_backtracking", True))
-
-    questions = []
-    for saved_question in attempt.assessment.questions_json or []:
-        question = saved_question.copy()
-        question["saved_answer"] = answers_map.get(question.get("question_id"), {})
-        if question.get("type") == "multiple_choice":
-            options = [opt.copy() for opt in question.get("options", [])]
-            if shuffle_options and len(options) > 1:
-                random.Random(f"{attempt.id}:{question.get('question_id')}:options").shuffle(options)
-            question["options"] = options
-        elif question.get("type") == "matching":
-            left_prompts = []
-            for saved_pair in question.get("left_prompts", []):
-                pair = saved_pair.copy()
-                for match in question["saved_answer"].get("submitted_matches", []):
-                    if match.get("pair_id") == pair.get("pair_id"):
-                        pair["selected_match"] = match.get("selected_match")
-                left_prompts.append(pair)
-            available_matches = list(question.get("available_matches", []))
-            if shuffle_options and len(available_matches) > 1:
-                random.Random(f"{attempt.id}:{question.get('question_id')}:matches").shuffle(available_matches)
-            question["left_prompts"] = left_prompts
-            question["available_matches"] = available_matches
-        questions.append(question)
-
-    if shuffle_questions and len(questions) > 1:
-        random.Random(f"{attempt.id}:questions").shuffle(questions)
 
     context = {
         "attempt": attempt,
         "assessment": attempt.assessment,
-        "questions": questions,
-        "answers_map": answers_map,
-        "attempt_files": attempt_files,
+        "attempt_files": AttemptFile.objects.filter(attempt=attempt).select_related("file"),
         "file_form": AssessmentFileUploadForm(),
-        "allow_backtracking": allow_backtracking,
     }
     return render(request, "kura/assessments/assessment_take.html", context)
 
 
 @login_required
-def assessment_autosave_view(request, attempt_id):
-    """Receive periodic background response autosaves via HTMX.
-    Who can use it: The attempting student.
-    Security: Enforces server-side deadline; rejects updates if expires_at is passed; tracks focus loss.
-    """
-    # Admins and Registrars cannot access instructional content or grades.
-    if not can_access_learning_records(request.user):
-        raise PermissionDenied
-
-    # Administrators cannot submit assessment responses.
-    if has_role(request.user, "Admin"):
-        raise PermissionDenied
-
-    if request.method != "POST":
-        return HttpResponseNotAllowed(["POST"])
-
-    # Validate the question identifier before using it to find the student's question.
-    lookup = AssessmentAutosaveForm(request.POST)
-    if not lookup.is_valid():
-        return HttpResponse("Unable to save this response.", status=400)
-
-    # The same attempt lock is used by submission, uploads, and the deadline job.
-    with transaction.atomic():
-        attempt = get_object_or_404(AssessmentAttempt.objects.select_for_update(), id=attempt_id, student=request.user)
-        if not attempt.assessment.section.is_visible:
-            raise PermissionDenied
-        if attempt.status != AttemptStatus.IN_PROGRESS or timezone.now() >= attempt.expires_at:
-            log_security_event(
-                request,
-                "access.denied",
-                {"reason": "assessment_deadline_expired"},
-                logging.WARNING,
-            )
-            return HttpResponse("Assessment deadline has expired.", status=409)
-        if lookup.cleaned_data["focus_lost"]:
-            attempt.tab_focus_lost_count += 1
-            attempt.save(update_fields=["tab_focus_lost_count"])
-            # Count focus changes without recording answer text or question identifiers.
-            log_security_event(
-                request,
-                "attempt.focus_lost",
-                {"attempt_id": attempt.id, "count": attempt.tab_focus_lost_count},
-            )
-            return render(request, "kura/assessments/_autosave_status.html", {"status": "saved"})
-
-        # Find the question in this assessment and reject invented IDs or response types.
-        question = None
-        for item in attempt.assessment.questions_json:
-            if item.get("question_id") == lookup.cleaned_data["question_id"]:
-                question = item
-                break
-        if not question:
-            return HttpResponse("Unable to save this response.", status=400)
-        question_type = question.get("type")
-        if question_type == "essay":
-            question_type = "long_text"
-        if lookup.cleaned_data["response_type"] != question_type:
-            return HttpResponse("Unable to save this response.", status=400)
-        response_form = AssessmentAnswerForm(request.POST, question)
-        if not response_form.is_valid():
-            return HttpResponse("Unable to save this response.", status=400)
-
-        # Only fields for the real question are stored; forged extra pair names are ignored.
-        question_id = question["question_id"]
-        answer = {"question_id": question_id, "type": question_type, "last_updated_at": timezone.now().isoformat()}
-        if question_type == "multiple_choice":
-            answer["selected_option_ids"] = response_form.cleaned_data["selected_options"]
-        elif question_type == "matching":
-            answer["submitted_matches"] = []
-            for pair in question.get("left_prompts", []):
-                pair_id = pair["pair_id"]
-                answer["submitted_matches"].append(
-                    {
-                        "pair_id": pair_id,
-                        "selected_match": response_form.cleaned_data[f"match_{pair_id}"],
-                    }
-                )
-        elif question_type == "long_text":
-            answer["response_text"] = response_form.cleaned_data["response_text"]
-        else:
-            return HttpResponse("Unable to save this response.", status=400)
-        existing_answers = {item.get("question_id"): item for item in (attempt.answers_json or [])}
-        existing_answers[question_id] = answer
-        new_answers = list(existing_answers.values())
-        validate_attempt_answers_json(new_answers)
-        attempt.answers_json = new_answers
-        attempt.last_autosave_at = timezone.now()
-        attempt.save(update_fields=["answers_json", "last_autosave_at"])
-
-    return render(request, "kura/assessments/_autosave_status.html", {"status": "saved"})
-
-
-@login_required
 def assessment_attempt_file_upload_view(request, attempt_id):
-    """Upload a student coursework submission file for an in-progress attempt.
-    Who can use it: The attempting student.
-    Security: Validates attempt is active and unexpired; database trigger also locks files on submit.
+    """Upload a student submission file for an in-progress attempt.
+    Who can use it: The student who started the attempt.
+    Security: Validates the attempt is open and before the deadline; a database trigger also locks files on submit.
     """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
@@ -6634,47 +5221,36 @@ def assessment_attempt_file_upload_view(request, attempt_id):
         return HttpResponseNotAllowed(["POST"])
 
     attempt = get_object_or_404(AssessmentAttempt, id=attempt_id, student=request.user)
-    if not attempt.assessment.section.is_visible:
-        raise PermissionDenied
 
     form = AssessmentFileUploadForm(request.POST, request.FILES)
     if form.is_valid():
-        uploaded_file = form.cleaned_data["file"]
         try:
             # Lock the attempt so submission cannot seal it while this file is being added.
             with transaction.atomic():
-                attempt = AssessmentAttempt.objects.select_for_update().get(id=attempt.id, student=request.user)
-                if attempt.status != AttemptStatus.IN_PROGRESS or timezone.now() >= attempt.expires_at:
+                attempt = AssessmentAttempt.objects.select_for_update().select_related("assessment").get(
+                    id=attempt.id, student=request.user
+                )
+                if attempt.status != AttemptStatus.IN_PROGRESS or timezone.now() >= attempt.assessment.due_date:
                     raise ValidationError("Files cannot be uploaded: attempt is closed or deadline has passed.")
                 stored_file = validate_and_save_upload(
-                    uploaded_file,
+                    form.cleaned_data["file"],
                     request.user,
                     request=request,
                     log_context={"context": "attempt", "attempt_id": attempt.id},
                 )
-                if attempt.assessment.delivery_mode == AssessmentDeliveryMode.PAPER_SCANNED:
-                    allowed_scan_types = {"application/pdf", "image/png", "image/jpeg", "image/gif", "image/webp"}
-                    if stored_file.mime_type not in allowed_scan_types:
-                        raise ValidationError("Upload a PDF or image of the scanned paper.")
-                if timezone.now() >= attempt.expires_at:
-                    raise ValidationError("Files cannot be uploaded: attempt is closed or deadline has passed.")
                 AttemptFile.objects.create(attempt=attempt, file=stored_file)
             messages.success(request, f"Uploaded {stored_file.original_filename}.")
-        except ValidationError as e:
-            if hasattr(e, "message"):
-                error_message = str(e.message)
-            else:
-                error_message = str(e)
-            messages.error(request, error_message)
+        except ValidationError as error:
+            messages.error(request, str(getattr(error, "message", error)))
 
     return redirect("kura:assessment_take", attempt_id=attempt.id)
 
 
 @login_required
 def assessment_attempt_file_delete_view(request, attempt_id, file_id):
-    """Remove a student submission file from an in-progress assessment attempt.
-    Who can use it: The attempting student.
-    Security: POST only; locks attempt and permits deletion only while In_Progress and unexpired.
+    """Remove a student submission file from an in-progress attempt.
+    Who can use it: The student who started the attempt.
+    Security: POST only; locks the attempt and permits deletion only while In_Progress and before the deadline.
     """
     if not can_access_learning_records(request.user):
         raise PermissionDenied
@@ -6684,10 +5260,12 @@ def assessment_attempt_file_delete_view(request, attempt_id, file_id):
         return HttpResponseNotAllowed(["POST"])
 
     with transaction.atomic():
-        attempt = get_object_or_404(AssessmentAttempt.objects.select_for_update(), id=attempt_id, student=request.user)
-        if not attempt.assessment.section.is_visible:
-            raise PermissionDenied
-        if attempt.status != AttemptStatus.IN_PROGRESS or timezone.now() >= attempt.expires_at:
+        attempt = get_object_or_404(
+            AssessmentAttempt.objects.select_for_update().select_related("assessment"),
+            id=attempt_id,
+            student=request.user,
+        )
+        if attempt.status != AttemptStatus.IN_PROGRESS or timezone.now() >= attempt.assessment.due_date:
             messages.error(request, "Files cannot be removed: attempt is closed or deadline has passed.")
             return redirect("kura:attempt_detail", attempt_id=attempt.id)
         attachment = get_object_or_404(AttemptFile.objects.select_related("file"), attempt=attempt, file_id=file_id)
@@ -6706,9 +5284,9 @@ def assessment_attempt_file_delete_view(request, attempt_id, file_id):
 
 @login_required
 def assessment_submit_view(request, attempt_id):
-    """Submit an assessment attempt, compute its submission hash and start auto-grading.
-    Who can use it: The attempting student.
-    Security: POST only; computes SHA-256 submission hash; locks further changes.
+    """Submit an attempt, compute its submission hash and send it for marking.
+    Who can use it: The student who started the attempt.
+    Security: POST only; needs at least one file; computes the SHA-256 submission hash; locks further changes.
     """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
@@ -6721,26 +5299,27 @@ def assessment_submit_view(request, attempt_id):
     if request.method != "POST":
         return HttpResponseNotAllowed(["POST"])
 
-    # Serialize submission with file uploads and the expiry job.
+    # Serialize submission with file uploads.
     with transaction.atomic():
-        attempt = get_object_or_404(AssessmentAttempt.objects.select_for_update(), id=attempt_id, student=request.user)
-        if not attempt.assessment.section.is_visible:
-            raise PermissionDenied
+        attempt = get_object_or_404(
+            AssessmentAttempt.objects.select_for_update().select_related("assessment"),
+            id=attempt_id,
+            student=request.user,
+        )
         if attempt.status != AttemptStatus.IN_PROGRESS:
             messages.warning(request, "This attempt has already been submitted.")
             return redirect("kura:attempt_detail", attempt_id=attempt.id)
 
-        # A scanned-paper attempt needs an attached script before submission.
-        if (
-            attempt.assessment.delivery_mode == AssessmentDeliveryMode.PAPER_SCANNED
-            and not AttemptFile.objects.filter(attempt=attempt).exists()
-        ):
-            messages.error(request, "Upload a PDF or image of the scanned paper.")
+        # A submission needs at least one file.
+        if not AttemptFile.objects.filter(attempt=attempt).exists():
+            messages.error(request, "Upload at least one file before submitting.")
             return redirect("kura:assessment_take", attempt_id=attempt.id)
 
-        # Seal the attempt and its grade together, capping the time at the deadline.
-        attempt.submitted_at = min(timezone.now(), attempt.expires_at)
-        evaluate_attempt(attempt)
+        # Seal the attempt and its integrity hash together, capping the time at the deadline.
+        attempt.submitted_at = min(timezone.now(), attempt.assessment.due_date)
+        attempt.status = AttemptStatus.REQUIRES_MANUAL_GRADING
+        attempt.submission_hash = compute_submission_hash(attempt)
+        attempt.save()
 
         # Email a receipt: when it was submitted, its integrity hash and the SHA-256 of each attached file.
         # The student can use it as proof later.
@@ -6762,7 +5341,7 @@ def assessment_submit_view(request, attempt_id):
         )
 
     messages.success(request, f"Assessment submitted! Integrity Hash: {attempt.submission_hash[:16]}...")
-    # Record the submission integrity hash without logging raw answers or scores.
+    # Record the submission integrity hash without logging file names or scores.
     log_security_event(
         request,
         "attempt.submitted",
@@ -6771,41 +5350,9 @@ def assessment_submit_view(request, attempt_id):
     return redirect("kura:attempt_detail", attempt_id=attempt.id)
 
 
-def build_question_reviews(attempt):
-    """Pairs each assessment question with a student's saved answers for staff review only."""
-    answers_by_id = {ans.get("question_id"): ans for ans in (attempt.answers_json or [])}
-    reviews = []
-    for index, question in enumerate(attempt.assessment.questions_json or [], start=1):
-        q_id = question.get("question_id")
-        q_type = question.get("type")
-        saved = answers_by_id.get(q_id, {})
-        review = {
-            "number": index,
-            "type": q_type,
-            "prompt": question.get("prompt", ""),
-            "points": question.get("points", 0),
-            "auto_evaluation": saved.get("auto_evaluation"),
-        }
-        if q_type == "multiple_choice":
-            selected_ids = set(saved.get("selected_option_ids", []))
-            review["selected_options"] = [
-                opt.get("text", "") for opt in question.get("options", []) if opt.get("option_id") in selected_ids
-            ]
-        elif q_type == "matching":
-            match_by_pair = {m.get("pair_id"): m.get("selected_match", "") for m in saved.get("submitted_matches", [])}
-            review["matching_rows"] = [
-                {"left": pair.get("text", ""), "selected": match_by_pair.get(pair.get("pair_id"), "")}
-                for pair in question.get("left_prompts", [])
-            ]
-        else:
-            review["response_text"] = saved.get("response_text", "")
-        reviews.append(review)
-    return reviews
-
-
 @login_required
 def attempt_detail_view(request, attempt_id):
-    """Show completed assessment attempt review and score telemetry.
+    """Show a submission with its files, integrity hash and (once released) grade.
     Who can use it: The attempting student, Course staff, Department Heads.
     Security: IDOR protection ensures students cannot inspect other students' attempts.
     """
@@ -6818,10 +5365,10 @@ def attempt_detail_view(request, attempt_id):
         raise PermissionDenied
 
     attempt = get_object_or_404(
-        AssessmentAttempt.objects.select_related("assessment__section__module__course__department", "student"),
+        AssessmentAttempt.objects.select_related("assessment__course__department", "student"),
         id=attempt_id,
     )
-    course = attempt.assessment.section.module.course
+    course = attempt.assessment.course
 
     is_head = is_department_head(request.user, course.department)
     is_staff = is_course_staff(request.user, course)
@@ -6829,17 +5376,10 @@ def attempt_detail_view(request, attempt_id):
     # Only course staff/head or the attempting student can view this attempt.
     if not (is_head or is_staff or attempt.student_id == request.user.id):
         raise PermissionDenied
-    if not (is_head or is_staff) and not attempt.assessment.section.is_visible:
-        raise PermissionDenied
 
-    # Staff may see the marking breakdown and read-only answers; students see only the released grade.
-    summary = {}
+    # Students see only their released grade; staff see it in the gradebook.
     released_grade = None
-    question_reviews = []
-    if (is_head or is_staff) and attempt.student_id != request.user.id:
-        summary = attempt.summary_score_json or {}
-        question_reviews = build_question_reviews(attempt)
-    else:
+    if not ((is_head or is_staff) and attempt.student_id != request.user.id):
         released_grade = Grade.objects.filter(
             attempt=attempt,
             student=request.user,
@@ -6860,14 +5400,12 @@ def attempt_detail_view(request, attempt_id):
         "assessment": attempt.assessment,
         "is_staff": is_head or is_staff,
         "attempt_files": attempt_files,
-        "summary": summary,
-        "question_reviews": question_reviews,
         "released_grade": released_grade,
     }
     return render(request, "kura/assessments/attempt_detail.html", context)
 
 
-# Grades, appeals & transcripts
+# Grades & transcripts
 
 
 @login_required
@@ -6890,12 +5428,11 @@ def course_grades_view(request, course_id):
         raise PermissionDenied
 
     grades = (
-        Grade.objects.filter(assessment__section__module__course=course)
+        Grade.objects.filter(assessment__course=course)
         .select_related("assessment", "student", "attempt")
         .order_by("-graded_at")
     )
     can_release = can_release_grades(request.user, course)
-    grade_schemes = CourseGradeScheme.objects.filter(course=course)
     course_results = CourseResult.objects.filter(course=course).select_related("student")
 
     # A staff member who is also a student must not see their own draft marks here.
@@ -6908,7 +5445,7 @@ def course_grades_view(request, course_id):
         "finalized": grades.filter(status=GradeStatus.FINALIZED).count(),
         "released": grades.filter(status=GradeStatus.RELEASED).count(),
         "needs_marking": AssessmentAttempt.objects.filter(
-            assessment__section__module__course=course,
+            assessment__course=course,
             status=AttemptStatus.REQUIRES_MANUAL_GRADING,
         )
         .exclude(student=request.user)
@@ -6917,7 +5454,7 @@ def course_grades_view(request, course_id):
 
     filter_form = CourseGradesFilterForm(
         request.GET or None,
-        assessments=Assessment.objects.filter(section__module__course=course).order_by("title"),
+        assessments=Assessment.objects.filter(course=course).order_by("title"),
     )
     if filter_form.is_valid():
         search = filter_form.cleaned_data["q"]
@@ -6932,29 +5469,12 @@ def course_grades_view(request, course_id):
         if filter_form.cleaned_data["status"]:
             grades = grades.filter(status=filter_form.cleaned_data["status"])
 
-    # Appeals waiting for a verdict on this course.
-    # Only instructors and the department head may inspect appeals (teaching assistants are excluded).
-    can_view_appeals = is_course_instructor(request.user, course) or is_department_head(
-        request.user, course.department
-    )
-    pending_appeals = GradeAppeal.objects.none()
-    if can_view_appeals:
-        pending_appeals = (
-            GradeAppeal.objects.filter(
-                grade__assessment__section__module__course=course,
-                status=AppealStatus.PENDING,
-            )
-            .exclude(grade__student=request.user)
-            .select_related("grade__assessment", "grade__student")
-            .order_by("created_at")
-        )
-
     # Post-release change requests are decided only by this department's head, and never by the person who raised them (specification: no self-approval).
     pending_change_requests = GradeChangeRequest.objects.none()
     if is_department_head(request.user, course.department):
         pending_change_requests = (
             GradeChangeRequest.objects.filter(
-                grade__assessment__section__module__course=course,
+                grade__assessment__course=course,
                 status=ChangeRequestStatus.PENDING,
             )
             .exclude(requested_by=request.user)
@@ -6974,65 +5494,11 @@ def course_grades_view(request, course_id):
         # Finalizing needs a lead or co-instructor assignment; a TA assignment is not enough.
         "can_finalize_grade": is_course_instructor(request.user, course),
         "can_request_grade_change": is_course_instructor(request.user, course),
-        "grade_schemes": grade_schemes,
         "course_results": course_results,
-        "pending_appeals": pending_appeals,
         "pending_change_requests": pending_change_requests,
-        "can_edit_scheme": is_course_instructor(request.user, course)
-        or is_department_head(request.user, course.department),
         "can_calculate_results": is_course_instructor(request.user, course),
     }
     return render(request, "kura/grades/course_grades.html", context)
-
-
-@login_required
-def course_grade_scheme_view(request, course_id):
-    """Set how much each grade component (coursework, quiz, exam, ...) counts
-    towards the final course result.
-    Who can use it: lead or co-instructors of the course and its department head.
-    Security: Admins and Registrars are refused; teaching assistants are refused
-    because the specification denies them "alter course grade schemes".
-    Changes are POST with CSRF, validated by a form, saved atomically and logged.
-    """
-    # Admins and Registrars cannot access instructional content or grades.
-    if not can_access_learning_records(request.user):
-        raise PermissionDenied
-
-    course = get_object_or_404(Course.objects.select_related("department"), id=course_id)
-
-    # Only an instructor of this course or its department head may change the weights. A TA assignment is not enough (is_course_instructor checks that).
-    if not (is_course_instructor(request.user, course) or is_department_head(request.user, course.department)):
-        raise PermissionDenied
-
-    # Fill the form with the weights saved now; a component with no row counts as 0.
-    current_weights = {}
-    for scheme in CourseGradeScheme.objects.filter(course=course):
-        current_weights[f"weight_{scheme.component_type}"] = scheme.weight_percentage
-    form = CourseGradeSchemeForm(request.POST or None, initial=current_weights)
-
-    if request.method == "POST" and form.is_valid():
-        # Replace the whole scheme in one transaction so the weights never add up to anything but 100 in the database.
-        with transaction.atomic():
-            for component, _ in GradeComponentType.choices:
-                weight = form.cleaned_data[f"weight_{component}"]
-                if weight:
-                    CourseGradeScheme.objects.update_or_create(
-                        course=course, component_type=component, defaults={"weight_percentage": weight}
-                    )
-                else:
-                    CourseGradeScheme.objects.filter(course=course, component_type=component).delete()
-
-        # Record who changed the scheme, not the weights themselves.
-        log_security_event(request, "grade.scheme.changed", {"course_id": course.id})
-        messages.success(request, "Grade scheme saved. Recalculate final results to apply it.")
-        return redirect("kura:course_grades", course_id=course.id)
-
-    return render(
-        request,
-        "kura/grades/grade_scheme.html",
-        {"form": form, "course": course},
-        status=400 if request.method == "POST" else 200,
-    )
 
 
 @login_required
@@ -7040,17 +5506,17 @@ def grade_entry_view(request, attempt_id):
     """Enter or edit draft scores and feedback for an assessment attempt.
     Who can use it: Teaching Assistants and Course Instructors.
     Security: Creates draft grade and logs modification in GradeHistory audit ledger.
-    Attempts still in progress cannot be graded (any delivery mode).
+    Attempts still in progress cannot be graded.
     """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
         raise PermissionDenied
 
     attempt = get_object_or_404(
-        AssessmentAttempt.objects.select_related("assessment__section__module__course__department", "student"),
+        AssessmentAttempt.objects.select_related("assessment__course__department", "student"),
         id=attempt_id,
     )
-    course = attempt.assessment.section.module.course
+    course = attempt.assessment.course
 
     if has_role(request.user, "Admin"):
         raise PermissionDenied
@@ -7068,11 +5534,6 @@ def grade_entry_view(request, attempt_id):
     # Staff can only mark a submitted attempt; marking one still in progress would be overwritten when it is submitted.
     if attempt.status == AttemptStatus.IN_PROGRESS:
         raise PermissionDenied
-
-    # A scanned paper must be submitted with a file before staff can mark it.
-    if attempt.assessment.delivery_mode == AssessmentDeliveryMode.PAPER_SCANNED:
-        if not AttemptFile.objects.filter(attempt=attempt).exists():
-            raise PermissionDenied
 
     existing_grade = Grade.objects.filter(attempt=attempt).first()
     initial_score = None
@@ -7141,7 +5602,6 @@ def grade_entry_view(request, attempt_id):
     if request.method == "POST":
         log_invalid_form(request, form)
 
-    question_reviews = build_question_reviews(attempt)
     attempt_files = AttemptFile.objects.filter(attempt=attempt).select_related("file")
     return render(
         request,
@@ -7150,7 +5610,6 @@ def grade_entry_view(request, attempt_id):
             "form": form,
             "attempt": attempt,
             "existing_grade": existing_grade,
-            "question_reviews": question_reviews,
             "attempt_files": attempt_files,
         },
         status=400 if request.method == "POST" else 200,
@@ -7179,10 +5638,10 @@ def grade_finalize_view(request, grade_id):
         return HttpResponseNotAllowed(["POST"])
 
     grade = get_object_or_404(
-        Grade.objects.select_related("assessment__section__module__course__department"),
+        Grade.objects.select_related("assessment__course__department"),
         id=grade_id,
     )
-    course = grade.assessment.section.module.course
+    course = grade.assessment.course
 
     # A student cannot finalize their own grade through a staff assignment.
     if grade.student_id == request.user.id:
@@ -7241,10 +5700,10 @@ def grade_release_view(request, grade_id):
         raise PermissionDenied
 
     grade = get_object_or_404(
-        Grade.objects.select_related("assessment__section__module__course__department"),
+        Grade.objects.select_related("assessment__course__department"),
         id=grade_id,
     )
-    course = grade.assessment.section.module.course
+    course = grade.assessment.course
 
     if grade.student_id == request.user.id or not can_release_grades(request.user, course):
         raise PermissionDenied
@@ -7274,7 +5733,7 @@ def grade_release_view(request, grade_id):
         # Lock the grade row inside atomic() and re-verify FINALIZED before releasing (P2).
         with transaction.atomic():
             grade = Grade.objects.select_for_update().select_related(
-                "assessment__section__module__course__department", "student"
+                "assessment__course__department", "student"
             ).get(id=grade.id)
             if grade.status != GradeStatus.FINALIZED:
                 messages.error(request, "Only finalized grades can be released.")
@@ -7351,152 +5810,11 @@ def student_grades_view(request):
             student=request.user,
             status=GradeStatus.RELEASED,
         )
-        .select_related("assessment__section__module__course")
+        .select_related("assessment__course")
         .order_by("-released_at")
     )
 
-    # Load existing appeals submitted by this student.
-    appeals = GradeAppeal.objects.filter(grade__student=request.user).select_related("grade__assessment")
-
-    return render(
-        request,
-        "kura/grades/student_grades.html",
-        {
-            "grades": released_grades,
-            "appeals": appeals,
-        },
-    )
-
-
-@login_required
-def grade_appeal_create_view(request, grade_id):
-    """File a formal student appeal disputing an assessment score.
-    Who can use it: The evaluated student on a released grade.
-    Security: Verifies grade.student == request.user and grade is RELEASED (prevents IDOR).
-    """
-    # Admins and Registrars cannot access instructional content or grades.
-    if not can_access_learning_records(request.user):
-        raise PermissionDenied
-
-    # Administrators cannot access grades through an appeal.
-    if has_role(request.user, "Admin"):
-        raise PermissionDenied
-
-    grade = get_object_or_404(
-        Grade.objects.select_related("assessment__section__module__course"),
-        id=grade_id,
-        student=request.user,
-    )
-
-    if grade.status != GradeStatus.RELEASED:
-        raise PermissionDenied
-
-    # Refuse a second pending appeal for the same grade with Post/Redirect/Get.
-    if GradeAppeal.objects.filter(grade=grade, status=AppealStatus.PENDING).exists():
-        messages.warning(request, "A pending appeal already exists for this grade.")
-        return redirect("kura:student_grades")
-
-    form = GradeAppealForm(request.POST or None)
-
-    if request.method == "POST" and form.is_valid():
-        reason = form.cleaned_data["reason"].strip()
-        appeal = GradeAppeal.objects.create(
-            grade=grade,
-            reason=reason,
-            status=AppealStatus.PENDING,
-        )
-        # Record the appeal ID and state, never the student's written reason.
-        log_security_event(request, "appeal.created", {"appeal_id": appeal.id, "status": appeal.status})
-        messages.success(request, "Your grade appeal has been submitted for instructor review.")
-        return redirect("kura:student_grades")
-
-    if request.method == "POST":
-        log_invalid_form(request, form)
-
-    return render(
-        request,
-        "kura/grades/appeal_create.html",
-        {"form": form, "grade": grade},
-        status=400 if request.method == "POST" else 200,
-    )
-
-
-@login_required
-def grade_appeal_review_view(request, appeal_id):
-    """Review a student grade appeal and record a formal verdict.
-    Who can use it: Course instructors (read and decide) and Department Heads (read-only).
-    Security: Enforces specification appeal authority (Instructors decide; Teaching
-    assistants denied; Department Heads may inspect read-only on GET but cannot decide on POST).
-    """
-    # Admins and Registrars cannot access instructional content or grades.
-    if not can_access_learning_records(request.user):
-        raise PermissionDenied
-
-    # Administrators cannot access grades through an appeal.
-    if has_role(request.user, "Admin"):
-        raise PermissionDenied
-
-    appeal = get_object_or_404(
-        GradeAppeal.objects.select_related("grade__assessment__section__module__course__department", "grade__student"),
-        id=appeal_id,
-    )
-    course = appeal.grade.assessment.section.module.course
-
-    # A student cannot review their own appeal as course staff.
-    if appeal.grade.student_id == request.user.id:
-        raise PermissionDenied
-
-    can_decide = is_course_instructor(request.user, course)
-    can_view = can_decide or is_department_head(request.user, course.department)
-    if not can_view:
-        raise PermissionDenied
-    if request.method == "POST" and not can_decide:
-        raise PermissionDenied
-    # Already-decided appeals return 404 to deciders; department heads keep read-only GET (M1).
-    if appeal.status != AppealStatus.PENDING and (request.method == "POST" or can_decide):
-        raise Http404
-
-    form = GradeAppealReviewForm(request.POST or None, initial={"status": appeal.status, "response": appeal.response})
-
-    if request.method == "POST" and form.is_valid():
-        with transaction.atomic():
-            # Lock the pending row inside atomic() so concurrent POSTs cannot re-decide it (M1).
-            appeal = get_object_or_404(
-                GradeAppeal.objects.select_for_update().select_related(
-                    "grade__assessment__section__module__course__department", "grade__student"
-                ),
-                id=appeal_id,
-                status=AppealStatus.PENDING,
-            )
-            appeal.status = form.cleaned_data["status"]
-            appeal.response = form.cleaned_data["response"].strip()
-            appeal.reviewed_by = request.user
-            appeal.resolved_at = timezone.now()
-            appeal.save(update_fields=["status", "response", "reviewed_by", "resolved_at"])
-            # Record the decision status without logging the private response text.
-            log_security_event(request, "appeal.decided", {"appeal_id": appeal.id, "status": appeal.status})
-
-            # Tell the student their appeal was decided (each decision once).
-            grades_link = settings.SITE_URL + reverse("kura:student_grades")
-            queue_email(
-                f"appeal-decided:{appeal.id}:{int(appeal.resolved_at.timestamp())}",
-                appeal.grade.student.email,
-                f"Grade appeal decided: {appeal.grade.assessment.title}",
-                f"Hello,\n\nYour grade appeal for {appeal.grade.assessment.title} has been reviewed "
-                f"(status: {appeal.get_status_display()}).\n\n"
-                f"Log in to Kura to read the response:\n{grades_link}\n\n"
-                "This is an automatic message from Kura. Please do not reply.",
-            )
-
-        messages.success(request, f"Appeal verdict recorded for {appeal.grade.student.email}.")
-        return redirect("kura:course_grades", course_id=course.id)
-
-    return render(
-        request,
-        "kura/grades/appeal_review.html",
-        {"form": form, "appeal": appeal, "can_decide": can_decide},
-        status=400 if request.method == "POST" else 200,
-    )
+    return render(request, "kura/grades/student_grades.html", {"grades": released_grades})
 
 
 @login_required
@@ -7514,10 +5832,10 @@ def grade_change_request_create_view(request, grade_id):
         raise PermissionDenied
 
     grade = get_object_or_404(
-        Grade.objects.select_related("assessment__section__module__course__department", "student"),
+        Grade.objects.select_related("assessment__course__department", "student"),
         id=grade_id,
     )
-    course = grade.assessment.section.module.course
+    course = grade.assessment.course
 
     # A student cannot manage their own grade through a staff assignment.
     if grade.student_id == request.user.id:
@@ -7586,11 +5904,11 @@ def grade_change_request_review_view(request, request_id):
 
     change_request = get_object_or_404(
         GradeChangeRequest.objects.select_related(
-            "grade__assessment__section__module__course__department", "requested_by"
+            "grade__assessment__course__department", "requested_by"
         ),
         id=request_id,
     )
-    course = change_request.grade.assessment.section.module.course
+    course = change_request.grade.assessment.course
     dept = course.department
 
     # A student cannot review a change to their own grade.
@@ -7693,31 +6011,26 @@ def grade_change_request_review_view(request, request_id):
 
 
 def calculate_student_course_score(course, student):
-    """Compute a student's weighted percentage score from released grades in a course."""
-    schemes = CourseGradeScheme.objects.filter(course=course)
-    cumulative_score = Decimal("0.00")
-
-    for scheme in schemes:
-        comp_grades = Grade.objects.filter(
-            assessment__section__module__course=course,
-            assessment__component_type=scheme.component_type,
+    """Compute a student's average percentage score over their released grades in a course."""
+    released_grades = list(
+        Grade.objects.filter(
+            assessment__course=course,
             student=student,
             status=GradeStatus.RELEASED,
         ).select_related("assessment")
-        comp_grades = list(comp_grades)
+    )
+    if not released_grades:
+        return Decimal("0.00")
 
-        if comp_grades:
-            # Calculate average percentage for this component.
-            total_pct = sum((g.score / g.assessment.max_score * 100) for g in comp_grades)
-            avg_pct = total_pct / len(comp_grades)
-            cumulative_score += avg_pct * (scheme.weight_percentage / 100)
-
-    return min(Decimal("100.00"), max(Decimal("0.00"), cumulative_score.quantize(Decimal("0.01"))))
+    # Average of score / maximum score, as a percentage.
+    total_pct = sum((g.score / g.assessment.max_score * 100) for g in released_grades)
+    average = total_pct / len(released_grades)
+    return min(Decimal("100.00"), max(Decimal("0.00"), average.quantize(Decimal("0.01"))))
 
 
 @login_required
 def course_result_calculate_view(request, course_id):
-    """Calculate cumulative course results from released grades and grading schemes.
+    """Calculate course results (average of released grades) for every enrolled student.
     Who can use it: Course instructors and Department Heads.
     Security: Only aggregates released grades; enforces final_score 0 to 100 constraint.
     """

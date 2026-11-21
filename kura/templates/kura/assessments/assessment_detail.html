@@ -3,162 +3,129 @@
 {% block title %}{{ assessment.title }} - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li><a href="{% url 'kura:course_list' %}" class="k-muted hover:text-primary">Courses</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li><a href="{% url 'kura:course_detail' assessment.section.module.course.id %}" class="k-muted hover:text-primary">{{ assessment.section.module.course.code }}</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content truncate max-w-xs">{{ assessment.title }}</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'kura:course_list' %}">Courses</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'kura:course_detail' assessment.course.id %}">{{ assessment.course.code }}</a></li>
+    <li class="breadcrumb-item active" aria-current="page">{{ assessment.title }}</li>
 </ol>
 {% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div class="space-y-1">
-            <div class="flex flex-wrap items-center gap-2">
-                <span class="k-eyebrow">{{ assessment.section.module.course.code }} &bull; {{ assessment.component_type }}</span>
+<div class="vstack gap-4">
+    <header class="d-flex flex-column flex-sm-row align-items-sm-start justify-content-sm-between gap-3">
+        <div class="vstack gap-1">
+            <div class="d-flex flex-wrap align-items-center gap-2">
+                <span class="text-uppercase small fw-semibold text-body-secondary">{{ assessment.course.code }} &bull; {{ assessment.get_component_type_display }}</span>
                 {% include "kura/_status_badge.html" with kind="assessment_window" value=is_open %}
             </div>
-            <h1 class="text-2xl font-bold">{{ assessment.title }}</h1>
-            <p class="text-sm k-muted">
-                {{ assessment.section.module.title }} &bull; Max score: <span class="k-num font-semibold">{{ assessment.max_score }}</span> &bull; Duration: <span class="k-num font-semibold">{{ assessment.duration_minutes }} min</span>
+            <h1 class="fs-3 fw-bold">{{ assessment.title }}</h1>
+            <p class="small text-body-secondary">
+                Max score: <span class="text-nowrap fw-semibold">{{ assessment.max_score }}</span> &bull; Due: <span class="text-nowrap fw-semibold">{{ assessment.due_date|date:"j M Y, H:i" }}</span>
             </p>
         </div>
-        <div class="flex flex-wrap items-center gap-2">
+        <div class="d-flex flex-wrap align-items-center gap-2">
             {% if can_author_assessments %}
-            <a href="{% url 'kura:assessment_edit' assessment.id %}" class="btn btn-outline btn-sm">Edit assessment</a>
+            <a href="{% url 'kura:assessment_edit' assessment.id %}" class="btn btn-outline-secondary btn-sm">Edit assessment</a>
             <form method="post" action="{% url 'kura:assessment_delete' assessment.id %}" data-confirm-action="Delete assessment {{ assessment.title }}? This cannot be undone.">
                 {% csrf_token %}
                 <input type="hidden" name="confirm" value="on">
-                <button type="submit" class="btn btn-outline btn-error btn-sm">Delete</button>
+                <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
             </form>
             {% endif %}
-            <a href="{% url 'kura:course_detail' assessment.section.module.course.id %}" class="btn btn-ghost btn-sm">Back to course</a>
+            <a href="{% url 'kura:course_detail' assessment.course.id %}" class="btn btn-link text-decoration-none btn-sm">Back to course</a>
         </div>
     </header>
 
-    <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div class="xl:col-span-2 space-y-6">
-            <div class="k-card p-6 space-y-3">
-                <h2 class="text-base font-semibold">Instructions</h2>
-                <div class="text-sm leading-relaxed whitespace-pre-wrap k-muted max-w-prose">
+    <div class="row g-4">
+        <div class="col-xl-8 vstack gap-4">
+            <div class="card card-body mb-3 p-4 vstack gap-2">
+                <h2 class="fw-semibold">Instructions</h2>
+                <div class="small k-pre-wrap text-body-secondary k-max-prose">
                     {{ assessment.description|default:"No additional instructions provided." }}
                 </div>
 
-                {% if assessment.lab_cidr_allowed or assessment.proctor_code_hash %}
-                <div class="alert alert-warning text-xs mt-4">
-                    <div>
-                        <span class="font-bold">Exam room requirements:</span>
-                        <ul class="list-disc list-inside mt-1 space-y-1">
-                            {% if assessment.lab_cidr_allowed %}
-                            <li>Must be opened from the lab network ({{ assessment.lab_cidr_allowed }}).</li>
-                            {% endif %}
-                            {% if assessment.proctor_code_hash %}
-                            <li>A proctor code from the invigilator is required to start.</li>
-                            {% endif %}
-                        </ul>
-                    </div>
-                </div>
-                {% endif %}
             </div>
 
-            <div class="k-card p-6 space-y-4">
-                <h2 class="text-base font-semibold">Reference materials</h2>
-                <div class="space-y-2">
+            <div class="card card-body mb-3 p-4 vstack gap-3">
+                <h2 class="fw-semibold">Reference materials</h2>
+                <div class="vstack gap-2">
                     {% for att in attached_files %}
-                    <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between p-3 bg-base-200 rounded-btn text-sm">
-                        <span class="font-medium truncate">{{ att.file.original_filename }} <span class="text-xs k-muted k-num">({{ att.file.size_bytes|filesizeformat }})</span></span>
-                        <a href="{% url 'kura:assessment_file_download' assessment.id att.file.id %}" class="btn btn-outline btn-xs">
+                    <div class="d-flex flex-column gap-2 flex-sm-row align-items-sm-center justify-content-sm-between p-2 bg-body-tertiary rounded small">
+                        <span class="fw-medium text-truncate">{{ att.file.original_filename }} <span class="small text-body-secondary text-nowrap">({{ att.file.size_bytes|filesizeformat }})</span></span>
+                        <a href="{% url 'kura:assessment_file_download' assessment.id att.file.id %}" class="btn btn-outline-secondary btn-sm">
                             Download
                         </a>
                     </div>
                     {% empty %}
-                    <p class="text-sm k-muted py-1">No reference files attached to this assessment.</p>
+                    <p class="small text-body-secondary py-1">No reference files attached to this assessment.</p>
                     {% endfor %}
                 </div>
 
                 {% if can_author_assessments %}
-                <form method="post" action="{% url 'kura:assessment_file_upload' assessment.id %}" enctype="multipart/form-data" class="pt-4 border-t border-base-300 flex flex-col sm:flex-row gap-3 sm:items-end">
+                <form method="post" action="{% url 'kura:assessment_file_upload' assessment.id %}" enctype="multipart/form-data" class="pt-3 border-top d-flex flex-column flex-sm-row gap-2 align-items-sm-end">
                     {% csrf_token %}
-                    <div class="flex-1">
+                    <div class="flex-fill">
                         {% include "kura/_field.html" with field=file_upload_form.file %}
                     </div>
-                    <button type="submit" class="btn btn-outline btn-sm">Upload material</button>
+                    <button type="submit" class="btn btn-outline-secondary btn-sm">Upload material</button>
                 </form>
                 {% endif %}
             </div>
 
-            {% if is_staff and assessment.delivery_mode == 'paper_scanned' %}
-            <div class="k-card p-6 space-y-4">
-                <h2 class="text-base font-semibold">Upload a scanned paper for a student</h2>
-                <form method="post" action="{% url 'kura:scanned_paper_staff_upload' assessment.id %}" enctype="multipart/form-data" class="space-y-4">
-                    {% csrf_token %}
-                    {% for field in scanned_upload_form %}
-                    {% include "kura/_field.html" with field=field %}
-                    {% endfor %}
-                    <div class="flex justify-end">
-                        <button type="submit" class="btn btn-outline btn-sm">Upload scanned paper</button>
-                    </div>
-                </form>
-            </div>
-            {% endif %}
-
-            <section class="space-y-3">
-                <div class="flex items-center justify-between">
-                    <h2 class="text-lg font-semibold">{% if is_staff %}Student attempts{% else %}Your attempts{% endif %}</h2>
-                    <span class="text-xs k-muted k-num">{{ attempts|length }} total</span>
+            <section class="vstack gap-2">
+                <div class="d-flex align-items-center justify-content-between">
+                    <h2 class="fs-5 fw-semibold">{% if is_staff %}Student submissions{% else %}Your submissions{% endif %}</h2>
+                    <span class="small text-body-secondary text-nowrap">{{ attempts|length }} total</span>
                 </div>
-                <div class="k-card p-0 overflow-x-auto">
-                    <table class="k-table">
-                        <caption class="sr-only">{% if is_staff %}All student attempts{% else %}Your assessment attempts{% endif %}</caption>
+                <div class="card card-body mb-3 p-0 table-responsive">
+                    <table class="table table-sm align-middle">
+                        <caption class="visually-hidden">{% if is_staff %}All student attempts{% else %}Your assessment attempts{% endif %}</caption>
                         <thead>
                             <tr>
                                 {% if is_staff %}
-                                <th class="k-sticky-col">Student</th>
+                                <th >Student</th>
                                 <th>Attempt</th>
                                 {% else %}
-                                <th class="k-sticky-col">Attempt</th>
+                                <th >Attempt</th>
                                 {% endif %}
                                 <th>Status</th>
                                 <th>Started</th>
                                 <th>Submitted</th>
-                                <th class="text-right">Action</th>
+                                <th class="text-end">Action</th>
                             </tr>
                         </thead>
                         <tbody>
                             {% for attempt in attempts %}
                             <tr>
                                 {% if is_staff %}
-                                <td class="k-sticky-col font-medium">
+                                <td class="fw-medium">
                                     {% if attempt.student.first_name or attempt.student.last_name %}{{ attempt.student.first_name }} {{ attempt.student.last_name }}{% else %}{{ attempt.student.email }}{% endif %}
-                                    <span class="block text-xs k-muted">{{ attempt.student.email }}</span>
+                                    <span class="d-block small text-body-secondary">{{ attempt.student.email }}</span>
                                 </td>
-                                <td class="k-num">#{{ attempt.attempt_no }}</td>
+                                <td class="text-nowrap">#{{ attempt.attempt_no }}</td>
                                 {% else %}
-                                <td class="k-sticky-col k-num font-medium">#{{ attempt.attempt_no }}</td>
+                                <td class="text-nowrap fw-medium">#{{ attempt.attempt_no }}</td>
                                 {% endif %}
                                 <td>
                                     {% include "kura/_status_badge.html" with kind="attempt" value=attempt.status %}
                                 </td>
-                                <td class="text-xs k-muted k-num">{{ attempt.started_at|date:"j M Y, H:i" }}</td>
-                                <td class="text-xs k-muted k-num">{{ attempt.submitted_at|date:"j M Y, H:i"|default:"-" }}</td>
-                                <td class="text-right">
-                                    <div class="inline-flex items-center justify-end gap-1.5">
+                                <td class="small text-body-secondary text-nowrap">{{ attempt.started_at|date:"j M Y, H:i" }}</td>
+                                <td class="small text-body-secondary text-nowrap">{{ attempt.submitted_at|date:"j M Y, H:i"|default:"-" }}</td>
+                                <td class="text-end">
+                                    <div class="d-inline-flex align-items-center justify-content-end gap-1">
                                         {% if attempt.status == 'In_Progress' and not is_staff %}
-                                        <a href="{% url 'kura:assessment_take' attempt.id %}" class="btn btn-primary btn-xs">Resume</a>
+                                        <a href="{% url 'kura:assessment_take' attempt.id %}" class="btn btn-primary btn-sm">Resume</a>
                                         {% else %}
-                                        <a href="{% url 'kura:attempt_detail' attempt.id %}" class="btn btn-ghost btn-xs">View</a>
+                                        <a href="{% url 'kura:attempt_detail' attempt.id %}" class="btn btn-link text-decoration-none btn-sm">View</a>
                                         {% endif %}
                                     </div>
                                 </td>
                             </tr>
                             {% empty %}
                             <tr>
-                                <td colspan="{% if is_staff %}6{% else %}5{% endif %}" class="p-8 text-center">
-                                    {% include "kura/_empty.html" with icon="document-text" title="No attempts yet" text="Attempts will appear here once started." %}
+                                <td colspan="{% if is_staff %}6{% else %}5{% endif %}" class="p-5 text-center">
+                                    {% include "kura/_empty.html" with icon="document-text" title="No submissions yet" text="Submissions will appear here once started." %}
                                 </td>
                             </tr>
                             {% endfor %}
@@ -168,33 +135,30 @@
             </section>
         </div>
 
-        <aside class="space-y-6">
-            <div class="k-card p-6 space-y-4">
-                <h2 class="text-base font-semibold border-b border-base-300 pb-2">Schedule &amp; limits</h2>
-                <dl class="space-y-3 text-sm">
+        <aside class="col-xl-4 vstack gap-4">
+            <div class="card card-body mb-3 p-4 vstack gap-3">
+                <h2 class="fw-semibold border-bottom pb-2">Schedule &amp; limits</h2>
+                <dl class="vstack gap-2 small">
                     <div>
-                        <dt class="k-eyebrow">Opens</dt>
-                        <dd class="font-medium k-num mt-0.5">{{ assessment.opens_at|date:"j M Y, H:i" }}</dd>
+                        <dt class="text-uppercase small fw-semibold text-body-secondary">Opens</dt>
+                        <dd class="fw-medium text-nowrap mt-1">{{ assessment.opens_at|date:"j M Y, H:i" }}</dd>
                     </div>
                     <div>
-                        <dt class="k-eyebrow">Closes</dt>
-                        <dd class="font-medium k-num mt-0.5">{{ assessment.due_date|date:"j M Y, H:i" }}</dd>
+                        <dt class="text-uppercase small fw-semibold text-body-secondary">Closes</dt>
+                        <dd class="fw-medium text-nowrap mt-1">{{ assessment.due_date|date:"j M Y, H:i" }}</dd>
                     </div>
                     <div>
-                        <dt class="k-eyebrow">Allowed attempts</dt>
-                        <dd class="font-medium k-num mt-0.5">{{ assessment.max_attempts }}</dd>
+                        <dt class="text-uppercase small fw-semibold text-body-secondary">Allowed submissions</dt>
+                        <dd class="fw-medium text-nowrap mt-1">{{ assessment.max_attempts }}</dd>
                     </div>
                 </dl>
 
                 {% if can_start_attempt %}
-                <div class="pt-4 border-t border-base-300 space-y-3">
-                    <form method="post" action="{% url 'kura:assessment_attempt_start' assessment.id %}" class="space-y-3">
+                <div class="pt-3 border-top vstack gap-2">
+                    <form method="post" action="{% url 'kura:assessment_attempt_start' assessment.id %}" class="vstack gap-2">
                         {% csrf_token %}
-                        {% if assessment.proctor_code_hash %}
-                        {% include "kura/_field.html" with field=start_form.proctor_code %}
-                        {% endif %}
-                        <button type="submit" class="btn btn-primary w-full" data-confirm-action="Start timed assessment now? The timer begins immediately.">
-                            Start attempt
+                        <button type="submit" class="btn btn-primary w-100" data-confirm-action="Start your submission now?" data-confirm-tone="primary">
+                            Start submission
                         </button>
                     </form>
                 </div>

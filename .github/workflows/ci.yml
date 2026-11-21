@@ -114,6 +114,21 @@ jobs:
         run: |
           python manage.py test kura --noinput
 
+      # The security test modules use SimpleNamespace mocks and direct HIBP /
+      # Vault calls instead of proxies, so they run as their own test labels
+      # to make sure they execute even if default discovery changes.
+      - name: Run Security Test Modules
+        env:
+          DATABASE_NAME: kura
+          DATABASE_USER: kura
+          DATABASE_PASSWORD: kura_password
+          DATABASE_HOST: localhost
+          DATABASE_PORT: 5432
+          SECRET_KEY: ci-test-secret-key-not-for-production-environment
+          DEBUG: "True"
+        run: |
+          python manage.py test kura.tests_security_leads_part1 kura.tests_security_leads_part2 kura.tests_security_routes --noinput
+
       - name: Verify Django Production Deploy Checks
         env:
           DATABASE_NAME: kura
@@ -172,40 +187,11 @@ jobs:
           ignore-unfixed: true
           severity: "HIGH,CRITICAL"
 
-      # Build the mail relay separately so its packages are scanned too.
-      - name: Build mail relay image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
-        with:
-          context: ./docker/postfix
-          load: true
-          tags: kura-relay:${{ github.sha }}
-
-      # Validate Postfix's installed files before scanning the image.
-      - name: Check Postfix configuration
-        run: docker run --rm --entrypoint postfix "kura-relay:${{ github.sha }}" check
-
-      # Apply the same vulnerability gate used for the web image.
-      - name: Scan mail relay image with Trivy
+      # Scan the nginx image built from the Dockerfile's nginx stage.
+      - name: Scan nginx image with Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
-          image-ref: "kura-relay:${{ github.sha }}"
-          format: "table"
-          exit-code: "1"
-          ignore-unfixed: true
-          severity: "HIGH,CRITICAL"
-
-      # Build and scan the breach-check proxy image as well.
-      - name: Build breach proxy image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
-        with:
-          context: ./docker/breach-proxy
-          load: true
-          tags: kura-breach-proxy:${{ github.sha }}
-
-      - name: Scan breach proxy image with Trivy
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: "kura-breach-proxy:${{ github.sha }}"
+          image-ref: "kura-nginx:latest"
           format: "table"
           exit-code: "1"
           ignore-unfixed: true
@@ -224,7 +210,7 @@ jobs:
       - name: Create missing placeholder secret files
         run: |
           mkdir -p secrets
-          for name in db_password backup_encryption_key django_secret_key crowdsec_bouncer_key grafana_admin_password telegram_bot_token telegram_chat_id smtp_relay_credentials vault_role_id vault_secret_id; do
+          for name in db_password backup_encryption_key django_secret_key crowdsec_bouncer_key grafana_admin_password telegram_bot_token telegram_chat_id vault_role_id vault_secret_id; do
             test -e "secrets/$name.txt" || touch "secrets/$name.txt"
           done
 

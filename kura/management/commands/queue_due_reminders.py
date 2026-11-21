@@ -30,17 +30,16 @@ class Command(BaseCommand):
         queued_count = 0
 
         with service_rls_context():
-            # Open, visible assessments that are due within the next 24 hours.
+            # Open assessments in published courses that are due within the next 24 hours.
             assessments = Assessment.objects.filter(
                 opens_at__lte=now,
                 due_date__gt=now,
                 due_date__lte=now + timezone.timedelta(hours=24),
-                section__is_visible=True,
-                section__module__is_visible=True,
-            ).select_related("section__module__course")
+                course__is_published=True,
+            ).select_related("course")
 
             for assessment in assessments:
-                course = assessment.section.module.course
+                course = assessment.course
                 link = settings.SITE_URL + reverse("kura:assessment_detail", kwargs={"assessment_id": assessment.id})
                 due_text = timezone.localtime(assessment.due_date).strftime("%d %b %Y, %H:%M")
 

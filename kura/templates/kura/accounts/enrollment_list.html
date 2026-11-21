@@ -3,26 +3,25 @@
 {% block title %}Enrollments - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">Enrollments</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Enrollments</li>
 </ol>
 {% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div class="space-y-1">
-            <p class="k-eyebrow">Records</p>
-            <h1 class="text-2xl font-bold">Enrollments</h1>
-            <p class="text-sm k-muted">View course enrollments and register or drop students.</p>
+<div class="vstack gap-4">
+    <header class="d-flex flex-column flex-sm-row align-items-sm-start justify-content-sm-between gap-3">
+        <div class="vstack gap-1">
+            <p class="text-uppercase small fw-semibold text-body-secondary">Records</p>
+            <h1 class="fs-3 fw-bold">Enrollments</h1>
+            <p class="small text-body-secondary">View course enrollments and register or drop students.</p>
         </div>
-        <div class="flex flex-wrap items-center gap-2">
-            <a href="{% url 'kura:student_list' %}" class="btn btn-ghost btn-sm">Students</a>
-            <a href="{% url 'kura:student_create' %}" class="btn btn-outline btn-sm">New student</a>
-            <a href="{% url 'kura:enrollment_create' %}" class="btn btn-primary btn-sm w-full sm:w-auto">
-                {% include "kura/_icon.html" with name="plus" class="h-4 w-4" %}
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <a href="{% url 'kura:student_list' %}" class="btn btn-link text-decoration-none btn-sm">Students</a>
+            <a href="{% url 'kura:student_create' %}" class="btn btn-outline-secondary btn-sm">New student</a>
+            <a href="{% url 'kura:enrollment_create' %}" class="btn btn-primary btn-sm w-100">
+                {% include "kura/_icon.html" with name="plus" class="k-icon-sm" %}
                 <span>Enroll student</span>
             </a>
         </div>
@@ -30,90 +29,90 @@
 
     {% if temp_account %}
     <!-- One-time temporary password card popped from session; never put in flash messages. -->
-    <div id="temp-password-card" class="k-card border-warning p-5 space-y-3" role="status">
-        <div class="flex items-start justify-between gap-4">
+    <div id="temp-password-card" class="card card-body mb-3 border-warning p-3 vstack gap-2" role="status">
+        <div class="d-flex align-items-start justify-content-between gap-3">
             <div>
-                <h2 class="text-base font-semibold">Temporary password for {{ temp_account.email }}</h2>
-                <p class="text-xs k-muted mt-0.5">This is shown once. Share it securely with the student.</p>
+                <h2 class="fw-semibold">Temporary password for {{ temp_account.email }}</h2>
+                <p class="small text-body-secondary mt-1">This is shown once. Share it securely with the student.</p>
             </div>
-            <button type="button" class="btn btn-ghost btn-xs" data-dismiss-target="#temp-password-card" aria-label="Dismiss temporary password">Dismiss</button>
+            <button type="button" class="btn btn-link text-decoration-none btn-sm" data-dismiss-target="#temp-password-card" aria-label="Dismiss temporary password">Dismiss</button>
         </div>
-        <div class="flex flex-wrap items-center gap-3">
-            <code id="temp-password-value" class="k-mono text-lg bg-base-200 border border-base-300 rounded-btn px-3 py-1.5 select-all">{{ temp_account.password }}</code>
-            <button type="button" class="btn btn-outline btn-sm" data-copy="#temp-password-value">Copy</button>
-            <span class="text-xs text-success font-medium" data-copy-status></span>
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <code id="temp-password-value" class="font-monospace fs-5 bg-body-tertiary border rounded px-2 py-1 user-select-all">{{ temp_account.password }}</code>
+            <button type="button" class="btn btn-outline-secondary btn-sm" data-copy="#temp-password-value">Copy</button>
+            <span class="small text-success fw-medium" data-copy-status></span>
         </div>
     </div>
     {% endif %}
 
     {% if filter_form %}
     <!-- Render all fields of EnrollmentFilterForm (course, student, status, semester, year). -->
-    <form method="get" class="k-card p-4 space-y-4 bg-base-100" role="search">
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-5 gap-4">
+    <form method="get" class="card card-body mb-3 p-3 vstack gap-3 bg-body" role="search">
+        <div class="k-grid gap-3">
             {% for field in filter_form %}
             {% include "kura/_field.html" with field=field %}
             {% endfor %}
         </div>
-        <div class="flex items-center justify-end gap-2">
-            <a href="{% url 'kura:enrollment_list' %}" class="btn btn-ghost btn-sm">Clear</a>
-            <button type="submit" class="btn btn-outline btn-sm">Apply</button>
+        <div class="d-flex align-items-center justify-content-end gap-2">
+            <a href="{% url 'kura:enrollment_list' %}" class="btn btn-link text-decoration-none btn-sm">Clear</a>
+            <button type="submit" class="btn btn-outline-secondary btn-sm">Apply</button>
         </div>
     </form>
     {% endif %}
 
-    <div class="flex items-center justify-between">
-        <p class="text-sm k-muted k-num">{% if page_obj %}{{ page_obj.paginator.count }} enrollment{{ page_obj.paginator.count|pluralize }}{% else %}{{ enrollments|length }} enrollment{{ enrollments|length|pluralize }}{% endif %}</p>
+    <div class="d-flex align-items-center justify-content-between">
+        <p class="small text-body-secondary text-nowrap">{% if page_obj %}{{ page_obj.paginator.count }} enrollment{{ page_obj.paginator.count|pluralize }}{% else %}{{ enrollments|length }} enrollment{{ enrollments|length|pluralize }}{% endif %}</p>
     </div>
 
     {% url 'kura:enrollment_create' as enroll_url %}
-    <div class="k-card p-0 overflow-x-auto">
-        <table class="k-table">
-            <caption class="sr-only">Course enrollments</caption>
+    <div class="card card-body mb-3 p-0 table-responsive">
+        <table class="table table-sm align-middle">
+            <caption class="visually-hidden">Course enrollments</caption>
             <thead>
                 <tr>
-                    <th class="k-sticky-col">Course</th>
+                    <th >Course</th>
                     <th>Student</th>
                     <th>Term</th>
                     <th>Enrolled</th>
                     <th>Status</th>
-                    <th class="text-right">Action</th>
+                    <th class="text-end">Action</th>
                 </tr>
             </thead>
             <tbody>
                 {% for enrollment in enrollments %}
                 <tr>
-                    <td class="k-sticky-col">
-                        <div class="font-semibold">{{ enrollment.course.code }}</div>
-                        <div class="text-xs k-muted">{{ enrollment.course.title }}</div>
+                    <td >
+                        <div class="fw-semibold">{{ enrollment.course.code }}</div>
+                        <div class="small text-body-secondary">{{ enrollment.course.title }}</div>
                     </td>
                     <td>
-                        <div class="font-semibold">{% if enrollment.student.first_name or enrollment.student.last_name %}{{ enrollment.student.first_name }} {{ enrollment.student.last_name }}{% else %}{{ enrollment.student.email }}{% endif %}</div>
-                        <div class="text-xs k-muted font-mono">{{ enrollment.student.email }}</div>
+                        <div class="fw-semibold">{% if enrollment.student.first_name or enrollment.student.last_name %}{{ enrollment.student.first_name }} {{ enrollment.student.last_name }}{% else %}{{ enrollment.student.email }}{% endif %}</div>
+                        <div class="small text-body-secondary font-monospace">{{ enrollment.student.email }}</div>
                     </td>
-                    <td class="text-xs k-num">{{ enrollment.course.semester|capfirst }} {{ enrollment.course.academic_year }}</td>
-                    <td class="text-xs">
+                    <td class="small text-nowrap">{{ enrollment.course.semester|capfirst }} {{ enrollment.course.academic_year }}</td>
+                    <td class="small">
                         <div>{{ enrollment.enrolled_by.email|default:"System" }}</div>
-                        <div class="text-xs k-muted k-num">{{ enrollment.enrolled_at|date:"j M Y" }}</div>
+                        <div class="small text-body-secondary text-nowrap">{{ enrollment.enrolled_at|date:"j M Y" }}</div>
                     </td>
                     <td>
                         {% include "kura/_status_badge.html" with kind="enrollment" value=enrollment.status %}
                     </td>
-                    <td class="text-right">
+                    <td class="text-end">
                         {% if enrollment.status == 'active' %}
-                        <form method="post" action="{% url 'kura:enrollment_drop' enrollment.id %}" class="inline">
+                        <form method="post" action="{% url 'kura:enrollment_drop' enrollment.id %}" class="d-inline">
                             {% csrf_token %}
-                            <button type="submit" class="btn btn-outline btn-error btn-sm" data-confirm-action="Drop {{ enrollment.student.email }} from {{ enrollment.course.code }}?">
+                            <button type="submit" class="btn btn-outline-danger btn-sm" data-confirm-action="Drop {{ enrollment.student.email }} from {{ enrollment.course.code }}?">
                                 Drop
                             </button>
                         </form>
                         {% elif enrollment.status == 'dropped' and enrollment.dropped_at %}
-                        <span class="text-xs k-muted k-num">Dropped {{ enrollment.dropped_at|date:"j M Y" }}</span>
+                        <span class="small text-body-secondary text-nowrap">Dropped {{ enrollment.dropped_at|date:"j M Y" }}</span>
                         {% endif %}
                     </td>
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="6" class="p-8 text-center">
+                    <td colspan="6" class="p-5 text-center">
                         {% include "kura/_empty.html" with icon="enrollments" title="No enrollments found" text="No student course enrollments match the selected filters." action_url=enroll_url action_label="Enroll student" %}
                     </td>
                 </tr>

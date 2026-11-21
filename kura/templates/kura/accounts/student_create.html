@@ -3,54 +3,52 @@
 {% block title %}Add student - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li><a href="{% url 'kura:student_list' %}" class="k-muted hover:text-primary">Students</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">New student</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'kura:student_list' %}">Students</a></li>
+    <li class="breadcrumb-item active" aria-current="page">New student</li>
 </ol>
 {% endblock %}
 
 {% block form_errors %}{% endblock %}
 
 {% block content %}
-<div class="max-w-2xl mx-auto space-y-6">
-    <header class="space-y-1">
-        <p class="k-eyebrow">Records</p>
-        <h1 class="text-2xl font-bold">New student</h1>
-        <p class="text-sm k-muted">
+<div class="k-max-2xl mx-auto vstack gap-4">
+    <header class="vstack gap-1">
+        <p class="text-uppercase small fw-semibold text-body-secondary">Records</p>
+        <h1 class="fs-3 fw-bold">New student</h1>
+        <p class="small text-body-secondary">
             Create a student account with the Student role and a temporary password.
         </p>
     </header>
 
-    <div class="k-card">
-        <form method="post" class="space-y-6">
+    <div class="card card-body mb-3">
+        <form method="post" class="vstack gap-4">
             {% csrf_token %}
             {% include "kura/_form_errors.html" %}
 
-            <fieldset class="space-y-4">
-                <legend class="text-base font-semibold text-base-content border-b border-base-300 pb-2 w-full">Personal information</legend>
+            <fieldset class="vstack gap-3">
+                <legend class="fw-semibold border-bottom pb-2 w-100">Personal information</legend>
                 {% include "kura/_field.html" with field=form.email %}
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="k-grid gap-3">
                     {% include "kura/_field.html" with field=form.first_name %}
                     {% include "kura/_field.html" with field=form.last_name %}
                 </div>
             </fieldset>
 
-            <fieldset class="space-y-4">
-                <legend class="text-base font-semibold text-base-content border-b border-base-300 pb-2 w-full">Academic placement</legend>
+            <fieldset class="vstack gap-3">
+                <legend class="fw-semibold border-bottom pb-2 w-100">Academic placement</legend>
                 {% include "kura/_field.html" with field=form.department %}
 
-                <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <div class="k-grid gap-3">
                     {% include "kura/_field.html" with field=form.current_level %}
                     {% include "kura/_field.html" with field=form.matriculation_year %}
                 </div>
             </fieldset>
 
-            <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
-                <a href="{% url 'kura:student_list' %}" class="btn btn-ghost">Cancel</a>
+            <div class="pt-3 border-top d-flex flex-column-reverse flex-sm-row justify-content-sm-end gap-2">
+                <a href="{% url 'kura:student_list' %}" class="btn btn-link text-decoration-none">Cancel</a>
                 <button type="submit" class="btn btn-primary">Create account</button>
             </div>
         </form>

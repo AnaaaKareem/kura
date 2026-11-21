@@ -3,32 +3,31 @@
 {% block title %}Courses - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">Courses</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Courses</li>
 </ol>
 {% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div class="space-y-1">
-            <p class="k-eyebrow">Teaching &amp; learning</p>
-            <h1 class="text-2xl font-bold">Courses</h1>
-            <p class="text-sm k-muted">
+<div class="vstack gap-4">
+    <header class="d-flex flex-column flex-sm-row align-items-sm-start justify-content-sm-between gap-3">
+        <div class="vstack gap-1">
+            <p class="text-uppercase small fw-semibold text-body-secondary">Teaching &amp; learning</p>
+            <h1 class="fs-3 fw-bold">Courses</h1>
+            <p class="small text-body-secondary">
                 Browse academic courses and access curriculum materials.
             </p>
         </div>
-        <div class="flex items-center gap-2">
+        <div class="d-flex align-items-center gap-2">
             {% if is_admin %}
-            <a href="{% url 'kura:admin_course_create' %}" class="btn btn-primary btn-sm w-full sm:w-auto">
-                {% include "kura/_icon.html" with name="plus" class="h-4 w-4" %}
+            <a href="{% url 'kura:admin_course_create' %}" class="btn btn-primary btn-sm w-100">
+                {% include "kura/_icon.html" with name="plus" class="k-icon-sm" %}
                 <span>New course</span>
             </a>
             {% elif is_head %}
-            <a href="{% url 'kura:course_create' %}" class="btn btn-primary btn-sm w-full sm:w-auto">
-                {% include "kura/_icon.html" with name="plus" class="h-4 w-4" %}
+            <a href="{% url 'kura:course_create' %}" class="btn btn-primary btn-sm w-100">
+                {% include "kura/_icon.html" with name="plus" class="k-icon-sm" %}
                 <span>New course</span>
             </a>
             {% endif %}
@@ -37,46 +36,46 @@
 
     {% if is_admin and filter_form %}
     <!-- Render all fields of AdminCourseFilterForm for administrators. -->
-    <form method="get" class="k-card p-4 space-y-4 bg-base-100" role="search">
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+    <form method="get" class="card card-body mb-3 p-3 vstack gap-3 bg-body" role="search">
+        <div class="k-grid gap-3">
             {% for field in filter_form %}
             {% include "kura/_field.html" with field=field %}
             {% endfor %}
         </div>
-        <div class="flex items-center justify-end gap-2">
-            <a href="{% url 'kura:course_list' %}" class="btn btn-ghost btn-sm">Clear</a>
-            <button type="submit" class="btn btn-outline btn-sm">Apply</button>
+        <div class="d-flex align-items-center justify-content-end gap-2">
+            <a href="{% url 'kura:course_list' %}" class="btn btn-link text-decoration-none btn-sm">Clear</a>
+            <button type="submit" class="btn btn-outline-secondary btn-sm">Apply</button>
         </div>
     </form>
     {% endif %}
 
-    <div class="flex items-center justify-between">
-        <p class="text-sm k-muted k-num">{% if page_obj %}{{ page_obj.paginator.count }} course{{ page_obj.paginator.count|pluralize }}{% else %}{{ courses|length }} course{{ courses|length|pluralize }}{% endif %}</p>
+    <div class="d-flex align-items-center justify-content-between">
+        <p class="small text-body-secondary text-nowrap">{% if page_obj %}{{ page_obj.paginator.count }} course{{ page_obj.paginator.count|pluralize }}{% else %}{{ courses|length }} course{{ courses|length|pluralize }}{% endif %}</p>
     </div>
 
-    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
+    <div class="k-grid gap-4">
         {% for course in courses %}
-        <a href="{% url 'kura:course_detail' course.id %}" class="k-card k-card-link flex flex-col justify-between gap-4">
-            <div class="space-y-2">
-                <div class="flex items-center justify-between gap-2">
-                    <span class="k-eyebrow">{{ course.code }}</span>
+        <a href="{% url 'kura:course_detail' course.id %}" class="card card-body mb-3 text-decoration-none d-flex flex-column justify-content-between gap-3">
+            <div class="vstack gap-2">
+                <div class="d-flex align-items-center justify-content-between gap-2">
+                    <span class="text-uppercase small fw-semibold text-body-secondary">{{ course.code }}</span>
                     {% if is_admin or is_head or not course.is_published %}
                     {% include "kura/_status_badge.html" with kind="course" value=course.is_published %}
                     {% endif %}
                 </div>
-                <h2 class="text-lg font-semibold leading-snug text-base-content">{{ course.title }}</h2>
-                <p class="text-sm k-muted leading-relaxed">
+                <h2 class="fs-5 fw-semibold lh-sm">{{ course.title }}</h2>
+                <p class="small text-body-secondary">
                     {{ course.description|truncatechars:140|default:"No curriculum description provided." }}
                 </p>
             </div>
 
-            <div class="pt-3 border-t border-base-300 flex items-center justify-between text-xs gap-2">
-                <span class="k-muted truncate">{{ course.department.name }}</span>
-                <span class="k-num font-medium text-base-content flex-shrink-0">{{ course.semester|capfirst }} {{ course.academic_year }}</span>
+            <div class="pt-2 border-top d-flex align-items-center justify-content-between small gap-2">
+                <span class="text-body-secondary text-truncate">{{ course.department.name }}</span>
+                <span class="text-nowrap fw-medium flex-shrink-0">{{ course.semester|capfirst }} {{ course.academic_year }}</span>
             </div>
         </a>
         {% empty %}
-        <div class="col-span-full">
+        <div >
             {% if is_admin %}
             {% url 'kura:admin_course_create' as create_course_url %}
             {% include "kura/_empty.html" with icon="courses" title="No courses match the criteria" text="No academic courses are available." action_url=create_course_url action_label="Create a course" %}

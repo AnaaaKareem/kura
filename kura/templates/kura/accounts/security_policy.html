@@ -3,29 +3,28 @@
 {% block title %}Security policy - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">Security policy</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Security policy</li>
 </ol>
 {% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <header class="space-y-1">
-        <p class="k-eyebrow">Administration</p>
-        <h1 class="text-2xl font-bold">Security policy</h1>
-        <p class="text-sm k-muted max-w-prose">
+<div class="vstack gap-4">
+    <header class="vstack gap-1">
+        <p class="text-uppercase small fw-semibold text-body-secondary">Administration</p>
+        <h1 class="fs-3 fw-bold">Security policy</h1>
+        <p class="small text-body-secondary k-max-prose">
             Active security rules in force. Configurable thresholds below apply immediately and require a fresh second-factor check to save.
         </p>
     </header>
 
-    <section class="k-card space-y-4">
-        <div class="border-b border-base-300 pb-2">
-            <h2 class="text-base font-semibold">Edit configurable thresholds</h2>
-            <p class="text-xs k-muted mt-0.5">Every change is bounded to safe minimums and logged with old and new values.</p>
+    <section class="card card-body mb-3 vstack gap-3">
+        <div class="border-bottom pb-2">
+            <h2 class="fw-semibold">Edit configurable thresholds</h2>
+            <p class="small text-body-secondary mt-1">Every change is bounded to safe minimums and logged with old and new values.</p>
         </div>
-        <form method="post" action="{% url 'kura:security_policy' %}" class="grid grid-cols-1 md:grid-cols-2 gap-4">
+        <form method="post" action="{% url 'kura:security_policy' %}" class="k-grid gap-3">
             {% csrf_token %}
             {% include "kura/_form_errors.html" %}
             {% include "kura/_field.html" with field=form.min_password_length %}
@@ -34,18 +33,18 @@
             {% include "kura/_field.html" with field=form.axes_cooloff_hours %}
             {% include "kura/_field.html" with field=form.session_idle_minutes %}
             {% include "kura/_field.html" with field=form.session_absolute_hours %}
-            <div class="md:col-span-2 pt-2 flex justify-end">
+            <div class="pt-2 d-flex justify-content-end">
                 <button type="submit" class="btn btn-primary btn-sm">Save policy</button>
             </div>
         </form>
     </section>
 
-    <div class="k-card p-0 overflow-x-auto">
-        <table class="k-table">
-            <caption class="sr-only">Security rules in force</caption>
+    <div class="card card-body mb-3 p-0 table-responsive">
+        <table class="table table-sm align-middle">
+            <caption class="visually-hidden">Security rules in force</caption>
             <thead>
                 <tr>
-                    <th class="k-sticky-col">Area</th>
+                    <th >Area</th>
                     <th>Rule</th>
                     <th>Value</th>
                 </tr>
@@ -53,9 +52,9 @@
             <tbody>
                 {% for area, rule, value in policies %}
                 <tr>
-                    <td class="k-sticky-col font-semibold">{% ifchanged area %}{{ area }}{% endifchanged %}</td>
+                    <td class="fw-semibold">{% ifchanged area %}{{ area }}{% endifchanged %}</td>
                     <td>{{ rule }}</td>
-                    <td class="k-num font-medium">{{ value }}</td>
+                    <td class="text-nowrap fw-medium">{{ value }}</td>
                 </tr>
                 {% endfor %}
             </tbody>

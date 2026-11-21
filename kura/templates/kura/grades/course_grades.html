@@ -3,131 +3,125 @@
 {% block title %}Gradebook - {{ course.code }} - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li><a href="{% url 'kura:course_list' %}" class="k-muted hover:text-primary">Courses</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li><a href="{% url 'kura:course_detail' course.id %}" class="k-muted hover:text-primary">{{ course.code }}</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">Gradebook</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'kura:course_list' %}">Courses</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'kura:course_detail' course.id %}">{{ course.code }}</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Gradebook</li>
 </ol>
 {% endblock %}
 
 {% block content %}
-<div class="space-y-8">
-    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div class="space-y-1">
-            <p class="k-eyebrow">{{ course.code }}</p>
-            <h1 class="text-2xl font-bold">Gradebook</h1>
-            <p class="text-sm k-muted">
+<div class="vstack gap-4">
+    <header class="d-flex flex-column flex-sm-row align-items-sm-start justify-content-sm-between gap-3">
+        <div class="vstack gap-1">
+            <p class="text-uppercase small fw-semibold text-body-secondary">{{ course.code }}</p>
+            <h1 class="fs-3 fw-bold">Gradebook</h1>
+            <p class="small text-body-secondary">
                 {{ course.title }} &bull; {{ course.semester|capfirst }} {{ course.academic_year }}
             </p>
         </div>
-        <div class="flex flex-wrap items-center gap-2">
-            <a href="{% url 'kura:course_detail' course.id %}" class="btn btn-ghost btn-sm">Course details</a>
-            {% if can_edit_scheme %}
-            <a href="{% url 'kura:course_grade_scheme' course.id %}" class="btn btn-outline btn-sm">Grade scheme</a>
-            {% endif %}
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <a href="{% url 'kura:course_detail' course.id %}" class="btn btn-link text-decoration-none btn-sm">Course details</a>
             {% if can_calculate_results %}
             <form method="post" action="{% url 'kura:course_result_calculate' course.id %}">
                 {% csrf_token %}
-                <button type="submit" class="btn {% if course_results and can_release %}btn-outline{% else %}btn-primary{% endif %} btn-sm">Calculate final results</button>
+                <button type="submit" class="btn {% if course_results and can_release %}btn-outline-secondary{% else %}btn-primary{% endif %} btn-sm">Calculate final results</button>
             </form>
             {% endif %}
         </div>
     </header>
 
     {% if grade_stats %}
-    <section class="grid grid-cols-2 sm:grid-cols-4 gap-4" aria-label="Gradebook summary">
-        <div class="k-card p-4">
-            <p class="k-eyebrow">Drafts</p>
-            <p class="text-2xl font-bold k-num mt-1">{{ grade_stats.drafts }}</p>
+    <section class="k-grid" aria-label="Gradebook summary">
+        <div class="card card-body mb-3 p-3">
+            <p class="text-uppercase small fw-semibold text-body-secondary">Drafts</p>
+            <p class="fs-3 fw-bold text-nowrap mt-1">{{ grade_stats.drafts }}</p>
         </div>
-        <div class="k-card p-4">
-            <p class="k-eyebrow">Finalized</p>
-            <p class="text-2xl font-bold k-num mt-1">{{ grade_stats.finalized }}</p>
+        <div class="card card-body mb-3 p-3">
+            <p class="text-uppercase small fw-semibold text-body-secondary">Finalized</p>
+            <p class="fs-3 fw-bold text-nowrap mt-1">{{ grade_stats.finalized }}</p>
         </div>
-        <div class="k-card p-4">
-            <p class="k-eyebrow">Released</p>
-            <p class="text-2xl font-bold k-num mt-1">{{ grade_stats.released }}</p>
+        <div class="card card-body mb-3 p-3">
+            <p class="text-uppercase small fw-semibold text-body-secondary">Released</p>
+            <p class="fs-3 fw-bold text-nowrap mt-1">{{ grade_stats.released }}</p>
         </div>
-        <div class="k-card p-4">
-            <p class="k-eyebrow">Needs marking</p>
-            <p class="text-2xl font-bold k-num mt-1">{{ grade_stats.needs_marking }}</p>
+        <div class="card card-body mb-3 p-3">
+            <p class="text-uppercase small fw-semibold text-body-secondary">Needs marking</p>
+            <p class="fs-3 fw-bold text-nowrap mt-1">{{ grade_stats.needs_marking }}</p>
         </div>
     </section>
     {% endif %}
 
     {% if filter_form %}
-    <form method="get" class="k-card p-4 space-y-4 bg-base-100" role="search">
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
+    <form method="get" class="card card-body mb-3 p-3 vstack gap-3 bg-body" role="search">
+        <div class="k-grid gap-3">
             {% for field in filter_form %}
             {% include "kura/_field.html" with field=field %}
             {% endfor %}
         </div>
-        <div class="flex items-center justify-end gap-2">
-            <a href="{% url 'kura:course_grades' course.id %}" class="btn btn-ghost btn-sm">Clear</a>
-            <button type="submit" class="btn btn-outline btn-sm">Apply</button>
+        <div class="d-flex align-items-center justify-content-end gap-2">
+            <a href="{% url 'kura:course_grades' course.id %}" class="btn btn-link text-decoration-none btn-sm">Clear</a>
+            <button type="submit" class="btn btn-outline-secondary btn-sm">Apply</button>
         </div>
     </form>
     {% endif %}
 
-    <section class="space-y-3">
-        <h2 class="text-lg font-semibold">Assessment scores ({{ grades|length }})</h2>
-        <div class="k-card p-0 overflow-x-auto">
-            <table class="k-table">
-                <caption class="sr-only">Course assessment scores</caption>
+    <section class="vstack gap-2">
+        <h2 class="fs-5 fw-semibold">Assessment scores ({{ grades|length }})</h2>
+        <div class="card card-body mb-3 p-0 table-responsive">
+            <table class="table table-sm align-middle">
+                <caption class="visually-hidden">Course assessment scores</caption>
                 <thead>
                     <tr>
-                        <th class="k-sticky-col">Student</th>
+                        <th >Student</th>
                         <th>Assessment</th>
-                        <th class="k-num">Score</th>
+                        <th class="text-nowrap">Score</th>
                         <th>Status</th>
                         <th>Graded</th>
-                        <th class="text-right">Actions</th>
+                        <th class="text-end">Actions</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for g in grades %}
                     <tr>
-                        <td class="font-semibold k-sticky-col">
+                        <td class="fw-semibold">
                             {% if g.student.first_name or g.student.last_name %}{{ g.student.first_name }} {{ g.student.last_name }}{% else %}{{ g.student.email }}{% endif %}
                         </td>
                         <td>
-                            <div class="font-medium text-sm">{{ g.assessment.title }}</div>
-                            <span class="k-eyebrow">{{ g.assessment.component_type }}</span>
+                            <div class="fw-medium small">{{ g.assessment.title }}</div>
+                            <span class="text-uppercase small fw-semibold text-body-secondary">{{ g.assessment.component_type }}</span>
                         </td>
-                        <td class="k-num font-bold text-sm">
+                        <td class="text-nowrap fw-bold small">
                             {{ g.score }} / {{ g.assessment.max_score }}
                         </td>
                         <td>
                             {% include "kura/_status_badge.html" with kind="grade" value=g.status %}
                         </td>
-                        <td class="text-xs k-muted k-num">{{ g.graded_at|date:"j M Y, H:i" }}</td>
-                        <td class="text-right">
-                            <div class="inline-flex items-center justify-end gap-1.5">
+                        <td class="small text-body-secondary text-nowrap">{{ g.graded_at|date:"j M Y, H:i" }}</td>
+                        <td class="text-end">
+                            <div class="d-inline-flex align-items-center justify-content-end gap-1">
                                 {% if g.status == 'draft' %}
                                     {% if can_enter_grade %}
-                                    <a href="{% url 'kura:grade_entry' g.attempt.id %}" class="btn btn-ghost btn-sm">Edit score</a>
+                                    <a href="{% url 'kura:grade_entry' g.attempt.id %}" class="btn btn-link text-decoration-none btn-sm">Edit score</a>
                                     {% endif %}
                                     {% if can_finalize_grade %}
                                     <form method="post" action="{% url 'kura:grade_finalize' g.id %}" data-confirm-action="Finalize this grade? TAs will no longer be able to edit it.">
                                         {% csrf_token %}
-                                        <button type="submit" class="btn btn-outline btn-sm">Finalize</button>
+                                        <button type="submit" class="btn btn-outline-secondary btn-sm">Finalize</button>
                                     </form>
                                     {% endif %}
                                 {% elif g.status == 'finalized' and can_release %}
-                                    <a href="{% url 'kura:grade_release' g.id %}" class="btn btn-outline btn-sm">Release with MFA</a>
+                                    <a href="{% url 'kura:grade_release' g.id %}" class="btn btn-outline-secondary btn-sm">Release with MFA</a>
                                 {% elif g.status == 'released' and can_request_grade_change %}
-                                    <a href="{% url 'kura:grade_change_request_create' g.id %}" class="btn btn-ghost btn-sm">Request change</a>
+                                    <a href="{% url 'kura:grade_change_request_create' g.id %}" class="btn btn-link text-decoration-none btn-sm">Request change</a>
                                 {% endif %}
                             </div>
                         </td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="6" class="p-8 text-center">
+                        <td colspan="6" class="p-5 text-center">
                             {% include "kura/_empty.html" with icon="grades" title="No grades recorded" text="No student grades have been entered for this course yet." %}
                         </td>
                     </tr>
@@ -137,88 +131,35 @@
         </div>
     </section>
 
-    <!-- Course grading scheme weights -->
-    <section class="k-card space-y-3">
-        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <h2 class="text-lg font-semibold">Grade scheme</h2>
-            {% if can_edit_scheme %}
-            <a href="{% url 'kura:course_grade_scheme' course.id %}" class="btn btn-outline btn-sm">Edit grade scheme</a>
-            {% endif %}
-        </div>
-        <div class="flex flex-wrap gap-2 text-sm">
-            {% for scheme in grade_schemes %}
-            <span class="badge badge-ghost badge-sm k-num font-medium">{{ scheme.get_component_type_display }}: {{ scheme.weight_percentage }}%</span>
-            {% empty %}
-            <p class="text-sm k-muted">No grade scheme set yet, so calculated final results would all be 0%.</p>
-            {% endfor %}
-        </div>
-    </section>
-
-    {% if pending_appeals %}
-    <section class="space-y-3">
-        <h2 class="text-lg font-semibold">Pending grade appeals ({{ pending_appeals|length }})</h2>
-        <div class="k-card p-0 overflow-x-auto">
-            <table class="k-table">
-                <caption class="sr-only">Pending grade appeals</caption>
-                <thead>
-                    <tr>
-                        <th class="k-sticky-col">Student</th>
-                        <th>Assessment</th>
-                        <th class="k-num">Score</th>
-                        <th>Filed</th>
-                        <th class="text-right">Action</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for appeal in pending_appeals %}
-                    <tr>
-                        <td class="k-sticky-col font-semibold">
-                            {% if appeal.grade.student.first_name or appeal.grade.student.last_name %}{{ appeal.grade.student.first_name }} {{ appeal.grade.student.last_name }}{% else %}{{ appeal.grade.student.email }}{% endif %}
-                            <span class="block text-xs k-muted">{{ appeal.grade.student.email }}</span>
-                        </td>
-                        <td>{{ appeal.grade.assessment.title }}</td>
-                        <td class="k-num font-bold">{{ appeal.grade.score }} / {{ appeal.grade.assessment.max_score }}</td>
-                        <td class="text-xs k-muted k-num">{{ appeal.created_at|date:"j M Y, H:i" }}</td>
-                        <td class="text-right">
-                            <a href="{% url 'kura:grade_appeal_review' appeal.id %}" class="btn btn-outline btn-sm">Review</a>
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </section>
-    {% endif %}
-
     {% if pending_change_requests %}
-    <section class="space-y-3">
-        <h2 class="text-lg font-semibold">Pending grade change requests ({{ pending_change_requests|length }})</h2>
-        <div class="k-card p-0 overflow-x-auto">
-            <table class="k-table">
-                <caption class="sr-only">Pending grade change requests</caption>
+    <section class="vstack gap-2">
+        <h2 class="fs-5 fw-semibold">Pending grade change requests ({{ pending_change_requests|length }})</h2>
+        <div class="card card-body mb-3 p-0 table-responsive">
+            <table class="table table-sm align-middle">
+                <caption class="visually-hidden">Pending grade change requests</caption>
                 <thead>
                     <tr>
-                        <th class="k-sticky-col">Student</th>
+                        <th >Student</th>
                         <th>Assessment</th>
-                        <th class="k-num">Current</th>
-                        <th class="k-num">Proposed</th>
+                        <th class="text-nowrap">Current</th>
+                        <th class="text-nowrap">Proposed</th>
                         <th>Requested by</th>
-                        <th class="text-right">Action</th>
+                        <th class="text-end">Action</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for change_request in pending_change_requests %}
                     <tr>
-                        <td class="k-sticky-col font-semibold">
+                        <td class="fw-semibold">
                             {% if change_request.grade.student.first_name or change_request.grade.student.last_name %}{{ change_request.grade.student.first_name }} {{ change_request.grade.student.last_name }}{% else %}{{ change_request.grade.student.email }}{% endif %}
-                            <span class="block text-xs k-muted">{{ change_request.grade.student.email }}</span>
+                            <span class="d-block small text-body-secondary">{{ change_request.grade.student.email }}</span>
                         </td>
                         <td>{{ change_request.grade.assessment.title }}</td>
-                        <td class="k-num">{{ change_request.current_score }}</td>
-                        <td class="k-num font-bold">{{ change_request.proposed_score }}</td>
-                        <td class="text-xs k-muted">{{ change_request.requested_by.email }}</td>
-                        <td class="text-right">
-                            <a href="{% url 'kura:grade_change_request_review' change_request.id %}" class="btn btn-outline btn-sm">Review</a>
+                        <td class="text-nowrap">{{ change_request.current_score }}</td>
+                        <td class="text-nowrap fw-bold">{{ change_request.proposed_score }}</td>
+                        <td class="small text-body-secondary">{{ change_request.requested_by.email }}</td>
+                        <td class="text-end">
+                            <a href="{% url 'kura:grade_change_request_review' change_request.id %}" class="btn btn-outline-secondary btn-sm">Review</a>
                         </td>
                     </tr>
                     {% endfor %}
@@ -229,9 +170,9 @@
     {% endif %}
 
     {% if course_results %}
-    <section class="space-y-3">
-        <div class="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-            <h2 class="text-lg font-semibold">Calculated final results</h2>
+    <section class="vstack gap-2">
+        <div class="d-flex flex-column gap-2 flex-sm-row align-items-sm-center justify-content-sm-between">
+            <h2 class="fs-5 fw-semibold">Calculated final results</h2>
             {% if can_release %}
             <form method="post" action="{% url 'kura:course_result_release' course.id %}" data-confirm-action="Release all calculated final course results to student transcripts? This publishes results officially." data-confirm-tone="primary">
                 {% csrf_token %}
@@ -241,21 +182,21 @@
             </form>
             {% endif %}
         </div>
-        <div class="k-card p-0 overflow-x-auto">
-            <table class="k-table">
-                <caption class="sr-only">Calculated final course results</caption>
+        <div class="card card-body mb-3 p-0 table-responsive">
+            <table class="table table-sm align-middle">
+                <caption class="visually-hidden">Calculated final course results</caption>
                 <thead>
                     <tr>
-                        <th class="k-sticky-col">Student</th>
-                        <th class="k-num">Final score</th>
+                        <th >Student</th>
+                        <th class="text-nowrap">Final score</th>
                         <th>Status</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for res in course_results %}
                     <tr>
-                        <td class="font-semibold k-sticky-col">{% if res.student.first_name or res.student.last_name %}{{ res.student.first_name }} {{ res.student.last_name }}{% else %}{{ res.student.email }}{% endif %}</td>
-                        <td class="k-num font-bold text-sm text-primary">{{ res.final_score }}%</td>
+                        <td class="fw-semibold">{% if res.student.first_name or res.student.last_name %}{{ res.student.first_name }} {{ res.student.last_name }}{% else %}{{ res.student.email }}{% endif %}</td>
+                        <td class="text-nowrap fw-bold small text-primary">{{ res.final_score }}%</td>
                         <td>
                             {% include "kura/_status_badge.html" with kind="course_result" value=res.status %}
                         </td>

@@ -3,34 +3,32 @@
 {% block title %}{% if student.user.first_name or student.user.last_name %}{{ student.user.first_name }} {{ student.user.last_name }}{% else %}{{ student.user.email }}{% endif %} - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li><a href="{% url 'kura:student_list' %}" class="k-muted hover:text-primary">Students</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content truncate max-w-xs">{% if student.user.first_name or student.user.last_name %}{{ student.user.first_name }} {{ student.user.last_name }}{% else %}{{ student.user.email }}{% endif %}</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'kura:student_list' %}">Students</a></li>
+    <li class="breadcrumb-item active" aria-current="page">{% if student.user.first_name or student.user.last_name %}{{ student.user.first_name }} {{ student.user.last_name }}{% else %}{{ student.user.email }}{% endif %}</li>
 </ol>
 {% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div class="space-y-1">
-            <p class="k-eyebrow">{{ student.department.name }}</p>
-            <div class="flex flex-wrap items-center gap-2.5">
-                <h1 class="text-2xl font-bold">{% if student.user.first_name or student.user.last_name %}{{ student.user.first_name }} {{ student.user.last_name }}{% else %}{{ student.user.email }}{% endif %}</h1>
+<div class="vstack gap-4">
+    <header class="d-flex flex-column flex-sm-row align-items-sm-start justify-content-sm-between gap-3">
+        <div class="vstack gap-1">
+            <p class="text-uppercase small fw-semibold text-body-secondary">{{ student.department.name }}</p>
+            <div class="d-flex flex-wrap align-items-center gap-2">
+                <h1 class="fs-3 fw-bold">{% if student.user.first_name or student.user.last_name %}{{ student.user.first_name }} {{ student.user.last_name }}{% else %}{{ student.user.email }}{% endif %}</h1>
                 {% if not student.user.is_active %}
                 {% include "kura/_status_badge.html" with kind="account" value="deactivated" %}
                 {% elif student.user.locked_until and student.user.locked_until > now %}
-                <span class="badge badge-warning badge-sm font-medium">Locked until {{ student.user.locked_until|date:"d M, H:i" }}</span>
+                <span class="badge text-bg-warning fw-medium">Locked until {{ student.user.locked_until|date:"d M, H:i" }}</span>
                 {% else %}
                 {% include "kura/_status_badge.html" with kind="account" value="active" %}
                 {% endif %}
             </div>
-            <p class="text-sm k-muted font-mono">{{ student.user.email }}</p>
+            <p class="small text-body-secondary font-monospace">{{ student.user.email }}</p>
         </div>
-        <div class="flex flex-wrap items-center gap-2">
-            <a href="{% url 'kura:student_list' %}" class="btn btn-outline btn-sm">
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <a href="{% url 'kura:student_list' %}" class="btn btn-outline-secondary btn-sm">
                 &larr; Back to students
             </a>
             <a href="{% url 'kura:enrollment_create' %}" class="btn btn-primary btn-sm">
@@ -39,38 +37,38 @@
         </div>
     </header>
 
-    <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div class="xl:col-span-2 space-y-4">
-            <div class="flex items-center justify-between">
-                <h2 class="text-lg font-bold">Course enrollments</h2>
-                <span class="badge badge-ghost badge-sm k-num font-medium">{{ enrollments|length }}</span>
+    <div class="k-grid gap-4">
+        <div class="vstack gap-3">
+            <div class="d-flex align-items-center justify-content-between">
+                <h2 class="fs-5 fw-bold">Course enrollments</h2>
+                <span class="badge text-bg-secondary text-nowrap fw-medium">{{ enrollments|length }}</span>
             </div>
 
-            <div class="k-card p-0 overflow-x-auto">
-                <table class="k-table">
-                    <caption class="sr-only">Student course enrollments</caption>
+            <div class="card card-body mb-3 p-0 table-responsive">
+                <table class="table table-sm align-middle">
+                    <caption class="visually-hidden">Student course enrollments</caption>
                     <thead>
                         <tr>
-                            <th class="k-sticky-col">Course</th>
+                            <th >Course</th>
                             <th>Term</th>
-                            <th class="text-right">Status</th>
+                            <th class="text-end">Status</th>
                         </tr>
                     </thead>
                     <tbody>
                         {% for enrollment in enrollments %}
                         <tr>
-                            <td class="k-sticky-col">
-                                <span class="font-semibold block">{{ enrollment.course.code }}</span>
-                                <span class="text-xs k-muted">{{ enrollment.course.title }}</span>
+                            <td >
+                                <span class="fw-semibold d-block">{{ enrollment.course.code }}</span>
+                                <span class="small text-body-secondary">{{ enrollment.course.title }}</span>
                             </td>
-                            <td class="text-xs k-num">{{ enrollment.course.semester|capfirst }} {{ enrollment.course.academic_year }}</td>
-                            <td class="text-right">
+                            <td class="small text-nowrap">{{ enrollment.course.semester|capfirst }} {{ enrollment.course.academic_year }}</td>
+                            <td class="text-end">
                                 {% include "kura/_status_badge.html" with kind="enrollment" value=enrollment.status %}
                             </td>
                         </tr>
                         {% empty %}
                         <tr>
-                            <td colspan="3" class="p-8 text-center">
+                            <td colspan="3" class="p-5 text-center">
                                 {% include "kura/_empty.html" with icon="courses" title="No course enrollments" text="This student is not enrolled in any courses." %}
                             </td>
                         </tr>
@@ -80,33 +78,33 @@
             </div>
         </div>
 
-        <aside class="space-y-6">
-            <div class="k-card space-y-4">
-                <h2 class="text-base font-semibold border-b border-base-300 pb-2">Student record</h2>
-                <dl class="space-y-3 text-sm">
+        <aside class="vstack gap-4">
+            <div class="card card-body mb-3 vstack gap-3">
+                <h2 class="fw-semibold border-bottom pb-2">Student record</h2>
+                <dl class="vstack gap-2 small">
                     <div>
-                        <dt class="k-eyebrow">Student ID</dt>
-                        <dd class="k-num text-xs font-mono mt-0.5">{{ student.user_id }}</dd>
+                        <dt class="text-uppercase small fw-semibold text-body-secondary">Student ID</dt>
+                        <dd class="text-nowrap small font-monospace mt-1">{{ student.user_id }}</dd>
                     </div>
                     <div>
-                        <dt class="k-eyebrow">Email address</dt>
-                        <dd class="k-muted text-xs font-mono mt-0.5">{{ student.user.email }}</dd>
+                        <dt class="text-uppercase small fw-semibold text-body-secondary">Email address</dt>
+                        <dd class="text-body-secondary small font-monospace mt-1">{{ student.user.email }}</dd>
                     </div>
                     <div>
-                        <dt class="k-eyebrow">Department</dt>
-                        <dd class="font-medium mt-0.5">{{ student.department.name }}</dd>
+                        <dt class="text-uppercase small fw-semibold text-body-secondary">Department</dt>
+                        <dd class="fw-medium mt-1">{{ student.department.name }}</dd>
                     </div>
                     <div>
-                        <dt class="k-eyebrow">Academic level</dt>
-                        <dd class="font-medium mt-0.5">{{ student.get_current_level_display }}</dd>
+                        <dt class="text-uppercase small fw-semibold text-body-secondary">Academic level</dt>
+                        <dd class="fw-medium mt-1">{{ student.get_current_level_display }}</dd>
                     </div>
                     <div>
-                        <dt class="k-eyebrow">Year started</dt>
-                        <dd class="k-num font-medium mt-0.5">{{ student.matriculation_year }}</dd>
+                        <dt class="text-uppercase small fw-semibold text-body-secondary">Year started</dt>
+                        <dd class="text-nowrap fw-medium mt-1">{{ student.matriculation_year }}</dd>
                     </div>
                     <div>
-                        <dt class="k-eyebrow">Account status</dt>
-                        <dd class="mt-0.5">
+                        <dt class="text-uppercase small fw-semibold text-body-secondary">Account status</dt>
+                        <dd class="mt-1">
                             {% if not student.user.is_active %}
                             Deactivated
                             {% elif student.user.locked_until and student.user.locked_until > now %}

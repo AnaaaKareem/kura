@@ -3,26 +3,26 @@
 {% block title %}Dashboard - Kura{% endblock %}
 
 {% block content %}
-<div class="space-y-8">
+<div class="vstack gap-4">
     <!-- Page Header (Section 8.2) -->
-    <header class="space-y-1">
-        <p class="k-eyebrow">{{ today_date|date:"l j F"|default:"Overview" }}</p>
-        <h1 class="text-2xl font-bold">{% if greeting %}{{ greeting }}, {{ user.first_name|default:user.email }}{% else %}Dashboard{% endif %}</h1>
-        <p class="text-sm k-muted">A quick view of work areas and recent records available to you.</p>
+    <header class="vstack gap-1">
+        <p class="text-uppercase small fw-semibold text-body-secondary">{{ today_date|date:"l j F"|default:"Overview" }}</p>
+        <h1 class="fs-3 fw-bold">{% if greeting %}{{ greeting }}, {{ user.first_name|default:user.email }}{% else %}Dashboard{% endif %}</h1>
+        <p class="small text-body-secondary">A quick view of work areas and recent records available to you.</p>
         {% for department in head_departments %}
-        <p class="text-sm font-medium k-muted">Head of {{ department.name }}</p>
+        <p class="small fw-medium text-body-secondary">Head of {{ department.name }}</p>
         {% endfor %}
     </header>
 
     {% if attention_items %}
     <!-- Role-scoped items needing timely attention (at most 3). -->
-    <section aria-labelledby="attention-heading" class="space-y-2">
-        <h2 id="attention-heading" class="text-lg font-semibold">Needs your attention</h2>
-        <div class="space-y-2">
+    <section aria-labelledby="attention-heading" class="vstack gap-2">
+        <h2 id="attention-heading" class="fs-5 fw-semibold">Needs your attention</h2>
+        <div class="vstack gap-2">
             {% for item in attention_items %}
-            <div class="alert border border-base-300 border-l-4 border-l-warning bg-base-100 text-base-content flex items-center justify-between gap-4">
-                <span class="text-sm">{{ item.text }}</span>
-                <a href="{{ item.url }}" class="btn btn-outline btn-sm flex-shrink-0">{{ item.action_label }}</a>
+            <div class="alert border border-start border-4 border-warning bg-body d-flex align-items-center justify-content-between gap-3">
+                <span class="small">{{ item.text }}</span>
+                <a href="{{ item.url }}" class="btn btn-outline-secondary btn-sm flex-shrink-0">{{ item.action_label }}</a>
             </div>
             {% endfor %}
         </div>
@@ -31,54 +31,54 @@
 
     <!-- Work Areas Link Cards (Section 8.6) -->
     <section aria-labelledby="work-areas-heading">
-        <div class="mb-3">
-            <h2 id="work-areas-heading" class="text-lg font-semibold">Work areas</h2>
+        <div class="mb-2">
+            <h2 id="work-areas-heading" class="fs-5 fw-semibold">Work areas</h2>
         </div>
-        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <div class="k-grid gap-3">
             {% for card in dashboard_cards %}
-            <a href="{{ card.url }}" {% if card.external %}target="_blank" rel="noopener noreferrer"{% endif %} class="k-card k-card-link p-5 flex flex-col justify-between gap-3 group">
-                <div class="space-y-2">
-                    <div class="flex items-center gap-2.5">
+            <a href="{{ card.url }}" {% if card.external %}target="_blank" rel="noopener noreferrer"{% endif %} class="card card-body mb-3 text-decoration-none p-3 d-flex flex-column justify-content-between gap-2">
+                <div class="vstack gap-2">
+                    <div class="d-flex align-items-center gap-2">
                         <span class="text-primary">
                             {% if card.title == 'Staff' %}
-                                {% include "kura/_icon.html" with name="staff" class="h-5 w-5" %}
+                                {% include "kura/_icon.html" with name="staff" class="k-icon" %}
                             {% elif card.title == 'Users' %}
-                                {% include "kura/_icon.html" with name="students" class="h-5 w-5" %}
+                                {% include "kura/_icon.html" with name="students" class="k-icon" %}
                             {% elif card.title == 'Courses' %}
-                                {% include "kura/_icon.html" with name="courses" class="h-5 w-5" %}
+                                {% include "kura/_icon.html" with name="courses" class="k-icon" %}
                             {% elif card.title == 'Active sessions' %}
-                                {% include "kura/_icon.html" with name="sessions" class="h-5 w-5" %}
+                                {% include "kura/_icon.html" with name="sessions" class="k-icon" %}
                             {% elif card.title == 'Security policy' %}
-                                {% include "kura/_icon.html" with name="shield-check" class="h-5 w-5" %}
+                                {% include "kura/_icon.html" with name="shield-check" class="k-icon" %}
                             {% elif card.title == 'Security log' %}
-                                {% include "kura/_icon.html" with name="quarantine" class="h-5 w-5" %}
+                                {% include "kura/_icon.html" with name="quarantine" class="k-icon" %}
                             {% elif card.title == 'Students' %}
-                                {% include "kura/_icon.html" with name="students" class="h-5 w-5" %}
+                                {% include "kura/_icon.html" with name="students" class="k-icon" %}
                             {% elif card.title == 'Enrollments' %}
-                                {% include "kura/_icon.html" with name="enrollments" class="h-5 w-5" %}
+                                {% include "kura/_icon.html" with name="enrollments" class="k-icon" %}
                             {% elif card.title == 'Schedule' or card.title == 'Class schedule' %}
-                                {% include "kura/_icon.html" with name="schedule" class="h-5 w-5" %}
+                                {% include "kura/_icon.html" with name="schedule" class="k-icon" %}
                             {% elif card.title == 'Attendance' %}
-                                {% include "kura/_icon.html" with name="attendance" class="h-5 w-5" %}
+                                {% include "kura/_icon.html" with name="attendance" class="k-icon" %}
                             {% elif card.title == 'Grades' %}
-                                {% include "kura/_icon.html" with name="grades" class="h-5 w-5" %}
+                                {% include "kura/_icon.html" with name="grades" class="k-icon" %}
                             {% elif card.title == 'Transcript' %}
-                                {% include "kura/_icon.html" with name="transcript" class="h-5 w-5" %}
+                                {% include "kura/_icon.html" with name="transcript" class="k-icon" %}
                             {% else %}
-                                {% include "kura/_icon.html" with name="dashboard" class="h-5 w-5" %}
+                                {% include "kura/_icon.html" with name="dashboard" class="k-icon" %}
                             {% endif %}
                         </span>
-                        <h3 class="text-base font-semibold group-hover:text-primary transition-colors">{{ card.title }}</h3>
+                        <h3 class="fw-semibold">{{ card.title }}</h3>
                     </div>
-                    <p class="text-sm k-muted leading-relaxed">{{ card.description }}</p>
+                    <p class="small text-body-secondary">{{ card.description }}</p>
                 </div>
-                <div class="flex items-center text-xs text-primary font-medium gap-1 pt-1">
+                <div class="d-flex align-items-center small text-primary fw-medium gap-1 pt-1">
                     <span>Open</span>
-                    {% include "kura/_icon.html" with name="chevron-right" class="h-3 w-3" %}
+                    {% include "kura/_icon.html" with name="chevron-right" class="k-icon-xs" %}
                 </div>
             </a>
             {% empty %}
-            <div class="col-span-full">
+            <div >
                 {% include "kura/_empty.html" with icon="dashboard" title="No work areas" text="No work areas are currently assigned to your account. Contact an administrator if you need access." %}
             </div>
             {% endfor %}
@@ -88,17 +88,17 @@
     <!-- Overview Summaries (Section 8.6 Stat Cards) -->
     {% for summary in dashboard_summaries %}
     <section aria-labelledby="summary-{{ forloop.counter }}">
-        <h2 id="summary-{{ forloop.counter }}" class="mb-3 text-lg font-semibold">{{ summary.role }} overview</h2>
-        <div class="grid grid-cols-1 gap-4 sm:grid-cols-2 xl:grid-cols-3">
+        <h2 id="summary-{{ forloop.counter }}" class="mb-2 fs-5 fw-semibold">{{ summary.role }} overview</h2>
+        <div class="k-grid gap-3">
             {% for item in summary.items %}
-            <article class="k-card p-5 space-y-1">
-                <p class="k-eyebrow">{{ item.label }}</p>
+            <article class="card card-body mb-3 p-3 vstack gap-1">
+                <p class="text-uppercase small fw-semibold text-body-secondary">{{ item.label }}</p>
                 {% if item.url %}
-                <a href="{{ item.url }}" class="inline-block text-3xl font-semibold text-primary hover:underline k-num" aria-label="{{ item.label }}: {{ item.value }}">
+                <a href="{{ item.url }}" class="d-inline-block fs-2 fw-semibold text-primary text-nowrap" aria-label="{{ item.label }}: {{ item.value }}">
                     {{ item.value }}
                 </a>
                 {% else %}
-                <p class="text-3xl font-semibold k-num">{{ item.value }}</p>
+                <p class="fs-2 fw-semibold text-nowrap">{{ item.value }}</p>
                 {% endif %}
             </article>
             {% endfor %}
@@ -108,52 +108,52 @@
 
     {% if account_status %}
     <!-- Compact account security status strip. -->
-    <section aria-labelledby="account-strip-heading" class="space-y-3">
-        <h2 id="account-strip-heading" class="text-lg font-semibold">Account</h2>
-        <div class="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            <div class="k-card p-4 flex items-center justify-between gap-3">
+    <section aria-labelledby="account-strip-heading" class="vstack gap-2">
+        <h2 id="account-strip-heading" class="fs-5 fw-semibold">Account</h2>
+        <div class="k-grid gap-3">
+            <div class="card card-body mb-3 p-3 d-flex align-items-center justify-content-between gap-2">
                 <div>
-                    <p class="k-eyebrow">Two-step verification</p>
-                    <p class="text-sm font-semibold mt-1">{% if account_status.mfa_enabled %}Enabled{% else %}Not set up{% endif %}</p>
+                    <p class="text-uppercase small fw-semibold text-body-secondary">Two-step verification</p>
+                    <p class="small fw-semibold mt-1">{% if account_status.mfa_enabled %}Enabled{% else %}Not set up{% endif %}</p>
                 </div>
                 {% if account_status.mfa_enabled %}
-                <span class="badge badge-success badge-sm">On</span>
+                <span class="badge text-bg-success">On</span>
                 {% else %}
-                <a href="{% url 'kura:mfa_setup' %}" class="btn btn-outline btn-xs">Set up</a>
+                <a href="{% url 'kura:mfa_setup' %}" class="btn btn-outline-secondary btn-sm">Set up</a>
                 {% endif %}
             </div>
-            <a href="{% url 'kura:passkey_manage' %}" class="k-card k-card-link p-4 flex items-center justify-between gap-3">
+            <a href="{% url 'kura:passkey_manage' %}" class="card card-body mb-3 text-decoration-none p-3 d-flex align-items-center justify-content-between gap-2">
                 <div>
-                    <p class="k-eyebrow">Passkeys</p>
-                    <p class="text-sm font-semibold mt-1 k-num">{{ account_status.passkey_count }} registered</p>
+                    <p class="text-uppercase small fw-semibold text-body-secondary">Passkeys</p>
+                    <p class="small fw-semibold mt-1 text-nowrap">{{ account_status.passkey_count }} registered</p>
                 </div>
-                <span class="text-xs text-primary font-medium">Manage</span>
+                <span class="small text-primary fw-medium">Manage</span>
             </a>
-            <a href="{% url 'kura:password_change' %}" class="k-card k-card-link p-4 flex items-center justify-between gap-3">
+            <a href="{% url 'kura:password_change' %}" class="card card-body mb-3 text-decoration-none p-3 d-flex align-items-center justify-content-between gap-2">
                 <div>
-                    <p class="k-eyebrow">Password changed</p>
-                    <p class="text-sm font-semibold mt-1 k-num">{{ account_status.password_changed_at|date:"j M Y" }}</p>
+                    <p class="text-uppercase small fw-semibold text-body-secondary">Password changed</p>
+                    <p class="small fw-semibold mt-1 text-nowrap">{{ account_status.password_changed_at|date:"j M Y" }}</p>
                 </div>
-                <span class="text-xs text-primary font-medium">Change</span>
+                <span class="small text-primary fw-medium">Change</span>
             </a>
         </div>
     </section>
     {% endif %}
 
     <!-- Recent Activity Section -->
-    <section aria-labelledby="recent-activity-heading" class="k-card p-0 overflow-hidden">
-        <div class="border-b border-base-300 px-5 py-4 bg-base-100">
-            <h2 id="recent-activity-heading" class="text-base font-semibold">Recent activity</h2>
-            <p class="text-xs k-muted mt-0.5">Recent records from the work areas available to you.</p>
+    <section aria-labelledby="recent-activity-heading" class="card card-body mb-3 p-0 overflow-hidden">
+        <div class="border-bottom px-3 py-3 bg-body">
+            <h2 id="recent-activity-heading" class="fw-semibold">Recent activity</h2>
+            <p class="small text-body-secondary mt-1">Recent records from the work areas available to you.</p>
         </div>
-        <ol class="divide-y divide-base-300">
+        <ol class="k-divide">
             {% for item in recent_activity %}
-            <li class="flex flex-col gap-1 py-3.5 px-5 sm:flex-row sm:items-center sm:justify-between sm:gap-4 hover:bg-base-200 transition-colors">
-                <span class="text-sm font-medium">{{ item.label }}</span>
-                <time class="text-xs k-muted" datetime="{{ item.date|date:'c' }}">{{ item.date|date:"j M Y, H:i" }}</time>
+            <li class="d-flex flex-column gap-1 py-3 px-3 flex-sm-row align-items-sm-center justify-content-sm-between gap-3">
+                <span class="small fw-medium">{{ item.label }}</span>
+                <time class="small text-body-secondary" datetime="{{ item.date|date:'c' }}">{{ item.date|date:"j M Y, H:i" }}</time>
             </li>
             {% empty %}
-            <li class="py-6 px-5 text-center text-sm k-muted">There are no recent records to show.</li>
+            <li class="py-4 px-3 text-center small text-body-secondary">There are no recent records to show.</li>
             {% endfor %}
         </ol>
     </section>

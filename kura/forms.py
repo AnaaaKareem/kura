@@ -6,8 +6,6 @@ from django.core.exceptions import ValidationError
 from .models import (
     AcademicLevel,
     Assessment,
-    AssessmentDeliveryMode,
-    AppealStatus,
     AttendanceStatus,
     ChangeRequestStatus,
     Course,
@@ -20,13 +18,11 @@ from .models import (
     EnrollmentStatus,
     PasswordHistory,
     Role,
-    SectionType,
     SecurityPolicy,
     SemesterType,
     SessionType,
     User,
     get_security_policy,
-    validate_cidr,
 )
 
 
@@ -164,7 +160,7 @@ class LoginForm(forms.Form):
         label="Email address",
         widget=forms.EmailInput(
             attrs={
-                "class": "input input-bordered w-full",
+                "class": "form-control",
                 "placeholder": "name@example.com",
                 "autocomplete": "email",
             }
@@ -176,7 +172,7 @@ class LoginForm(forms.Form):
         label="Password",
         widget=forms.PasswordInput(
             attrs={
-                "class": "input input-bordered w-full",
+                "class": "form-control",
                 "placeholder": "Enter your password",
                 "autocomplete": "current-password",
             }
@@ -195,7 +191,7 @@ class PasswordChangeForm(forms.Form):
         label="Current password",
         widget=forms.PasswordInput(
             attrs={
-                "class": "input input-bordered w-full",
+                "class": "form-control",
                 "autocomplete": "current-password",
             }
         ),
@@ -206,7 +202,7 @@ class PasswordChangeForm(forms.Form):
         label="New password",
         widget=forms.PasswordInput(
             attrs={
-                "class": "input input-bordered w-full",
+                "class": "form-control",
                 "autocomplete": "new-password",
             }
         ),
@@ -217,7 +213,7 @@ class PasswordChangeForm(forms.Form):
         label="Confirm new password",
         widget=forms.PasswordInput(
             attrs={
-                "class": "input input-bordered w-full",
+                "class": "form-control",
                 "autocomplete": "new-password",
             }
         ),
@@ -282,7 +278,7 @@ class PasswordResetRequestForm(forms.Form):
         label="Email address",
         widget=forms.EmailInput(
             attrs={
-                "class": "input input-bordered w-full",
+                "class": "form-control",
                 "placeholder": "name@example.com",
                 "autocomplete": "email",
             }
@@ -302,7 +298,7 @@ class PasswordResetConfirmForm(forms.Form):
         max_length=20,
         widget=forms.TextInput(
             attrs={
-                "class": "input input-bordered w-full font-mono",
+                "class": "form-control font-monospace",
                 "placeholder": "123456",
                 "autocomplete": "one-time-code",
                 "inputmode": "numeric",
@@ -315,7 +311,7 @@ class PasswordResetConfirmForm(forms.Form):
         label="New password",
         widget=forms.PasswordInput(
             attrs={
-                "class": "input input-bordered w-full",
+                "class": "form-control",
                 "autocomplete": "new-password",
             }
         ),
@@ -326,7 +322,7 @@ class PasswordResetConfirmForm(forms.Form):
         label="Confirm new password",
         widget=forms.PasswordInput(
             attrs={
-                "class": "input input-bordered w-full",
+                "class": "form-control",
                 "autocomplete": "new-password",
             }
         ),
@@ -369,7 +365,7 @@ class MFAVerifyForm(forms.Form):
         max_length=20,
         widget=forms.TextInput(
             attrs={
-                "class": "input input-bordered w-full text-center tracking-widest text-lg font-mono",
+                "class": "form-control font-monospace text-center",
                 "placeholder": "123456",
                 "autocomplete": "one-time-code",
                 "inputmode": "numeric",
@@ -410,14 +406,14 @@ class DepartmentHeadAssignForm(forms.Form):
 
     department = forms.ModelChoiceField(
         queryset=Department.objects.order_by("name"),
-        widget=forms.Select(attrs={"class": "select select-bordered select-sm w-full"}),
+        widget=forms.Select(attrs={"class": "form-select form-select-sm"}),
     )
     head_user = forms.ModelChoiceField(
         label="Department Head",
         required=False,
         empty_label="No head assigned",
         queryset=User.objects.none(),
-        widget=forms.Select(attrs={"class": "select select-bordered select-sm w-full"}),
+        widget=forms.Select(attrs={"class": "form-select form-select-sm"}),
     )
 
     def __init__(self, *args, **kwargs):
@@ -459,7 +455,7 @@ class StaffCreateForm(forms.Form):
         label="Email address",
         widget=forms.EmailInput(
             attrs={
-                "class": "input input-bordered w-full",
+                "class": "form-control",
                 "placeholder": "staff@example.com",
                 "autocomplete": "email",
             }
@@ -470,33 +466,33 @@ class StaffCreateForm(forms.Form):
         label="First name",
         max_length=150,
         required=False,
-        widget=forms.TextInput(attrs={"class": "input input-bordered w-full", "autocomplete": "given-name"}),
+        widget=forms.TextInput(attrs={"class": "form-control", "autocomplete": "given-name"}),
     )
 
     last_name = forms.CharField(
         label="Last name",
         max_length=150,
         required=False,
-        widget=forms.TextInput(attrs={"class": "input input-bordered w-full", "autocomplete": "family-name"}),
+        widget=forms.TextInput(attrs={"class": "form-control", "autocomplete": "family-name"}),
     )
 
     department = forms.ModelChoiceField(
         label="Department",
         queryset=Department.objects.all(),
-        widget=forms.Select(attrs={"class": "select select-bordered w-full", "autocomplete": "off"}),
+        widget=forms.Select(attrs={"class": "form-select", "autocomplete": "off"}),
     )
 
     staff_title = forms.ChoiceField(
         label="Staff title",
         choices=[("", "Select a title")] + [(name, name) for name in
                  ["Admin", "Registrar", "Department head", "Instructor", "Teaching assistant"]],
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
 
     building = forms.ModelChoiceField(queryset=Building.objects.order_by("name"), required=False,
-                                      widget=forms.Select(attrs={"class": "select select-bordered w-full", "data-office-building": ""}))
+                                      widget=forms.Select(attrs={"class": "form-select", "data-office-building": ""}))
     room = forms.ModelChoiceField(queryset=Room.objects.none(), required=False,
-                                  widget=forms.Select(attrs={"class": "select select-bordered w-full", "data-office-room": ""}))
+                                  widget=forms.Select(attrs={"class": "form-select", "data-office-room": ""}))
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, **kwargs)
@@ -534,7 +530,7 @@ class StudentCreateForm(forms.Form):
         label="Email address",
         widget=forms.EmailInput(
             attrs={
-                "class": "input input-bordered w-full",
+                "class": "form-control",
                 "placeholder": "student@example.com",
             }
         ),
@@ -544,26 +540,26 @@ class StudentCreateForm(forms.Form):
         label="First name",
         max_length=150,
         required=False,
-        widget=forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+        widget=forms.TextInput(attrs={"class": "form-control"}),
     )
 
     last_name = forms.CharField(
         label="Last name",
         max_length=150,
         required=False,
-        widget=forms.TextInput(attrs={"class": "input input-bordered w-full"}),
+        widget=forms.TextInput(attrs={"class": "form-control"}),
     )
 
     department = forms.ModelChoiceField(
         label="Department",
         queryset=Department.objects.all(),
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
 
     current_level = forms.ChoiceField(
         label="Academic level",
         choices=AcademicLevel.choices,
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
 
     matriculation_year = forms.IntegerField(
@@ -572,7 +568,7 @@ class StudentCreateForm(forms.Form):
         max_value=2100,
         widget=forms.NumberInput(
             attrs={
-                "class": "input input-bordered w-full",
+                "class": "form-control",
                 "placeholder": "2026",
             }
         ),
@@ -614,13 +610,6 @@ class EnrollmentFilterForm(forms.Form):
     year = forms.IntegerField(required=False, min_value=1900, max_value=9999)
 
 
-class EnrollmentSearchForm(forms.Form):
-    """Validate an enrollment search before querying private records."""
-
-    kind = forms.ChoiceField(choices=[("student", "Student"), ("course", "Course")])
-    q = forms.CharField(required=False, max_length=150)
-
-
 class EnrollmentForm(forms.Form):
     """
     Form used by the registrar to enroll a student into an active course.
@@ -629,13 +618,13 @@ class EnrollmentForm(forms.Form):
     course = forms.ModelChoiceField(
         label="Course",
         queryset=Course.objects.filter(is_published=True),
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
 
     student = forms.ModelChoiceField(
         label="Student",
         queryset=User.objects.filter(student_profile__isnull=False, is_active=True),
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
 
 
@@ -650,7 +639,7 @@ class AdminCourseForm(forms.ModelForm):
         widgets = {
             "description": forms.Textarea(
                 attrs={
-                    "class": "textarea textarea-bordered box-border w-full min-w-0 max-w-full",
+                    "class": "form-control",
                 }
             ),
         }
@@ -671,7 +660,7 @@ class CourseCreateForm(forms.Form):
         queryset=Department.objects.none(),
         required=False,
         empty_label=None,
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
 
     code = forms.CharField(
@@ -679,7 +668,7 @@ class CourseCreateForm(forms.Form):
         max_length=30,
         widget=forms.TextInput(
             attrs={
-                "class": "input input-bordered w-full",
+                "class": "form-control",
                 "placeholder": "e.g. CS201",
             }
         ),
@@ -690,7 +679,7 @@ class CourseCreateForm(forms.Form):
         max_length=255,
         widget=forms.TextInput(
             attrs={
-                "class": "input input-bordered w-full",
+                "class": "form-control",
                 "placeholder": "e.g. Data Structures and Algorithms",
             }
         ),
@@ -702,7 +691,7 @@ class CourseCreateForm(forms.Form):
         max_length=5000,
         widget=forms.Textarea(
             attrs={
-                "class": "textarea textarea-bordered w-full",
+                "class": "form-control",
                 "rows": 3,
                 "placeholder": "Course curriculum summary and prerequisites",
             }
@@ -712,7 +701,7 @@ class CourseCreateForm(forms.Form):
     semester = forms.ChoiceField(
         label="Semester",
         choices=SemesterType.choices,
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
 
     academic_year = forms.IntegerField(
@@ -721,7 +710,7 @@ class CourseCreateForm(forms.Form):
         max_value=2100,
         widget=forms.NumberInput(
             attrs={
-                "class": "input input-bordered w-full",
+                "class": "form-control",
                 "placeholder": "2026",
             }
         ),
@@ -770,7 +759,7 @@ class CourseStaffAssignForm(forms.Form):
             is_active=True,
             user_roles__role__name="Instructor",
         ).distinct(),
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
 
     staff_role = forms.ChoiceField(
@@ -779,13 +768,13 @@ class CourseStaffAssignForm(forms.Form):
             ("lead_instructor", "Lead Instructor"),
             ("co_instructor", "Co-Instructor"),
         ],
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
 
     can_release_grades = forms.BooleanField(
         label="Can release final grades to students",
         required=False,
-        widget=forms.CheckboxInput(attrs={"class": "checkbox checkbox-primary"}),
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
     )
 
     def __init__(self, *args, department=None, **kwargs):
@@ -809,7 +798,7 @@ class TAAssignForm(forms.Form):
             is_active=True,
             user_roles__role__name="Teaching assistant",
         ).distinct(),
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
 
     def __init__(self, *args, department=None, **kwargs):
@@ -820,143 +809,10 @@ class TAAssignForm(forms.Form):
             )
 
 
-class ModuleForm(forms.Form):
-    """
-    Form for Instructors to create or edit a curriculum module.
-    """
-
-    title = forms.CharField(
-        label="Module Title",
-        max_length=255,
-        widget=forms.TextInput(
-            attrs={
-                "class": "input input-bordered w-full",
-                "placeholder": "e.g. Week 1: Network Protocols",
-            }
-        ),
-    )
-
-    description = forms.CharField(
-        label="Description",
-        required=False,
-        max_length=5000,
-        widget=forms.Textarea(
-            attrs={
-                "class": "textarea textarea-bordered w-full",
-                "rows": 3,
-            }
-        ),
-    )
-
-    is_visible = forms.BooleanField(
-        label="Visible to enrolled students",
-        required=False,
-        widget=forms.CheckboxInput(attrs={"class": "checkbox checkbox-primary"}),
-    )
-
-    target_levels = forms.MultipleChoiceField(
-        label="Target Academic Levels (leave blank for all students)",
-        choices=AcademicLevel.choices,
-        required=False,
-        widget=forms.CheckboxSelectMultiple(attrs={"class": "checkbox checkbox-sm checkbox-primary"}),
-    )
-
-
 class DeleteConfirmationForm(forms.Form):
     """Require an explicit confirmation before deleting a record."""
 
     confirm = forms.BooleanField(required=True)
-
-
-class ModuleSectionForm(forms.Form):
-    """
-    Form for Instructors to create a section grouping within a module.
-    """
-
-    title = forms.CharField(
-        label="Section Title",
-        max_length=255,
-        widget=forms.TextInput(
-            attrs={
-                "class": "input input-bordered w-full",
-                "placeholder": "e.g. Lecture Notes",
-            }
-        ),
-    )
-
-    section_type = forms.ChoiceField(
-        label="Section Type",
-        choices=SectionType.choices,
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
-    )
-
-
-class SectionItemForm(forms.Form):
-    """
-    Form for Instructors to author content items with rich text and file attachment.
-    """
-
-    title = forms.CharField(
-        label="Item Title",
-        max_length=255,
-        widget=forms.TextInput(
-            attrs={
-                "class": "input input-bordered w-full",
-                "placeholder": "e.g. Chapter 1 Summary",
-            }
-        ),
-    )
-
-    content_body = forms.CharField(
-        label="Content Body (Markdown)",
-        required=False,
-        max_length=50000,
-        widget=forms.Textarea(
-            attrs={
-                "class": "textarea textarea-bordered w-full font-mono text-sm",
-                "rows": 6,
-                "placeholder": "Write your notes using Markdown...",
-            }
-        ),
-    )
-
-    # Let staff schedule when students may access an item.
-    released_at = forms.DateTimeField(
-        label="Release at (optional)",
-        required=False,
-        input_formats=["%Y-%m-%dT%H:%M"],
-        widget=forms.DateTimeInput(
-            attrs={"class": "input input-bordered w-full", "type": "datetime-local"},
-            format="%Y-%m-%dT%H:%M",
-        ),
-    )
-
-    file = forms.FileField(
-        label="Attach File (Optional, max 25 MiB)",
-        required=False,
-        widget=forms.FileInput(attrs={"class": "file-input file-input-bordered w-full"}),
-    )
-
-    def __init__(self, data=None, files=None, initial=None, existing_file=False):
-        """Initializes the section-item form with its existing-attachment state."""
-        # An existing attachment also counts when editing a file-only item.
-        super().__init__(data=data, files=files, initial=initial)
-        self.existing_file = existing_file
-
-    def clean(self):
-        """Requires the section item to contain text, a new file, or an existing attachment."""
-        # Require something useful in the item, even though each field is optional.
-        cleaned_data = super().clean()
-        if not cleaned_data.get("content_body") and not cleaned_data.get("file") and not self.existing_file:
-            raise forms.ValidationError("Add some content or attach a file.")
-        return cleaned_data
-
-
-class MarkdownPreviewForm(forms.Form):
-    """Validate the Markdown text submitted for an authorized preview."""
-
-    # Empty text is valid so staff can preview while writing.
-    content_body = forms.CharField(required=False, max_length=50000, widget=forms.Textarea)
 
 
 class ScheduleForm(forms.Form):
@@ -968,23 +824,23 @@ class ScheduleForm(forms.Form):
     session_type = forms.ChoiceField(
         label="Session Format",
         choices=SessionType.choices,
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
 
     day = forms.ChoiceField(
         label="Day of Week",
         choices=DayOfWeek.choices,
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
 
     start_time = forms.TimeField(
         label="Start Time",
-        widget=forms.TimeInput(attrs={"class": "input input-bordered w-full", "type": "time"}),
+        widget=forms.TimeInput(attrs={"class": "form-control", "type": "time"}),
     )
 
     end_time = forms.TimeField(
         label="End Time",
-        widget=forms.TimeInput(attrs={"class": "input input-bordered w-full", "type": "time"}),
+        widget=forms.TimeInput(attrs={"class": "form-control", "type": "time"}),
     )
 
     location = forms.CharField(
@@ -992,7 +848,7 @@ class ScheduleForm(forms.Form):
         max_length=150,
         widget=forms.TextInput(
             attrs={
-                "class": "input input-bordered w-full",
+                "class": "form-control",
                 "placeholder": "e.g. Hall A, Science Building",
             }
         ),
@@ -1000,18 +856,18 @@ class ScheduleForm(forms.Form):
 
     recurrence_start = forms.DateField(
         label="Term Start Date",
-        widget=forms.DateInput(attrs={"class": "input input-bordered w-full", "type": "date"}),
+        widget=forms.DateInput(attrs={"class": "form-control", "type": "date"}),
     )
 
     recurrence_end = forms.DateField(
         label="Term End Date",
-        widget=forms.DateInput(attrs={"class": "input input-bordered w-full", "type": "date"}),
+        widget=forms.DateInput(attrs={"class": "form-control", "type": "date"}),
     )
 
     instructor = forms.ModelChoiceField(
         label="Assigned Instructor",
         queryset=User.objects.filter(is_active=True),
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
 
     def clean(self):
@@ -1037,7 +893,7 @@ class AttendanceSessionStartForm(forms.Form):
         max_length=150,
         widget=forms.TextInput(
             attrs={
-                "class": "input input-bordered w-full",
+                "class": "form-control",
                 "placeholder": "e.g. Lecture 4 Attendance",
             }
         ),
@@ -1048,7 +904,7 @@ class AttendanceSessionStartForm(forms.Form):
         min_value=1,
         max_value=240,
         initial=20,
-        widget=forms.NumberInput(attrs={"class": "input input-bordered w-full"}),
+        widget=forms.NumberInput(attrs={"class": "form-control"}),
     )
 
 
@@ -1062,7 +918,7 @@ class StudentCheckinForm(forms.Form):
         max_length=20,
         widget=forms.TextInput(
             attrs={
-                "class": "input input-bordered w-full text-center tracking-widest text-lg font-mono uppercase",
+                "class": "form-control font-monospace text-center text-uppercase",
                 "placeholder": "e.g. 9B3A7F",
                 "autofocus": "autofocus",
             }
@@ -1078,13 +934,13 @@ class ManualAttendanceForm(forms.Form):
     student = forms.ModelChoiceField(
         label="Student",
         queryset=User.objects.filter(student_profile__isnull=False, is_active=True),
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
 
     status = forms.ChoiceField(
         label="Attendance Status",
         choices=AttendanceStatus.choices,
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
 
     override_reason = forms.CharField(
@@ -1092,7 +948,7 @@ class ManualAttendanceForm(forms.Form):
         max_length=5000,
         widget=forms.Textarea(
             attrs={
-                "class": "textarea textarea-bordered w-full",
+                "class": "form-control",
                 "rows": 3,
                 "placeholder": "Explain the justification for this manual roll entry...",
             }
@@ -1110,14 +966,14 @@ class ManualAttendanceForm(forms.Form):
 
 class AssessmentCreateForm(forms.Form):
     """
-    Form for Instructors to author an assessment with settings, delivery parameters, and questions.
+    Form for Instructors to author a coursework assessment that students answer with file uploads.
     """
 
     title = forms.CharField(
         label="Assessment Title",
         max_length=255,
         widget=forms.TextInput(
-            attrs={"class": "input input-bordered w-full", "placeholder": "e.g. Midterm Examination"}
+            attrs={"class": "form-control", "placeholder": "e.g. Coursework 1"}
         ),
     )
 
@@ -1125,21 +981,13 @@ class AssessmentCreateForm(forms.Form):
         label="Briefing & Instructions",
         required=False,
         max_length=5000,
-        widget=forms.Textarea(attrs={"class": "textarea textarea-bordered w-full", "rows": 3}),
+        widget=forms.Textarea(attrs={"class": "form-control", "rows": 3}),
     )
 
     component_type = forms.ChoiceField(
         label="Assessment Category",
         choices=GradeComponentType.choices,
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
-    )
-
-    # Keep old submissions compatible while making the delivery choice explicit.
-    delivery_mode = forms.ChoiceField(
-        choices=AssessmentDeliveryMode.choices,
-        required=False,
-        initial=AssessmentDeliveryMode.ONLINE,
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
 
     max_score = forms.DecimalField(
@@ -1148,81 +996,28 @@ class AssessmentCreateForm(forms.Form):
         decimal_places=2,
         min_value=0.01,
         initial=100.00,
-        widget=forms.NumberInput(attrs={"class": "input input-bordered w-full", "step": "0.01"}),
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "0.01"}),
     )
 
     max_attempts = forms.IntegerField(
         label="Max Attempts Allowed",
         min_value=1,
         initial=1,
-        widget=forms.NumberInput(attrs={"class": "input input-bordered w-full"}),
+        widget=forms.NumberInput(attrs={"class": "form-control"}),
     )
 
     opens_at = forms.DateTimeField(
         label="Opening Window",
         widget=forms.DateTimeInput(
-            format="%Y-%m-%dT%H:%M", attrs={"class": "input input-bordered w-full", "type": "datetime-local"}
+            format="%Y-%m-%dT%H:%M", attrs={"class": "form-control", "type": "datetime-local"}
         ),
     )
 
     due_date = forms.DateTimeField(
         label="Submission Due Date",
         widget=forms.DateTimeInput(
-            format="%Y-%m-%dT%H:%M", attrs={"class": "input input-bordered w-full", "type": "datetime-local"}
+            format="%Y-%m-%dT%H:%M", attrs={"class": "form-control", "type": "datetime-local"}
         ),
-    )
-
-    duration_minutes = forms.IntegerField(
-        label="Duration (Minutes)",
-        min_value=1,
-        initial=60,
-        widget=forms.NumberInput(attrs={"class": "input input-bordered w-full"}),
-    )
-
-    lab_cidr_allowed = forms.CharField(
-        label="Required Lab CIDR Subnet (Optional)",
-        required=False,
-        max_length=43,
-        validators=[validate_cidr],
-        widget=forms.TextInput(attrs={"class": "input input-bordered w-full", "placeholder": "e.g. 10.20.0.0/24"}),
-    )
-
-    proctor_code = forms.CharField(
-        label="Whiteboard Proctor Code (Optional)",
-        required=False,
-        max_length=50,
-        widget=forms.TextInput(
-            attrs={"class": "input input-bordered w-full font-mono", "placeholder": "e.g. EXAM-8842"}
-        ),
-    )
-
-    shuffle_questions = forms.BooleanField(
-        label="Shuffle questions for each student",
-        required=False,
-        initial=True,
-        widget=forms.CheckboxInput(attrs={"class": "checkbox checkbox-primary"}),
-    )
-
-    shuffle_options = forms.BooleanField(
-        label="Shuffle question options",
-        required=False,
-        initial=True,
-        widget=forms.CheckboxInput(attrs={"class": "checkbox checkbox-primary"}),
-    )
-
-    allow_backtracking = forms.BooleanField(
-        label="Allow students to navigate back and change answers",
-        required=False,
-        initial=True,
-        widget=forms.CheckboxInput(attrs={"class": "checkbox checkbox-primary"}),
-    )
-
-    autosave_interval_seconds = forms.IntegerField(
-        label="Autosave Interval (seconds)",
-        min_value=5,
-        max_value=300,
-        initial=15,
-        widget=forms.NumberInput(attrs={"class": "input input-bordered w-full"}),
     )
 
     def clean(self):
@@ -1236,164 +1031,20 @@ class AssessmentCreateForm(forms.Form):
         return cleaned_data
 
 
-class AssessmentQuestionForm(forms.Form):
-    """Validate one online question and its staff-only answer fields."""
-
-    # Every question has a type, a prompt, and a positive number of points.
-    type = forms.ChoiceField(
-        choices=[
-            ("multiple_choice", "Multiple choice"),
-            ("matching", "Matching"),
-            ("long_text", "Written answer"),
-        ]
-    )
-    prompt = forms.CharField(max_length=5000, widget=forms.Textarea(attrs={"rows": 2}))
-    points = forms.DecimalField(max_digits=6, decimal_places=2, min_value=0.01)
-    max_words = forms.IntegerField(required=False, min_value=1, max_value=100000, initial=500)
-    rubric = forms.CharField(required=False, max_length=5000, widget=forms.Textarea(attrs={"rows": 3}))
-    explanation = forms.CharField(required=False, max_length=5000, widget=forms.Textarea(attrs={"rows": 2}))
-    extra_matches = forms.CharField(
-        required=False,
-        max_length=4000,
-        label="Additional matching choices, one per line",
-        widget=forms.Textarea(attrs={"rows": 2}),
-    )
-
-    def __init__(self, *args, **kwargs):
-        """Build the repeated question fields and display rows for one question form."""
-        # Each row is a normal Django field, so every submitted value is validated.
-        super().__init__(*args, **kwargs)
-        for number in range(1, 9):
-            self.fields[f"option_{number}"] = forms.CharField(required=False, max_length=500, label=f"Option {number}")
-            self.fields[f"correct_{number}"] = forms.BooleanField(required=False, label="Correct")
-            self.fields[f"left_{number}"] = forms.CharField(required=False, max_length=500, label=f"Left item {number}")
-            self.fields[f"right_{number}"] = forms.CharField(
-                required=False, max_length=500, label=f"Correct match {number}"
-            )
-        self.option_rows = []
-        self.pair_rows = []
-        for number in range(1, 9):
-            self.option_rows.append((self[f"option_{number}"], self[f"correct_{number}"]))
-            self.pair_rows.append((self[f"left_{number}"], self[f"right_{number}"]))
-
-    def clean(self):
-        """Check that the submitted question has enough valid answers for its type."""
-        # Require enough choices and a real answer; reject incomplete matching pairs.
-        cleaned_data = super().clean()
-        if cleaned_data.get("type") == "multiple_choice":
-            options = 0
-            correct = 0
-            for number in range(1, 9):
-                option = cleaned_data.get(f"option_{number}")
-                marked = cleaned_data.get(f"correct_{number}")
-                if option:
-                    options += 1
-                if marked and option:
-                    correct += 1
-                elif marked:
-                    self.add_error(f"option_{number}", "Enter the marked option's text.")
-            if options < 2 or correct == 0:
-                raise forms.ValidationError("Add at least two options and mark at least one correct answer.")
-        elif cleaned_data.get("type") == "matching":
-            pairs = 0
-            for number in range(1, 9):
-                left = cleaned_data.get(f"left_{number}")
-                right = cleaned_data.get(f"right_{number}")
-                if left and right:
-                    pairs += 1
-                elif left or right:
-                    self.add_error(f"right_{number}", "Enter both sides of this pair.")
-            if not pairs:
-                raise forms.ValidationError("Add at least one complete matching pair.")
-        elif cleaned_data.get("type") == "long_text" and not cleaned_data.get("max_words"):
-            self.add_error("max_words", "Enter a word limit.")
-        return cleaned_data
-
-
-# Cap the formset so a forged request cannot create an unlimited number of forms.
-AssessmentQuestionFormSet = forms.formset_factory(
-    AssessmentQuestionForm,
-    extra=0,
-    can_delete=True,
-    can_order=True,
-    max_num=20,
-    validate_max=True,
-    absolute_max=20,
-)
-
-
-class AssessmentQuestionAddForm(forms.Form):
-    """Validate the type and formset position for a blank question card."""
-
-    type = forms.ChoiceField(choices=AssessmentQuestionForm.base_fields["type"].choices)
-    index = forms.IntegerField(min_value=0, max_value=19)
-
-
-class AssessmentAttemptStartForm(forms.Form):
+class CourseFileForm(forms.Form):
     """
-    Form for students to initiate an attempt, validating the exam whiteboard proctor code if required.
+    Form for course staff to add a material file (slides, notes) to a course.
     """
 
-    proctor_code = forms.CharField(
-        label="Enter Exam Proctor Code",
-        required=False,
-        max_length=50,
-        widget=forms.TextInput(
-            attrs={
-                "class": "input input-bordered w-full font-mono text-center tracking-wider text-lg uppercase",
-                "placeholder": "Enter whiteboard code",
-                "autocomplete": "off",
-                "autofocus": "autofocus",
-            }
-        ),
+    title = forms.CharField(
+        label="Title", max_length=255, widget=forms.TextInput(attrs={"class": "form-control"})
     )
-
-
-class AssessmentAutosaveForm(forms.Form):
-    """Validate which question or focus event the student is sending."""
-
-    # Only known response types can reach the answer validation below.
-    question_id = forms.CharField(required=False, max_length=255)
-    response_type = forms.ChoiceField(
+    file = forms.FileField(label="Choose File", widget=forms.FileInput(attrs={"class": "form-control"}))
+    is_visible = forms.BooleanField(
+        label="Release to students now",
         required=False,
-        choices=[
-            ("multiple_choice", "Multiple choice"),
-            ("matching", "Matching"),
-            ("long_text", "Written answer"),
-            ("essay", "Essay"),
-        ],
+        widget=forms.CheckboxInput(attrs={"class": "form-check-input"}),
     )
-    focus_lost = forms.BooleanField(required=False)
-
-
-class AssessmentAnswerForm(forms.Form):
-    """Validate answers against the choices in the student's actual question."""
-
-    # Limit written responses and make choice values come from the assessment itself.
-    selected_options = forms.MultipleChoiceField(required=False, choices=[])
-    response_text = forms.CharField(required=False, max_length=100000, strip=False)
-
-    def __init__(self, data, question):
-        """Build answer fields from the actual question shown to the student."""
-        # Add only the matching-pair fields and choices that the question really contains.
-        super().__init__(data)
-        self.max_words = question.get("max_words", 500)
-        for option in question.get("options", []):
-            option_id = option.get("option_id", "")
-            self.fields["selected_options"].choices.append((option_id, option.get("text", "")))
-        choices = [("", "No answer")]
-        for match in question.get("available_matches", []):
-            choices.append((match, match))
-        for pair in question.get("left_prompts", []):
-            self.fields[f"match_{pair['pair_id']}"] = forms.ChoiceField(required=False, choices=choices)
-
-    def clean_response_text(self):
-        """Check that a written answer stays within the question's word limit."""
-        # A student cannot submit more words than the question allows.
-        text = self.cleaned_data["response_text"]
-        if len(text.split()) > self.max_words:
-            raise forms.ValidationError("The answer exceeds this question's word limit.")
-        return text
 
 
 class AssessmentFileUploadForm(forms.Form):
@@ -1403,19 +1054,11 @@ class AssessmentFileUploadForm(forms.Form):
 
     file = forms.FileField(
         label="Choose File",
-        widget=forms.FileInput(attrs={"class": "file-input file-input-bordered w-full"}),
+        widget=forms.FileInput(attrs={"class": "form-control"}),
     )
 
 
-class ScannedPaperStaffUploadForm(forms.Form):
-    """Validate the student and scanned file selected by authorized course staff."""
-
-    # The view restricts this empty queryset to students enrolled in its course.
-    student = forms.ModelChoiceField(queryset=User.objects.none())
-    file = forms.FileField()
-
-
-# Grades, appeals & change requests forms
+# Grades & change requests forms
 
 
 class GradeEntryForm(forms.Form):
@@ -1428,7 +1071,7 @@ class GradeEntryForm(forms.Form):
         max_digits=6,
         decimal_places=2,
         min_value=0,
-        widget=forms.NumberInput(attrs={"class": "input input-bordered w-full", "step": "0.01"}),
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "0.01"}),
     )
 
     feedback = forms.CharField(
@@ -1437,7 +1080,7 @@ class GradeEntryForm(forms.Form):
         max_length=5000,
         widget=forms.Textarea(
             attrs={
-                "class": "textarea textarea-bordered w-full",
+                "class": "form-control",
                 "rows": 3,
                 "placeholder": "Feedback for the student...",
             }
@@ -1455,56 +1098,11 @@ class GradeReleaseForm(forms.Form):
         max_length=8,
         widget=forms.TextInput(
             attrs={
-                "class": "input input-bordered w-full font-mono text-center tracking-widest text-lg",
+                "class": "form-control font-monospace text-center",
                 "placeholder": "123456",
                 "autocomplete": "one-time-code",
                 "inputmode": "numeric",
                 "autofocus": "autofocus",
-            }
-        ),
-    )
-
-
-class GradeAppealForm(forms.Form):
-    """
-    Form for students to formally dispute a released grade.
-    """
-
-    reason = forms.CharField(
-        label="Detailed Appeal Rationale",
-        max_length=5000,
-        widget=forms.Textarea(
-            attrs={
-                "class": "textarea textarea-bordered w-full",
-                "rows": 4,
-                "placeholder": "Explain the specific grounds for appealing this grade...",
-            }
-        ),
-    )
-
-
-class GradeAppealReviewForm(forms.Form):
-    """
-    Form for instructors to submit their verdict on a student grade appeal.
-    """
-
-    status = forms.ChoiceField(
-        label="Appeal Verdict",
-        choices=[
-            (AppealStatus.APPROVED, "Approve Appeal"),
-            (AppealStatus.REJECTED, "Reject Appeal"),
-        ],
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
-    )
-
-    response = forms.CharField(
-        label="Written Decision & Notes",
-        max_length=5000,
-        widget=forms.Textarea(
-            attrs={
-                "class": "textarea textarea-bordered w-full",
-                "rows": 3,
-                "placeholder": "Explain the reasoning for this verdict...",
             }
         ),
     )
@@ -1520,7 +1118,7 @@ class GradeChangeRequestForm(forms.Form):
         max_digits=6,
         decimal_places=2,
         min_value=0,
-        widget=forms.NumberInput(attrs={"class": "input input-bordered w-full", "step": "0.01"}),
+        widget=forms.NumberInput(attrs={"class": "form-control", "step": "0.01"}),
     )
 
     reason = forms.CharField(
@@ -1528,7 +1126,7 @@ class GradeChangeRequestForm(forms.Form):
         max_length=5000,
         widget=forms.Textarea(
             attrs={
-                "class": "textarea textarea-bordered w-full",
+                "class": "form-control",
                 "rows": 3,
                 "placeholder": "Provide detailed justification for department head review...",
             }
@@ -1547,7 +1145,7 @@ class GradeChangeRequestReviewForm(forms.Form):
             (ChangeRequestStatus.APPROVED, "Approve Change Request"),
             (ChangeRequestStatus.REJECTED, "Reject Change Request"),
         ],
-        widget=forms.Select(attrs={"class": "select select-bordered w-full"}),
+        widget=forms.Select(attrs={"class": "form-select"}),
     )
 
     review_note = forms.CharField(
@@ -1556,7 +1154,7 @@ class GradeChangeRequestReviewForm(forms.Form):
         max_length=5000,
         widget=forms.Textarea(
             attrs={
-                "class": "textarea textarea-bordered w-full",
+                "class": "form-control",
                 "rows": 2,
                 "placeholder": "Required explanation for approval or rejection...",
             }
@@ -1569,41 +1167,6 @@ class GradeChangeRequestReviewForm(forms.Form):
         if not note:
             raise forms.ValidationError("A review note is required.")
         return note
-
-
-class CourseGradeSchemeForm(forms.Form):
-    """
-    Sets the weight of every grade component (coursework, quiz, exam,
-    assignment, lab) for one course. The weights must add up to 100, because
-    the final course result is the weighted average of the components.
-    """
-
-    def __init__(self, *args, **kwargs):
-        """Add one percentage field per grade component, named weight_<component>."""
-        super().__init__(*args, **kwargs)
-        for component, label in GradeComponentType.choices:
-            self.fields[f"weight_{component}"] = forms.DecimalField(
-                label=f"{label} (%)",
-                required=False,
-                max_digits=5,
-                decimal_places=2,
-                min_value=0,
-                max_value=100,
-                widget=forms.NumberInput(attrs={"class": "input input-bordered w-full", "step": "0.5"}),
-            )
-
-    def clean(self):
-        """Treat an empty field as 0 and check that the weights total exactly 100."""
-        cleaned_data = super().clean()
-        total = 0
-        for component, _ in GradeComponentType.choices:
-            field_name = f"weight_{component}"
-            if cleaned_data.get(field_name) is None:
-                cleaned_data[field_name] = 0
-            total += cleaned_data[field_name]
-        if total != 100:
-            raise forms.ValidationError(f"The weights must add up to 100%. They currently add up to {total}%.")
-        return cleaned_data
 
 
 class ScheduleFilterForm(forms.Form):
@@ -1629,12 +1192,12 @@ class AttendanceHistoryFilterForm(forms.Form):
     date_from = forms.DateField(
         required=False,
         label="From date",
-        widget=forms.DateInput(attrs={"class": "input input-bordered w-full", "type": "date"}),
+        widget=forms.DateInput(attrs={"class": "form-control", "type": "date"}),
     )
     date_to = forms.DateField(
         required=False,
         label="To date",
-        widget=forms.DateInput(attrs={"class": "input input-bordered w-full", "type": "date"}),
+        widget=forms.DateInput(attrs={"class": "form-control", "type": "date"}),
     )
 
     def __init__(self, *args, courses=None, **kwargs):
@@ -1656,154 +1219,6 @@ class CourseGradesFilterForm(forms.Form):
         # Limit assessment choices to assessments belonging to this course.
         if assessments is not None:
             self.fields["assessment"].queryset = assessments
-
-
-# Pure-Python JSONB Schema Validators
-
-
-def _is_number(value):
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
-def validate_assessment_settings_json(doc):
-    """Validate Assessments.settings_json against the specification schema."""
-    if not isinstance(doc, dict):
-        raise ValidationError("Assessment settings must be a JSON object.")
-    allowed_keys = {"shuffle_questions", "shuffle_options", "allow_backtracking", "autosave_interval_seconds"}
-    unknown = set(doc.keys()) - allowed_keys
-    if unknown:
-        raise ValidationError(f"Unsupported assessment setting keys: {', '.join(sorted(unknown))}.")
-    for bool_key in ("shuffle_questions", "shuffle_options", "allow_backtracking"):
-        if bool_key in doc and not isinstance(doc[bool_key], bool):
-            raise ValidationError(f"Setting '{bool_key}' must be a boolean.")
-    if "autosave_interval_seconds" in doc:
-        interval = doc["autosave_interval_seconds"]
-        if isinstance(interval, bool) or not isinstance(interval, int) or interval < 5 or interval > 300:
-            raise ValidationError("Setting 'autosave_interval_seconds' must be an integer between 5 and 300.")
-    return doc
-
-
-def validate_assessment_questions_json(questions):
-    """Validate Assessments.questions_json against the specification schema (no answer keys)."""
-    if not isinstance(questions, list):
-        raise ValidationError("Assessment questions must be a JSON array.")
-    seen_ids = set()
-    forbidden_answer_fields = ("correct_option_ids", "correct_pairs", "tutor_rubric", "answer_key", "answer_key_json")
-    for item in questions:
-        if not isinstance(item, dict):
-            raise ValidationError("Each question must be a JSON object.")
-        # Reject every answer-key or rubric field regardless of question type (P6).
-        for forbidden in forbidden_answer_fields:
-            if forbidden in item:
-                raise ValidationError("Question definitions must not contain answer keys or grading rubrics.")
-        q_id = item.get("question_id")
-        q_type = item.get("type")
-        prompt = item.get("prompt")
-        points = item.get("points")
-        if not isinstance(q_id, str) or not q_id or q_id in seen_ids:
-            raise ValidationError("Each question must have a unique non-empty question_id.")
-        seen_ids.add(q_id)
-        if not isinstance(prompt, str) or not prompt.strip():
-            raise ValidationError("Each question must include a text prompt.")
-        if not _is_number(points) or points <= 0:
-            raise ValidationError("Each question must have positive numeric points.")
-        if q_type == "multiple_choice":
-            options = item.get("options")
-            if not isinstance(options, list) or len(options) < 2:
-                raise ValidationError("Multiple-choice questions require at least two options.")
-            for opt in options:
-                if not isinstance(opt, dict) or not isinstance(opt.get("option_id"), str) or not isinstance(opt.get("text"), str):
-                    raise ValidationError("Each option must contain string option_id and text.")
-                if "is_correct" in opt or "correct" in opt:
-                    raise ValidationError("Question options must not contain answer keys.")
-        elif q_type == "matching":
-            pairs = item.get("left_prompts")
-            matches = item.get("available_matches")
-            if not isinstance(pairs, list) or not pairs or not isinstance(matches, list) or not matches:
-                raise ValidationError("Matching questions require left_prompts and available_matches.")
-            for pair in pairs:
-                if not isinstance(pair, dict) or not isinstance(pair.get("pair_id"), str) or not isinstance(pair.get("text"), str):
-                    raise ValidationError("Each matching prompt must contain string pair_id and text.")
-        elif q_type in ("long_text", "essay"):
-            max_words = item.get("max_words")
-            if max_words is not None and (isinstance(max_words, bool) or not isinstance(max_words, int) or max_words < 1):
-                raise ValidationError("Long-text question max_words must be a positive integer.")
-        else:
-            raise ValidationError(f"Unsupported question type: {q_type}.")
-    return questions
-
-
-def validate_answer_key_json(answer_key_dict):
-    """Validate ExamAnswerKey.answer_key_json before encryption/storage."""
-    if not isinstance(answer_key_dict, dict):
-        raise ValidationError("Answer key must be a JSON object.")
-    for q_id, entry in answer_key_dict.items():
-        if not isinstance(q_id, str) or not q_id or not isinstance(entry, dict):
-            raise ValidationError("Each answer key entry must be keyed by question_id and map to an object.")
-        if "correct_option_ids" in entry:
-            if not isinstance(entry["correct_option_ids"], list) or not all(isinstance(x, str) for x in entry["correct_option_ids"]):
-                raise ValidationError("correct_option_ids must be a list of option ID strings.")
-            if "explanation" in entry and not isinstance(entry["explanation"], str):
-                raise ValidationError("Answer key explanation must be a string.")
-        elif "correct_pairs" in entry:
-            pairs = entry["correct_pairs"]
-            if not isinstance(pairs, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in pairs.items()):
-                raise ValidationError("correct_pairs must map pair_id strings to answer strings.")
-        elif "tutor_rubric" in entry:
-            rubric = entry["tutor_rubric"]
-            if not isinstance(rubric, dict):
-                raise ValidationError("tutor_rubric must be an object.")
-            criteria = rubric.get("criteria", [])
-            if not isinstance(criteria, list) or not all(isinstance(c, dict) for c in criteria):
-                raise ValidationError("tutor_rubric.criteria must be a list of objects.")
-        else:
-            raise ValidationError("Answer key entry must specify correct_option_ids, correct_pairs, or tutor_rubric.")
-    return answer_key_dict
-
-
-def validate_attempt_answers_json(answers):
-    """Validate AssessmentAttempt.answers_json against the specification schema."""
-    if not isinstance(answers, list):
-        raise ValidationError("Attempt answers must be a JSON array.")
-    for item in answers:
-        if not isinstance(item, dict):
-            raise ValidationError("Each answer entry must be a JSON object.")
-        q_id = item.get("question_id")
-        q_type = item.get("type")
-        if not isinstance(q_id, str) or not q_id:
-            raise ValidationError("Each answer entry must include question_id.")
-        if q_type == "multiple_choice":
-            selected = item.get("selected_option_ids", [])
-            if not isinstance(selected, list) or not all(isinstance(x, str) for x in selected):
-                raise ValidationError("selected_option_ids must be a list of strings.")
-        elif q_type == "matching":
-            matches = item.get("submitted_matches", [])
-            if not isinstance(matches, list) or not all(
-                isinstance(m, dict) and isinstance(m.get("pair_id"), str) and isinstance(m.get("selected_match"), str)
-                for m in matches
-            ):
-                raise ValidationError("submitted_matches must contain pair_id and selected_match strings.")
-        elif q_type in ("long_text", "essay"):
-            if "response_text" in item and not isinstance(item["response_text"], str):
-                raise ValidationError("response_text must be a string.")
-        else:
-            raise ValidationError(f"Unsupported answer type: {q_type}.")
-    return answers
-
-
-def validate_summary_score_json(summary):
-    """Validate AssessmentAttempt.summary_score_json before saving."""
-    if summary is None:
-        return None
-    if not isinstance(summary, dict):
-        raise ValidationError("Summary score must be a JSON object.")
-    required_nums = ("auto_graded_points", "manual_graded_points", "total_score", "max_possible_points")
-    for key in required_nums:
-        if key not in summary or not _is_number(summary[key]) or summary[key] < 0:
-            raise ValidationError(f"Summary score '{key}' must be a non-negative number.")
-    if not isinstance(summary.get("is_fully_graded"), bool):
-        raise ValidationError("Summary score 'is_fully_graded' must be a boolean.")
-    return summary
 
 
 class SecurityPolicyForm(forms.ModelForm):
@@ -1828,12 +1243,12 @@ class SecurityPolicyForm(forms.ModelForm):
             "session_absolute_hours": "Session absolute limit in hours (1 to 72)",
         }
         widgets = {
-            "min_password_length": forms.NumberInput(attrs={"class": "input input-bordered w-full", "min": 12, "max": 128}),
-            "password_history_count": forms.NumberInput(attrs={"class": "input input-bordered w-full", "min": 1, "max": 24}),
-            "axes_failure_limit": forms.NumberInput(attrs={"class": "input input-bordered w-full", "min": 3, "max": 20}),
-            "axes_cooloff_hours": forms.NumberInput(attrs={"class": "input input-bordered w-full", "min": 1, "max": 24}),
-            "session_idle_minutes": forms.NumberInput(attrs={"class": "input input-bordered w-full", "min": 5, "max": 240}),
-            "session_absolute_hours": forms.NumberInput(attrs={"class": "input input-bordered w-full", "min": 1, "max": 72}),
+            "min_password_length": forms.NumberInput(attrs={"class": "form-control", "min": 12, "max": 128}),
+            "password_history_count": forms.NumberInput(attrs={"class": "form-control", "min": 1, "max": 24}),
+            "axes_failure_limit": forms.NumberInput(attrs={"class": "form-control", "min": 3, "max": 20}),
+            "axes_cooloff_hours": forms.NumberInput(attrs={"class": "form-control", "min": 1, "max": 24}),
+            "session_idle_minutes": forms.NumberInput(attrs={"class": "form-control", "min": 5, "max": 240}),
+            "session_absolute_hours": forms.NumberInput(attrs={"class": "form-control", "min": 1, "max": 72}),
         }
 
     def clean(self):

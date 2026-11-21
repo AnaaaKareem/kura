@@ -5,75 +5,72 @@
 {% block form_errors %}{% endblock %}
 
 {% block content %}
-<div class="max-w-lg mx-auto my-6">
-    <div class="k-card p-6 sm:p-8 space-y-6">
+<div class="k-max-lg mx-auto my-4">
+    <div class="card card-body mb-3 p-4 p-sm-5 vstack gap-4">
         {% if needs_reauth %}
-        <header class="text-center space-y-2">
-            <h1 class="text-2xl font-bold">Confirm it's you</h1>
-            <p class="text-sm k-muted">
+        <header class="text-center vstack gap-2">
+            <h1 class="fs-3 fw-bold">Confirm it's you</h1>
+            <p class="small text-body-secondary">
                 Two-step verification is already enabled. To view your setup or generate new recovery codes, enter a code from your authenticator app or an unused recovery code.
             </p>
-            <p class="text-xs k-muted">
+            <p class="small text-body-secondary">
                 Entering a recovery code uses it up.
             </p>
         </header>
 
-        <form method="post" action="{% url 'kura:mfa_setup' %}" class="space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+        <form method="post" action="{% url 'kura:mfa_setup' %}" class="vstack gap-3">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
             {% csrf_token %}
             {% include "kura/_form_errors.html" %}
             {% include "kura/_field.html" with field=form.code %}
 
             <div class="pt-2">
-                <button type="submit" class="btn btn-primary w-full">
+                <button type="submit" class="btn btn-primary w-100">
                     Verify and continue
                 </button>
             </div>
         </form>
         {% else %}
-        <header class="text-center space-y-2">
-            <h1 class="text-2xl font-bold">Set up two-step verification</h1>
-            <p class="text-sm k-muted">
+        <header class="text-center vstack gap-2">
+            <h1 class="fs-3 fw-bold">Set up two-step verification</h1>
+            <p class="small text-body-secondary">
                 Kura requires an authenticator app for every account.
             </p>
         </header>
 
         {% if qr_code_url %}
-        <ol class="list-decimal pl-5 space-y-4 text-sm">
+        <ol class="ps-4 vstack gap-3 small">
             <li>Install an authenticator app (Microsoft Authenticator, Google Authenticator, Aegis, or 2FAS).</li>
             <li>
-                <p class="mb-3">Scan this QR code with your authenticator app.</p>
-                <div class="flex justify-center">
-                    <div class="p-3 bg-white border border-base-300 rounded-box">
-                        <img src="{{ qr_code_url }}" alt="TOTP QR Code" class="w-48 h-48">
+                <p class="mb-2">Scan this QR code with your authenticator app.</p>
+                <div class="d-flex justify-content-center">
+                    <div class="p-2 bg-body border rounded">
+                        <img src="{{ qr_code_url }}" alt="TOTP QR Code" width="192" height="192">
                     </div>
                 </div>
                 {% if manual_key %}
-                <div class="collapse collapse-arrow bg-base-200 border border-base-300 rounded-box mt-3">
-                    <input type="checkbox" aria-label="Show manual setup key">
-                    <div class="collapse-title text-xs font-medium">Can't scan? Enter the key instead</div>
-                    <div class="collapse-content">
-                        <p class="k-mono text-sm tracking-wider break-all select-all">{{ manual_key }}</p>
-                    </div>
-                </div>
+                <details class="bg-body-tertiary border rounded mt-2 p-2">
+                    <summary class="small fw-medium">Can't scan? Enter the key instead</summary>
+                    <p class="font-monospace small text-break user-select-all mt-2 mb-0">{{ manual_key }}</p>
+                </details>
                 {% endif %}
             </li>
             <li>Enter the 6-digit code shown in your app.</li>
         </ol>
 
-        <form method="post" action="{% url 'kura:mfa_setup' %}" class="space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+        <form method="post" action="{% url 'kura:mfa_setup' %}" class="vstack gap-3">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
             {% csrf_token %}
             {% include "kura/_form_errors.html" %}
             {% include "kura/_field.html" with field=form.code %}
 
             <div class="pt-2">
-                <button type="submit" class="btn btn-primary w-full">
+                <button type="submit" class="btn btn-primary w-100">
                     Turn on two-step verification
                 </button>
             </div>
         </form>
         {% else %}
         {# Vault is unavailable, so no seed can be created or read. #}
-        <div role="alert" class="alert alert-warning text-sm">
+        <div role="alert" class="alert alert-warning small">
             <span>Authenticator setup is unavailable right now. Please try again later.</span>
         </div>
         {% endif %}

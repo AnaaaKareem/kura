@@ -3,59 +3,58 @@
 {% block title %}Quarantined uploads - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">Quarantine</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Quarantine</li>
 </ol>
 {% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <header class="space-y-1">
-        <p class="k-eyebrow">Security</p>
-        <h1 class="text-2xl font-bold">Quarantined uploads</h1>
-        <p class="text-sm k-muted">
+<div class="vstack gap-4">
+    <header class="vstack gap-1">
+        <p class="text-uppercase small fw-semibold text-body-secondary">Security</p>
+        <h1 class="fs-3 fw-bold">Quarantined uploads</h1>
+        <p class="small text-body-secondary">
             Files rejected by the virus scanner in the last 7 days. Records are purged automatically after 7 days.
         </p>
     </header>
 
-    <div class="k-card p-0 overflow-x-auto">
-        <table class="k-table">
-            <caption class="sr-only">Quarantined uploads</caption>
+    <div class="card card-body mb-3 p-0 table-responsive">
+        <table class="table table-sm align-middle">
+            <caption class="visually-hidden">Quarantined uploads</caption>
             <thead>
                 <tr>
-                    <th class="k-sticky-col">Uploaded</th>
+                    <th >Uploaded</th>
                     <th>Uploaded by</th>
                     <th>File name</th>
-                    <th class="k-num">Size</th>
+                    <th class="text-nowrap">Size</th>
                     <th>Detection</th>
                     <th>Integrity hash</th>
-                    <th class="text-right">Action</th>
+                    <th class="text-end">Action</th>
                 </tr>
             </thead>
             <tbody>
                 {% for quarantined_file in quarantined_files %}
                 <tr>
-                    <td class="k-sticky-col k-num text-xs">{{ quarantined_file.created_at|date:"j M Y, H:i" }}</td>
-                    <td class="font-mono text-xs">{{ quarantined_file.uploaded_by.email }}</td>
-                    <td class="font-medium text-xs break-all max-w-xs">{{ quarantined_file.original_filename }}</td>
-                    <td class="k-num text-xs">{{ quarantined_file.size_bytes|filesizeformat }}</td>
+                    <td class="text-nowrap small">{{ quarantined_file.created_at|date:"j M Y, H:i" }}</td>
+                    <td class="font-monospace small">{{ quarantined_file.uploaded_by.email }}</td>
+                    <td class="fw-medium small text-break k-max-xs">{{ quarantined_file.original_filename }}</td>
+                    <td class="text-nowrap small">{{ quarantined_file.size_bytes|filesizeformat }}</td>
                     <td>
-                        <span class="badge badge-error badge-sm font-medium">{{ quarantined_file.detection }}</span>
+                        <span class="badge text-bg-danger fw-medium">{{ quarantined_file.detection }}</span>
                     </td>
-                    <td class="k-num text-xs break-all max-w-xs">{{ quarantined_file.sha256_hash }}</td>
-                    <td class="text-right">
+                    <td class="text-nowrap small text-break k-max-xs">{{ quarantined_file.sha256_hash }}</td>
+                    <td class="text-end">
                         <form method="post" action="{% url 'kura:quarantine_delete' quarantined_file.id %}" data-confirm-action="Delete quarantined file {{ quarantined_file.original_filename }}? This cannot be undone.">
                             {% csrf_token %}
                             <input type="hidden" name="confirm" value="on">
-                            <button type="submit" class="btn btn-outline btn-error btn-sm">Delete</button>
+                            <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
                         </form>
                     </td>
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="7" class="p-8 text-center">
+                    <td colspan="7" class="p-5 text-center">
                         {% include "kura/_empty.html" with icon="quarantine" title="No quarantined uploads" text="All uploaded files have passed malware scanning." %}
                     </td>
                 </tr>

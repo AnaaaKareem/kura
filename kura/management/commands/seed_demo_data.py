@@ -15,15 +15,9 @@ from kura.models import (
     StudentProfile,
     Course,
     CourseStaff,
-    CourseGradeScheme,
     Enrollment,
-    Module,
-    ModuleTargetLevel,
-    ModuleSection,
-    SectionItem,
     Schedule,
     Assessment,
-    ExamAnswerKey,
     AcademicLevel,
     GradeComponentType,
     CourseStaffRole,
@@ -31,10 +25,8 @@ from kura.models import (
     SemesterType,
     SessionType,
     DayOfWeek,
-    SectionType,
 )
 from kura.permissions import service_rls_context
-from kura.views import encrypt_answer_key
 
 
 class Command(BaseCommand):
@@ -184,24 +176,7 @@ class Command(BaseCommand):
             },
         )
 
-        # 7. Setup Course Grade Scheme.
-        CourseGradeScheme.objects.update_or_create(
-            course=course,
-            component_type=GradeComponentType.QUIZ,
-            defaults={"weight_percentage": Decimal("30.00")},
-        )
-        CourseGradeScheme.objects.update_or_create(
-            course=course,
-            component_type=GradeComponentType.COURSEWORK,
-            defaults={"weight_percentage": Decimal("30.00")},
-        )
-        CourseGradeScheme.objects.update_or_create(
-            course=course,
-            component_type=GradeComponentType.EXAM,
-            defaults={"weight_percentage": Decimal("40.00")},
-        )
-
-        # 8. Enroll students.
+        # 7. Enroll students.
         Enrollment.objects.update_or_create(
             course=course,
             student=student_user,
@@ -219,35 +194,7 @@ class Command(BaseCommand):
             },
         )
 
-        # 9. Create Course Module, Section, and Learning Item.
-        module, _ = Module.objects.update_or_create(
-            course=course,
-            title="Module 1: Authentication & Access Control",
-            defaults={
-                "description": "Principles of least privilege, multi-factor auth, and secure session management.",
-                "is_visible": True,
-                "created_by": instructor_user,
-            },
-        )
-        ModuleTargetLevel.objects.get_or_create(module=module, target_level=AcademicLevel.YEAR_3)
-
-        section, _ = ModuleSection.objects.update_or_create(
-            module=module,
-            title="Lecture 1: Web Security Fundamentals",
-            defaults={
-                "section_type": SectionType.LECTURE,
-            },
-        )
-
-        SectionItem.objects.update_or_create(
-            section=section,
-            title="Lecture Notes: Least Privilege & Session Security",
-            defaults={
-                "content_body": "<p>Always enforce authorization at the server boundary and validate sessions against the database.</p>",
-            },
-        )
-
-        # 10. Create Class Schedule.
+        # 8. Create Class Schedule.
         Schedule.objects.update_or_create(
             course=course,
             day=DayOfWeek.MONDAY,
@@ -263,53 +210,17 @@ class Command(BaseCommand):
             },
         )
 
-        # 11. Create Assessment and Exam Answer Key.
-        quiz_section, _ = ModuleSection.objects.update_or_create(
-            module=module,
-            title="Week 1 Quiz Section",
+        # 9. Create a coursework assessment that students answer by uploading a file.
+        Assessment.objects.update_or_create(
+            course=course,
+            title="Coursework 1: Access Control Report",
             defaults={
-                "section_type": SectionType.QUIZ,
-            },
-        )
-
-        assessment, _ = Assessment.objects.update_or_create(
-            section=quiz_section,
-            title="Quiz 1: Access Control & Cryptography",
-            defaults={
-                "component_type": GradeComponentType.QUIZ,
+                "component_type": GradeComponentType.COURSEWORK,
+                "description": "Write a short report on least privilege and upload it as a PDF.",
                 "max_score": Decimal("20.00"),
                 "max_attempts": 2,
-                "duration_minutes": 30,
                 "opens_at": current_time - timezone.timedelta(days=1),
                 "due_date": current_time + timezone.timedelta(days=7),
-                "questions_json": [
-                    {
-                        "question_id": "q1",
-                        "type": "multiple_choice",
-                        "points": 10.0,
-                        "prompt": "Which principle states that a user should only have the minimum permissions necessary to complete their job?",
-                        "options": [
-                            {"option_id": "opt1", "text": "Principle of Least Privilege"},
-                            {"option_id": "opt2", "text": "Security through Obscurity"},
-                            {"option_id": "opt3", "text": "Default Allow"},
-                        ],
-                    },
-                    {
-                        "question_id": "q2",
-                        "type": "written",
-                        "points": 10.0,
-                        "prompt": "Explain in 2-3 sentences what an IDOR vulnerability is and how server-side checks prevent it.",
-                    },
-                ],
-                "created_by": instructor_user,
-            },
-        )
-
-        # The answer key is encrypted by Vault before it is saved, like keys saved from the web page.
-        ExamAnswerKey.objects.update_or_create(
-            assessment=assessment,
-            defaults={
-                "answer_key_json": encrypt_answer_key({"q1": {"correct_option_ids": ["opt1"]}}),
                 "created_by": instructor_user,
             },
         )

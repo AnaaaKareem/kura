@@ -3,52 +3,51 @@
 {% block title %}Active sessions - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">Active sessions</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Active sessions</li>
 </ol>
 {% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <header class="space-y-1">
-        <p class="k-eyebrow">Administration</p>
-        <h1 class="text-2xl font-bold">Active sessions</h1>
-        <p class="text-sm k-muted">Everyone currently signed in to Kura.</p>
+<div class="vstack gap-4">
+    <header class="vstack gap-1">
+        <p class="text-uppercase small fw-semibold text-body-secondary">Administration</p>
+        <h1 class="fs-3 fw-bold">Active sessions</h1>
+        <p class="small text-body-secondary">Everyone currently signed in to Kura.</p>
     </header>
 
     <!-- Render all fields of AdminSessionFilterForm using the shared field partial. -->
-    <form method="get" class="k-card p-4 space-y-4 bg-base-100" role="search">
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+    <form method="get" class="card card-body mb-3 p-3 vstack gap-3 bg-body" role="search">
+        <div class="k-grid gap-3">
             {% for field in form %}
             {% include "kura/_field.html" with field=field %}
             {% endfor %}
         </div>
-        <div class="flex items-center justify-end gap-2">
-            <a href="{% url 'kura:admin_sessions' %}" class="btn btn-ghost btn-sm">Clear</a>
-            <button type="submit" class="btn btn-outline btn-sm">Apply</button>
+        <div class="d-flex align-items-center justify-content-end gap-2">
+            <a href="{% url 'kura:admin_sessions' %}" class="btn btn-link text-decoration-none btn-sm">Clear</a>
+            <button type="submit" class="btn btn-outline-secondary btn-sm">Apply</button>
         </div>
     </form>
 
     {% if selected_user %}
-    <div class="k-card p-4 border-error flex flex-col sm:flex-row sm:items-center sm:justify-between gap-4">
+    <div class="card card-body mb-3 p-3 border-danger d-flex flex-column flex-sm-row align-items-sm-center justify-content-sm-between gap-3">
         <div>
-            <p class="text-sm font-semibold">All sessions for {{ selected_user.email }}</p>
-            <p class="text-xs k-muted">End all active sessions or manage account lock/status immediately.</p>
+            <p class="small fw-semibold">All sessions for {{ selected_user.email }}</p>
+            <p class="small text-body-secondary">End all active sessions or manage account lock/status immediately.</p>
         </div>
-        <div class="flex flex-wrap items-center gap-2">
+        <div class="d-flex flex-wrap align-items-center gap-2">
             {% if selected_user.id != user.id %}
-            <form method="post" action="{% url 'kura:user_lock_toggle' selected_user.id %}" class="inline">
+            <form method="post" action="{% url 'kura:user_lock_toggle' selected_user.id %}" class="d-inline">
                 {% csrf_token %}
                 <input type="hidden" name="next" value="{% url 'kura:admin_sessions' %}?q={{ selected_user.email|urlencode }}">
-                <button type="submit" class="btn btn-outline btn-sm">Lock / Unlock</button>
+                <button type="submit" class="btn btn-outline-secondary btn-sm">Lock / Unlock</button>
             </form>
             {% if selected_user.is_active %}
-            <form method="post" action="{% url 'kura:user_deactivate' selected_user.id %}" class="inline" data-confirm-action="Deactivate {{ selected_user.email }}? Their sessions end immediately.">
+            <form method="post" action="{% url 'kura:user_deactivate' selected_user.id %}" class="d-inline" data-confirm-action="Deactivate {{ selected_user.email }}? Their sessions end immediately.">
                 {% csrf_token %}
                 <input type="hidden" name="next" value="{% url 'kura:admin_sessions' %}">
-                <button type="submit" class="btn btn-outline btn-error btn-sm">Deactivate account</button>
+                <button type="submit" class="btn btn-outline-danger btn-sm">Deactivate account</button>
             </form>
             {% endif %}
             {% endif %}
@@ -56,39 +55,39 @@
                 {% csrf_token %}
                 <input type="hidden" name="action" value="all">
                 <input type="hidden" name="user_id" value="{{ selected_user.id }}">
-                <button type="submit" class="btn btn-outline btn-error btn-sm">End all sessions</button>
+                <button type="submit" class="btn btn-outline-danger btn-sm">End all sessions</button>
             </form>
         </div>
     </div>
     {% endif %}
 
-    <div class="flex items-center justify-between">
-        <p class="text-sm k-muted k-num">{% if page_obj %}{{ page_obj.paginator.count }} session{{ page_obj.paginator.count|pluralize }}{% else %}{{ sessions|length }} session{{ sessions|length|pluralize }}{% endif %}</p>
+    <div class="d-flex align-items-center justify-content-between">
+        <p class="small text-body-secondary text-nowrap">{% if page_obj %}{{ page_obj.paginator.count }} session{{ page_obj.paginator.count|pluralize }}{% else %}{{ sessions|length }} session{{ sessions|length|pluralize }}{% endif %}</p>
     </div>
 
-    <div class="k-card p-0 overflow-x-auto">
-        <table class="k-table">
-            <caption class="sr-only">User sessions</caption>
+    <div class="card card-body mb-3 p-0 table-responsive">
+        <table class="table table-sm align-middle">
+            <caption class="visually-hidden">User sessions</caption>
             <thead>
                 <tr>
-                    <th class="k-sticky-col">User</th>
+                    <th >User</th>
                     <th>Device</th>
                     <th>IP address</th>
                     <th>Started</th>
                     <th>Status</th>
-                    <th class="text-right">Action</th>
+                    <th class="text-end">Action</th>
                 </tr>
             </thead>
             <tbody>
                 {% for session in sessions %}
                 <tr>
-                    <td class="k-sticky-col">
-                        <span class="font-medium text-sm">{% if session.user.first_name or session.user.last_name %}{{ session.user.first_name }} {{ session.user.last_name }}{% else %}{{ session.user.email }}{% endif %}</span>
-                        <span class="block text-xs k-muted">{{ session.user.email }}</span>
+                    <td >
+                        <span class="fw-medium small">{% if session.user.first_name or session.user.last_name %}{{ session.user.first_name }} {{ session.user.last_name }}{% else %}{{ session.user.email }}{% endif %}</span>
+                        <span class="d-block small text-body-secondary">{{ session.user.email }}</span>
                     </td>
-                    <td class="text-xs">{{ session.user_agent|default:"Unknown device" }}</td>
-                    <td class="k-num text-xs">{{ session.ip_address|default:"Unknown" }}</td>
-                    <td class="text-xs k-muted k-num">{{ session.created_at|date:"j M Y, H:i" }}</td>
+                    <td class="small">{{ session.user_agent|default:"Unknown device" }}</td>
+                    <td class="text-nowrap small">{{ session.ip_address|default:"Unknown" }}</td>
+                    <td class="small text-body-secondary text-nowrap">{{ session.created_at|date:"j M Y, H:i" }}</td>
                     <td>
                         {% if session.revoked_at %}
                         {% include "kura/_status_badge.html" with kind="session" value="revoked" %}
@@ -100,20 +99,20 @@
                         {% include "kura/_status_badge.html" with kind="session" value="active" %}
                         {% endif %}
                     </td>
-                    <td class="text-right">
+                    <td class="text-end">
                         {% if not session.revoked_at and form.cleaned_data.state != 'expired' %}
                         <form method="post" action="{% url 'kura:admin_sessions_revoke' %}" data-confirm-action="End this session for {{ session.user.email }}?">
                             {% csrf_token %}
                             <input type="hidden" name="action" value="one">
                             <input type="hidden" name="session_id" value="{{ session.id }}">
-                            <button type="submit" class="btn btn-outline btn-error btn-sm">End session</button>
+                            <button type="submit" class="btn btn-outline-danger btn-sm">End session</button>
                         </form>
                         {% endif %}
                     </td>
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="6" class="p-8 text-center">
+                    <td colspan="6" class="p-5 text-center">
                         {% include "kura/_empty.html" with icon="sessions" title="No sessions found" text="No sessions match these filters." %}
                     </td>
                 </tr>

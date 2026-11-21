@@ -3,110 +3,108 @@
 {% block title %}Staff settings - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li><a href="{% url 'kura:staff_list' %}" class="k-muted hover:text-primary">Staff</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">Staff settings</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'kura:staff_list' %}">Staff</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Staff settings</li>
 </ol>
 {% endblock %}
 
 {% block form_errors %}{% endblock %}
 
 {% block content %}
-<div class="max-w-2xl mx-auto space-y-6">
-    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div class="space-y-1">
-            <p class="k-eyebrow">Administration</p>
-            <h1 class="text-2xl font-bold">Staff settings</h1>
-            <p class="text-sm k-muted">Manage university departments, campus buildings, and office rooms.</p>
+<div class="k-max-2xl mx-auto vstack gap-4">
+    <header class="d-flex flex-column flex-sm-row align-items-sm-start justify-content-sm-between gap-3">
+        <div class="vstack gap-1">
+            <p class="text-uppercase small fw-semibold text-body-secondary">Administration</p>
+            <h1 class="fs-3 fw-bold">Staff settings</h1>
+            <p class="small text-body-secondary">Manage university departments, campus buildings, and office rooms.</p>
         </div>
-        <a href="{% url 'kura:staff_create' %}" class="btn btn-outline btn-sm w-full sm:w-auto">
+        <a href="{% url 'kura:staff_create' %}" class="btn btn-outline-secondary btn-sm w-100">
             &larr; Back to add staff
         </a>
     </header>
 
-    <section class="k-card space-y-4">
-        <h2 class="text-lg font-semibold border-b border-base-300 pb-2">Departments</h2>
-        <ul class="divide-y divide-base-200 text-sm">
+    <section class="card card-body mb-3 vstack gap-3">
+        <h2 class="fs-5 fw-semibold border-bottom pb-2">Departments</h2>
+        <ul class="k-divide small">
             {% for department in departments %}
-            <li class="py-2.5 flex items-center justify-between gap-2">
-                <span class="font-medium">{{ department }}</span>
-                <span class="text-xs k-muted">
+            <li class="py-2 d-flex align-items-center justify-content-between gap-2">
+                <span class="fw-medium">{{ department }}</span>
+                <span class="small text-body-secondary">
                     Head: {% if department.head_user %}{{ department.head_user.email }}{% else %}Unassigned{% endif %}
                 </span>
             </li>
             {% empty %}
-            <li class="py-2.5 text-sm k-muted">No departments added yet.</li>
+            <li class="py-2 small text-body-secondary">No departments added yet.</li>
             {% endfor %}
         </ul>
-        <form method="post" class="space-y-3 pt-3 border-t border-base-300">
+        <form method="post" class="vstack gap-2 pt-2 border-top">
             {% csrf_token %}
             <input type="hidden" name="kind" value="department_head">
-            <h3 class="text-sm font-semibold">Appoint or update department head</h3>
+            <h3 class="small fw-semibold">Appoint or update department head</h3>
             {% include "kura/_form_errors.html" with form=department_head_form %}
             {% for field in department_head_form %}
             {% include "kura/_field.html" with field=field %}
             {% endfor %}
-            <div class="flex justify-end">
-                <button class="btn btn-outline btn-sm" type="submit">Update department head</button>
+            <div class="d-flex justify-content-end">
+                <button class="btn btn-outline-secondary btn-sm" type="submit">Update department head</button>
             </div>
         </form>
-        <form method="post" class="space-y-3 pt-3 border-t border-base-300">
+        <form method="post" class="vstack gap-2 pt-2 border-top">
             {% csrf_token %}
             <input type="hidden" name="kind" value="department">
-            <h3 class="text-sm font-semibold">Add department</h3>
+            <h3 class="small fw-semibold">Add department</h3>
             {% include "kura/_form_errors.html" with form=department_form %}
             {% for field in department_form %}
             {% include "kura/_field.html" with field=field %}
             {% endfor %}
-            <div class="flex justify-end">
-                <button class="btn btn-outline btn-sm" type="submit">Add department</button>
+            <div class="d-flex justify-content-end">
+                <button class="btn btn-outline-secondary btn-sm" type="submit">Add department</button>
             </div>
         </form>
     </section>
 
-    <section class="k-card space-y-4">
-        <h2 class="text-lg font-semibold border-b border-base-300 pb-2">Buildings</h2>
-        <ul class="divide-y divide-base-200 text-sm">
+    <section class="card card-body mb-3 vstack gap-3">
+        <h2 class="fs-5 fw-semibold border-bottom pb-2">Buildings</h2>
+        <ul class="k-divide small">
             {% for building in buildings %}
-            <li class="py-2.5 font-medium">{{ building }}</li>
+            <li class="py-2 fw-medium">{{ building }}</li>
             {% empty %}
-            <li class="py-2.5 text-sm k-muted">No buildings added yet.</li>
+            <li class="py-2 small text-body-secondary">No buildings added yet.</li>
             {% endfor %}
         </ul>
-        <form method="post" class="space-y-3 pt-3 border-t border-base-300">
+        <form method="post" class="vstack gap-2 pt-2 border-top">
             {% csrf_token %}
             <input type="hidden" name="kind" value="building">
             {% include "kura/_form_errors.html" with form=building_form %}
             {% for field in building_form %}
             {% include "kura/_field.html" with field=field %}
             {% endfor %}
-            <div class="flex justify-end">
-                <button class="btn btn-outline btn-sm" type="submit">Add building</button>
+            <div class="d-flex justify-content-end">
+                <button class="btn btn-outline-secondary btn-sm" type="submit">Add building</button>
             </div>
         </form>
     </section>
 
-    <section class="k-card space-y-4">
-        <h2 class="text-lg font-semibold border-b border-base-300 pb-2">Rooms</h2>
-        <ul class="divide-y divide-base-200 text-sm">
+    <section class="card card-body mb-3 vstack gap-3">
+        <h2 class="fs-5 fw-semibold border-bottom pb-2">Rooms</h2>
+        <ul class="k-divide small">
             {% for room in rooms %}
-            <li class="py-2.5 font-medium">{{ room }}</li>
+            <li class="py-2 fw-medium">{{ room }}</li>
             {% empty %}
-            <li class="py-2.5 text-sm k-muted">No rooms added yet.</li>
+            <li class="py-2 small text-body-secondary">No rooms added yet.</li>
             {% endfor %}
         </ul>
-        <form method="post" class="space-y-3 pt-3 border-t border-base-300">
+        <form method="post" class="vstack gap-2 pt-2 border-top">
             {% csrf_token %}
             <input type="hidden" name="kind" value="room">
             {% include "kura/_form_errors.html" with form=room_form %}
             {% for field in room_form %}
             {% include "kura/_field.html" with field=field %}
             {% endfor %}
-            <div class="flex justify-end">
-                <button class="btn btn-outline btn-sm" type="submit">Add room</button>
+            <div class="d-flex justify-content-end">
+                <button class="btn btn-outline-secondary btn-sm" type="submit">Add room</button>
             </div>
         </form>
     </section>

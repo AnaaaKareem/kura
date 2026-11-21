@@ -3,41 +3,40 @@
 {% block title %}My sessions - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">My sessions</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item active" aria-current="page">My sessions</li>
 </ol>
 {% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <header class="space-y-1">
-        <p class="k-eyebrow">Account security</p>
-        <h1 class="text-2xl font-bold">My sessions</h1>
-        <p class="text-sm k-muted">Review your active browser sessions and end any you do not recognise.</p>
+<div class="vstack gap-4">
+    <header class="vstack gap-1">
+        <p class="text-uppercase small fw-semibold text-body-secondary">Account security</p>
+        <h1 class="fs-3 fw-bold">My sessions</h1>
+        <p class="small text-body-secondary">Review your active browser sessions and end any you do not recognise.</p>
     </header>
 
-    <div class="k-card p-0 overflow-x-auto">
-        <table class="k-table">
-            <caption class="sr-only">Active personal sessions</caption>
+    <div class="card card-body mb-3 p-0 table-responsive">
+        <table class="table table-sm align-middle">
+            <caption class="visually-hidden">Active personal sessions</caption>
             <thead>
                 <tr>
-                    <th class="k-sticky-col">Device</th>
+                    <th >Device</th>
                     <th>IP address</th>
                     <th>Started</th>
                     <th>Expires</th>
                     <th>Status</th>
-                    <th class="text-right">Action</th>
+                    <th class="text-end">Action</th>
                 </tr>
             </thead>
             <tbody>
                 {% for session in sessions %}
                 <tr>
-                    <td class="k-sticky-col font-medium">{{ session.user_agent|default:"Unknown device" }}</td>
-                    <td class="k-num text-xs">{{ session.ip_address|default:"Unknown" }}</td>
-                    <td class="text-xs k-muted k-num">{{ session.created_at|date:"j M Y, H:i" }}</td>
-                    <td class="text-xs k-muted k-num">{{ session.expires_at|date:"j M Y, H:i" }}</td>
+                    <td class="fw-medium">{{ session.user_agent|default:"Unknown device" }}</td>
+                    <td class="text-nowrap small">{{ session.ip_address|default:"Unknown" }}</td>
+                    <td class="small text-body-secondary text-nowrap">{{ session.created_at|date:"j M Y, H:i" }}</td>
+                    <td class="small text-body-secondary text-nowrap">{{ session.expires_at|date:"j M Y, H:i" }}</td>
                     <td>
                         {% if session.id|stringformat:"s" == current_session_id %}
                         {% include "kura/_status_badge.html" with kind="session" value="current" %}
@@ -45,16 +44,16 @@
                         {% include "kura/_status_badge.html" with kind="session" value="active" %}
                         {% endif %}
                     </td>
-                    <td class="text-right">
+                    <td class="text-end">
                         <form method="post" action="{% url 'kura:user_session_revoke' session.id %}" data-confirm-action="End this session? {% if session.id|stringformat:'s' == current_session_id %}You will be signed out immediately.{% endif %}">
                             {% csrf_token %}
-                            <button type="submit" class="btn btn-outline btn-error btn-sm">End session</button>
+                            <button type="submit" class="btn btn-outline-danger btn-sm">End session</button>
                         </form>
                     </td>
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="6" class="p-8 text-center">
+                    <td colspan="6" class="p-5 text-center">
                         {% include "kura/_empty.html" with icon="sessions" title="No active sessions" text="You have no other active sessions." %}
                     </td>
                 </tr>

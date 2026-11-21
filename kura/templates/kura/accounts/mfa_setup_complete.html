@@ -8,39 +8,39 @@
 {% endblock %}
 
 {% block content %}
-<div class="max-w-lg mx-auto my-6">
-    <div class="k-card p-6 sm:p-8 space-y-6">
-        <header class="text-center space-y-2">
-            <h1 class="text-2xl font-bold">Save your recovery codes</h1>
-            <p class="text-sm k-muted">
+<div class="k-max-lg mx-auto my-4">
+    <div class="card card-body mb-3 p-4 p-sm-5 vstack gap-4">
+        <header class="text-center vstack gap-2">
+            <h1 class="fs-3 fw-bold">Save your recovery codes</h1>
+            <p class="small text-body-secondary">
                 Save these 10 recovery codes in a safe place. Each code works once if you lose your authenticator app.
             </p>
         </header>
 
-        <div role="alert" class="alert alert-warning text-sm">
+        <div role="alert" class="alert alert-warning small">
             <span>You will only see these once. Each code works one time.</span>
         </div>
 
-        <div class="grid grid-cols-2 gap-2 text-center">
+        <div class="k-grid gap-2 text-center">
             {% for code in recovery_codes %}
-            <div class="bg-base-200 border border-base-300 rounded-btn px-3 py-2 font-mono text-base font-semibold k-num tracking-wider">
+            <div class="bg-body-tertiary border rounded px-2 py-2 font-monospace fw-semibold text-nowrap">
                 <span data-recovery-code>{{ code }}</span>
             </div>
             {% endfor %}
         </div>
 
-        <div class="flex gap-2">
-            <button type="button" class="btn btn-outline flex-1" data-copy-recovery-codes>Copy codes</button>
-            <button type="button" class="btn btn-outline flex-1" data-print-recovery-codes>Print codes</button>
+        <div class="d-flex gap-2">
+            <button type="button" class="btn btn-outline-secondary flex-fill" data-copy-recovery-codes>Copy codes</button>
+            <button type="button" class="btn btn-outline-secondary flex-fill" data-print-recovery-codes>Print codes</button>
         </div>
-        <p class="text-sm text-center font-medium text-success" role="status" data-recovery-status></p>
+        <p class="small text-center fw-medium text-success" role="status" data-recovery-status></p>
 
-        <div class="pt-2 space-y-3">
-            <label class="label cursor-pointer justify-start gap-3 py-1" for="saved-codes-confirm">
-                <input id="saved-codes-confirm" type="checkbox" class="checkbox checkbox-primary checkbox-sm">
-                <span class="label-text text-sm">I've saved these codes somewhere safe</span>
+        <div class="pt-2 vstack gap-2">
+            <label class="form-label justify-content-start gap-2 py-1" for="saved-codes-confirm">
+                <input id="saved-codes-confirm" type="checkbox" class="form-check-input">
+                <span class="small">I've saved these codes somewhere safe</span>
             </label>
-            <a href="{% url 'kura:home' %}" class="btn btn-primary w-full" data-requires="#saved-codes-confirm">
+            <a href="{% url 'kura:home' %}" class="btn btn-primary w-100" data-requires="#saved-codes-confirm">
                 Continue to dashboard
             </a>
         </div>
@@ -48,7 +48,7 @@
 </div>
 
 <!-- Paper copy formatted for A4 printing. -->
-<div class="recovery-sheet hidden" aria-hidden="true">
+<div class="recovery-sheet d-none" aria-hidden="true">
     <div class="sheet-logo">
         <span class="sheet-mark"><svg viewBox="0 0 24 24" width="28" height="28" fill="none" stroke="#000" stroke-width="2.2" stroke-linecap="round"><path d="M7 4v16M17 5 7 12l10 7"/></svg></span>
         <span class="sheet-name">Kura</span>

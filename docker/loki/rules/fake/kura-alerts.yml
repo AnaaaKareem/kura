@@ -131,7 +131,7 @@ groups:
           severity: warning
         annotations:
           summary: "Breached-password check is not working"
-          description: "At least one new password in the last 15 minutes could not be checked against HaveIBeenPwned, so it was accepted without the check. Check the breach-proxy container and its internet route."
+          description: "At least one new password in the last 15 minutes could not be checked against HaveIBeenPwned, so it was accepted without the check. Check that the web container can reach api.pwnedpasswords.com (egress allowlist, section 3 of docs/CONTAINER_REMOVAL_AND_TEST_PLAN.md) and that HaveIBeenPwned is up."
 
       # 15. Unhandled server error (500) logged by Kura's custom error handler.
       - alert: ServerError

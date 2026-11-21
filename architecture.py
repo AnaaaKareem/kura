@@ -74,11 +74,15 @@ with Diagram(
 
     # Development side: GitHub Actions checks every push.
     with Cluster("CI/CD: GitHub Actions (actions pinned to commit hashes)"):
-        ci_pipeline = GithubActions(
-            "ruff + pip-audit\nDjango tests (PostgreSQL 17)\nSemgrep SAST\nOWASP ZAP baseline"
+        # These jobs run in parallel; only the image build waits for Semgrep (needs: semgrep-scan in ci.yml).
+        ci_pipeline = GithubActions("ruff + pip-audit\nDjango tests (PostgreSQL 17)\nSemgrep SAST")
+        image_scanner = Trivy(
+            "Docker build + Trivy\n(web, nginx;\nfails on fixable\nHigh or Critical)"
         )
-        image_scanner = Trivy("Docker build\n+ Trivy (fails on High\nor Critical)")
-        ci_pipeline >> Edge(label="then") >> image_scanner
+        # The ZAP baseline job scans only the signed-out login page and runs with -I, so warnings do not fail the build.
+        zap_scan = Server("OWASP ZAP baseline\n(login page only,\nreport only)")
+        ci_pipeline >> Edge(label="after Semgrep") >> image_scanner
+        ci_pipeline >> Edge(label="parallel job") >> zap_scan
 
     # The server: an Ubuntu 24.04 Hyper-V virtual machine running Docker Compose.
     with Cluster("Ubuntu Server 24.04 VM (Hyper-V) running Docker Compose"):
@@ -94,16 +98,16 @@ with Diagram(
             nginx = Nginx("nginx\nports 80 + 443\nTLS 1.3, HSTS,\nself-signed cert (lab),\n10 req/s general,\n10 req/min sign-in,\n25 MiB cap")
             waf = Firewall("Coraza WAF\nOWASP Core Rule Set")
 
-        # The application ("app", "backend", "mail", "breach_check" and "clamav" networks, all internal).
-        with Cluster("Application (internal networks: app, backend, mail, breach_check, clamav)"):
+        # The application ("app", "backend", "clamav" and "egress" networks).
+        with Cluster("Application (internal networks: app, backend, clamav; egress network for allowlisted traffic)"):
             gunicorn = Gunicorn("Gunicorn\n(mTLS, non-root,\nread-only filesystem)")
             django_app = Django("Django 6.1.2\nPython 3.14\nRBAC + IDOR checks,\nCSP, MFA, passkeys")
 
         # Data and security services ("backend" network, internal).
         with Cluster("Data and secrets (backend network, internal)"):
-            database = Postgresql("PostgreSQL 17\nRow-Level Security,\npgAudit, JSONB,\nfiles in bytea")
+            database = Postgresql("PostgreSQL 17\nRow-Level Security,\npgAudit,\nfiles in bytea")
             vault = Vault(
-                "HashiCorp Vault\nTransit (MFA seeds,\nanswer keys, file keys),\n"
+                "HashiCorp Vault\nTransit (MFA seeds,\nfile keys),\n"
                 "dynamic DB users (15 min),\nPKI (30-day certs)"
             )
             backups = Storage("pgBackRest\nencrypted WAL archive,\nfull + differential,\nPITR drill")
@@ -112,13 +116,8 @@ with Diagram(
         with Cluster("Malware scan (clamav network, internal)"):
             clamav = Firewall("ClamAV\nscans every upload\n(quarantine on hit)")
 
-        # Outgoing mail ("mail" network, internal; only the relay can leave).
-        with Cluster("Mail (mail network, internal)"):
-            relay = Server("Postfix relay\nTLS in and out")
-
-        # The breached-password check's only way out ("breach_check" network, internal).
-        with Cluster("Breach check (breach_check network, internal)"):
-            breach_proxy = Firewall("tinyproxy\nallows only\napi.pwnedpasswords.com:443")
+        # The web container's only route to the internet, enforced by the host firewall.
+        egress_fw = Firewall("nftables egress allowlist\nGmail :587, HIBP :443,\none DNS resolver")
 
         # Monitoring and SIEM ("observability" network).
         with Cluster("Observability and SIEM (observability network)"):
@@ -148,13 +147,13 @@ with Diagram(
     django_app >> Edge(label="scan upload") >> clamav
     database >> Edge(label="WAL archive") >> backups
 
-    # Breached-password check: Django -> proxy -> HaveIBeenPwned. TLS runs end to end, so the proxy only forwards encrypted bytes.
-    django_app >> Edge(label="5-char hash prefix,\nHTTPS tunnel") >> breach_proxy
-    breach_proxy >> Edge(label="CONNECT :443 only") >> breach_service
+    # Breached-password check: Django -> egress allowlist -> HaveIBeenPwned. Only the 5-char hash prefix leaves, over HTTPS.
+    django_app >> Edge(label="5-char hash prefix,\nHTTPS") >> egress_fw
+    egress_fw >> Edge(label="api.pwnedpasswords.com:443 only") >> breach_service
 
-    # Outgoing email: outbox -> relay -> provider.
-    django_app >> Edge(label="outbox job, TLS") >> relay
-    relay >> Edge(label="verified STARTTLS") >> mail_provider
+    # Outgoing email: outbox job -> egress allowlist -> Gmail SMTP over verified STARTTLS.
+    django_app >> Edge(label="outbox job,\nSTARTTLS") >> egress_fw
+    egress_fw >> Edge(label="smtp.gmail.com:587 only,\nverified TLS") >> mail_provider
 
     # Monitoring: logs and metrics flow in, alerts flow out.
     alloy >> Edge(label="container logs") >> loki
@@ -169,7 +168,8 @@ with Diagram(
 
     # CrowdSec reads the web logs and the firewall drops banned IPs.
     crowdsec >> Edge(label="reads nginx, WAF,\nDjango logs\n(Docker API proxy)") >> nginx
-    crowdsec >> Edge(label="pushes bans") >> host_firewall
+    # The host firewall bouncer is not installed on the VM yet, so the ban push is planned (dashed).
+    crowdsec >> Edge(label="pushes bans\n(planned bouncer)", style="dashed") >> host_firewall
 
     # Admin access: an SSH tunnel from the admin's laptop to Grafana on the VM's loopback address.
     # Prometheus, Loki and Alertmanager have no host port; the admin sees them only through Grafana.

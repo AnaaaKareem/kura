@@ -3,26 +3,25 @@
 {% block title %}Staff - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">Staff</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Staff</li>
 </ol>
 {% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div class="space-y-1">
-            <p class="k-eyebrow">Administration</p>
-            <h1 class="text-2xl font-bold">Staff</h1>
-            <p class="text-sm k-muted">
+<div class="vstack gap-4">
+    <header class="d-flex flex-column flex-sm-row align-items-sm-start justify-content-sm-between gap-3">
+        <div class="vstack gap-1">
+            <p class="text-uppercase small fw-semibold text-body-secondary">Administration</p>
+            <h1 class="fs-3 fw-bold">Staff</h1>
+            <p class="small text-body-secondary">
                 Accounts for everyone who works at the university.
             </p>
         </div>
-        <div class="flex items-center gap-2">
-            <a href="{% url 'kura:staff_create' %}" class="btn btn-primary btn-sm w-full sm:w-auto">
-                {% include "kura/_icon.html" with name="plus" class="h-4 w-4" %}
+        <div class="d-flex align-items-center gap-2">
+            <a href="{% url 'kura:staff_create' %}" class="btn btn-primary btn-sm w-100">
+                {% include "kura/_icon.html" with name="plus" class="k-icon-sm" %}
                 <span>Add staff member</span>
             </a>
         </div>
@@ -30,99 +29,99 @@
 
     {% if temp_account %}
     <!-- One-time temporary password card popped from session; never logged or put in flash messages. -->
-    <div id="temp-password-card" class="k-card border-warning p-5 space-y-3" role="status">
-        <div class="flex items-start justify-between gap-4">
+    <div id="temp-password-card" class="card card-body mb-3 border-warning p-3 vstack gap-2" role="status">
+        <div class="d-flex align-items-start justify-content-between gap-3">
             <div>
-                <h2 class="text-base font-semibold">Temporary password for {{ temp_account.email }}</h2>
-                <p class="text-xs k-muted mt-0.5">This is shown once. Share it securely with the staff member.</p>
+                <h2 class="fw-semibold">Temporary password for {{ temp_account.email }}</h2>
+                <p class="small text-body-secondary mt-1">This is shown once. Share it securely with the staff member.</p>
             </div>
-            <button type="button" class="btn btn-ghost btn-xs" data-dismiss-target="#temp-password-card" aria-label="Dismiss temporary password">Dismiss</button>
+            <button type="button" class="btn btn-link text-decoration-none btn-sm" data-dismiss-target="#temp-password-card" aria-label="Dismiss temporary password">Dismiss</button>
         </div>
-        <div class="flex flex-wrap items-center gap-3">
-            <code id="temp-password-value" class="k-mono text-lg bg-base-200 border border-base-300 rounded-btn px-3 py-1.5 select-all">{{ temp_account.password }}</code>
-            <button type="button" class="btn btn-outline btn-sm" data-copy="#temp-password-value">Copy</button>
-            <span class="text-xs text-success font-medium" data-copy-status></span>
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <code id="temp-password-value" class="font-monospace fs-5 bg-body-tertiary border rounded px-2 py-1 user-select-all">{{ temp_account.password }}</code>
+            <button type="button" class="btn btn-outline-secondary btn-sm" data-copy="#temp-password-value">Copy</button>
+            <span class="small text-success fw-medium" data-copy-status></span>
         </div>
     </div>
     {% endif %}
 
     {% if filter_form %}
     <!-- Render every staff filter field so search, role, department, and status work. -->
-    <form method="get" class="k-card p-4 space-y-4 bg-base-100" role="search">
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+    <form method="get" class="card card-body mb-3 p-3 vstack gap-3 bg-body" role="search">
+        <div class="k-grid gap-3">
             {% for field in filter_form %}
             {% include "kura/_field.html" with field=field %}
             {% endfor %}
         </div>
-        <div class="flex items-center justify-end gap-2">
-            <a href="{% url 'kura:staff_list' %}" class="btn btn-ghost btn-sm">Clear</a>
-            <button type="submit" class="btn btn-outline btn-sm">Apply</button>
+        <div class="d-flex align-items-center justify-content-end gap-2">
+            <a href="{% url 'kura:staff_list' %}" class="btn btn-link text-decoration-none btn-sm">Clear</a>
+            <button type="submit" class="btn btn-outline-secondary btn-sm">Apply</button>
         </div>
     </form>
     {% endif %}
 
-    <div class="flex items-center justify-between">
-        <p class="text-sm k-muted k-num">{% if page_obj %}{{ page_obj.paginator.count }}{% else %}{{ staff_members|length }}{% endif %} staff</p>
+    <div class="d-flex align-items-center justify-content-between">
+        <p class="small text-body-secondary text-nowrap">{% if page_obj %}{{ page_obj.paginator.count }}{% else %}{{ staff_members|length }}{% endif %} staff</p>
     </div>
 
-    <div class="k-card p-0 overflow-x-auto">
-        <table class="k-table">
-            <caption class="sr-only">Staff accounts</caption>
+    <div class="card card-body mb-3 p-0 table-responsive">
+        <table class="table table-sm align-middle">
+            <caption class="visually-hidden">Staff accounts</caption>
             <thead>
                 <tr>
-                    <th class="k-sticky-col">Name</th>
+                    <th >Name</th>
                     <th>Department</th>
                     <th>Title &amp; office</th>
                     <th>Status</th>
-                    <th class="text-right">Actions</th>
+                    <th class="text-end">Actions</th>
                 </tr>
             </thead>
             <tbody>
                 {% for profile in staff_members %}
                 <tr>
-                    <td class="k-sticky-col">
-                        <div class="font-semibold">{% if profile.user.first_name or profile.user.last_name %}{{ profile.user.first_name }} {{ profile.user.last_name }}{% else %}{{ profile.user.email }}{% endif %}</div>
-                        <div class="text-xs k-muted font-mono">{{ profile.user.email }}</div>
+                    <td >
+                        <div class="fw-semibold">{% if profile.user.first_name or profile.user.last_name %}{{ profile.user.first_name }} {{ profile.user.last_name }}{% else %}{{ profile.user.email }}{% endif %}</div>
+                        <div class="small text-body-secondary font-monospace">{{ profile.user.email }}</div>
                     </td>
                     <td>
                         <div>{{ profile.department.name|default:"Unassigned" }}</div>
                         {% for department_name in profile.head_department_names %}
-                        <div class="text-xs k-muted font-medium">Head of {{ department_name }}</div>
+                        <div class="small text-body-secondary fw-medium">Head of {{ department_name }}</div>
                         {% endfor %}
                     </td>
                     <td>
                         <div>{{ profile.staff_title }}</div>
-                        <div class="text-xs k-muted">{{ profile.office_location|default:"No office" }}</div>
+                        <div class="small text-body-secondary">{{ profile.office_location|default:"No office" }}</div>
                     </td>
                     <td>
                         {% if not profile.user.is_active %}
                         {% include "kura/_status_badge.html" with kind="account" value="deactivated" %}
                         {% elif profile.user.locked_until and profile.user.locked_until > now %}
-                        <span class="badge badge-warning badge-sm font-medium">
+                        <span class="badge text-bg-warning fw-medium">
                             Locked until {{ profile.user.locked_until|date:"d M, H:i" }}
                         </span>
                         {% else %}
                         {% include "kura/_status_badge.html" with kind="account" value="active" %}
                         {% endif %}
                     </td>
-                    <td class="text-right">
-                        <div class="inline-flex items-center justify-end gap-1.5">
-                            <a href="{% url 'kura:user_roles' profile.user.id %}" class="btn btn-ghost btn-sm">
+                    <td class="text-end">
+                        <div class="d-inline-flex align-items-center justify-content-end gap-1">
+                            <a href="{% url 'kura:user_roles' profile.user.id %}" class="btn btn-link text-decoration-none btn-sm">
                                 Roles
                             </a>
 
                             {% if profile.user.id != user.id %}
-                            <form method="post" action="{% url 'kura:user_lock_toggle' profile.user.id %}" class="inline" data-confirm-action="{% if profile.user.locked_until and profile.user.locked_until > now %}Unlock{% else %}Lock{% endif %} {{ profile.user.email }}?">
+                            <form method="post" action="{% url 'kura:user_lock_toggle' profile.user.id %}" class="d-inline" data-confirm-action="{% if profile.user.locked_until and profile.user.locked_until > now %}Unlock{% else %}Lock{% endif %} {{ profile.user.email }}?">
                                 {% csrf_token %}
-                                <button type="submit" class="btn btn-outline btn-sm">
+                                <button type="submit" class="btn btn-outline-secondary btn-sm">
                                     {% if profile.user.locked_until and profile.user.locked_until > now %}Unlock{% else %}Lock{% endif %}
                                 </button>
                             </form>
 
                             {% if profile.user.is_active %}
-                            <form method="post" action="{% url 'kura:user_deactivate' profile.user.id %}" class="inline" data-confirm-action="Deactivate {{ profile.user.email }}? Their sessions end immediately.">
+                            <form method="post" action="{% url 'kura:user_deactivate' profile.user.id %}" class="d-inline" data-confirm-action="Deactivate {{ profile.user.email }}? Their sessions end immediately.">
                                 {% csrf_token %}
-                                <button type="submit" class="btn btn-outline btn-error btn-sm">
+                                <button type="submit" class="btn btn-outline-danger btn-sm">
                                     Deactivate
                                 </button>
                             </form>
@@ -133,7 +132,7 @@
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="5" class="p-8 text-center">
+                    <td colspan="5" class="p-5 text-center">
                         {% include "kura/_empty.html" with icon="staff" title="No staff accounts found" text="No staff accounts match the selected filters." %}
                     </td>
                 </tr>

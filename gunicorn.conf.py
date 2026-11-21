@@ -27,6 +27,11 @@ accesslog = None
 errorlog = "-"
 timeout = 60
 
+# Gunicorn control-server socket lives in the writable tmpfs mounted at /app/.gunicorn
+# (see docker-compose.yml). Required because the container runs as non-root UID 10001
+# and cannot write to ~/.gunicorn.
+worker_tmp_dir = "/app/.gunicorn"
+
 # Mutual TLS (mTLS) settings
 if mtls_enabled:
     certfile = os.environ.get("GUNICORN_CERTFILE", "/certs/internal/web.crt")

@@ -77,20 +77,7 @@
       "type": "row",
       "gridPos": { "x": 0, "y": 8, "w": 24, "h": 1 },
       "id": 4,
-      "title": "Grades and appeals"
-    },
-    {
-      "type": "stat",
-      "datasource": { "type": "prometheus", "uid": "prometheus" },
-      "gridPos": { "x": 0, "y": 16, "w": 12, "h": 5 },
-      "id": 7,
-      "title": "Open appeals",
-      "description": "Number of appeals awaiting a decision. This count needs the application metrics job planned in WP3.",
-      "targets": [
-        { "refId": "A", "expr": "kura_pending_appeals", "legendFormat": "open appeals" }
-      ],
-      "fieldConfig": { "defaults": { "unit": "short" }, "overrides": [] },
-      "options": { "reduceOptions": { "calcs": ["lastNotNull"], "fields": "", "values": false } }
+      "title": "Grades and change requests"
     },
     {
       "type": "timeseries",
@@ -126,8 +113,8 @@
       "datasource": { "type": "loki", "uid": "loki" },
       "gridPos": { "x": 12, "y": 9, "w": 12, "h": 7 },
       "id": 6,
-      "title": "Appeals: requests vs decisions per day",
-      "description": "Grade change requests (grade.change_requested) and committee decisions (grade.change_decided) per day. Requests meeting decisions shows the appeals queue health.",
+      "title": "Grade change requests vs decisions per day",
+      "description": "Grade change requests (grade.change_requested) and department head decisions (grade.change_decided) per day. Requests meeting decisions shows the review queue health.",
       "targets": [
         {
           "refId": "A",

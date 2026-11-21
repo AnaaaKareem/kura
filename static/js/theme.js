@@ -1,6 +1,41 @@
-// Kura UI v2 ("Ledger") Shared Interactions
+// Kura shared interactions: colour theme, confirmation dialog, copy/print helpers.
+// Loaded from an external file because the Content Security Policy blocks inline scripts.
 document.addEventListener("DOMContentLoaded", function () {
-    // 1. Office Room Filter by Building
+    // 1. Colour theme: "light", "dark", or "system" (follows the operating system).
+    const allowedThemes = ["light", "dark", "system"];
+    const colourScheme = window.matchMedia("(prefers-color-scheme: dark)");
+
+    function applyTheme(choice) {
+        if (!allowedThemes.includes(choice)) choice = "system";
+        try {
+            localStorage.setItem("kura-theme", choice);
+        } catch (error) {
+            // Private browsing can block storage; the theme then lasts for this page only.
+        }
+        let resolved = choice;
+        if (choice === "system") resolved = colourScheme.matches ? "dark" : "light";
+        document.documentElement.setAttribute("data-bs-theme", resolved);
+        document.querySelectorAll("[data-theme-selector]").forEach(function (select) {
+            select.value = choice;
+        });
+    }
+
+    let savedTheme = "system";
+    try {
+        savedTheme = localStorage.getItem("kura-theme") || "system";
+    } catch (error) {
+        savedTheme = "system";
+    }
+    applyTheme(savedTheme);
+    document.querySelectorAll("[data-theme-selector]").forEach(function (select) {
+        select.addEventListener("change", function () { applyTheme(select.value); });
+    });
+    // When the choice is "system", follow operating system changes while the page is open.
+    colourScheme.addEventListener("change", function () {
+        if ((localStorage.getItem("kura-theme") || "system") === "system") applyTheme("system");
+    });
+
+    // 2. Office room filter by building (staff creation form).
     const building = document.querySelector("[data-office-building]");
     const room = document.querySelector("[data-office-room]");
     const officeRooms = document.getElementById("office-rooms");
@@ -21,7 +56,7 @@ document.addEventListener("DOMContentLoaded", function () {
         updateRooms();
     }
 
-    // 2. Recovery Codes Copy & Print
+    // 3. Recovery codes: copy and print.
     const copyRecoveryCodes = document.querySelector("[data-copy-recovery-codes]");
     const recoveryStatus = document.querySelector("[data-recovery-status]");
     if (copyRecoveryCodes && recoveryStatus) {
@@ -36,25 +71,21 @@ document.addEventListener("DOMContentLoaded", function () {
             }
         });
     }
-
     const printRecoveryCodes = document.querySelector("[data-print-recovery-codes]");
     if (printRecoveryCodes) {
         printRecoveryCodes.addEventListener("click", function () { window.print(); });
     }
-
-    // Print the current document for buttons marked with data-print.
     document.querySelectorAll("[data-print]").forEach(function (button) {
         button.addEventListener("click", function () { window.print(); });
     });
 
-    // Gate links/buttons marked with data-requires until the target checkbox is ticked.
+    // 4. Block a link or button (data-requires) until the referenced checkbox is ticked.
     document.querySelectorAll("[data-requires]").forEach(function (control) {
         const checkbox = document.querySelector(control.getAttribute("data-requires"));
         if (!checkbox) return;
         const syncRequired = function () {
-            const ready = checkbox.checked;
-            control.classList.toggle("btn-disabled", !ready);
-            control.setAttribute("aria-disabled", ready ? "false" : "true");
+            control.classList.toggle("disabled", !checkbox.checked);
+            control.setAttribute("aria-disabled", checkbox.checked ? "false" : "true");
         };
         control.addEventListener("click", function (event) {
             if (!checkbox.checked) {
@@ -66,7 +97,7 @@ document.addEventListener("DOMContentLoaded", function () {
         syncRequired();
     });
 
-    // Copy text from a referenced element into the clipboard.
+    // 5. Copy text from a referenced element into the clipboard.
     document.querySelectorAll("[data-copy]").forEach(function (button) {
         button.addEventListener("click", async function () {
             const target = document.querySelector(button.getAttribute("data-copy"));
@@ -81,142 +112,58 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     });
 
-    // Toggle projector fullscreen view for live attendance code and QR panels.
+    // 6. Full screen view of the live attendance code and QR panel.
     document.querySelectorAll("[data-fullscreen]").forEach(function (button) {
         const target = document.querySelector(button.getAttribute("data-fullscreen"));
-        if (!target) return;
+        if (!target || !target.requestFullscreen) return;
         button.addEventListener("click", function () {
-            if (document.fullscreenElement === target && document.exitFullscreen) {
+            if (document.fullscreenElement === target) {
                 document.exitFullscreen();
-                return;
-            }
-            if (target.requestFullscreen) {
-                target.requestFullscreen().catch(function () {
-                    target.classList.toggle("fixed");
-                    target.classList.toggle("inset-0");
-                    target.classList.toggle("z-50");
-                });
             } else {
-                target.classList.toggle("fixed");
-                target.classList.toggle("inset-0");
-                target.classList.toggle("z-50");
+                target.requestFullscreen();
             }
         });
     });
 
-    // Handle enrollment search suggestion picks while keeping the underlying <select> authoritative.
+    // 7. Dismiss buttons for notices and flash messages.
     document.addEventListener("click", function (event) {
-        const dismissTargetBtn = event.target.closest("[data-dismiss-target]");
-        if (dismissTargetBtn) {
-            const el = document.querySelector(dismissTargetBtn.getAttribute("data-dismiss-target"));
-            if (el) el.remove();
+        const dismissTarget = event.target.closest("[data-dismiss-target]");
+        if (dismissTarget) {
+            const element = document.querySelector(dismissTarget.getAttribute("data-dismiss-target"));
+            if (element) element.remove();
             return;
         }
-        const pickBtn = event.target.closest("[data-pick-id]");
-        if (!pickBtn) return;
-        const container = pickBtn.closest("[data-pick-container]");
-        if (!container) return;
-        const selectId = container.getAttribute("data-pick-select");
-        const selectEl = selectId ? document.getElementById(selectId) : null;
-        if (selectEl) {
-            const value = pickBtn.getAttribute("data-pick-id");
-            const label = pickBtn.getAttribute("data-pick-label") || pickBtn.textContent.trim();
-            if (!Array.from(selectEl.options).some(function (opt) { return opt.value === value; })) {
-                selectEl.add(new Option(label, value));
-            }
-            selectEl.value = value;
-        }
-        const pickedBox = container.querySelector("[data-picked-display]");
-        const pickedText = container.querySelector("[data-picked-label]");
-        if (pickedBox && pickedText) {
-            pickedText.textContent = pickBtn.getAttribute("data-pick-label") || pickBtn.textContent.trim();
-            pickedBox.hidden = false;
-        }
-        const list = pickBtn.closest("[data-pick-list]");
-        if (list) list.replaceChildren();
-    });
-
-    // 3. Theme Management (Light "kura", Dark "kura-dark", System "kura-system")
-    const allowedThemes = ["light", "dark", "system"];
-    const themeNames = { light: "kura", dark: "kura-dark", system: "kura-system" };
-    let savedTheme = localStorage.getItem("kura-theme") || "system";
-    if (!allowedThemes.includes(savedTheme)) savedTheme = "system";
-
-    function applyTheme(themeKey) {
-        if (!allowedThemes.includes(themeKey)) return;
-        localStorage.setItem("kura-theme", themeKey);
-        document.documentElement.setAttribute("data-theme", themeNames[themeKey]);
-
-        // Sync dropdown selectors if present
-        document.querySelectorAll("[data-theme-selector]").forEach(function (el) {
-            el.value = themeKey;
-        });
-        // Sync radio buttons if present
-        document.querySelectorAll('input[name="kura-theme-choice"]').forEach(function (el) {
-            el.checked = (el.value === themeKey);
-        });
-    }
-
-    // Apply on load
-    applyTheme(savedTheme);
-
-    // Listen to changes on selectors or radios
-    document.querySelectorAll("[data-theme-selector]").forEach(function (el) {
-        el.addEventListener("change", function () { applyTheme(el.value); });
-    });
-    document.querySelectorAll('input[name="kura-theme-choice"]').forEach(function (el) {
-        el.addEventListener("change", function () {
-            if (el.checked) applyTheme(el.value);
-        });
-    });
-
-    // 4. Mobile Sidebar Close on Link Click
-    const sidebarToggle = document.getElementById("kura-sidebar-toggle");
-    document.querySelectorAll("[data-close-sidebar]").forEach(function (link) {
-        link.addEventListener("click", function () {
-            if (sidebarToggle) sidebarToggle.checked = false;
-        });
-    });
-
-    // Dismiss flash messages without inline style changes.
-    document.addEventListener("click", function (event) {
-        const dismissBtn = event.target.closest("[data-dismiss-message]");
-        if (dismissBtn) {
-            const messageItem = dismissBtn.closest("[data-message-item]");
-            if (messageItem) {
-                messageItem.remove();
-            }
+        const dismissMessage = event.target.closest("[data-dismiss-message]");
+        if (dismissMessage) {
+            const item = dismissMessage.closest("[data-message-item]");
+            if (item) item.remove();
         }
     });
 
-    // 6. Accessible Confirmation Dialog (<dialog id="k-confirm">)
-    const confirmModal = document.getElementById("k-confirm");
+    // 8. Confirmation dialog (Bootstrap modal) for forms marked with data-confirm-action.
+    const confirmElement = document.getElementById("k-confirm");
+    const confirmModal = confirmElement && window.bootstrap ? new window.bootstrap.Modal(confirmElement) : null;
     let pendingSubmitForm = null;
 
-    if (confirmModal) {
-        const confirmMsg = confirmModal.querySelector("[data-confirm-message]");
-        const confirmSubmitBtn = confirmModal.querySelector("[data-confirm-submit]");
-        const confirmCancelBtn = confirmModal.querySelector("[data-confirm-cancel]");
-
-        if (confirmCancelBtn) {
-            confirmCancelBtn.addEventListener("click", function () {
-                pendingSubmitForm = null;
-                confirmModal.close();
-            });
+    if (confirmElement) {
+        const confirmSubmit = confirmElement.querySelector("[data-confirm-submit]");
+        const confirmCancel = confirmElement.querySelector("[data-confirm-cancel]");
+        if (confirmCancel) {
+            confirmCancel.addEventListener("click", function () { pendingSubmitForm = null; });
         }
-
-        if (confirmSubmitBtn) {
-            confirmSubmitBtn.addEventListener("click", function () {
-                if (pendingSubmitForm) {
-                    const formToSubmit = pendingSubmitForm;
-                    pendingSubmitForm = null;
-                    confirmModal.close();
-                    formToSubmit.dataset.confirmed = "true";
-                    if (typeof formToSubmit.requestSubmit === "function") {
-                        formToSubmit.requestSubmit();
-                    } else {
-                        formToSubmit.submit();
-                    }
+        confirmElement.addEventListener("hidden.bs.modal", function () { pendingSubmitForm = null; });
+        if (confirmSubmit) {
+            confirmSubmit.addEventListener("click", function () {
+                if (!pendingSubmitForm) return;
+                const form = pendingSubmitForm;
+                pendingSubmitForm = null;
+                confirmModal.hide();
+                // One-shot flag so the re-submit below skips this dialog.
+                form.dataset.confirmed = "true";
+                if (typeof form.requestSubmit === "function") {
+                    form.requestSubmit();
+                } else {
+                    form.submit();
                 }
             });
         }
@@ -232,135 +179,31 @@ document.addEventListener("DOMContentLoaded", function () {
             form.removeAttribute("data-confirmed");
             return;
         }
-
-        if (confirmModal && typeof confirmModal.showModal === "function") {
+        if (confirmModal) {
             event.preventDefault();
             pendingSubmitForm = form;
-            const msgEl = confirmModal.querySelector("[data-confirm-message]");
-            if (msgEl) msgEl.textContent = message;
-
+            confirmElement.querySelector("[data-confirm-message]").textContent = message;
             const tone = form.getAttribute("data-confirm-tone") || (submitter && submitter.getAttribute("data-confirm-tone")) || "error";
-            const submitBtn = confirmModal.querySelector("[data-confirm-submit]");
-            if (submitBtn) {
-                if (tone === "primary") {
-                    submitBtn.className = "btn btn-primary btn-sm";
-                } else {
-                    submitBtn.className = "btn btn-error btn-sm";
-                }
-            }
-
-            confirmModal.showModal();
-            const cancelBtn = confirmModal.querySelector("[data-confirm-cancel]");
-            if (cancelBtn) cancelBtn.focus();
-        } else {
-            // Fallback for browsers without <dialog>
-            if (!window.confirm(message)) {
-                event.preventDefault();
-            }
+            const submitButton = confirmElement.querySelector("[data-confirm-submit]");
+            submitButton.className = tone === "primary" ? "btn btn-primary" : "btn btn-danger";
+            confirmModal.show();
+        } else if (!window.confirm(message)) {
+            event.preventDefault();
         }
     });
 
-    // Disable the submit button after a POST submits so users cannot trigger duplicate writes.
+    // 9. Disable the submit button after a POST so a double click cannot write twice.
     document.addEventListener("submit", function (event) {
         const form = event.target;
         if (!form || form.method.toUpperCase() !== "POST" || event.defaultPrevented) return;
-        const submitBtn = event.submitter || form.querySelector('button[type="submit"]:not([data-no-loading])');
-        if (submitBtn && !submitBtn.disabled && !submitBtn.hasAttribute("data-no-loading")) {
-            submitBtn.disabled = true;
-            submitBtn.classList.add("loading", "loading-spinner");
-            window.addEventListener("pageshow", function () {
-                submitBtn.disabled = false;
-                submitBtn.classList.remove("loading", "loading-spinner");
-            }, { once: true });
+        const submitButton = event.submitter || form.querySelector('button[type="submit"]:not([data-no-loading])');
+        if (submitButton && !submitButton.disabled && !submitButton.hasAttribute("data-no-loading")) {
+            submitButton.disabled = true;
+            window.addEventListener("pageshow", function () { submitButton.disabled = false; }, { once: true });
         }
     });
 
-    // 8. Focus Form Error Summary on Page Load
+    // 10. Move focus to the form error summary when a page loads with errors.
     const errorSummary = document.querySelector("[data-form-error-summary]");
-    if (errorSummary) {
-        errorSummary.focus();
-    }
-
-    // 9. Assessment Authoring Dynamic Groups
-    const delivery = document.getElementById("id_delivery_mode");
-    if (!delivery) return;
-
-    function updateDelivery() {
-        const online = delivery.value !== "paper_scanned";
-        document.querySelectorAll("[data-online-only]").forEach(function (section) { section.hidden = !online; });
-        document.querySelectorAll("[data-scanned-only]").forEach(function (section) { section.hidden = online; });
-    }
-
-    function updateCard(card) {
-        const type = card.querySelector("select[name$='-type']");
-        if (!type) return;
-        card.querySelectorAll("[data-question-group]").forEach(function (group) {
-            const active = group.dataset.questionGroup === type.value;
-            group.hidden = !active;
-            group.querySelectorAll("input, textarea, select").forEach(function (input) { input.disabled = !active; });
-        });
-    }
-
-    function prepareCards() {
-        document.querySelectorAll("[data-question-card]").forEach(function (card) {
-            updateCard(card);
-            card.querySelectorAll("[data-question-group]").forEach(function (group) {
-                if (group.dataset.rowsReady) return;
-                group.dataset.rowsReady = "true";
-                group.querySelectorAll("[data-question-row]").forEach(function (row, index) {
-                    const filled = Array.from(row.querySelectorAll("input")).some(function (input) {
-                        return input.type === "checkbox" ? input.checked : input.value.trim() !== "";
-                    });
-                    row.hidden = !filled && index >= (group.dataset.questionGroup === "multiple_choice" ? 2 : 1);
-                });
-            });
-        });
-    }
-
-    delivery.addEventListener("change", updateDelivery);
-    document.addEventListener("change", function (event) {
-        const card = event.target.closest("[data-question-card]");
-        if (card) updateCard(card);
-    });
-    document.addEventListener("click", function (event) {
-        const move = event.target.closest("[data-move-question]");
-        if (move) {
-            const card = move.closest("[data-question-card]");
-            const list = card.parentElement;
-            if (move.dataset.moveQuestion === "up" && card.previousElementSibling) {
-                list.insertBefore(card, card.previousElementSibling);
-            } else if (move.dataset.moveQuestion === "down" && card.nextElementSibling) {
-                list.insertBefore(card.nextElementSibling, card);
-            }
-            list.querySelectorAll("[data-question-card]").forEach(function (question, index) {
-                const orderInput = question.querySelector("input[name$='-ORDER']");
-                if (orderInput) orderInput.value = index + 1;
-            });
-            move.focus();
-            return;
-        }
-        const remove = event.target.closest("[data-remove-row]");
-        if (remove) {
-            const row = remove.closest("[data-question-row]");
-            row.querySelectorAll("input").forEach(function (input) {
-                if (input.type === "checkbox") input.checked = false;
-                else input.value = "";
-            });
-            row.hidden = true;
-            const addBtn = remove.closest("[data-question-group]").querySelector("[data-add-row]");
-            if (addBtn) addBtn.focus();
-            return;
-        }
-        const button = event.target.closest("[data-add-row]");
-        if (!button) return;
-        const row = button.parentElement.querySelector("[data-question-row][hidden]");
-        if (row) {
-            row.hidden = false;
-            const firstInput = row.querySelector("input");
-            if (firstInput) firstInput.focus();
-        }
-    });
-    document.body.addEventListener("htmx:afterSwap", prepareCards);
-    updateDelivery();
-    prepareCards();
+    if (errorSummary) errorSummary.focus();
 });

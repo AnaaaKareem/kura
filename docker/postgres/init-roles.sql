@@ -49,7 +49,7 @@ GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO kura_migrator;
 GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO kura_migrator;
 
 -- Grant read-only reporting permissions to kura_readonly.
--- Migration 0026 revokes access to file_contents, exam_answer_keys, password_reset_tokens and users.mfa_secret (W4).
+-- Migration 0026 revokes access to file_contents, password_reset_tokens and users.mfa_secret (W4).
 GRANT CONNECT ON DATABASE kura TO kura_readonly;
 GRANT USAGE ON SCHEMA public TO kura_readonly;
 GRANT SELECT ON ALL TABLES IN SCHEMA public TO kura_readonly;

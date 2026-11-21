@@ -1,72 +1,68 @@
 {% extends "kura/base.html" %}
-{% load markdown %}
 
 {% block title %}{{ course.code }} - {{ course.title }} - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li><a href="{% url 'kura:course_list' %}" class="k-muted hover:text-primary">Courses</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">{{ course.code }}</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'kura:course_list' %}">Courses</a></li>
+    <li class="breadcrumb-item active" aria-current="page">{{ course.code }}</li>
 </ol>
 {% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div class="space-y-1">
-            <p class="k-eyebrow">{{ course.code }}</p>
-            <div class="flex flex-wrap items-center gap-2.5">
-                <h1 class="text-2xl font-bold">{{ course.title }}</h1>
+<div class="vstack gap-4">
+    <header class="d-flex flex-column flex-sm-row align-items-sm-start justify-content-sm-between gap-3">
+        <div class="vstack gap-1">
+            <p class="text-uppercase small fw-semibold text-body-secondary">{{ course.code }}</p>
+            <div class="d-flex flex-wrap align-items-center gap-2">
+                <h1 class="fs-3 fw-bold">{{ course.title }}</h1>
                 {% include "kura/_status_badge.html" with kind="course" value=course.is_published %}
             </div>
-            <p class="text-sm k-muted">
+            <p class="small text-body-secondary">
                 {{ course.department.name }} &bull; {{ course.semester|capfirst }} {{ course.academic_year }}
             </p>
         </div>
 
-        <div class="flex flex-wrap items-center gap-2">
+        <div class="d-flex flex-wrap align-items-center gap-2">
             {% if is_staff or is_head %}
-            <a href="{% url 'kura:course_grades' course.id %}" class="btn btn-outline btn-sm">Gradebook</a>
-            <a href="{% url 'kura:module_create' course.id %}" class="btn btn-primary btn-sm">
-                {% include "kura/_icon.html" with name="plus" class="h-4 w-4" %}
-                <span>Add module</span>
-            </a>
+            <a href="{% url 'kura:course_grades' course.id %}" class="btn btn-outline-secondary btn-sm">Gradebook</a>
+            {% if can_author_assessments %}
+            <a href="{% url 'kura:assessment_create' course.id %}" class="btn btn-primary btn-sm">Add assessment</a>
+            {% endif %}
             {% endif %}
 
             {% if is_head or is_admin or is_lead or is_staff %}
-            <div class="dropdown dropdown-end">
-                <button type="button" tabindex="0" class="btn btn-outline btn-sm gap-1.5" aria-label="More actions for this course">
-                    <span>Actions</span>
-                    {% include "kura/_icon.html" with name="chevron-down" class="h-3.5 w-3.5" %}
-                </button>
-                <ul tabindex="0" class="dropdown-content menu z-20 mt-1 w-56 rounded-box border border-base-300 bg-base-100 p-2 text-sm">
+            <div class="dropdown">
+                <button type="button" class="btn btn-outline-secondary btn-sm dropdown-toggle" data-bs-toggle="dropdown" aria-expanded="false" aria-label="More actions for this course">Actions</button>
+                <ul class="dropdown-menu dropdown-menu-end">
                     {% if is_head or is_admin %}
                     <li>
-                        <form method="post" action="{% url 'kura:course_publish_toggle' course.id %}" class="p-0">
+                        <form method="post" action="{% url 'kura:course_publish_toggle' course.id %}">
                             {% csrf_token %}
-                            <button type="submit" class="w-full text-left py-2 px-3">
+                            <button type="submit" class="dropdown-item">
                                 {% if course.is_published %}Move to draft{% else %}Publish course{% endif %}
                             </button>
                         </form>
                     </li>
                     {% if is_admin %}
-                    <li><a href="{% url 'kura:admin_course_edit' course.id %}">Edit course</a></li>
+                    <li><a class="dropdown-item" href="{% url 'kura:admin_course_edit' course.id %}">Edit course</a></li>
                     {% else %}
-                    <li><a href="{% url 'kura:course_staff_assign' course.id %}">Assign instructor</a></li>
+                    <li><a class="dropdown-item" href="{% url 'kura:course_staff_assign' course.id %}">Assign instructor</a></li>
                     {% endif %}
                     {% endif %}
 
                     {% if is_staff or is_head %}
                     {% if can_assign_ta %}
-                    <li><a href="{% url 'kura:course_ta_assign' course.id %}">Assign teaching assistant</a></li>
+                    <li><a class="dropdown-item" href="{% url 'kura:course_ta_assign' course.id %}">Assign teaching assistant</a></li>
                     {% endif %}
                     {% if can_manage_schedules %}
-                    <li><a href="{% url 'kura:schedule_create' course.id %}">Add schedule</a></li>
+                    <li><a class="dropdown-item" href="{% url 'kura:schedule_create' course.id %}">Add schedule</a></li>
                     {% endif %}
-                    <li><a href="{% url 'kura:course_grades' course.id %}">Gradebook</a></li>
+                    {% if is_staff %}
+                    <li><a class="dropdown-item" href="{% url 'kura:attendance_session_start' course.id %}">Start attendance</a></li>
+                    {% endif %}
+                    <li><a class="dropdown-item" href="{% url 'kura:course_grades' course.id %}">Gradebook</a></li>
                     {% endif %}
                 </ul>
             </div>
@@ -74,35 +70,35 @@
         </div>
     </header>
 
-    <nav class="tabs tabs-bordered border-b border-base-300" aria-label="Course sections">
+    <nav class="nav nav-tabs" aria-label="Course sections">
         {% if not is_admin %}
-        <a href="?tab=content" class="tab {% if active_tab == 'content' %}tab-active font-semibold{% endif %}">Content</a>
+        <a href="?tab=content" class="nav-link {% if active_tab == 'content' %}active{% endif %}" {% if active_tab == 'content' %}aria-current="page"{% endif %}>Content</a>
         {% endif %}
-        <a href="?tab=schedule" class="tab {% if active_tab == 'schedule' %}tab-active font-semibold{% endif %}">Schedule</a>
+        <a href="?tab=schedule" class="nav-link {% if active_tab == 'schedule' %}active{% endif %}" {% if active_tab == 'schedule' %}aria-current="page"{% endif %}>Schedule</a>
         {% if is_admin or is_staff or is_head %}
-        <a href="?tab=people" class="tab {% if active_tab == 'people' %}tab-active font-semibold{% endif %}">People</a>
+        <a href="?tab=people" class="nav-link {% if active_tab == 'people' %}active{% endif %}" {% if active_tab == 'people' %}aria-current="page"{% endif %}>People</a>
         {% endif %}
         {% if not is_admin and is_staff or not is_admin and is_head %}
-        <a href="?tab=grades" class="tab {% if active_tab == 'grades' %}tab-active font-semibold{% endif %}">Grades</a>
+        <a href="?tab=grades" class="nav-link {% if active_tab == 'grades' %}active{% endif %}" {% if active_tab == 'grades' %}aria-current="page"{% endif %}>Grades</a>
         {% endif %}
     </nav>
 
-    <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div class="xl:col-span-2 space-y-6">
+    <div class="row g-4">
+        <div class="col-xl-8 vstack gap-4">
             {% if active_tab == 'schedule' %}
-            <section class="space-y-4">
-                <div class="flex items-center justify-between gap-3">
-                    <h2 class="text-xl font-bold">Class meetings</h2>
+            <section class="vstack gap-3">
+                <div class="d-flex align-items-center justify-content-between gap-2">
+                    <h2 class="fs-4 fw-bold">Class meetings</h2>
                     {% if can_manage_schedules %}
-                    <a href="{% url 'kura:schedule_create' course.id %}" class="btn btn-outline btn-sm">Add meeting</a>
+                    <a href="{% url 'kura:schedule_create' course.id %}" class="btn btn-outline-secondary btn-sm">Add meeting</a>
                     {% endif %}
                 </div>
-                <div class="k-card p-0 overflow-x-auto">
-                    <table class="k-table">
-                        <caption class="sr-only">Course meeting schedule</caption>
+                <div class="card card-body mb-3 p-0 table-responsive">
+                    <table class="table table-sm align-middle">
+                        <caption class="visually-hidden">Course meeting schedule</caption>
                         <thead>
                             <tr>
-                                <th class="k-sticky-col">Day</th>
+                                <th >Day</th>
                                 <th>Time</th>
                                 <th>Format</th>
                                 <th>Location</th>
@@ -112,15 +108,15 @@
                         <tbody>
                             {% for sched in course_schedules %}
                             <tr>
-                                <td class="k-sticky-col font-medium">{{ sched.day|capfirst }}</td>
-                                <td class="k-num text-xs">{{ sched.start_time|time:"H:i" }} &ndash; {{ sched.end_time|time:"H:i" }}</td>
-                                <td><span class="badge badge-ghost badge-sm">{{ sched.session_type|capfirst }}</span></td>
-                                <td class="text-sm">{{ sched.location }}</td>
-                                <td class="text-sm">{% if sched.instructor.first_name or sched.instructor.last_name %}{{ sched.instructor.first_name }} {{ sched.instructor.last_name }}{% else %}{{ sched.instructor.email }}{% endif %}</td>
+                                <td class="fw-medium">{{ sched.day|capfirst }}</td>
+                                <td class="text-nowrap small">{{ sched.start_time|time:"H:i" }} &ndash; {{ sched.end_time|time:"H:i" }}</td>
+                                <td><span class="badge text-bg-secondary">{{ sched.session_type|capfirst }}</span></td>
+                                <td class="small">{{ sched.location }}</td>
+                                <td class="small">{% if sched.instructor.first_name or sched.instructor.last_name %}{{ sched.instructor.first_name }} {{ sched.instructor.last_name }}{% else %}{{ sched.instructor.email }}{% endif %}</td>
                             </tr>
                             {% empty %}
                             <tr>
-                                <td colspan="5" class="p-8 text-center">
+                                <td colspan="5" class="p-5 text-center">
                                     {% include "kura/_empty.html" with icon="schedule" title="No meetings scheduled" text="No recurring class meetings are set for this course yet." %}
                                 </td>
                             </tr>
@@ -131,80 +127,80 @@
             </section>
             {% elif active_tab == 'people' %}
             {% if is_admin %}
-            <div class="k-card space-y-2">
-                <h2 class="text-base font-semibold">Course administration</h2>
-                <p class="text-sm k-muted">
+            <div class="card card-body mb-3 vstack gap-2">
+                <h2 class="fw-semibold">Course administration</h2>
+                <p class="small text-body-secondary">
                     Administrative details are managed here. Curriculum content and gradebooks are restricted to academic staff and enrolled students.
                 </p>
                 <div class="pt-2">
-                    <a href="{% url 'kura:admin_course_edit' course.id %}" class="btn btn-outline btn-sm">Edit course settings</a>
+                    <a href="{% url 'kura:admin_course_edit' course.id %}" class="btn btn-outline-secondary btn-sm">Edit course settings</a>
                 </div>
             </div>
             {% endif %}
-            <section class="k-card space-y-4">
-                <div class="flex flex-wrap items-center justify-between gap-2 border-b border-base-300 pb-3">
+            <section class="card card-body mb-3 vstack gap-3">
+                <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 border-bottom pb-2">
                     <div>
-                        <h2 class="text-lg font-bold">Course staff &amp; enrollment</h2>
-                        <p class="text-xs k-muted mt-0.5">Active enrollments: <span class="font-semibold k-num text-base-content">{{ enrolled_count }}</span></p>
+                        <h2 class="fs-5 fw-bold">Course staff &amp; enrollment</h2>
+                        <p class="small text-body-secondary mt-1">Active enrollments: <span class="fw-semibold text-nowrap">{{ enrolled_count }}</span></p>
                     </div>
-                    <div class="flex flex-wrap gap-2">
+                    <div class="d-flex flex-wrap gap-2">
                         {% if is_head %}
-                        <a href="{% url 'kura:course_staff_assign' course.id %}" class="btn btn-outline btn-sm">Assign instructor</a>
+                        <a href="{% url 'kura:course_staff_assign' course.id %}" class="btn btn-outline-secondary btn-sm">Assign instructor</a>
                         {% endif %}
                         {% if can_assign_ta %}
-                        <a href="{% url 'kura:course_ta_assign' course.id %}" class="btn btn-outline btn-sm">Assign TA</a>
+                        <a href="{% url 'kura:course_ta_assign' course.id %}" class="btn btn-outline-secondary btn-sm">Assign TA</a>
                         {% endif %}
                     </div>
                 </div>
-                <ul class="divide-y divide-base-300 text-sm">
+                <ul class="k-divide small">
                     {% for staff in staff_assignments %}
-                    <li class="py-3 flex items-center justify-between gap-3">
+                    <li class="py-2 d-flex align-items-center justify-content-between gap-2">
                         <div>
-                            <p class="font-semibold">{% if staff.user.first_name or staff.user.last_name %}{{ staff.user.first_name }} {{ staff.user.last_name }}{% else %}{{ staff.user.email }}{% endif %}</p>
-                            <p class="text-xs k-muted">{{ staff.staff_role|title }}</p>
+                            <p class="fw-semibold">{% if staff.user.first_name or staff.user.last_name %}{{ staff.user.first_name }} {{ staff.user.last_name }}{% else %}{{ staff.user.email }}{% endif %}</p>
+                            <p class="small text-body-secondary">{{ staff.staff_role|title }}</p>
                         </div>
                         {% if staff.can_release_grades %}
-                        <span class="badge badge-secondary badge-outline badge-sm">Can release</span>
+                        <span class="badge text-bg-secondary">Can release</span>
                         {% endif %}
                     </li>
                     {% empty %}
-                    <li class="py-4 text-sm k-muted">No teaching staff assigned yet.</li>
+                    <li class="py-3 small text-body-secondary">No teaching staff assigned yet.</li>
                     {% endfor %}
                 </ul>
             </section>
             {% elif active_tab == 'grades' and grade_summary %}
-            <section class="k-card space-y-4">
-                <div class="flex flex-wrap items-center justify-between gap-3 border-b border-base-300 pb-3">
-                    <h2 class="text-lg font-bold">Gradebook summary</h2>
-                    <a href="{% url 'kura:course_grades' course.id %}" class="btn btn-outline btn-sm">Open gradebook</a>
+            <section class="card card-body mb-3 vstack gap-3">
+                <div class="d-flex flex-wrap align-items-center justify-content-between gap-2 border-bottom pb-2">
+                    <h2 class="fs-5 fw-bold">Gradebook summary</h2>
+                    <a href="{% url 'kura:course_grades' course.id %}" class="btn btn-outline-secondary btn-sm">Open gradebook</a>
                 </div>
-                <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
-                    <div class="p-3 bg-base-200 rounded-btn">
-                        <p class="k-eyebrow">Drafts</p>
-                        <p class="text-2xl font-bold k-num mt-1">{{ grade_summary.drafts }}</p>
+                <div class="k-grid gap-3">
+                    <div class="p-2 bg-body-tertiary rounded">
+                        <p class="text-uppercase small fw-semibold text-body-secondary">Drafts</p>
+                        <p class="fs-3 fw-bold text-nowrap mt-1">{{ grade_summary.drafts }}</p>
                     </div>
-                    <div class="p-3 bg-base-200 rounded-btn">
-                        <p class="k-eyebrow">Finalized</p>
-                        <p class="text-2xl font-bold k-num mt-1">{{ grade_summary.finalized }}</p>
+                    <div class="p-2 bg-body-tertiary rounded">
+                        <p class="text-uppercase small fw-semibold text-body-secondary">Finalized</p>
+                        <p class="fs-3 fw-bold text-nowrap mt-1">{{ grade_summary.finalized }}</p>
                     </div>
-                    <div class="p-3 bg-base-200 rounded-btn">
-                        <p class="k-eyebrow">Released</p>
-                        <p class="text-2xl font-bold k-num mt-1">{{ grade_summary.released }}</p>
+                    <div class="p-2 bg-body-tertiary rounded">
+                        <p class="text-uppercase small fw-semibold text-body-secondary">Released</p>
+                        <p class="fs-3 fw-bold text-nowrap mt-1">{{ grade_summary.released }}</p>
                     </div>
-                    <div class="p-3 bg-base-200 rounded-btn">
-                        <p class="k-eyebrow">Needs marking</p>
-                        <p class="text-2xl font-bold k-num mt-1">{{ grade_summary.needs_marking }}</p>
+                    <div class="p-2 bg-body-tertiary rounded">
+                        <p class="text-uppercase small fw-semibold text-body-secondary">Needs marking</p>
+                        <p class="fs-3 fw-bold text-nowrap mt-1">{{ grade_summary.needs_marking }}</p>
                     </div>
                 </div>
             </section>
             {% elif not is_admin %}
             {% if open_attendance_sessions %}
-            <section class="space-y-2" aria-label="Open attendance check-ins">
+            <section class="vstack gap-2" aria-label="Open attendance check-ins">
                 {% for att_session in open_attendance_sessions %}
-                <div class="alert border border-base-300 border-l-4 border-l-primary bg-base-100 text-base-content flex items-center justify-between gap-4">
+                <div class="alert border border-start border-4 border-primary bg-body d-flex align-items-center justify-content-between gap-3">
                     <div>
-                        <p class="text-sm font-semibold">Attendance open: {{ att_session.title }}</p>
-                        <p class="text-xs k-muted">{{ att_session.module.title }} &bull; Closes {{ att_session.expires_at|date:"j M Y, H:i" }}</p>
+                        <p class="small fw-semibold">Attendance open: {{ att_session.title }}</p>
+                        <p class="small text-body-secondary">{{ att_session.course.title }} &bull; Closes {{ att_session.expires_at|date:"j M Y, H:i" }}</p>
                     </div>
                     <a href="{% url 'kura:student_checkin' att_session.id %}" class="btn btn-primary btn-sm flex-shrink-0">Check in</a>
                 </div>
@@ -213,25 +209,25 @@
             {% endif %}
 
             {% if attendance_sessions %}
-            <section class="k-card space-y-3" aria-label="Course attendance sessions">
-                <div class="flex items-center justify-between gap-2 border-b border-base-300 pb-2">
-                    <h2 class="text-base font-semibold">Attendance rolls</h2>
-                    <a href="{% url 'kura:attendance_history' %}" class="link link-primary text-xs">All attendance</a>
+            <section class="card card-body mb-3 vstack gap-2" aria-label="Course attendance sessions">
+                <div class="d-flex align-items-center justify-content-between gap-2 border-bottom pb-2">
+                    <h2 class="fw-semibold">Attendance rolls</h2>
+                    <a href="{% url 'kura:attendance_history' %}" class="link-primary small">All attendance</a>
                 </div>
-                <ul class="divide-y divide-base-200 text-sm">
+                <ul class="k-divide small">
                     {% for att_session in attendance_sessions %}
-                    <li class="py-2.5 flex items-center justify-between gap-3">
+                    <li class="py-2 d-flex align-items-center justify-content-between gap-2">
                         <div>
-                            <p class="font-medium">{{ att_session.title }}</p>
-                            <p class="text-xs k-muted">{{ att_session.module.title }} &bull; Ends {{ att_session.expires_at|date:"j M Y, H:i" }}</p>
+                            <p class="fw-medium">{{ att_session.title }}</p>
+                            <p class="small text-body-secondary">{{ att_session.course.title }} &bull; Ends {{ att_session.expires_at|date:"j M Y, H:i" }}</p>
                         </div>
-                        <div class="flex items-center gap-2">
+                        <div class="d-flex align-items-center gap-2">
                             {% if att_session.is_active and att_session.expires_at > now %}
                             {% include "kura/_status_badge.html" with kind="attendance_session" value=True %}
                             {% else %}
                             {% include "kura/_status_badge.html" with kind="attendance_session" value=False %}
                             {% endif %}
-                            <a href="{% url 'kura:attendance_session_detail' att_session.id %}" class="btn btn-outline btn-xs">Open roll</a>
+                            <a href="{% url 'kura:attendance_session_detail' att_session.id %}" class="btn btn-outline-secondary btn-sm">Open roll</a>
                         </div>
                     </li>
                     {% endfor %}
@@ -239,207 +235,112 @@
             </section>
             {% endif %}
 
-            <section class="space-y-4">
-                <div class="flex items-center justify-between">
-                    <h2 class="text-xl font-bold">Curriculum modules</h2>
-                    <span class="text-xs k-muted font-medium k-num">{{ modules|length }} module{{ modules|length|pluralize }}</span>
+            <section class="card card-body mb-3 vstack gap-3" aria-label="Assessments">
+                <div class="d-flex align-items-center justify-content-between gap-2 border-bottom pb-2">
+                    <h2 class="fs-5 fw-bold">Assessments</h2>
+                    {% if can_author_assessments %}
+                    <a href="{% url 'kura:assessment_create' course.id %}" class="btn btn-outline-secondary btn-sm">Add assessment</a>
+                    {% endif %}
                 </div>
-
-                {% for module in modules %}
-                <article class="k-card space-y-4">
-                    <div class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-3 border-b border-base-300 pb-3">
-                        <div class="space-y-1">
-                            <div class="flex flex-wrap items-center gap-2">
-                                <h3 class="text-lg font-bold">{{ module.title }}</h3>
-                                {% if is_staff or is_head %}
-                                {% include "kura/_status_badge.html" with kind="module" value=module.is_visible %}
-                                {% endif %}
-                            </div>
-                            {% if module.description %}
-                            <p class="text-sm k-muted">{{ module.description }}</p>
-                            {% endif %}
-                            {% if module.target_levels.all %}
-                            <div class="flex flex-wrap items-center gap-1 pt-1">
-                                <span class="text-xs k-muted mr-1">Target levels:</span>
-                                {% for tl in module.target_levels.all %}
-                                <span class="badge badge-ghost badge-xs">{{ tl.target_level }}</span>
-                                {% endfor %}
-                            </div>
-                            {% endif %}
+                <ul class="k-divide">
+                    {% for assessment in assessments %}
+                    <li class="py-2 d-flex flex-wrap align-items-center justify-content-between gap-2">
+                        <div>
+                            <a class="link-primary fw-medium" href="{% url 'kura:assessment_detail' assessment.id %}">{{ assessment.title }}</a>
+                            <p class="small text-body-secondary">{{ assessment.get_component_type_display }} &bull; Due {{ assessment.due_date|date:"j M Y, H:i" }}</p>
                         </div>
+                        <span class="badge text-bg-secondary">{{ assessment.max_score }} pts</span>
+                    </li>
+                    {% empty %}
+                    <li class="py-3 small text-body-secondary">No assessments yet.</li>
+                    {% endfor %}
+                </ul>
+            </section>
 
+            <section class="card card-body mb-3 vstack gap-3" aria-label="Course materials">
+                <h2 class="fs-5 fw-bold border-bottom pb-2">Course materials</h2>
+                <ul class="k-divide">
+                    {% for course_file in course_files %}
+                    <li class="py-2 d-flex flex-wrap align-items-center justify-content-between gap-2">
+                        <div>
+                            <a class="link-primary fw-medium" href="{% url 'kura:file_download' course.id course_file.file.id %}">{{ course_file.title }}</a>
+                            <p class="small text-body-secondary">{{ course_file.file.original_filename }} ({{ course_file.file.size_bytes|filesizeformat }})</p>
+                        </div>
                         {% if is_staff or is_head %}
-                        <div class="flex flex-wrap items-center gap-1.5">
-                            <a href="{% url 'kura:section_create' module.id %}" class="btn btn-outline btn-xs">
-                                + Add section
-                            </a>
-                            {% if is_staff %}
-                            <a href="{% url 'kura:attendance_session_start' module.id %}" class="btn btn-outline btn-xs">
-                                Start attendance
-                            </a>
-                            {% endif %}
-                            <a href="{% url 'kura:module_edit' module.id %}" class="btn btn-ghost btn-xs">Edit module</a>
-                            <form method="post" action="{% url 'kura:module_delete' module.id %}" class="inline" data-confirm-action="Delete module {{ module.title }} and its contents?">
+                        <div class="d-flex flex-wrap align-items-center gap-2">
+                            {% include "kura/_status_badge.html" with kind="item" value=course_file.is_visible %}
+                            <form method="post" action="{% url 'kura:course_file_visibility_toggle' course_file.id %}">
+                                {% csrf_token %}
+                                <button type="submit" class="btn btn-outline-secondary btn-sm">{% if course_file.is_visible %}Hide{% else %}Release{% endif %}</button>
+                            </form>
+                            <form method="post" action="{% url 'kura:course_file_delete' course_file.id %}" data-confirm-action="Delete {{ course_file.title }}?">
                                 {% csrf_token %}
                                 <input type="hidden" name="confirm" value="on">
-                                <button type="submit" class="btn btn-outline btn-error btn-xs">Delete module</button>
+                                <button type="submit" class="btn btn-outline-danger btn-sm">Delete</button>
                             </form>
                         </div>
                         {% endif %}
-                    </div>
+                    </li>
+                    {% empty %}
+                    <li class="py-3 small text-body-secondary">No materials yet.</li>
+                    {% endfor %}
+                </ul>
 
-                    <div class="space-y-4">
-                        {% for section in module.sections.all %}
-                        <div class="bg-base-200 rounded-box p-4 border border-base-300 space-y-3">
-                            <div class="flex flex-col sm:flex-row sm:items-center sm:justify-between gap-3 border-b border-base-300 pb-2">
-                                <div class="flex flex-wrap items-center gap-2">
-                                    <span class="k-eyebrow">{{ section.section_type }}</span>
-                                    <p class="font-semibold text-sm">{{ section.title }}</p>
-                                    {% if is_staff or is_head %}
-                                    {% include "kura/_status_badge.html" with kind="section" value=section.is_visible %}
-                                    {% endif %}
-                                </div>
-
-                                {% if is_staff or is_head %}
-                                <div class="flex flex-wrap items-center gap-1.5">
-                                    <a href="{% url 'kura:item_create' section.id %}" class="btn btn-outline btn-xs">
-                                        + Add item
-                                    </a>
-                                    {% if can_author_assessments %}
-                                    <a href="{% url 'kura:assessment_create' section.id %}" class="btn btn-ghost btn-xs">Add assessment</a>
-                                    {% endif %}
-                                    <a href="{% url 'kura:section_edit' section.id %}" class="btn btn-ghost btn-xs">Edit section</a>
-                                    <form method="post" action="{% url 'kura:section_visibility_toggle' section.id %}" class="inline">
-                                        {% csrf_token %}
-                                        <button type="submit" class="btn btn-ghost btn-xs">{% if section.is_visible %}Hide{% else %}Release{% endif %} section</button>
-                                    </form>
-                                    <form method="post" action="{% url 'kura:section_delete' section.id %}" class="inline" data-confirm-action="Delete section {{ section.title }}?">
-                                        {% csrf_token %}
-                                        <input type="hidden" name="confirm" value="on">
-                                        <button type="submit" class="btn btn-outline btn-error btn-xs">Delete section</button>
-                                    </form>
-                                </div>
-                                {% endif %}
-                            </div>
-
-                            {% if section.assessments.all %}
-                            <div class="space-y-1.5 pt-1">
-                                {% for assessment in section.assessments.all %}
-                                <div class="flex items-center gap-2 text-sm">
-                                    {% include "kura/_icon.html" with name="document-text" class="h-4 w-4 text-primary" %}
-                                    <a class="link link-primary font-medium" href="{% url 'kura:assessment_detail' assessment.id %}">{{ assessment.title }}</a>
-                                </div>
-                                {% endfor %}
-                            </div>
-                            {% endif %}
-
-                            <div class="space-y-3 pt-1">
-                                {% for item in section.items.all %}
-                                <div class="bg-base-100 rounded-box p-3.5 border border-base-300 space-y-2">
-                                    <div class="flex flex-wrap justify-between items-start gap-3">
-                                        <div>
-                                            <p class="font-semibold text-sm">{{ item.title }}</p>
-                                            {% if is_staff or is_head %}
-                                            <div class="flex flex-wrap items-center gap-2 mt-1">
-                                                {% include "kura/_status_badge.html" with kind="item" value=item.is_visible %}
-                                                {% if item.released_at %}
-                                                <span class="text-xs k-muted k-num">Release at {{ item.released_at|date:"j M Y, H:i" }}</span>
-                                                {% endif %}
-                                            </div>
-                                            {% endif %}
-                                        </div>
-
-                                        {% if is_staff or is_head %}
-                                        <div class="flex flex-wrap items-center gap-1">
-                                            <a href="{% url 'kura:item_edit' item.id %}" class="btn btn-ghost btn-xs">Edit item</a>
-                                            <form method="post" action="{% url 'kura:item_visibility_toggle' item.id %}" class="inline">
-                                                {% csrf_token %}
-                                                <button type="submit" class="btn btn-ghost btn-xs">
-                                                    {% if item.is_visible %}Hide{% else %}Release{% endif %} item
-                                                </button>
-                                            </form>
-                                            <form method="post" action="{% url 'kura:item_delete' item.id %}" class="inline" data-confirm-action="Delete item {{ item.title }}?">
-                                                {% csrf_token %}
-                                                <input type="hidden" name="confirm" value="on">
-                                                <button type="submit" class="btn btn-outline btn-error btn-xs">Delete item</button>
-                                            </form>
-                                        </div>
-                                        {% endif %}
-                                    </div>
-
-                                    <div class="prose max-w-none text-sm text-base-content leading-relaxed">
-                                        {% render_markdown item.content_body %}
-                                    </div>
-
-                                    {% if item.item_files.all %}
-                                    <div class="pt-2 border-t border-base-200 flex flex-wrap gap-2">
-                                        {% for item_file in item.item_files.all %}
-                                        <a href="{% url 'kura:file_download' course.id item_file.file.id %}" class="btn btn-xs btn-outline gap-1">
-                                            {% include "kura/_icon.html" with name="paper-clip" class="h-3.5 w-3.5" %}
-                                            <span>{{ item_file.file.original_filename }} ({{ item_file.file.size_bytes|filesizeformat }})</span>
-                                        </a>
-                                        {% endfor %}
-                                    </div>
-                                    {% endif %}
-                                </div>
-                                {% empty %}
-                                <p class="text-xs k-muted py-1">No items in this section.</p>
-                                {% endfor %}
-                            </div>
-                        </div>
-                        {% empty %}
-                        <p class="text-xs k-muted py-1">No sections in this module.</p>
-                        {% endfor %}
-                    </div>
-                </article>
-                {% empty %}
-                {% include "kura/_empty.html" with icon="courses" title="No modules yet" text="No modules have been added to this course yet." %}
-                {% endfor %}
+                {% if is_staff or is_head %}
+                <form method="post" action="{% url 'kura:course_file_upload' course.id %}" enctype="multipart/form-data" class="vstack gap-3 border-top pt-3">
+                    {% csrf_token %}
+                    <h3 class="fs-6 fw-semibold">Add a material</h3>
+                    {% include "kura/_field.html" with field=file_form.title %}
+                    {% include "kura/_field.html" with field=file_form.file %}
+                    {% include "kura/_field.html" with field=file_form.is_visible %}
+                    <div><button type="submit" class="btn btn-primary btn-sm">Upload</button></div>
+                </form>
+                {% endif %}
             </section>
             {% else %}
-            <div class="k-card space-y-2">
-                <h2 class="text-base font-semibold">Course administration</h2>
-                <p class="text-sm k-muted">
+            <div class="card card-body mb-3 vstack gap-2">
+                <h2 class="fw-semibold">Course administration</h2>
+                <p class="small text-body-secondary">
                     Administrative details are managed here. Curriculum content and gradebooks are restricted to academic staff and enrolled students.
                 </p>
                 <div class="pt-2">
-                    <a href="{% url 'kura:admin_course_edit' course.id %}" class="btn btn-outline btn-sm">Edit course settings</a>
+                    <a href="{% url 'kura:admin_course_edit' course.id %}" class="btn btn-outline-secondary btn-sm">Edit course settings</a>
                 </div>
             </div>
             {% endif %}
         </div>
 
-        <aside class="space-y-6">
-            <div class="k-card space-y-4">
-                <h2 class="text-base font-semibold border-b border-base-300 pb-2">Course details</h2>
-                <dl class="space-y-3 text-sm">
+        <aside class="col-xl-4 vstack gap-4">
+            <div class="card card-body mb-3 vstack gap-3">
+                <h2 class="fw-semibold border-bottom pb-2">Course details</h2>
+                <dl class="vstack gap-2 small">
                     <div>
-                        <dt class="k-eyebrow">Department</dt>
-                        <dd class="font-medium mt-0.5">{{ course.department.name }}</dd>
+                        <dt class="text-uppercase small fw-semibold text-body-secondary">Department</dt>
+                        <dd class="fw-medium mt-1">{{ course.department.name }}</dd>
                     </div>
                     <div>
-                        <dt class="k-eyebrow">Academic period</dt>
-                        <dd class="font-medium mt-0.5">{{ course.semester|capfirst }} {{ course.academic_year }}</dd>
+                        <dt class="text-uppercase small fw-semibold text-body-secondary">Academic period</dt>
+                        <dd class="fw-medium mt-1">{{ course.semester|capfirst }} {{ course.academic_year }}</dd>
                     </div>
                     <div>
-                        <dt class="k-eyebrow">Description</dt>
-                        <dd class="k-muted text-sm leading-relaxed mt-0.5">{{ course.description|default:"No curriculum description." }}</dd>
+                        <dt class="text-uppercase small fw-semibold text-body-secondary">Description</dt>
+                        <dd class="text-body-secondary small mt-1">{{ course.description|default:"No curriculum description." }}</dd>
                     </div>
                 </dl>
             </div>
 
             {% if staff_assignments %}
-            <div class="k-card space-y-4">
-                <h2 class="text-base font-semibold border-b border-base-300 pb-2">Teaching staff</h2>
-                <ul class="space-y-2.5 text-sm">
+            <div class="card card-body mb-3 vstack gap-3">
+                <h2 class="fw-semibold border-bottom pb-2">Teaching staff</h2>
+                <ul class="vstack gap-2 small">
                     {% for staff in staff_assignments %}
-                    <li class="flex items-start justify-between gap-2 p-2.5 rounded-btn bg-base-200">
-                        <div class="min-w-0">
-                            <p class="font-semibold text-sm truncate">{% if staff.user.first_name or staff.user.last_name %}{{ staff.user.first_name }} {{ staff.user.last_name }}{% else %}{{ staff.user.email }}{% endif %}</p>
-                            <p class="text-xs k-muted truncate">{{ staff.staff_role|title }}</p>
+                    <li class="d-flex align-items-start justify-content-between gap-2 p-2 rounded bg-body-tertiary">
+                        <div >
+                            <p class="fw-semibold small text-truncate">{% if staff.user.first_name or staff.user.last_name %}{{ staff.user.first_name }} {{ staff.user.last_name }}{% else %}{{ staff.user.email }}{% endif %}</p>
+                            <p class="small text-body-secondary text-truncate">{{ staff.staff_role|title }}</p>
                         </div>
                         {% if staff.can_release_grades %}
-                        <span class="badge badge-secondary badge-outline badge-sm flex-shrink-0">Can release</span>
+                        <span class="badge text-bg-secondary flex-shrink-0">Can release</span>
                         {% endif %}
                     </li>
                     {% endfor %}

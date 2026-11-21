@@ -3,25 +3,24 @@
 {% block title %}Students - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">Students</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Students</li>
 </ol>
 {% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div class="space-y-1">
-            <p class="k-eyebrow">Records</p>
-            <h1 class="text-2xl font-bold">Students</h1>
-            <p class="text-sm k-muted">Find students and manage student accounts.</p>
+<div class="vstack gap-4">
+    <header class="d-flex flex-column flex-sm-row align-items-sm-start justify-content-sm-between gap-3">
+        <div class="vstack gap-1">
+            <p class="text-uppercase small fw-semibold text-body-secondary">Records</p>
+            <h1 class="fs-3 fw-bold">Students</h1>
+            <p class="small text-body-secondary">Find students and manage student accounts.</p>
         </div>
-        <div class="flex flex-wrap items-center gap-2">
-            <a href="{% url 'kura:enrollment_create' %}" class="btn btn-ghost btn-sm">Enroll a student</a>
-            <a href="{% url 'kura:student_create' %}" class="btn btn-primary btn-sm w-full sm:w-auto">
-                {% include "kura/_icon.html" with name="plus" class="h-4 w-4" %}
+        <div class="d-flex flex-wrap align-items-center gap-2">
+            <a href="{% url 'kura:enrollment_create' %}" class="btn btn-link text-decoration-none btn-sm">Enroll a student</a>
+            <a href="{% url 'kura:student_create' %}" class="btn btn-primary btn-sm w-100">
+                {% include "kura/_icon.html" with name="plus" class="k-icon-sm" %}
                 <span>New student</span>
             </a>
         </div>
@@ -29,67 +28,67 @@
 
     {% if filter_form %}
     <!-- Render every student filter field so search, department, level, and status work. -->
-    <form method="get" class="k-card p-4 space-y-4 bg-base-100" role="search">
-        <div class="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
+    <form method="get" class="card card-body mb-3 p-3 vstack gap-3 bg-body" role="search">
+        <div class="k-grid gap-3">
             {% for field in filter_form %}
             {% include "kura/_field.html" with field=field %}
             {% endfor %}
         </div>
-        <div class="flex items-center justify-end gap-2">
-            <a href="{% url 'kura:student_list' %}" class="btn btn-ghost btn-sm">Clear</a>
-            <button type="submit" class="btn btn-outline btn-sm">Apply</button>
+        <div class="d-flex align-items-center justify-content-end gap-2">
+            <a href="{% url 'kura:student_list' %}" class="btn btn-link text-decoration-none btn-sm">Clear</a>
+            <button type="submit" class="btn btn-outline-secondary btn-sm">Apply</button>
         </div>
     </form>
     {% endif %}
 
-    <div class="flex items-center justify-between">
-        <p class="text-sm k-muted k-num">{% if page_obj %}{{ page_obj.paginator.count }} student{{ page_obj.paginator.count|pluralize }}{% else %}{{ students|length }} student{{ students|length|pluralize }}{% endif %}</p>
+    <div class="d-flex align-items-center justify-content-between">
+        <p class="small text-body-secondary text-nowrap">{% if page_obj %}{{ page_obj.paginator.count }} student{{ page_obj.paginator.count|pluralize }}{% else %}{{ students|length }} student{{ students|length|pluralize }}{% endif %}</p>
     </div>
 
     {% url 'kura:student_create' as new_student_url %}
-    <div class="k-card p-0 overflow-x-auto">
-        <table class="k-table">
-            <caption class="sr-only">Student records</caption>
+    <div class="card card-body mb-3 p-0 table-responsive">
+        <table class="table table-sm align-middle">
+            <caption class="visually-hidden">Student records</caption>
             <thead>
                 <tr>
-                    <th class="k-sticky-col">Student</th>
+                    <th >Student</th>
                     <th>Student ID</th>
                     <th>Department</th>
                     <th>Level</th>
                     <th>Status</th>
-                    <th class="text-right">Action</th>
+                    <th class="text-end">Action</th>
                 </tr>
             </thead>
             <tbody>
                 {% for student in students %}
                 <tr>
-                    <td class="k-sticky-col">
-                        <a class="link link-primary font-semibold block" href="{% url 'kura:student_profile' student.user_id %}">
+                    <td >
+                        <a class="link-primary fw-semibold d-block" href="{% url 'kura:student_profile' student.user_id %}">
                             {% if student.user.first_name or student.user.last_name %}{{ student.user.first_name }} {{ student.user.last_name }}{% else %}{{ student.user.email }}{% endif %}
                         </a>
-                        <span class="text-xs k-muted font-mono">{{ student.user.email }}</span>
+                        <span class="small text-body-secondary font-monospace">{{ student.user.email }}</span>
                     </td>
-                    <td class="k-num text-xs">{{ student.user_id }}</td>
+                    <td class="text-nowrap small">{{ student.user_id }}</td>
                     <td>{{ student.department.name }}</td>
                     <td>{{ student.get_current_level_display }}</td>
                     <td>
                         {% if not student.user.is_active %}
                         {% include "kura/_status_badge.html" with kind="account" value="deactivated" %}
                         {% elif student.user.locked_until and student.user.locked_until > now %}
-                        <span class="badge badge-warning badge-sm font-medium">
+                        <span class="badge text-bg-warning fw-medium">
                             Locked until {{ student.user.locked_until|date:"d M, H:i" }}
                         </span>
                         {% else %}
                         {% include "kura/_status_badge.html" with kind="account" value="active" %}
                         {% endif %}
                     </td>
-                    <td class="text-right">
-                        <a href="{% url 'kura:student_profile' student.user_id %}" class="btn btn-ghost btn-sm">View</a>
+                    <td class="text-end">
+                        <a href="{% url 'kura:student_profile' student.user_id %}" class="btn btn-link text-decoration-none btn-sm">View</a>
                     </td>
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="6" class="p-8 text-center">
+                    <td colspan="6" class="p-5 text-center">
                         {% include "kura/_empty.html" with icon="students" title="No students found" text="No student records match the selected filters." action_url=new_student_url action_label="New student" %}
                     </td>
                 </tr>

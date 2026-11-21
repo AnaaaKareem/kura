@@ -15,8 +15,6 @@ from django.core.management.base import BaseCommand
 from django.utils import timezone
 
 from kura.models import (
-    AppealStatus,
-    GradeAppeal,
     OutgoingEmail,
     OutgoingEmailStatus,
     QuarantinedFile,
@@ -47,9 +45,6 @@ class Command(BaseCommand):
         # Sessions that are still valid (not ended and not expired).
         active_sessions = UserSession.objects.filter(revoked_at__isnull=True, expires_at__gt=now).count()
 
-        # Grade appeals waiting for a decision.
-        pending_appeals = GradeAppeal.objects.filter(status=AppealStatus.PENDING).count()
-
         # One block per metric: a description, its type, and its value.
         metrics = [
             ("kura_outbox_pending", "gauge", "Emails waiting in the outbox.", pending_count),
@@ -57,7 +52,6 @@ class Command(BaseCommand):
             ("kura_outbox_failed_total", "counter", "Emails given up on after all attempts.", failed_count),
             ("kura_quarantined_files", "gauge", "Uploads rejected by ClamAV and kept in quarantine.", quarantined_count),
             ("kura_active_sessions", "gauge", "Sessions that are still valid.", active_sessions),
-            ("kura_pending_appeals", "gauge", "Grade appeals waiting for a decision.", pending_appeals),
         ]
         for name, metric_type, description, value in metrics:
             self.stdout.write(f"# HELP {name} {description}")

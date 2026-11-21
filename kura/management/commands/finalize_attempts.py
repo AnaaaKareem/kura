@@ -4,31 +4,36 @@ from django.utils import timezone
 
 from kura.models import AssessmentAttempt, AttemptStatus
 from kura.permissions import service_rls_context
-from kura.views import evaluate_attempt
+from kura.views import compute_submission_hash
 
 
 class Command(BaseCommand):
     help = "Auto-finalizes assessment attempts that passed their deadline without manual submission."
 
     def handle(self, *args, **options):
-        """Submit and grade assessment attempts whose allowed duration has expired."""
+        """Submit assessment attempts that are still open after their assessment's due date."""
         with service_rls_context():
-            # Query active in-progress attempts whose timer has expired.
+            # Query in-progress attempts whose assessment is past its due date.
             now = timezone.now()
             overdue_attempts = AssessmentAttempt.objects.filter(
                 status=AttemptStatus.IN_PROGRESS,
-                expires_at__lt=now,
+                assessment__due_date__lt=now,
             )
 
             finalized_count = 0
             for overdue_attempt in overdue_attempts:
                 # Share the upload/submission lock and recheck in case another request finished first.
                 with transaction.atomic():
-                    attempt = AssessmentAttempt.objects.select_for_update().get(id=overdue_attempt.id)
-                    if attempt.status != AttemptStatus.IN_PROGRESS or attempt.expires_at >= timezone.now():
+                    attempt = AssessmentAttempt.objects.select_for_update().select_related("assessment").get(
+                        id=overdue_attempt.id
+                    )
+                    if attempt.status != AttemptStatus.IN_PROGRESS or attempt.assessment.due_date >= timezone.now():
                         continue
-                    attempt.submitted_at = attempt.expires_at
-                    evaluate_attempt(attempt)
+                    # An empty attempt is still sealed, with a hash over no files, so it goes to the marker as a non-submission.
+                    attempt.submitted_at = attempt.assessment.due_date
+                    attempt.status = AttemptStatus.REQUIRES_MANUAL_GRADING
+                    attempt.submission_hash = compute_submission_hash(attempt)
+                    attempt.save()
                     finalized_count += 1
 
         self.stdout.write(

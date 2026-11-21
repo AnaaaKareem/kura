@@ -3,36 +3,35 @@
 {% block title %}Privacy notice - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">Privacy notice</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Privacy notice</li>
 </ol>
 {% endblock %}
 
 {% block content %}
-<div class="max-w-3xl mx-auto space-y-6">
-    <header class="space-y-1">
-        <p class="k-eyebrow">Data Protection</p>
-        <h1 class="text-2xl font-bold">Privacy notice</h1>
-        <p class="text-sm k-muted">
+<div class="k-max-3xl mx-auto vstack gap-4">
+    <header class="vstack gap-1">
+        <p class="text-uppercase small fw-semibold text-body-secondary">Data Protection</p>
+        <h1 class="fs-3 fw-bold">Privacy notice</h1>
+        <p class="small text-body-secondary">
             How Kura processes personal and academic records under GDPR, Egyptian Law No. 151 of 2020, Law No. 175 of 2018, and FERPA.
         </p>
     </header>
 
-    <section class="k-card space-y-3 text-sm">
-        <h2 class="text-base font-semibold">1. Data we collect and lawful basis</h2>
+    <section class="card card-body mb-3 vstack gap-2 small">
+        <h2 class="fw-semibold">1. Data we collect and lawful basis</h2>
         <p>Kura processes university identity details, enrollments, attendance, assessment submissions, released grades, and security audit logs to deliver coursework, verify academic integrity, and protect accounts.</p>
-        <ul class="list-disc pl-5 space-y-1 k-muted">
+        <ul class="ps-4 vstack gap-1 text-body-secondary">
             <li>Account and academic delivery (enrollments, coursework, grading, transcripts): institutional contract and public-interest educational task.</li>
             <li>Authentication, MFA, and security logs: legal obligation and security interest.</li>
             <li>Breached-password verification: k-anonymity lookup sending only the first 5 SHA-1 hash characters to HaveIBeenPwned (no full hash or password leaves the server).</li>
         </ul>
     </section>
 
-    <section class="k-card space-y-3 text-sm">
-        <h2 class="text-base font-semibold">2. Retention schedules</h2>
-        <ul class="list-disc pl-5 space-y-1 k-muted">
+    <section class="card card-body mb-3 vstack gap-2 small">
+        <h2 class="fw-semibold">2. Retention schedules</h2>
+        <ul class="ps-4 vstack gap-1 text-body-secondary">
             <li>Security logs and database IP addresses: retained 180 days (IPs masked to /24 or /48 subnets after 180 days).</li>
             <li>Sent notification emails: bodies wiped upon delivery/failure; sent rows purged after 30 days.</li>
             <li>Quarantined malware uploads: purged after 7 days.</li>
@@ -40,18 +39,18 @@
         </ul>
     </section>
 
-    <section class="k-card space-y-3 text-sm">
-        <h2 class="text-base font-semibold">3. Your rights</h2>
-        <ul class="list-disc pl-5 space-y-1 k-muted">
-            <li><strong>Access &amp; portability:</strong> Download a JSON copy of your own account and released academic records from <a href="{% url 'kura:privacy_dashboard' %}" class="link link-primary">Privacy &amp; data</a>.</li>
+    <section class="card card-body mb-3 vstack gap-2 small">
+        <h2 class="fw-semibold">3. Your rights</h2>
+        <ul class="ps-4 vstack gap-1 text-body-secondary">
+            <li><strong>Access &amp; portability:</strong> Download a JSON copy of your own account and released academic records from <a href="{% url 'kura:privacy_dashboard' %}" class="link-primary">Privacy &amp; data</a>.</li>
             <li><strong>Restriction of processing:</strong> Restrict optional processing (such as due-date reminder emails) at any time.</li>
             <li><strong>Erasure with academic-record exceptions:</strong> Request erasure of non-exempt auxiliary metadata (session history, pending reset tokens, optional office room). Statutory security logs and academic/grading records remain retained as required by law and institutional policy.</li>
         </ul>
     </section>
 
-    <section class="k-card space-y-3 text-sm">
-        <h2 class="text-base font-semibold">4. Annual FERPA notice of rights (34 C.F.R. &sect; 99.7)</h2>
-        <p class="k-muted">Eligible students have the right to inspect and review their education records (via <a href="{% url 'kura:student_grades' %}" class="link link-primary">My grades</a>, <a href="{% url 'kura:student_transcript' %}" class="link link-primary">Transcript</a>, <a href="{% url 'kura:attendance_history' %}" class="link link-primary">Attendance</a>, and <a href="{% url 'kura:privacy_export' %}" class="link link-primary">Data export</a>), request amendments of inaccurate records (including grade appeals), consent to disclosures outside legitimate educational interest under 34 C.F.R. &sect; 99.31(a)(1), and file a complaint with the Student Privacy Policy Office.</p>
+    <section class="card card-body mb-3 vstack gap-2 small">
+        <h2 class="fw-semibold">4. Annual FERPA notice of rights (34 C.F.R. &sect; 99.7)</h2>
+        <p class="text-body-secondary">Eligible students have the right to inspect and review their education records (via <a href="{% url 'kura:student_grades' %}" class="link-primary">My grades</a>, <a href="{% url 'kura:student_transcript' %}" class="link-primary">Transcript</a>, <a href="{% url 'kura:attendance_history' %}" class="link-primary">Attendance</a>, and <a href="{% url 'kura:privacy_export' %}" class="link-primary">Data export</a>), request amendments of inaccurate records (including grade appeals), consent to disclosures outside legitimate educational interest under 34 C.F.R. &sect; 99.31(a)(1), and file a complaint with the Student Privacy Policy Office.</p>
     </section>
 </div>
 {% endblock %}

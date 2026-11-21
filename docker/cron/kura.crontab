@@ -11,21 +11,24 @@ KURA_DIR=/opt/kura
 # Where the .prom files go (mounted read-only into Alloy, see KURA_METRICS_DIR in .env).
 KURA_METRICS_DIR=/var/lib/kura-metrics
 
+# Every 10 minutes: refresh the egress IP allowlists (Gmail SMTP, HaveIBeenPwned).
+*/10 * * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh egress-refresh ./kura.sh egress-refresh >> /var/log/kura/egress-refresh.log 2>&1
+
 # Every minute: send queued emails, and save the application counts.
-* * * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh send-emails docker compose exec -T web python manage.py send_queued_emails >> /var/log/kura/send-emails.log 2>&1
+* * * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh send-emails docker compose exec -T -u 10001:10001 web python manage.py send_queued_emails >> /var/log/kura/send-emails.log 2>&1
 * * * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh app-metrics ./kura.sh app-metrics >> /var/log/kura/app-metrics.log 2>&1
 
 # Every 5 minutes: finalize assessment attempts whose deadline has passed.
-*/5 * * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh finalize-attempts docker compose exec -T web python manage.py finalize_attempts >> /var/log/kura/finalize-attempts.log 2>&1
+*/5 * * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh finalize-attempts docker compose exec -T -u 10001:10001 web python manage.py finalize_attempts >> /var/log/kura/finalize-attempts.log 2>&1
 
 # Every hour: queue the "due in 24 hours" reminder emails.
-0 * * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh due-reminders docker compose exec -T web python manage.py queue_due_reminders >> /var/log/kura/due-reminders.log 2>&1
+0 * * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh due-reminders docker compose exec -T -u 10001:10001 web python manage.py queue_due_reminders >> /var/log/kura/due-reminders.log 2>&1
 
 # Every day at 04:00: delete quarantined uploads older than 7 days (owner's choice).
-0 4 * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh purge-quarantine docker compose exec -T web python manage.py purge_quarantine --days=7 >> /var/log/kura/purge-quarantine.log 2>&1
+0 4 * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh purge-quarantine docker compose exec -T -u 10001:10001 web python manage.py purge_quarantine --days=7 >> /var/log/kura/purge-quarantine.log 2>&1
 
 # Every day at 04:15: disable accounts with no login for 90 days (ACL-08).
-15 4 * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh disable-inactive docker compose exec -T web python manage.py disable_inactive_accounts --days=90 >> /var/log/kura/disable-inactive.log 2>&1
+15 4 * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh disable-inactive docker compose exec -T -u 10001:10001 web python manage.py disable_inactive_accounts --days=90 >> /var/log/kura/disable-inactive.log 2>&1
 
 # Every Monday at 03:30: renew the internal certificates from Vault (they last 30 days).
 # Vault must be unsealed.
@@ -33,12 +36,12 @@ KURA_METRICS_DIR=/var/lib/kura-metrics
 30 3 * * 1 /bin/sh $KURA_DIR/docker/cron/run-job.sh cert-renewal ./kura.sh renew-certs >> /var/log/kura/cert-renewal.log 2>&1
 
 # Every day at 04:30: purge expired Django sessions from django_session.
-30 4 * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh clear-sessions docker compose exec -T web python manage.py clearsessions >> /var/log/kura/clear-sessions.log 2>&1
+30 4 * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh clear-sessions docker compose exec -T -u 10001:10001 web python manage.py clearsessions >> /var/log/kura/clear-sessions.log 2>&1
 
 # Monthly: delete expired sessions and old login records after 180 days.
 # Weekly (Sunday): anonymise IP addresses older than 180 days. (Approved by the owner, 6 November 2026.)
-0 5 1 * * /bin/sh $KURA_DIR/docker/cron/run-job.sh purge-retention docker compose exec -T web python manage.py purge_retention --days=180 >> /var/log/kura/purge-retention.log 2>&1
-0 5 * * 0 /bin/sh $KURA_DIR/docker/cron/run-job.sh anonymize-ips docker compose exec -T web python manage.py anonymize_ips --days=180 >> /var/log/kura/anonymize-ips.log 2>&1
+0 5 1 * * /bin/sh $KURA_DIR/docker/cron/run-job.sh purge-retention docker compose exec -T -u 10001:10001 web python manage.py purge_retention --days=180 >> /var/log/kura/purge-retention.log 2>&1
+0 5 * * 0 /bin/sh $KURA_DIR/docker/cron/run-job.sh anonymize-ips docker compose exec -T -u 10001:10001 web python manage.py anonymize_ips --days=180 >> /var/log/kura/anonymize-ips.log 2>&1
 
 # Backups (pgBackRest, local encrypted repository repo1 and secondary repo2).
 # WAL is archived continuously by PostgreSQL itself.

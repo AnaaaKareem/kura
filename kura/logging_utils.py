@@ -36,7 +36,6 @@ REDACTED_LOG_KEYS = frozenset(
         "data_key",
         "wrapped_key",
         "nonce",
-        "answer_key",
         "score",
         "proposed_score",
         "justification",

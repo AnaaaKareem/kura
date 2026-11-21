@@ -25,9 +25,6 @@ token-stack.png
 TOKEN-SAVING-STACK.md
 OWASP_REMEDIATION_TASKS.md
 
-# Tests run outside Docker (see .github/workflows/ci.yml), not in the image.
-kura/tests.py
-
 # CI workflow definitions are not needed inside the container.
 .github/
 

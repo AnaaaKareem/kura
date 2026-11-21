@@ -3,35 +3,36 @@
 {% block title %}{{ session.title }} - Attendance - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li><a href="{% url 'kura:course_list' %}" class="k-muted hover:text-primary">Courses</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li><a href="{% url 'kura:course_detail' session.module.course.id %}" class="k-muted hover:text-primary">{{ session.module.course.code }}</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content truncate max-w-xs">{{ session.title }}</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'kura:course_list' %}">Courses</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'kura:course_detail' session.course.id %}">{{ session.course.code }}</a></li>
+    <li class="breadcrumb-item active" aria-current="page">{{ session.title }}</li>
 </ol>
 {% endblock %}
 
+{% block head %}
+{% if is_live %}<meta http-equiv="refresh" content="15">{% endif %}
+{% endblock %}
+
 {% block content %}
-<div class="space-y-6">
-    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div class="space-y-1">
-            <p class="k-eyebrow">{{ session.module.course.code }} &bull; {{ session.module.title }}</p>
-            <div class="flex flex-wrap items-center gap-2.5">
-                <h1 class="text-2xl font-bold">{{ session.title }}</h1>
+<div class="vstack gap-4">
+    <header class="d-flex flex-column flex-sm-row align-items-sm-start justify-content-sm-between gap-3">
+        <div class="vstack gap-1">
+            <p class="text-uppercase small fw-semibold text-body-secondary">{{ session.course.code }} &bull; {{ session.course.title }}</p>
+            <div class="d-flex flex-wrap align-items-center gap-2">
+                <h1 class="fs-3 fw-bold">{{ session.title }}</h1>
                 {% include "kura/_status_badge.html" with kind="attendance_session" value=is_live %}
             </div>
-            <p class="text-sm k-muted">
-                Ends at: <strong class="text-base-content k-num">{{ session.expires_at|date:"j M Y, H:i" }}</strong>
+            <p class="small text-body-secondary">
+                Ends at: <strong class="text-nowrap">{{ session.expires_at|date:"j M Y, H:i" }}</strong>
             </p>
         </div>
 
         {% if is_live and can_manage_attendance %}
         <form method="post" action="{% url 'kura:attendance_session_close' session.id %}">
             {% csrf_token %}
-            <button type="submit" class="btn btn-outline btn-error btn-sm w-full sm:w-auto" data-confirm-action="Close this check-in window now? Students will no longer be able to check in.">
+            <button type="submit" class="btn btn-outline-danger btn-sm w-100" data-confirm-action="Close this check-in window now? Students will no longer be able to check in.">
                 End check-in
             </button>
         </form>
@@ -39,25 +40,25 @@
     </header>
 
     {% if is_live and passcode %}
-    <section id="projector-panel" class="k-card space-y-4">
-        <div class="flex items-center justify-between gap-3 border-b border-base-300 pb-2">
-            <h2 class="text-base font-semibold">Classroom check-in</h2>
-            <button type="button" class="btn btn-outline btn-xs" data-fullscreen="#projector-panel">Fullscreen</button>
+    <section id="projector-panel" class="card card-body mb-3 vstack gap-3">
+        <div class="d-flex align-items-center justify-content-between gap-2 border-bottom pb-2">
+            <h2 class="fw-semibold">Classroom check-in</h2>
+            <button type="button" class="btn btn-outline-secondary btn-sm" data-fullscreen="#projector-panel">Fullscreen</button>
         </div>
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6 items-center">
-            <div class="text-center p-6 bg-base-200 rounded-box border border-base-300 space-y-2">
-                <p class="k-eyebrow">Passcode</p>
-                <div class="text-5xl font-mono font-bold tracking-widest text-primary k-num">
+        <div class="k-grid gap-4 align-items-center">
+            <div class="text-center p-4 bg-body-tertiary rounded border vstack gap-2">
+                <p class="text-uppercase small fw-semibold text-body-secondary">Passcode</p>
+                <div class="display-5 font-monospace fw-bold text-primary text-nowrap">
                     {{ passcode }}
                 </div>
-                <p class="text-xs k-muted pt-2">Students enter this code on their check-in screen.</p>
+                <p class="small text-body-secondary pt-2">Students enter this code on their check-in screen.</p>
             </div>
 
             {% if qr_code_url %}
-            <div class="flex flex-col items-center p-6 bg-base-200 rounded-box border border-base-300 space-y-3">
-                <p class="k-eyebrow">Scan to check in</p>
-                <div class="p-2 bg-white rounded-box border border-base-300">
-                    <img src="{{ qr_code_url }}" alt="Attendance QR Code" class="w-40 h-40">
+            <div class="d-flex flex-column align-items-center p-4 bg-body-tertiary rounded border vstack gap-2">
+                <p class="text-uppercase small fw-semibold text-body-secondary">Scan to check in</p>
+                <div class="p-2 bg-body rounded border">
+                    <img src="{{ qr_code_url }}" alt="Attendance QR Code" width="200" height="200">
                 </div>
             </div>
             {% endif %}
@@ -65,47 +66,41 @@
     </section>
     {% endif %}
 
-    <div class="grid grid-cols-1 xl:grid-cols-3 gap-6">
-        <div id="session-roll"
-             class="xl:col-span-2 space-y-4"
-             {% if is_live %}hx-get="{% url 'kura:attendance_session_detail' session.id %}?fragment=1" hx-trigger="every 10s" hx-swap="innerHTML"{% endif %}>
+    <div class="row g-4">
+        <div id="session-roll" class="col-xl-8 vstack gap-3">
             {% include "kura/attendance/_session_roll.html" %}
         </div>
 
-        <aside class="space-y-6">
-            <div class="k-card space-y-3">
-                <h2 class="text-base font-semibold border-b border-base-300 pb-2">Session details</h2>
-                <dl class="space-y-2 text-sm">
+        <aside class="col-xl-4 vstack gap-4">
+            <div class="card card-body mb-3 vstack gap-2">
+                <h2 class="fw-semibold border-bottom pb-2">Session details</h2>
+                <dl class="vstack gap-2 small">
                     <div>
-                        <dt class="k-eyebrow">Course</dt>
-                        <dd class="font-medium mt-0.5">{{ session.module.course.code }} &bull; {{ session.module.course.title }}</dd>
+                        <dt class="text-uppercase small fw-semibold text-body-secondary">Course</dt>
+                        <dd class="fw-medium mt-1">{{ session.course.code }} &bull; {{ session.course.title }}</dd>
                     </div>
                     <div>
-                        <dt class="k-eyebrow">Module</dt>
-                        <dd class="font-medium mt-0.5">{{ session.module.title }}</dd>
-                    </div>
-                    <div>
-                        <dt class="k-eyebrow">Closes at</dt>
-                        <dd class="k-num font-medium mt-0.5">{{ session.expires_at|date:"j M Y, H:i" }}</dd>
+                        <dt class="text-uppercase small fw-semibold text-body-secondary">Closes at</dt>
+                        <dd class="text-nowrap fw-medium mt-1">{{ session.expires_at|date:"j M Y, H:i" }}</dd>
                     </div>
                 </dl>
             </div>
 
             {% if can_manage_attendance %}
-            <div class="k-card space-y-4">
-                <div class="border-b border-base-300 pb-2">
-                    <h2 class="text-base font-semibold">Manual entry</h2>
-                    <p class="text-xs k-muted mt-0.5">Record or update attendance with a written reason.</p>
+            <div class="card card-body mb-3 vstack gap-3">
+                <div class="border-bottom pb-2">
+                    <h2 class="fw-semibold">Manual entry</h2>
+                    <p class="small text-body-secondary mt-1">Record or update attendance with a written reason.</p>
                 </div>
 
-                <form method="post" action="{% url 'kura:attendance_manual_record' session.id %}" class="space-y-3">
+                <form method="post" action="{% url 'kura:attendance_manual_record' session.id %}" class="vstack gap-2">
                     {% csrf_token %}
                     {% include "kura/_form_errors.html" with form=manual_form %}
                     {% include "kura/_field.html" with field=manual_form.student %}
                     {% include "kura/_field.html" with field=manual_form.status %}
                     {% include "kura/_field.html" with field=manual_form.override_reason %}
 
-                    <button type="submit" class="btn btn-primary btn-sm w-full mt-2">
+                    <button type="submit" class="btn btn-primary btn-sm w-100 mt-2">
                         Record attendance
                     </button>
                 </form>

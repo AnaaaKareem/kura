@@ -3,53 +3,52 @@
 {% block title %}Passkeys - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">Passkeys</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Passkeys</li>
 </ol>
 {% endblock %}
 
 {% block content %}
-<div class="space-y-6">
-    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div class="space-y-1">
-            <p class="k-eyebrow">Account security</p>
-            <h1 class="text-2xl font-bold">Passkeys</h1>
-            <p class="text-sm k-muted">Sign in with your fingerprint, face, or security key instead of a code.</p>
+<div class="vstack gap-4">
+    <header class="d-flex flex-column flex-sm-row align-items-sm-start justify-content-sm-between gap-3">
+        <div class="vstack gap-1">
+            <p class="text-uppercase small fw-semibold text-body-secondary">Account security</p>
+            <h1 class="fs-3 fw-bold">Passkeys</h1>
+            <p class="small text-body-secondary">Sign in with your fingerprint, face, or security key instead of a code.</p>
         </div>
-        <div class="flex items-center gap-2">
-            <a href="{% url 'start_fido2' %}" class="btn btn-primary btn-sm w-full sm:w-auto flex items-center gap-1.5">
-                {% include "kura/_icon.html" with name="plus" class="h-4 w-4" %}
+        <div class="d-flex align-items-center gap-2">
+            <a href="{% url 'start_fido2' %}" class="btn btn-primary btn-sm w-100 d-flex align-items-center gap-1">
+                {% include "kura/_icon.html" with name="plus" class="k-icon-sm" %}
                 <span>Add a passkey</span>
             </a>
         </div>
     </header>
 
-    <div class="k-card p-5 space-y-2">
-        <h2 class="text-base font-semibold">Supported passkeys</h2>
-        <p class="text-sm k-muted">Your browser can save passkeys with Windows Hello, Apple Passwords, Google Password Manager, your phone, or a hardware security key.</p>
+    <div class="card card-body mb-3 p-3 vstack gap-2">
+        <h2 class="fw-semibold">Supported passkeys</h2>
+        <p class="small text-body-secondary">Your browser can save passkeys with Windows Hello, Apple Passwords, Google Password Manager, your phone, or a hardware security key.</p>
     </div>
 
     {% url 'start_fido2' as add_passkey_url %}
-    <div class="k-card p-0 overflow-x-auto">
-        <table class="k-table">
-            <caption class="sr-only">Your registered passkeys</caption>
+    <div class="card card-body mb-3 p-0 table-responsive">
+        <table class="table table-sm align-middle">
+            <caption class="visually-hidden">Your registered passkeys</caption>
             <thead>
                 <tr>
-                    <th class="k-sticky-col">Name</th>
+                    <th >Name</th>
                     <th>Added</th>
                     <th>Last used</th>
                     <th>Status</th>
-                    <th class="text-right">Action</th>
+                    <th class="text-end">Action</th>
                 </tr>
             </thead>
             <tbody>
                 {% for key in keys %}
                 <tr>
-                    <td class="k-sticky-col k-num font-medium text-sm">Passkey #{{ key.id }}</td>
-                    <td class="text-xs k-muted k-num">{{ key.added_on|date:"j M Y, H:i" }}</td>
-                    <td class="text-xs k-muted k-num">
+                    <td class="text-nowrap fw-medium small">Passkey #{{ key.id }}</td>
+                    <td class="small text-body-secondary text-nowrap">{{ key.added_on|date:"j M Y, H:i" }}</td>
+                    <td class="small text-body-secondary text-nowrap">
                         {% if key.last_used %}
                             {{ key.last_used|date:"j M Y, H:i" }}
                         {% else %}
@@ -59,10 +58,10 @@
                     <td>
                         {% include "kura/_status_badge.html" with kind="account" value=key.enabled %}
                     </td>
-                    <td class="text-right">
+                    <td class="text-end">
                         <form method="post" action="{% url 'kura:passkey_delete' key.id %}" data-confirm-action="Remove this passkey? You will no longer be able to use it to log in.">
                             {% csrf_token %}
-                            <button type="submit" class="btn btn-outline btn-error btn-sm">
+                            <button type="submit" class="btn btn-outline-danger btn-sm">
                                 Remove
                             </button>
                         </form>
@@ -70,7 +69,7 @@
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="5" class="p-8 text-center">
+                    <td colspan="5" class="p-5 text-center">
                         {% include "kura/_empty.html" with icon="passkey" title="No passkeys yet" text="Add a passkey for faster two-step verification." action_url=add_passkey_url action_label="Add a passkey" %}
                     </td>
                 </tr>

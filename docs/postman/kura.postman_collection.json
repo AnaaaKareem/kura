@@ -1,0 +1,305 @@
+{
+  "info": {
+    "name": "Kura LMS — Security Verification Collection",
+    "_postman_id": "a11d4980-8c34-4a51-9a14-922f839c7001",
+    "description": "Manual and automated HTTP security checks for Kura LMS (headers, CSP, CSRF enforcement, HTTP method restrictions, unauthenticated access blocks, and IDOR checks).",
+    "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+  },
+  "variable": [
+    {
+      "key": "base_url",
+      "value": "http://127.0.0.1:8000",
+      "type": "string"
+    },
+    {
+      "key": "csrftoken",
+      "value": "",
+      "type": "string"
+    },
+    {
+      "key": "sample_uuid",
+      "value": "00000000-0000-0000-0000-000000000001",
+      "type": "string"
+    }
+  ],
+  "item": [
+    {
+      "name": "1. Security Headers & CSP",
+      "item": [
+        {
+          "name": "GET /login/ — Verify Security Headers & Extract CSRF Cookie",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Status code is 200 OK', function () {",
+                  "    pm.response.to.have.status(200);",
+                  "});",
+                  "",
+                  "pm.test('X-Frame-Options is DENY (Clickjacking protection)', function () {",
+                  "    pm.expect(pm.response.headers.get('X-Frame-Options')).to.eql('DENY');",
+                  "});",
+                  "",
+                  "pm.test('X-Content-Type-Options is nosniff (MIME sniffing protection)', function () {",
+                  "    pm.expect(pm.response.headers.get('X-Content-Type-Options')).to.eql('nosniff');",
+                  "});",
+                  "",
+                  "pm.test('Referrer-Policy is same-origin', function () {",
+                  "    pm.expect(pm.response.headers.get('Referrer-Policy')).to.eql('same-origin');",
+                  "});",
+                  "",
+                  "pm.test('Content-Security-Policy header is present', function () {",
+                  "    const csp = pm.response.headers.get('Content-Security-Policy');",
+                  "    pm.expect(csp).to.be.a('string');",
+                  "    pm.expect(csp).to.include(\"default-src 'self'\");",
+                  "    pm.expect(csp).to.include(\"frame-ancestors 'none'\");",
+                  "});",
+                  "",
+                  "const csrfCookie = pm.cookies.get('csrftoken');",
+                  "if (csrfCookie) {",
+                  "    pm.collectionVariables.set('csrftoken', csrfCookie);",
+                  "}"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/login/",
+              "host": ["{{base_url}}"],
+              "path": ["login", ""]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "2. Authentication & Generic Error Messages",
+      "item": [
+        {
+          "name": "POST /login/ without CSRF Token — Rejected with 403 Forbidden",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Missing CSRF token returns 403 Forbidden', function () {",
+                  "    pm.response.to.have.status(403);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "Referer",
+                "value": "{{base_url}}/login/"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "email",
+                  "value": "nonexistent@example.com",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "WrongPassword123!",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/login/",
+              "host": ["{{base_url}}"],
+              "path": ["login", ""]
+            }
+          }
+        },
+        {
+          "name": "POST /login/ with Wrong Password — Generic Error (No Account Enumeration)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Returns generic error message without revealing if email exists', function () {",
+                  "    pm.expect(pm.response.text()).to.include('Invalid email or password.');",
+                  "    pm.expect(pm.response.text()).to.not.include('Traceback');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "POST",
+            "header": [
+              {
+                "key": "Content-Type",
+                "value": "application/x-www-form-urlencoded"
+              },
+              {
+                "key": "X-CSRFToken",
+                "value": "{{csrftoken}}"
+              },
+              {
+                "key": "Referer",
+                "value": "{{base_url}}/login/"
+              }
+            ],
+            "body": {
+              "mode": "urlencoded",
+              "urlencoded": [
+                {
+                  "key": "csrfmiddlewaretoken",
+                  "value": "{{csrftoken}}",
+                  "type": "text"
+                },
+                {
+                  "key": "email",
+                  "value": "unknown_user@example.com",
+                  "type": "text"
+                },
+                {
+                  "key": "password",
+                  "value": "WrongPassword123!",
+                  "type": "text"
+                }
+              ]
+            },
+            "url": {
+              "raw": "{{base_url}}/login/",
+              "host": ["{{base_url}}"],
+              "path": ["login", ""]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "3. HTTP Method Enforcement (GET Must Never Change State)",
+      "item": [
+        {
+          "name": "GET /logout/ — Rejected (POST Required)",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('GET /logout/ is rejected with 405 Method Not Allowed or 302 to login', function () {",
+                  "    pm.expect([302, 405]).to.include(pm.response.code);",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/logout/",
+              "host": ["{{base_url}}"],
+              "path": ["logout", ""]
+            }
+          }
+        }
+      ]
+    },
+    {
+      "name": "4. Unauthenticated Access & IDOR Protection",
+      "item": [
+        {
+          "name": "GET /admin/staff/ (Unauthenticated) — Redirects to Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Unauthenticated user cannot view staff list', function () {",
+                  "    pm.expect(pm.response.text()).to.include('Sign in');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/admin/staff/",
+              "host": ["{{base_url}}"],
+              "path": ["admin", "staff", ""]
+            }
+          }
+        },
+        {
+          "name": "GET /courses/{{sample_uuid}}/grades/ (Unauthenticated) — Redirects to Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Unauthenticated user cannot view course grades', function () {",
+                  "    pm.expect(pm.response.text()).to.include('Sign in');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/courses/{{sample_uuid}}/grades/",
+              "host": ["{{base_url}}"],
+              "path": ["courses", "{{sample_uuid}}", "grades", ""]
+            }
+          }
+        },
+        {
+          "name": "GET /registrar/students/{{sample_uuid}}/ (Unauthenticated) — Redirects to Login",
+          "event": [
+            {
+              "listen": "test",
+              "script": {
+                "type": "text/javascript",
+                "exec": [
+                  "pm.test('Unauthenticated user cannot view student profile', function () {",
+                  "    pm.expect(pm.response.text()).to.include('Sign in');",
+                  "});"
+                ]
+              }
+            }
+          ],
+          "request": {
+            "method": "GET",
+            "header": [],
+            "url": {
+              "raw": "{{base_url}}/registrar/students/{{sample_uuid}}/",
+              "host": ["{{base_url}}"],
+              "path": ["registrar", "students", "{{sample_uuid}}", ""]
+            }
+          }
+        }
+      ]
+    }
+  ]
+}
+

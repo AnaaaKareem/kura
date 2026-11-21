@@ -3,53 +3,51 @@
 {% block title %}{% if editing %}Edit class time{% else %}Add class time{% endif %} - {{ course.code }} - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li><a href="{% url 'kura:schedule_list' %}" class="k-muted hover:text-primary">Schedule</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">{% if editing %}Edit class time{% else %}Add class time{% endif %}</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'kura:schedule_list' %}">Schedule</a></li>
+    <li class="breadcrumb-item active" aria-current="page">{% if editing %}Edit class time{% else %}Add class time{% endif %}</li>
 </ol>
 {% endblock %}
 
 {% block form_errors %}{% endblock %}
 
 {% block content %}
-<div class="max-w-2xl mx-auto space-y-6">
-    <header class="space-y-1">
-        <p class="k-eyebrow">{{ course.code }} &bull; {{ course.title }}</p>
-        <h1 class="text-2xl font-bold">{% if editing %}Edit class time{% else %}Add class time{% endif %}</h1>
-        <p class="text-sm k-muted">
+<div class="k-max-2xl mx-auto vstack gap-4">
+    <header class="vstack gap-1">
+        <p class="text-uppercase small fw-semibold text-body-secondary">{{ course.code }} &bull; {{ course.title }}</p>
+        <h1 class="fs-3 fw-bold">{% if editing %}Edit class time{% else %}Add class time{% endif %}</h1>
+        <p class="small text-body-secondary">
             Set a recurring class meeting for {{ course.code }}. End time must be after start time.
         </p>
     </header>
 
-    <div class="k-card">
-        <form method="post" class="space-y-4">
+    <div class="card card-body mb-3">
+        <form method="post" class="vstack gap-3">
             {% csrf_token %}
             {% include "kura/_form_errors.html" %}
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="k-grid gap-3">
                 {% include "kura/_field.html" with field=form.session_type %}
                 {% include "kura/_field.html" with field=form.day %}
             </div>
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="k-grid gap-3">
                 {% include "kura/_field.html" with field=form.start_time %}
                 {% include "kura/_field.html" with field=form.end_time %}
             </div>
 
             {% include "kura/_field.html" with field=form.location %}
 
-            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <div class="k-grid gap-3">
                 {% include "kura/_field.html" with field=form.recurrence_start %}
                 {% include "kura/_field.html" with field=form.recurrence_end %}
             </div>
 
             {% include "kura/_field.html" with field=form.instructor %}
 
-            <div class="pt-4 border-t border-base-300 flex flex-col-reverse sm:flex-row sm:justify-end gap-2">
-                <a href="{% url 'kura:course_detail' course.id %}" class="btn btn-ghost">Cancel</a>
+            <div class="pt-3 border-top d-flex flex-column-reverse flex-sm-row justify-content-sm-end gap-2">
+                <a href="{% url 'kura:course_detail' course.id %}" class="btn btn-link text-decoration-none">Cancel</a>
                 <button type="submit" class="btn btn-primary">Save meeting</button>
             </div>
         </form>

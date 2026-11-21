@@ -4,12 +4,10 @@
 {% block title %}Academic transcript - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li><a href="{% url 'kura:student_grades' %}" class="k-muted hover:text-primary">Grades</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">Transcript</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item"><a href="{% url 'kura:student_grades' %}">Grades</a></li>
+    <li class="breadcrumb-item active" aria-current="page">Transcript</li>
 </ol>
 {% endblock %}
 
@@ -18,49 +16,49 @@
 {% endblock %}
 
 {% block content %}
-<div class="transcript-sheet space-y-6 max-w-3xl mx-auto">
-    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div class="space-y-1">
-            <p class="k-eyebrow">Official record</p>
-            <h1 class="text-2xl font-bold">Academic transcript</h1>
-            <p class="text-sm k-muted">
-                Student: <strong class="text-base-content">{% if request.user.first_name or request.user.last_name %}{{ request.user.first_name }} {{ request.user.last_name }}{% else %}{{ request.user.email }}{% endif %}</strong>
+<div class="transcript-sheet vstack gap-4 k-max-3xl mx-auto">
+    <header class="d-flex flex-column flex-sm-row align-items-sm-start justify-content-sm-between gap-3">
+        <div class="vstack gap-1">
+            <p class="text-uppercase small fw-semibold text-body-secondary">Official record</p>
+            <h1 class="fs-3 fw-bold">Academic transcript</h1>
+            <p class="small text-body-secondary">
+                Student: <strong >{% if request.user.first_name or request.user.last_name %}{{ request.user.first_name }} {{ request.user.last_name }}{% else %}{{ request.user.email }}{% endif %}</strong>
                 {% if student_profile %}
-                &bull; {{ student_profile.department.name }} &bull; Level: <span class="uppercase k-num">{{ student_profile.current_level }}</span>
+                &bull; {{ student_profile.department.name }} &bull; Level: <span class="text-uppercase text-nowrap">{{ student_profile.current_level }}</span>
                 {% endif %}
             </p>
         </div>
-        <div class="flex items-center gap-2 no-print">
-            <button type="button" data-print class="btn btn-outline btn-sm w-full sm:w-auto">
+        <div class="d-flex align-items-center gap-2 d-print-none">
+            <button type="button" data-print class="btn btn-outline-secondary btn-sm w-100">
                 Print transcript
             </button>
         </div>
     </header>
 
-    <div class="k-card p-0 overflow-x-auto">
-        <table class="k-table">
-            <caption class="sr-only">Course results and final cumulative marks</caption>
+    <div class="card card-body mb-3 p-0 table-responsive">
+        <table class="table table-sm align-middle">
+            <caption class="visually-hidden">Course results and final cumulative marks</caption>
             <thead>
                 <tr>
-                    <th class="k-sticky-col">Course code</th>
+                    <th >Course code</th>
                     <th>Course title</th>
                     <th>Term</th>
-                    <th class="k-num">Year</th>
-                    <th class="k-num">Final mark</th>
+                    <th class="text-nowrap">Year</th>
+                    <th class="text-nowrap">Final mark</th>
                 </tr>
             </thead>
             <tbody>
                 {% for res in results %}
                 <tr>
-                    <td class="font-mono font-bold k-sticky-col">{{ res.course.code }}</td>
-                    <td class="font-medium">{{ res.course.title }}</td>
+                    <td class="font-monospace fw-bold">{{ res.course.code }}</td>
+                    <td class="fw-medium">{{ res.course.title }}</td>
                     <td>{{ res.course.semester|capfirst }}</td>
-                    <td class="k-num">{{ res.course.academic_year }}</td>
-                    <td class="k-num font-bold text-base text-primary">{{ res.final_score }}%</td>
+                    <td class="text-nowrap">{{ res.course.academic_year }}</td>
+                    <td class="text-nowrap fw-bold text-primary">{{ res.final_score }}%</td>
                 </tr>
                 {% empty %}
                 <tr>
-                    <td colspan="5" class="p-8 text-center">
+                    <td colspan="5" class="p-5 text-center">
                         {% include "kura/_empty.html" with icon="transcript" title="No results released yet" text="No course results have been released to your transcript yet." %}
                     </td>
                 </tr>

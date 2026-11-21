@@ -5,26 +5,26 @@
 {% block form_errors %}{% endblock %}
 
 {% block content %}
-<div class="max-w-md mx-auto my-6">
-    <div class="k-card p-6 sm:p-8 space-y-6">
-        <header class="text-center space-y-2">
-            <h1 class="text-2xl font-bold">Confirm it's you</h1>
-            <p class="text-sm k-muted">
+<div class="k-max-md mx-auto my-4">
+    <div class="card card-body mb-3 p-4 p-sm-5 vstack gap-4">
+        <header class="text-center vstack gap-2">
+            <h1 class="fs-3 fw-bold">Confirm it's you</h1>
+            <p class="small text-body-secondary">
                 This action needs your code again. Enter a code from your authenticator app or an unused recovery code.
             </p>
-            <p class="text-xs k-muted">
+            <p class="small text-body-secondary">
                 Entering a recovery code uses it up.
             </p>
         </header>
 
-        <form method="post" action="{% url 'kura:mfa_reauth' %}" class="space-y-4">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+        <form method="post" action="{% url 'kura:mfa_reauth' %}" class="vstack gap-3">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
             {% csrf_token %}
             <input type="hidden" name="next" value="{{ next_url }}">
             {% include "kura/_form_errors.html" %}
             {% include "kura/_field.html" with field=form.code %}
 
             <div class="pt-2">
-                <button type="submit" class="btn btn-primary w-full">
+                <button type="submit" class="btn btn-primary w-100">
                     Verify and continue
                 </button>
             </div>

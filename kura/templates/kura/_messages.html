@@ -1,27 +1,27 @@
 {# Dismissible flash messages stack displayed near the top of the page content. #}
 {% if messages %}
-<div class="space-y-2 mb-6" data-messages-container>
+<div class="vstack gap-2 mb-4" data-messages-container>
     {% for message in messages %}
-    <div class="alert {% if 'error' in message.tags %}alert-error{% elif 'warning' in message.tags %}alert-warning{% elif 'success' in message.tags %}alert-success{% else %}alert-info{% endif %} flex items-start justify-between py-3 px-4 rounded-btn"
+    <div class="alert {% if 'error' in message.tags %}alert-danger{% elif 'warning' in message.tags %}alert-warning{% elif 'success' in message.tags %}alert-success{% else %}alert-info{% endif %} d-flex align-items-start justify-content-between py-2 px-3 rounded"
          {% if 'error' in message.tags %}role="alert"{% else %}role="status"{% endif %}
          {% if 'password_changed' in message.tags %}data-password-change-confirmation{% endif %}
          data-message-item>
-        <div class="flex items-start gap-3">
-            <span class="mt-0.5">
+        <div class="d-flex align-items-start gap-2">
+            <span class="mt-1">
             {% if 'error' in message.tags %}
-                {% include "kura/_icon.html" with name="exclamation" class="h-5 w-5" %}
+                {% include "kura/_icon.html" with name="exclamation" class="k-icon" %}
             {% elif 'warning' in message.tags %}
-                {% include "kura/_icon.html" with name="exclamation" class="h-5 w-5" %}
+                {% include "kura/_icon.html" with name="exclamation" class="k-icon" %}
             {% elif 'success' in message.tags %}
-                {% include "kura/_icon.html" with name="check" class="h-5 w-5" %}
+                {% include "kura/_icon.html" with name="check" class="k-icon" %}
             {% else %}
-                {% include "kura/_icon.html" with name="info" class="h-5 w-5" %}
+                {% include "kura/_icon.html" with name="info" class="k-icon" %}
             {% endif %}
             </span>
-            <div class="text-sm font-medium leading-relaxed">{{ message }}</div>
+            <div class="small fw-medium">{{ message }}</div>
         </div>
-        <button type="button" class="btn btn-ghost btn-xs btn-square -mr-1 -mt-1" data-dismiss-message aria-label="Dismiss message">
-            {% include "kura/_icon.html" with name="x-mark" class="h-4 w-4" %}
+        <button type="button" class="btn btn-link text-decoration-none btn-sm" data-dismiss-message aria-label="Dismiss message">
+            {% include "kura/_icon.html" with name="x-mark" class="k-icon-sm" %}
         </button>
     </div>
     {% endfor %}

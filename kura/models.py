@@ -161,20 +161,6 @@ class EnrollmentStatus(models.TextChoices):
     WITHDRAWN = "withdrawn", "Withdrawn"
 
 
-class SectionType(models.TextChoices):
-    """
-    Structural groupings within a module.
-    Sections keep lectures, quizzes, lab work, and exams in separate containers.
-    """
-
-    LECTURE = "lecture", "Lecture"
-    LAB = "lab", "Lab"
-    SEMINAR = "seminar", "Seminar"
-    COURSEWORK = "coursework", "Coursework"
-    QUIZ = "quiz", "Quiz"
-    EXAM = "exam", "Exam"
-
-
 class SessionType(models.TextChoices):
     """
     Class meeting formats for timetables.
@@ -185,13 +171,6 @@ class SessionType(models.TextChoices):
     LAB = "lab", "Lab"
     TUTORIAL = "tutorial", "Tutorial"
     SEMINAR = "seminar", "Seminar"
-
-
-class AssessmentDeliveryMode(models.TextChoices):
-    """Ways an assessment can be delivered to students."""
-
-    ONLINE = "online", "Online"
-    PAPER_SCANNED = "paper_scanned", "Scanned paper"
 
 
 class DayOfWeek(models.TextChoices):
@@ -257,17 +236,6 @@ class ChangeRequestStatus(models.TextChoices):
     """
     Review stages for post-release grade change requests.
     Requests stay pending until the department head approves or rejects the change.
-    """
-
-    PENDING = "pending", "Pending"
-    APPROVED = "approved", "Approved"
-    REJECTED = "rejected", "Rejected"
-
-
-class AppealStatus(models.TextChoices):
-    """
-    Review stages for student grade appeals.
-    Appeals stay pending until an instructor reviews the case and submits a verdict.
     """
 
     PENDING = "pending", "Pending"
@@ -612,7 +580,7 @@ class UserSession(models.Model):
         return f"Session {self.id} - {self.user}"
 
 
-# Courses, Staff & Grading Schemes
+# Courses & Staff
 
 
 class Course(models.Model):
@@ -681,35 +649,6 @@ class CourseStaff(models.Model):
         return f"{self.user} as {self.staff_role} in {self.course}"
 
 
-class CourseGradeScheme(models.Model):
-    """
-    Weight percentages for coursework, quizzes, and exams.
-    Values must be between 0 and 100, and sum to the total course mark.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name="grade_schemes")
-    component_type = models.CharField(max_length=30, choices=GradeComponentType.choices)
-    weight_percentage = models.DecimalField(
-        max_digits=5, decimal_places=2, validators=[MinValueValidator(0), MaxValueValidator(100)]
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = "course_grade_schemes"
-        unique_together = (("course", "component_type"),)
-        constraints = [
-            models.CheckConstraint(
-                condition=models.Q(weight_percentage__gte=0) & models.Q(weight_percentage__lte=100),
-                name="grade_scheme_weight_0_to_100",
-            ),
-        ]
-
-    def __str__(self):
-        """Formats this model's identifying fields for readable display."""
-        return f"{self.course} - {self.component_type}: {self.weight_percentage}%"
-
-
 class Enrollment(models.Model):
     """
     Student registrations in courses.
@@ -746,92 +685,30 @@ class Enrollment(models.Model):
         return f"{self.student} in {self.course} ({self.status})"
 
 
-# Modules, Sections, and Content Items
+# Course materials
 
 
-class Module(models.Model):
+class CourseFile(models.Model):
     """
-    Curriculum units and weekly topic groupings within a course.
-    Instructors can toggle visibility to keep draft units hidden from students.
+    A course material file (slides, notes, handouts) listed on the course page.
+    Students can download it only when the course is published and the file is visible.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name="modules")
-    title = models.CharField(max_length=255)
-    description = models.TextField(null=True, blank=True)
-    is_visible = models.BooleanField(default=False)
-    created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="created_modules"
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name="course_files")
+    file = models.OneToOneField(
+        "StoredFile", on_delete=models.CASCADE, related_name="course_attachment", db_column="file_id"
     )
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = "modules"
-
-    def __str__(self):
-        """Formats this model's identifying fields for readable display."""
-        return f"{self.course.code} - Module: {self.title}"
-
-
-class ModuleTargetLevel(models.Model):
-    """
-    Academic standing requirements for individual modules.
-    Students below the required level cannot view or download module materials.
-    """
-
-    pk = models.CompositePrimaryKey("module", "target_level")
-    module = models.ForeignKey(Module, on_delete=models.CASCADE, related_name="target_levels")
-    target_level = models.CharField(max_length=30, choices=AcademicLevel.choices)
-
-    class Meta:
-        db_table = "module_target_levels"
-
-    def __str__(self):
-        """Formats this model's identifying fields for readable display."""
-        return f"{self.module.title} -> {self.target_level}"
-
-
-class ModuleSection(models.Model):
-    """
-    Content groupings within a module, such as lectures, quizzes, and exams.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    module = models.ForeignKey(Module, on_delete=models.CASCADE, related_name="sections")
     title = models.CharField(max_length=255)
-    section_type = models.CharField(max_length=20, choices=SectionType.choices)
-    # Existing and new sections remain visible until staff explicitly hide them.
-    is_visible = models.BooleanField(default=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = "module_sections"
-
-    def __str__(self):
-        """Formats this model's identifying fields for readable display."""
-        return f"{self.module.title} - Section: {self.title} ({self.section_type})"
-
-
-class SectionItem(models.Model):
-    """
-    Markdown source and files attached to a section item.
-    Rendered Markdown must be cleaned with nh3 before it is shown as HTML.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    section = models.ForeignKey(ModuleSection, on_delete=models.CASCADE, related_name="items")
-    title = models.CharField(max_length=255)
-    content_body = models.TextField(blank=True)
     is_visible = models.BooleanField(default=False)
-    released_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
-        db_table = "section_items"
+        db_table = "course_files"
 
     def __str__(self):
         """Formats this model's identifying fields for readable display."""
-        return f"{self.section.title} - Item: {self.title}"
+        return f"{self.course.code} - {self.title}"
 
 
 # File Storage (Metadata & Binaries)
@@ -968,27 +845,6 @@ class QuarantinedFile(models.Model):
         return f"Quarantined {self.original_filename} ({self.detection})"
 
 
-class SectionItemFile(models.Model):
-    """
-    Course material files attached to section items.
-    Students can download files only when the parent course and module are published and visible to their level.
-    """
-
-    pk = models.CompositePrimaryKey("section_item", "file")
-    section_item = models.ForeignKey(SectionItem, on_delete=models.CASCADE, related_name="item_files")
-    file = models.OneToOneField(
-        StoredFile, on_delete=models.CASCADE, related_name="section_item_attachment", db_column="file_id"
-    )
-    attached_at = models.DateTimeField(auto_now_add=True)
-
-    class Meta:
-        db_table = "section_item_files"
-
-    def __str__(self):
-        """Formats this model's identifying fields for readable display."""
-        return f"File {self.file_id} attached to SectionItem {self.section_item_id}"
-
-
 # Schedules & Attendance
 
 
@@ -1035,7 +891,7 @@ class ModuleAttendanceSession(models.Model):
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    module = models.ForeignKey(Module, on_delete=models.CASCADE, related_name="attendance_sessions")
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name="attendance_sessions")
     schedule = models.ForeignKey(
         Schedule, on_delete=models.SET_NULL, null=True, blank=True, related_name="attendance_sessions"
     )
@@ -1102,34 +958,24 @@ class AttendanceRecord(models.Model):
         return f"{self.student} - {self.session.title}: {self.status}"
 
 
-# Assessments, Answer Keys & Attempts
+# Assessments & Submissions
 
 
 class Assessment(models.Model):
     """
-    Quizzes, coursework briefs, and exams within module sections.
-    Delivery settings and questions are stored in JSONB fields, with correct answers stored in a separate table.
+    Coursework briefs that students answer by uploading files.
+    Each assessment belongs to one course and has an opening time and a due date.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    section = models.ForeignKey(ModuleSection, on_delete=models.CASCADE, related_name="assessments")
+    course = models.ForeignKey(Course, on_delete=models.CASCADE, related_name="assessments")
     title = models.CharField(max_length=255)
     description = models.TextField(null=True, blank=True)
     component_type = models.CharField(max_length=30, choices=GradeComponentType.choices)
-    delivery_mode = models.CharField(
-        max_length=20,
-        choices=AssessmentDeliveryMode.choices,
-        default=AssessmentDeliveryMode.ONLINE,
-    )
     max_score = models.DecimalField(max_digits=6, decimal_places=2, default=Decimal("100.00"))
     max_attempts = models.IntegerField(default=1, validators=[MinValueValidator(1)])
     opens_at = models.DateTimeField()
     due_date = models.DateTimeField()
-    duration_minutes = models.IntegerField(validators=[MinValueValidator(1)])
-    lab_cidr_allowed = CIDRField(null=True, blank=True)
-    proctor_code_hash = FixedCharField(max_length=SHA256_HEX, null=True, blank=True)
-    settings_json = models.JSONField(default=dict)
-    questions_json = models.JSONField(default=list)
     created_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="created_assessments"
     )
@@ -1146,10 +992,6 @@ class Assessment(models.Model):
                 condition=models.Q(max_attempts__gte=1),
                 name="assessment_max_attempts_min_1",
             ),
-            models.CheckConstraint(
-                condition=models.Q(duration_minutes__gt=0),
-                name="assessment_duration_positive",
-            ),
         ]
 
     def __str__(self):
@@ -1159,8 +1001,8 @@ class Assessment(models.Model):
 
 class AssessmentFile(models.Model):
     """
-    Staff-uploaded materials attached to an assessment, such as exam papers, briefs, or datasets.
-    Students can download exam papers only during an active attempt after passing proctor and network checks.
+    Staff-uploaded materials attached to an assessment, such as briefs or datasets.
+    Enrolled students can download them while the course is published.
     """
 
     pk = models.CompositePrimaryKey("assessment", "file")
@@ -1178,33 +1020,10 @@ class AssessmentFile(models.Model):
         return f"File {self.file_id} attached to Assessment {self.assessment_id}"
 
 
-class ExamAnswerKey(models.Model):
-    """
-    Correct answers and grading rubrics stored in an isolated table.
-    Database permissions revoke SELECT access from student database roles.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    assessment = models.OneToOneField(Assessment, on_delete=models.CASCADE, related_name="answer_key")
-    answer_key_json = models.JSONField(default=dict)
-    created_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="authored_answer_keys"
-    )
-    created_at = models.DateTimeField(auto_now_add=True)
-    updated_at = models.DateTimeField(auto_now=True)
-
-    class Meta:
-        db_table = "exam_answer_keys"
-
-    def __str__(self):
-        """Formats this model's identifying fields for readable display."""
-        return f"Answer Key for {self.assessment.title}"
-
-
 class AssessmentAttempt(models.Model):
     """
-    Student exam sessions, autosaved responses, timers, and focus loss telemetry.
-    Submissions generate a SHA-256 hash for non-repudiation.
+    One student's submission for an assessment, with the files they uploaded.
+    Submitting generates a SHA-256 hash for non-repudiation.
     """
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
@@ -1213,14 +1032,9 @@ class AssessmentAttempt(models.Model):
     attempt_no = models.IntegerField(default=1, validators=[MinValueValidator(1)])
     status = models.CharField(max_length=30, choices=AttemptStatus.choices, default=AttemptStatus.IN_PROGRESS)
     started_at = models.DateTimeField(auto_now_add=True)
-    expires_at = models.DateTimeField()
-    last_autosave_at = models.DateTimeField(null=True, blank=True)
     submitted_at = models.DateTimeField(null=True, blank=True)
-    answers_json = models.JSONField(default=list)
-    summary_score_json = models.JSONField(null=True, blank=True)
     ip_address = models.GenericIPAddressField()
     user_agent = models.CharField(max_length=255, null=True, blank=True)
-    tab_focus_lost_count = models.IntegerField(default=0)
     submission_hash = FixedCharField(max_length=SHA256_HEX, null=True, blank=True)
 
     class Meta:
@@ -1259,7 +1073,7 @@ class AttemptFile(models.Model):
         return f"File {self.file_id} attached to Attempt {self.attempt_id}"
 
 
-# Grades, Grade History, Appeals & Results
+# Grades, Grade History & Results
 
 
 class Grade(models.Model):
@@ -1346,42 +1160,6 @@ class GradeHistory(models.Model):
         return f"History #{self.id} for Grade {self.grade_id} ({self.old_score} -> {self.new_score})"
 
 
-class GradeAppeal(models.Model):
-    """
-    Student appeals disputing assessment scores.
-    Records keep the student's statement, reviewer notes, and final decisions.
-    """
-
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    grade = models.ForeignKey(Grade, on_delete=models.CASCADE, related_name="appeals")
-    reason = models.TextField()
-    status = models.CharField(max_length=20, choices=AppealStatus.choices, default=AppealStatus.PENDING)
-    reviewed_by = models.ForeignKey(
-        settings.AUTH_USER_MODEL,
-        on_delete=models.SET_NULL,
-        null=True,
-        blank=True,
-        related_name="reviewed_grade_appeals",
-    )
-    response = models.TextField(null=True, blank=True)
-    created_at = models.DateTimeField(auto_now_add=True)
-    resolved_at = models.DateTimeField(null=True, blank=True)
-
-    class Meta:
-        db_table = "grade_appeals"
-        constraints = [
-            models.UniqueConstraint(
-                fields=["grade"],
-                condition=models.Q(status=AppealStatus.PENDING),
-                name="unique_pending_appeal_per_grade",
-            ),
-        ]
-
-    def __str__(self):
-        """Formats this model's identifying fields for readable display."""
-        return f"Appeal on Grade {self.grade_id} ({self.status})"
-
-
 class GradeChangeRequest(models.Model):
     """
     Formal requests to alter released grades.
@@ -1390,9 +1168,6 @@ class GradeChangeRequest(models.Model):
 
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     grade = models.ForeignKey(Grade, on_delete=models.CASCADE, related_name="change_requests")
-    appeal = models.ForeignKey(
-        GradeAppeal, on_delete=models.SET_NULL, null=True, blank=True, related_name="change_requests"
-    )
     requested_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.PROTECT, related_name="requested_grade_changes"
     )

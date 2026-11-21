@@ -3,64 +3,57 @@
 {% block title %}My grades - Kura{% endblock %}
 
 {% block breadcrumbs %}
-<ol class="flex items-center gap-1.5 text-sm">
-    <li><a href="{% url 'kura:home' %}" class="k-muted hover:text-primary">Dashboard</a></li>
-    <li aria-hidden="true" class="k-muted">/</li>
-    <li aria-current="page" class="font-medium text-base-content">My grades</li>
+<ol class="breadcrumb mb-0 small">
+    <li class="breadcrumb-item"><a href="{% url 'kura:home' %}">Dashboard</a></li>
+    <li class="breadcrumb-item active" aria-current="page">My grades</li>
 </ol>
 {% endblock %}
 
 {% block content %}
-<div class="space-y-8">
-    <header class="flex flex-col sm:flex-row sm:items-start sm:justify-between gap-4">
-        <div class="space-y-1">
-            <p class="k-eyebrow">Academic records</p>
-            <h1 class="text-2xl font-bold">My grades</h1>
-            <p class="text-sm k-muted">Released assessment marks and marker feedback.</p>
+<div class="vstack gap-4">
+    <header class="d-flex flex-column flex-sm-row align-items-sm-start justify-content-sm-between gap-3">
+        <div class="vstack gap-1">
+            <p class="text-uppercase small fw-semibold text-body-secondary">Academic records</p>
+            <h1 class="fs-3 fw-bold">My grades</h1>
+            <p class="small text-body-secondary">Released assessment marks and marker feedback.</p>
         </div>
         <div>
-            <a href="{% url 'kura:student_transcript' %}" class="btn btn-outline btn-sm w-full sm:w-auto">
+            <a href="{% url 'kura:student_transcript' %}" class="btn btn-outline-secondary btn-sm w-100">
                 View transcript
             </a>
         </div>
     </header>
 
-    <section class="space-y-3">
-        <div class="k-card p-0 overflow-x-auto">
-            <table class="k-table">
-                <caption class="sr-only">Released assessment grades</caption>
+    <section class="vstack gap-2">
+        <div class="card card-body mb-3 p-0 table-responsive">
+            <table class="table table-sm align-middle">
+                <caption class="visually-hidden">Released assessment grades</caption>
                 <thead>
                     <tr>
-                        <th class="k-sticky-col">Course</th>
+                        <th >Course</th>
                         <th>Assessment</th>
                         <th>Category</th>
-                        <th class="k-num">Score</th>
+                        <th class="text-nowrap">Score</th>
                         <th>Released</th>
                         <th>Feedback</th>
-                        <th class="text-right">Action</th>
                     </tr>
                 </thead>
                 <tbody>
                     {% for g in grades %}
                     <tr>
-                        <td class="font-bold k-sticky-col">{{ g.assessment.section.module.course.code }}</td>
+                        <td class="fw-bold">{{ g.assessment.course.code }}</td>
                         <td>
-                            <div class="font-semibold text-sm">{{ g.assessment.title }}</div>
-                            <div class="text-xs k-muted">{{ g.assessment.section.module.title }}</div>
+                            <div class="fw-semibold small">{{ g.assessment.title }}</div>
+                            <div class="small text-body-secondary">{{ g.assessment.course.title }}</div>
                         </td>
-                        <td><span class="k-eyebrow">{{ g.assessment.component_type }}</span></td>
-                        <td class="k-num font-bold text-sm text-primary">{{ g.score }} / {{ g.assessment.max_score }}</td>
-                        <td class="text-xs k-muted k-num">{{ g.released_at|date:"j M Y, H:i" }}</td>
-                        <td class="text-sm whitespace-pre-line max-w-xs">{{ g.feedback|default:"No feedback given." }}</td>
-                        <td class="text-right">
-                            <a href="{% url 'kura:grade_appeal_create' g.id %}" class="btn btn-ghost btn-sm">
-                                Appeal
-                            </a>
-                        </td>
+                        <td><span class="text-uppercase small fw-semibold text-body-secondary">{{ g.assessment.component_type }}</span></td>
+                        <td class="text-nowrap fw-bold small text-primary">{{ g.score }} / {{ g.assessment.max_score }}</td>
+                        <td class="small text-body-secondary text-nowrap">{{ g.released_at|date:"j M Y, H:i" }}</td>
+                        <td class="small k-pre-line k-max-xs">{{ g.feedback|default:"No feedback given." }}</td>
                     </tr>
                     {% empty %}
                     <tr>
-                        <td colspan="7" class="p-8 text-center">
+                        <td colspan="6" class="p-5 text-center">
                             {% include "kura/_empty.html" with icon="grades" title="No released grades" text="No assessment grades have been released to your account yet." %}
                         </td>
                     </tr>
@@ -69,44 +62,5 @@
             </table>
         </div>
     </section>
-
-    {% if appeals %}
-    <section class="space-y-3">
-        <h2 class="text-lg font-semibold">My appeals</h2>
-        <div class="k-card p-0 overflow-x-auto">
-            <table class="k-table">
-                <caption class="sr-only">Submitted grade appeals</caption>
-                <thead>
-                    <tr>
-                        <th class="k-sticky-col">Assessment</th>
-                        <th class="k-num">Score</th>
-                        <th>Status</th>
-                        <th>Submitted</th>
-                        <th>Response</th>
-                    </tr>
-                </thead>
-                <tbody>
-                    {% for app in appeals %}
-                    <tr>
-                        <td class="k-sticky-col font-medium">{{ app.grade.assessment.title }}</td>
-                        <td class="k-num font-bold">{{ app.grade.score }}</td>
-                        <td>
-                            {% include "kura/_status_badge.html" with kind="appeal" value=app.status %}
-                        </td>
-                        <td class="text-xs k-muted k-num">{{ app.created_at|date:"j M Y, H:i" }}</td>
-                        <td class="text-sm k-muted">
-                            {% if app.response %}
-                            {{ app.response }}
-                            {% else %}
-                            Pending review
-                            {% endif %}
-                        </td>
-                    </tr>
-                    {% endfor %}
-                </tbody>
-            </table>
-        </div>
-    </section>
-    {% endif %}
 </div>
 {% endblock %}

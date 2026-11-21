@@ -167,19 +167,16 @@ class SecurityEnforcementMiddleware:
 
 class RateLimitMiddleware:
     """
-    Applies sliding-window rate limits on file uploads (20/min), autosave calls (120/min)
+    Applies sliding-window rate limits on file uploads (20/min)
     and text searches (60/min) to protect server capacity against bursts.
     """
 
     UPLOAD_URL_NAMES = {
         "assessment_attempt_file_upload",
         "assessment_file_upload",
-        "scanned_paper_staff_upload",
-        # Course material items can carry a file attachment on create and edit.
-        "item_create",
-        "item_edit",
+        # Course material files.
+        "course_file_upload",
     }
-    AUTOSAVE_URL_NAMES = {"assessment_autosave"}
     # List pages with a free-text "q" filter.
     # Enrollment search has its own limit in views.py.
     SEARCH_URL_NAMES = {
@@ -199,7 +196,7 @@ class RateLimitMiddleware:
         limit = None
         bucket = None
         window = 60
-        # Uploads and autosaves are POST.
+        # Uploads are POST.
         # Searches are GET and only count when a search term is sent, so plain page loads and pagination stay free.
         # Counting only touches the rate-limit cache.
         has_search_term = request.method == "GET" and request.GET.get("q", "").strip() != ""
@@ -212,9 +209,6 @@ class RateLimitMiddleware:
                 if match.url_name in self.UPLOAD_URL_NAMES:
                     limit = 20
                     bucket = "upload"
-                elif match.url_name in self.AUTOSAVE_URL_NAMES:
-                    limit = 120
-                    bucket = "autosave"
             elif match is not None and match.url_name in self.SEARCH_URL_NAMES:
                 limit = 60
                 bucket = "search"

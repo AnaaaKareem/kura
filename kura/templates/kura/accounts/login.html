@@ -5,41 +5,41 @@
 {% block form_errors %}{% endblock %}
 
 {% block content %}
-<div class="max-w-md mx-auto my-6">
-    <div class="k-card p-6 sm:p-8 space-y-6">
-        <header class="text-center space-y-2">
-            <h1 class="text-2xl font-bold">Log in</h1>
-            <p class="text-sm k-muted">Use your university email and password.</p>
+<div class="k-max-md mx-auto my-4">
+    <div class="card card-body mb-3 p-4 p-sm-5 vstack gap-4">
+        <header class="text-center vstack gap-2">
+            <h1 class="fs-3 fw-bold">Log in</h1>
+            <p class="small text-body-secondary">Use your university email and password.</p>
         </header>
 
-        <form method="post" action="{% url 'kura:login' %}" class="space-y-4">
+        <form method="post" action="{% url 'kura:login' %}" class="vstack gap-3">
             {% csrf_token %}
             {% include "kura/_form_errors.html" %}
             {% include "kura/_field.html" with field=form.email %}
 
-            <div class="form-control w-full space-y-1">
-                <div class="flex justify-between items-center py-1">
-                    <label for="id_password" class="label p-0">
-                        <span class="label-text font-medium text-sm">Password</span>
+            <div class="w-100 vstack gap-1">
+                <div class="d-flex justify-content-between align-items-center py-1">
+                    <label for="id_password" class="form-label p-0">
+                        <span class="fw-medium small">Password</span>
                     </label>
-                    <a href="{% url 'kura:password_reset_request' %}" class="link link-primary text-xs font-medium">
+                    <a href="{% url 'kura:password_reset_request' %}" class="link-primary small fw-medium">
                         Forgot password?
                     </a>
                 </div>
                 {{ form.password }}
                 {% if form.password.errors %}
-                <p id="id_password-error" class="text-error text-xs font-medium pt-0.5" role="alert">{{ form.password.errors.0 }}</p>
+                <p id="id_password-error" class="text-danger small fw-medium pt-1" role="alert">{{ form.password.errors.0 }}</p>
                 {% endif %}
             </div>
 
             <div class="pt-2">
-                <button type="submit" class="btn btn-primary w-full">
+                <button type="submit" class="btn btn-primary w-100">
                     Log in
                 </button>
             </div>
         </form>
-        <p class="text-center text-xs k-muted pt-2 border-t border-base-300">
-            <a href="{% url 'kura:privacy_notice' %}" class="link link-hover">Privacy notice &amp; data rights</a>
+        <p class="text-center small text-body-secondary pt-2 border-top">
+            <a href="{% url 'kura:privacy_notice' %}" >Privacy notice &amp; data rights</a>
         </p>
     </div>
 </div>

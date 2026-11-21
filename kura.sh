@@ -21,14 +21,14 @@ SECRETS_DIR="secrets"
 GENERATED_SECRETS="db_password backup_encryption_key django_secret_key crowdsec_bouncer_key grafana_admin_password grafana_viewer_password"
 # Secrets that come from outside services or from Vault.
 # We cannot generate these, so setup creates an empty file and says where the value comes from.
-EXTERNAL_SECRETS="telegram_bot_token telegram_chat_id smtp_relay_credentials vault_role_id vault_secret_id"
+EXTERNAL_SECRETS="telegram_bot_token telegram_chat_id vault_role_id vault_secret_id"
 # Host-only secrets written by vault-init (never mounted into a container).
 HOST_ONLY_SECRETS="vault_issuer_role_id vault_issuer_secret_id"
 
 # Private keys and the container user (UID) that reads each one.
-KEY_OWNERS="db:26 web:10001 migrator:10001 waf:101 nginx:0 vault:100 relay:0 alloy:473"
+KEY_OWNERS="db:26 web:10001 migrator:0:10002 waf:101 nginx:0 vault:100 alloy:473"
 # Internal certificates issued by Vault (and by the bootstrap CA before it).
-INTERNAL_CERTS="nginx waf web db vault relay alloy migrator"
+INTERNAL_CERTS="nginx waf web db vault alloy migrator"
 
 DRY_RUN=0
 FORCE=0
@@ -90,7 +90,7 @@ secret_owner() {
         django_secret_key|vault_role_id|vault_secret_id) echo 10001 ;;  # "kura" in our Dockerfile
         grafana_admin_password) echo 472 ;;                    # "grafana" in the Grafana image
         telegram_bot_token|telegram_chat_id) echo 65534 ;;     # "nobody" in the Alertmanager image
-        *) echo 0 ;;  # crowdsec_bouncer_key, smtp_relay_credentials (read as root), host-only files
+        *) echo 0 ;;  # crowdsec_bouncer_key (read as root), host-only files
     esac
 }
 
@@ -179,7 +179,10 @@ Checks
   health             Container health, the HTTPS site and Grafana's health endpoint
 
 Operations
+  firewall-bouncer   Install the CrowdSec nftables bouncer config (key from secrets/) and enable it
   app-metrics        Write Kura's application counts for Alloy (every-minute cron)
+  egress-refresh     Resolve Gmail SMTP and HaveIBeenPwned to IP addresses and refresh
+                     the host firewall egress allowlists (every-10-minutes cron)
   restore-drill [T]  Restore the backup (latest, or time T) into a throwaway database
                      and compare row counts with the live one; the live database is untouched
   help               This list
@@ -223,7 +226,6 @@ cmd_secrets() {
         case "$name" in
             telegram_bot_token) source="Telegram @BotFather" ;;
             telegram_chat_id) source="the Telegram chat that receives alerts" ;;
-            smtp_relay_credentials) source="your Gmail account and app password. One line: [smtp.gmail.com]:587 username@gmail.com:app-password" ;;
             *) source="Vault. ./kura.sh vault-init writes it for you" ;;
         esac
         if [ -s "$file" ]; then
@@ -349,8 +351,6 @@ cmd_mtls_bootstrap() {
     bootstrap_cert db db "DNS:db,DNS:db.kura.internal,DNS:localhost,IP:127.0.0.1"
     # Vault: Django checks "vault"; the vault tool inside the container checks 127.0.0.1.
     bootstrap_cert vault vault "DNS:vault,DNS:vault.kura.internal,DNS:localhost,IP:127.0.0.1"
-    # Mail relay (server for Django's email).
-    bootstrap_cert relay relay "DNS:relay"
     # Alloy (client certificate for its PostgreSQL login as role "alloy").
     bootstrap_cert alloy alloy "DNS:alloy"
     # Migration role (client certificate for migrations as role "kura_migrator").
@@ -398,6 +398,9 @@ set_key_owners() {
     for entry in $KEY_OWNERS; do
         chown "${entry#*:}" "$CERT_DIR/${entry%%:*}.key"
     done
+    # The migration key is readable only by root and group 10002; Gunicorn runs without that group.
+    chown 0:10002 "$CERT_DIR/migrator.key"
+    chmod 0440 "$CERT_DIR/migrator.key"
 }
 
 # vault-init
@@ -410,7 +413,7 @@ set_key_owners() {
 # Nothing is saved to disk.
 # 2. Unseal.
 # 3. Audit log (every request, secrets hashed) to the container output.
-# 4. Transit keys kura-mfa, kura-answer-keys (AES-256-GCM) and kura-files (RSA-4096).
+# 4. Transit keys kura-mfa (AES-256-GCM) and kura-files (RSA-4096).
 # 5. Temporary database users (database engine).
 # 6. The "kura-web" policy and Django's AppRole login, written to secrets/.
 # 7. Kura's CA inside Vault: a root CA that only signs an intermediate CA.
@@ -478,17 +481,14 @@ cmd_vault_init() {
 
     # 4. Transit engine and the key that encrypts authenticator seeds.
     # Vault keeps the key inside; Django can only ask Vault to use it.
-    say "[4/9] Creating the kura-mfa, kura-answer-keys, and kura-files encryption keys..."
+    say "[4/9] Creating the kura-mfa and kura-files encryption keys..."
     vault_root secrets enable transit > /dev/null
     vault_root write -f transit/keys/kura-mfa type=aes256-gcm96 > /dev/null
-    # A second key, used only for exam answer keys (ExamAnswerKey.answer_key_json).
-    vault_root write -f transit/keys/kura-answer-keys type=aes256-gcm96 > /dev/null
     # An RSA-4096 key used to wrap per-file AES-256-GCM data keys (FileContent.wrapped_key).
     vault_root write -f transit/keys/kura-files type=rsa-4096 > /dev/null
     # Rotate Transit keys every 30 days (720h).
-    # Vault Transit keeps old key versions, so previously encrypted seeds, answer keys, and file keys still decrypt (LOG-05).
+    # Vault Transit keeps old key versions, so previously encrypted seeds and file keys still decrypt (LOG-05).
     vault_root write transit/keys/kura-mfa/config auto_rotate_period=720h > /dev/null
-    vault_root write transit/keys/kura-answer-keys/config auto_rotate_period=720h > /dev/null
     vault_root write transit/keys/kura-files/config auto_rotate_period=720h > /dev/null
 
     # 5. Temporary database users.
@@ -578,7 +578,7 @@ cmd_vault_init() {
     # cn_validations=disabled lets the common name be "kura_migrator", a PostgreSQL
     # user name that is not a valid host name. allowed_domains still limits the names.
     vault_root write pki_int/roles/kura-service \
-        allowed_domains="nginx,waf,web,db,vault,relay,alloy,kura_migrator,localhost" \
+        allowed_domains="nginx,waf,web,db,vault,alloy,kura_migrator,localhost" \
         allow_bare_domains=true \
         allow_subdomains=false \
         allow_wildcard_certificates=false \
@@ -746,7 +746,6 @@ cmd_renew_certs() {
     issue_certificate web "web,localhost" 720h
     issue_certificate db "db,localhost" 720h
     issue_certificate vault "vault,localhost" 8760h
-    issue_certificate relay "relay" 720h
     issue_certificate alloy "alloy" 720h
     issue_certificate migrator "kura_migrator" 720h
     # The root CA certificate becomes ca.crt: the one thing every service trusts.
@@ -793,10 +792,6 @@ cmd_renew_certs() {
     if is_running nginx; then
         docker compose exec -T nginx nginx -s reload
         echo "      nginx: reloaded"
-    fi
-    if is_running relay; then
-        docker compose exec -T relay postfix reload
-        echo "      relay: postfix reloaded"
     fi
     if is_running web; then
         docker compose kill -s SIGHUP web > /dev/null 2>&1
@@ -859,7 +854,7 @@ write_cert_metrics() {
     {
         echo "# HELP kura_cert_expiry_timestamp_seconds When each internal certificate expires (Unix time)."
         echo "# TYPE kura_cert_expiry_timestamp_seconds gauge"
-        for NAME in nginx waf web db vault relay alloy; do
+        for NAME in nginx waf web db vault alloy; do
             EXPIRY_TEXT=$(openssl x509 -noout -enddate -in "$CERT_DIR/$NAME.crt" | cut -d= -f2)
             EXPIRY_SECONDS=$(python3 -c 'import sys, datetime; print(int(datetime.datetime.strptime(sys.argv[1], "%b %d %H:%M:%S %Y %Z").replace(tzinfo=datetime.timezone.utc).timestamp()))' "$EXPIRY_TEXT")
             echo "kura_cert_expiry_timestamp_seconds{service=\"$NAME\"} $EXPIRY_SECONDS"
@@ -1032,7 +1027,7 @@ check_compose_config() {
 # Django's deployment checklist, inside the web image in a throwaway container (removed afterwards).
 # Only the check output is shown, never the environment.
 check_django_deploy() {
-    if docker compose run --rm --no-deps -T web python manage.py check --deploy --fail-level WARNING > /tmp/kura-check-deploy.$$ 2>&1; then
+    if docker compose run --rm --no-deps -T -u 10001:10001 --entrypoint python web manage.py check --deploy --fail-level WARNING > /tmp/kura-check-deploy.$$ 2>&1; then
         pass "manage.py check --deploy"
     else
         fail "manage.py check --deploy reported problems:"
@@ -1200,9 +1195,7 @@ cmd_health() {
     # "|" separates the fields because Health is empty without a health check.
     docker compose ps -a --format '{{.Service}}|{{.State}}|{{.Health}}|{{.ExitCode}}' > /tmp/kura-health.$$
     while IFS='|' read -r service state health exit_code; do
-        if [ "$service" = "collectstatic" ] && [ "$state" = "exited" ] && [ "$exit_code" = "0" ]; then
-            pass "collectstatic finished"
-        elif [ "$state" = "running" ] && { [ "$health" = "healthy" ] || [ -z "$health" ]; }; then
+        if [ "$state" = "running" ] && { [ "$health" = "healthy" ] || [ -z "$health" ]; }; then
             pass "$service is running${health:+ ($health)}"
         else
             fail "$service is $state${health:+ ($health)}"
@@ -1262,15 +1255,19 @@ cmd_setup() {
         cmd_mtls_bootstrap
     fi
 
-    # Build the images Kura builds itself (web, relay, breach-proxy).
+    # Build the images Kura builds itself (web and nginx).
     if ! planned "build the local images"; then
         docker compose build
     fi
 
-    # The database must be up and migrated before Vault can create its roles.
-    if ! planned "start db and wait until healthy, then run migrations (tools profile)"; then
+    # The database must be up before Vault can create its roles.
+    if ! planned "start db and wait until healthy"; then
         docker compose up -d --wait db
-        docker compose --profile tools run --rm migrate
+    fi
+
+    # Migrate as kura_migrator through the web entrypoint before Vault exists.
+    if ! planned "run migrations as kura_migrator"; then
+        docker compose run --rm --no-deps web migrate-only
     fi
 
     # A new, empty Docker volume belongs to root.
@@ -1304,15 +1301,63 @@ cmd_setup() {
         die "Vault is sealed. Unseal it, then run setup again:  docker compose exec vault vault operator unseal"
     fi
 
-    # Static files, then the whole stack.
-    if ! planned "collect static files, start the stack and wait until healthy"; then
-        docker compose run --rm collectstatic > /dev/null
+    # Start the whole stack and wait until healthy.
+    if ! planned "start the stack and wait until healthy"; then
         docker compose up -d --wait
     fi
 
     cmd_grafana_users
+    # The bouncer is a host package; setup skips it when the package is not installed.
+    if command -v crowdsec-firewall-bouncer > /dev/null 2>&1; then
+        cmd_firewall_bouncer
+    else
+        skip "crowdsec-firewall-bouncer-nftables not installed (see docker/nftables/README.md, then run: sudo ./kura.sh firewall-bouncer)"
+    fi
     if ! planned "run the health checks"; then
         cmd_health
+    fi
+}
+
+# firewall-bouncer
+
+# Install the CrowdSec nftables firewall bouncer's configuration and enable its service.
+# It copies bans from CrowdSec's Local API (127.0.0.1:8085) into the kura_host nftables sets.
+# The API key comes from secrets/crowdsec_bouncer_key.txt and is never printed.
+# Needs the crowdsec-firewall-bouncer-nftables package (apt) and the rules from docker/nftables/kura.nft loaded.
+# Safe to repeat: the file is rewritten only when its content would change.
+cmd_firewall_bouncer() {
+    need_root firewall-bouncer
+    template="docker/crowdsec/crowdsec-firewall-bouncer.yaml"
+    target="/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml"
+    [ -f "$SECRETS_DIR/crowdsec_bouncer_key.txt" ] || die "Missing $SECRETS_DIR/crowdsec_bouncer_key.txt (run: sudo ./kura.sh secrets)."
+    if ! command -v crowdsec-firewall-bouncer > /dev/null 2>&1; then
+        die "Package crowdsec-firewall-bouncer-nftables is not installed (see docker/nftables/README.md)."
+    fi
+    if planned "write $target (mode 600, root) and enable crowdsec-firewall-bouncer"; then
+        return 0
+    fi
+    # Put the key into a copy of the template; awk reads it from the environment so it never appears in a command line.
+    new_file=$(mktemp)
+    chmod 600 "$new_file"
+    BOUNCER_KEY=$(read_secret crowdsec_bouncer_key) awk '
+        /^api_key:/ { print "api_key: \"" ENVIRON["BOUNCER_KEY"] "\""; next }
+        { print }' "$template" > "$new_file"
+    if [ -f "$target" ] && cmp -s "$new_file" "$target"; then
+        skip "$target is up to date"
+    else
+        install -d -m 755 "$(dirname "$target")"
+        install -o root -g root -m 600 "$new_file" "$target"
+        say "Wrote $target"
+    fi
+    rm -f "$new_file"
+    # The bouncer only fills sets that already exist, so start it only once the Kura rules are loaded.
+    if nft list table inet kura_host > /dev/null 2>&1; then
+        systemctl enable --now crowdsec-firewall-bouncer
+        systemctl restart crowdsec-firewall-bouncer
+        say "crowdsec-firewall-bouncer enabled and running"
+    else
+        systemctl enable crowdsec-firewall-bouncer
+        say "Enabled crowdsec-firewall-bouncer but did not start it: table inet kura_host is not loaded (apply docker/nftables/kura.nft, then run this again)."
     fi
 }
 
@@ -1326,9 +1371,34 @@ cmd_app_metrics() {
     fi
     metrics_directory=${KURA_METRICS_DIR:-/var/lib/kura-metrics}
     mkdir -p "$metrics_directory"
-    docker compose exec -T web python manage.py write_app_metrics > "$metrics_directory/kura_app.prom.tmp"
+    docker compose exec -T -u 10001:10001 web python manage.py write_app_metrics > "$metrics_directory/kura_app.prom.tmp"
     chmod 0644 "$metrics_directory/kura_app.prom.tmp"
     mv -f "$metrics_directory/kura_app.prom.tmp" "$metrics_directory/kura_app.prom"
+}
+
+# egress-refresh
+
+# Resolve Gmail SMTP and HaveIBeenPwned to IP addresses and add them to the host firewall
+# egress allowlists, with a 2-hour timeout so stale entries expire. Safe to run while the
+# stack is up: adding elements never replaces the table.
+# Needs root on Linux (nftables) and the kura_host table already loaded.
+cmd_egress_refresh() {
+    need_root egress-refresh
+    is_linux || die "egress-refresh is Linux only (nftables)."
+    for name in smtp.gmail.com api.pwnedpasswords.com; do
+        case "$name" in
+            smtp.gmail.com) set="egress_smtp" ;;
+            api.pwnedpasswords.com) set="egress_hibp" ;;
+        esac
+        for ip in $(getent ahostsv4 "$name" 2>/dev/null | awk '{print $1}' | sort -u); do
+            [ -n "$ip" ] || continue
+            if planned "add $ip to inet kura_host $set (timeout 2h)"; then
+                continue
+            fi
+            nft add element inet kura_host "$set" "{ $ip timeout 2h }" 2>/dev/null || true
+        done
+    done
+    say "Egress allowlists refreshed"
 }
 
 # restore-drill
@@ -1470,7 +1540,9 @@ case "$COMMAND" in
     grafana-users) cmd_grafana_users ;;
     preflight) cmd_preflight ;;
     health) cmd_health ;;
+    firewall-bouncer) cmd_firewall_bouncer ;;
     app-metrics) cmd_app_metrics ;;
+    egress-refresh) cmd_egress_refresh ;;
     restore-drill) cmd_restore_drill "$ARGUMENT" ;;
     *) die "Unknown command: $COMMAND (see ./kura.sh help)" ;;
 esac

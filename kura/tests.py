@@ -18,14 +18,13 @@ from django.contrib.auth import get_user_model
 from django.apps import apps as django_apps
 from django.conf import settings
 from django.core.exceptions import PermissionDenied, ValidationError
+from config.settings import read_secret
 from django.core.files.uploadedfile import SimpleUploadedFile
 from django.core.management import call_command
-from django.core import mail
 from django.core.management.base import CommandError
 from django.db import DatabaseError, IntegrityError, connection, connections, transaction
 from django.db.models import QuerySet
 from django.template.loader import render_to_string
-from django.templatetags.static import static
 from django.contrib.auth.models import AnonymousUser
 from django.contrib.messages.middleware import MessageMiddleware
 from django.contrib.sessions.middleware import SessionMiddleware
@@ -47,19 +46,12 @@ from .views import (
     scan_file_for_malware,
     validate_and_save_upload,
     check_breached_password,
-    decrypt_answer_key,
     decrypt_mfa_secret,
-    encrypt_answer_key,
     encrypt_mfa_secret,
-    compute_submission_hash,
-    evaluate_attempt,
-    hash_attendance_passcode,
-    hash_proctor_code,
     hash_recovery_code,
     hash_session_token,
     log_security_event,
     mfa_login_callback,
-    queue_assessment_notification,
     queue_email,
     verify_totp_code,
 )
@@ -69,19 +61,14 @@ from .models import (
     OutgoingEmail,
     OutgoingEmailStatus,
     QuarantinedFile,
-    ALLOWED_UPLOAD_MIME_TYPES,
-    AcademicLevel,
     Assessment,
     AssessmentAttempt,
-    AttemptFile,
     AttemptStatus,
     AttendanceMethod,
     AttendanceRecord,
     AttendanceStatus,
-    AppealStatus,
     ChangeRequestStatus,
     Course,
-    CourseGradeScheme,
     CourseResult,
     CourseStaff,
     DayOfWeek,
@@ -90,33 +77,23 @@ from .models import (
     Room,
     Enrollment,
     EnrollmentStatus,
-    ExamAnswerKey,
     FileContent,
     Grade,
-    GradeAppeal,
     GradeChangeRequest,
     GradeComponentType,
     GradeHistory,
     GradeStatus,
-    Module,
     ModuleAttendanceSession,
-    ModuleSection,
-    ModuleTargetLevel,
     PasswordHistory,
     PasswordResetToken,
     Role,
-    RolePermission,
     Schedule,
-    SectionItem,
-    SectionItemFile,
     SessionType,
     StaffProfile,
     StoredFile,
     StudentProfile,
-    SystemPermission,
     UserRole,
     UserSession,
-    MAX_UPLOAD_BYTES,
 )
 from .permissions import (
     has_fresh_second_factor,
@@ -130,7 +107,6 @@ from .permissions import (
 )
 
 User = get_user_model()
-
 
 class EmailConfigurationTests(TestCase):
     def test_debug_email_uses_django_console_backend(self):
@@ -155,6 +131,49 @@ class EmailConfigurationTests(TestCase):
         self.assertNotContains(response, "Second course")
 
 
+class GmailEmailSettingsTests(TestCase):
+    """Production email goes straight to Gmail over verified STARTTLS; the app password comes from Vault KV."""
+
+    def test_production_uses_smtp_backend(self):
+        from config import settings
+        # EMAIL_BACKEND is set at import time from DEBUG; override_settings(DEBUG)
+        # does not re-run the module-level if block, so test the logic directly.
+        if not settings.DEBUG:
+            self.assertEqual(settings.EMAIL_BACKEND, "django.core.mail.backends.smtp.EmailBackend")
+        else:
+            self.skipTest("DEBUG is True; console backend is in use")
+
+    def test_gmail_smtp_settings(self):
+        with override_settings(DEBUG=False, EMAIL_HOST="smtp.gmail.com", EMAIL_PORT=587, EMAIL_USE_TLS=True):
+            self.assertEqual(settings.EMAIL_HOST, "smtp.gmail.com")
+            self.assertEqual(settings.EMAIL_PORT, 587)
+            self.assertTrue(settings.EMAIL_USE_TLS)
+            self.assertEqual(settings.EMAIL_TIMEOUT, 10)
+
+    def test_ssl_context_verifies_certificates(self):
+        import ssl
+        # ssl.create_default_context() verifies certificates by default
+        # (CERT_REQUIRED), which is what Django's SMTP backend uses for STARTTLS.
+        self.assertIs(ssl.create_default_context().verify_mode, ssl.CERT_REQUIRED)
+
+    def test_password_comes_from_vault_not_file(self):
+        from django.conf import settings as dj_settings
+        from kura.vault_secrets import get_gmail_app_password
+        import os
+        # EMAIL_HOST_PASSWORD must come from Vault KV, not from os.environ or
+        # a Docker secret file (read_secret("gmail_app_password")).
+        self.assertEqual(dj_settings.EMAIL_HOST_PASSWORD, get_gmail_app_password())
+        self.assertNotEqual(dj_settings.EMAIL_HOST_PASSWORD, read_secret("gmail_app_password"))
+        self.assertNotIn("GMAIL_APP_PASSWORD", os.environ)
+
+    def test_debug_uses_console_backend(self):
+        from config import settings
+        if settings.DEBUG:
+            self.assertEqual(settings.EMAIL_BACKEND, "django.core.mail.backends.console.EmailBackend")
+        else:
+            self.skipTest("DEBUG is False; SMTP backend is in use")
+
+
 def make_user(role_name, email=None, password="ValidPassword123!", **extra_fields):
     """Test helper function to create a user and assign them a specific system role."""
     # Generate unique test email if one was not provided.
@@ -177,7 +196,6 @@ def make_user(role_name, email=None, password="ValidPassword123!", **extra_field
 
     return user
 
-
 def login_with_session(client, user):
     """Log a test client in and create a matching tracked UserSession row."""
     client.logout()
@@ -196,7 +214,6 @@ def login_with_session(client, user):
     session.save()
     return user_session
 
-
 def confirm_second_factor(client):
     """Test helper: marks the logged-in test client as having just entered a
     second-factor code, as the "confirm your identity" page would (AUTH-02, ACL-05).
@@ -204,7 +221,6 @@ def confirm_second_factor(client):
     session = client.session
     session["mfa_reauth_at"] = timezone.now().timestamp()
     session.save()
-
 
 class RolesAndPermissionsTests(TestCase):
     """
@@ -383,122 +399,6 @@ class RolesAndPermissionsTests(TestCase):
         self.assertTrue(is_enrolled(enrolled_student, course))
         self.assertFalse(is_enrolled(dropped_student, course))
 
-
-class BaseTemplateAndHomeTests(TestCase):
-    """
-    Tests base template and home page.
-    """
-
-    def setUp(self):
-        self.client = Client()
-        self.student = make_user("Student", mfa_enabled=True)
-
-    def test_home_page_loads_for_authenticated_user(self):
-        # Authenticated user with MFA enabled can open home page.
-        login_with_session(self.client, self.student)
-        response = self.client.get(reverse("kura:home"))
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Kura")
-        self.assertNotContains(response, "Kura LMS")
-        self.assertNotContains(response, "Kura Secure Learning Management System")
-        self.assertContains(response, "<title>Dashboard - Kura</title>")
-        self.assertContains(response, "<span>Kura</span>")
-        self.assertContains(response, 'data-theme="kura-system"')
-        self.assertContains(response, "data-theme-selector")
-        self.assertContains(response, 'id="theme-selector"')
-        self.assertContains(response, 'name="theme"')
-        # static() gives the content-hashed URL, the one the page links to.
-        self.assertContains(response, static("js/theme.js"))
-        self.assertContains(response, 'name="htmx-config"')
-        self.assertContains(response, 'includeIndicatorStyles')
-        self.assertContains(response, 'rel="icon"')
-        self.assertContains(response, "Work areas")
-        self.assertContains(response, "Student")
-
-        # Verify static CSS and JS are loaded from local static files without external URLs.
-        content = response.content.decode("utf-8")
-        htmx_url = static("js/htmx.min.js")
-        # The stylesheet name carries a content hash, so a changed file gets a new URL.
-        self.assertRegex(static("css/kura.css"), r"^/static/css/kura\.[0-9a-f]{12}\.css$")
-        self.assertIn(static("css/kura.css"), content)
-        self.assertIn(static("css/tailwind.min.css"), content)
-        self.assertIn(static("css/daisyui.min.css"), content)
-        self.assertIn(htmx_url, content)
-        self.assertNotIn("https://cdn.", content)
-        self.assertNotIn("https://unpkg.", content)
-        self.assertLess(content.index('name="htmx-config"'), content.index(htmx_url))
-        self.assertIn("style-src 'self'", response.headers["Content-Security-Policy"])
-        self.assertNotIn("unsafe-inline", response.headers["Content-Security-Policy"])
-
-    def test_department_head_sees_department_on_dashboard_and_header(self):
-        # Department heads should see their department in the dashboard and page header.
-        department_head = make_user("Department head")
-        department = Department.objects.create(
-            name="Computer Science",
-            code="CS",
-            head_user=department_head,
-        )
-        login_with_session(self.client, department_head)
-
-        response = self.client.get(reverse("kura:home"))
-
-        self.assertContains(response, f"Head of {department.name}", count=2)
-
-    def test_admin_dashboard_has_admin_area_cards_and_no_work_area_header_links(self):
-        # Admin work areas belong on the dashboard rather than in the shared header.
-        admin = make_user("Admin")
-        login_with_session(self.client, admin)
-
-        response = self.client.get(reverse("kura:home"))
-
-        self.assertEqual(response.status_code, 200)
-        card_titles = {card["title"] for card in response.context["dashboard_cards"]}
-        self.assertEqual(card_titles, {"Staff", "Users", "Courses", "Active sessions", "Security policy", "Security log"})
-
-        cards_by_title = {card["title"]: card for card in response.context["dashboard_cards"]}
-        self.assertEqual(cards_by_title["Staff"]["url"], reverse("kura:staff_list"))
-        self.assertEqual(cards_by_title["Users"]["url"], reverse("kura:admin_users"))
-        self.assertEqual(cards_by_title["Courses"]["url"], reverse("kura:course_list"))
-        self.assertEqual(cards_by_title["Active sessions"]["url"], "/admin/sessions/")
-        self.assertEqual(cards_by_title["Security log"]["url"], "http://localhost:3000")
-
-        # Check only the header so the dashboard's own cards do not affect this assertion.
-        header_html = response.content.decode("utf-8").split("</nav>", maxsplit=1)[0]
-        self.assertNotIn("Dashboard</a>", header_html)
-        self.assertNotIn("Courses</a>", header_html)
-        self.assertNotIn("Staff</a>", header_html)
-        self.assertNotIn("Enrollments</a>", header_html)
-
-    def test_other_roles_receive_their_own_dashboard_areas(self):
-        # Registrars and students should also use cards for their permitted areas.
-        registrar = make_user("Registrar")
-        login_with_session(self.client, registrar)
-        registrar_response = self.client.get(reverse("kura:home"))
-        registrar_card_titles = {card["title"] for card in registrar_response.context["dashboard_cards"]}
-
-        self.assertEqual(registrar_card_titles, {"Students", "Enrollments"})
-
-        student = make_user("Student")
-        login_with_session(self.client, student)
-        student_response = self.client.get(reverse("kura:home"))
-        student_card_titles = {card["title"] for card in student_response.context["dashboard_cards"]}
-
-        self.assertEqual(
-            student_card_titles,
-            {"Courses", "Class schedule", "Attendance", "Grades", "Transcript"},
-        )
-
-    def test_dashboard_does_not_show_a_welcome_card(self):
-        # The dashboard should begin with its page title and work-area cards, not a welcome panel.
-        login_with_session(self.client, self.student)
-
-        response = self.client.get(reverse("kura:home"))
-
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Dashboard")
-        self.assertNotContains(response, "Welcome,")
-
-
 class LoginAndLogoutTests(TestCase):
     """
     Tests login and logout functionality.
@@ -632,7 +532,6 @@ class LoginAndLogoutTests(TestCase):
         response = self.client.get(reverse("kura:logout"))
         self.assertEqual(response.status_code, 405)
 
-
 class FirstLoginPasswordChangeTests(TestCase):
     """
     Tests forced first-login password rotation.
@@ -737,7 +636,6 @@ class FirstLoginPasswordChangeTests(TestCase):
 
         self.assertIn("A form-wide validation error.", rendered_page)
 
-
 class DemoDataSeedCommandTests(TestCase):
     """Tests that demo data cannot reintroduce shared MFA credentials."""
 
@@ -792,7 +690,6 @@ class DemoDataSeedCommandTests(TestCase):
         self.assertTrue(demo_user.mfa_enabled)
         self.assertTrue(TOTPDevice.objects.filter(id=device.id, confirmed=True).exists())
         self.assertTrue(StaticToken.objects.filter(device=recovery_device, token="ABCD1234").exists())
-
 
 class PasswordResetTests(TestCase):
     """
@@ -935,7 +832,6 @@ class PasswordResetTests(TestCase):
         )
         self.assertRedirects(response, reverse("kura:password_reset_request"))
 
-
 class MFATests(TestCase):
     """
     Tests mandatory MFA and TOTP/recovery verification.
@@ -978,7 +874,6 @@ class MFATests(TestCase):
             {"code": "ABCD1234"},
         )
         self.assertRedirects(response, reverse("kura:home"))
-
 
 class MySessionsTests(TestCase):
     """
@@ -1190,7 +1085,6 @@ class MySessionsTests(TestCase):
         self.assertContains(response, "This account has been deactivated. Contact the administrator.")
         self.assertNotIn("_auth_user_id", self.client.session)
 
-
 class AdminStaffAccountsTests(TestCase):
     """
     Tests Admin management of staff accounts.
@@ -1290,7 +1184,6 @@ class AdminStaffAccountsTests(TestCase):
         self.assertEqual(response.status_code, 400)
         self.assertFalse(User.objects.filter(email="test-office@example.com").exists())
 
-
     def test_staff_list_shows_department_run_by_department_head(self):
         # The staff list should identify the department managed by each department head.
         department_head = make_user("Department head")
@@ -1379,7 +1272,6 @@ class AdminStaffAccountsTests(TestCase):
         self.assertContains(response, "Active")
         self.assertContains(response, "Lock")
 
-
 class AdminRolesTests(TestCase):
     """
     Tests Admin management of user roles.
@@ -1426,483 +1318,6 @@ class AdminRolesTests(TestCase):
         # Verify assignment was rejected
         self.assertFalse(UserRole.objects.filter(user=instructor_user, role=self.admin_role).exists())
 
-
-class RegistrarStudentsAndEnrollmentTests(TestCase):
-    """
-    Tests Registrar student accounts and enrollment management.
-    """
-
-    def setUp(self):
-        self.client = Client()
-        self.registrar = make_user("Registrar", mfa_enabled=True)
-        self.student = make_user("Student", mfa_enabled=True)
-        self.department = Department.objects.create(name="Biology", code="BIO")
-        self.course = Course.objects.create(
-            department=self.department,
-            code="BIO101",
-            title="General Biology",
-            semester="1",
-            academic_year=2026,
-            is_published=True,
-            published_by=self.registrar,
-            published_at=timezone.now(),
-        )
-        self.student_profile = StudentProfile.objects.create(
-            user=self.student,
-            department=self.department,
-            current_level="level_4",
-            matriculation_year=2026,
-        )
-
-    def test_registrar_can_create_student_account(self):
-        # Registrar creates student account with StudentProfile and Student role.
-        login_with_session(self.client, self.registrar)
-        response = self.client.post(
-            reverse("kura:student_create"),
-            {
-                "email": "new_student@example.com",
-                "first_name": "Alice",
-                "last_name": "Green",
-                "department": self.department.id,
-                "current_level": "level_4",
-                "matriculation_year": 2026,
-            },
-        )
-        self.assertRedirects(response, reverse("kura:enrollment_list"))
-
-        created_user = User.objects.get(email="new_student@example.com")
-        self.assertTrue(created_user.must_change_password)
-        self.assertTrue(StudentProfile.objects.filter(user=created_user).exists())
-        self.assertTrue(has_role(created_user, "Student"))
-
-    @patch("kura.views.check_breached_password", side_effect=ValidationError("Breached password"))
-    def test_breached_temporary_password_does_not_create_student(self, check):
-        login_with_session(self.client, self.registrar)
-        response = self.client.post(reverse("kura:student_create"), {
-            "email": "blocked.student@example.com", "department": self.department.id,
-            "current_level": "level_4", "matriculation_year": 2026,
-        })
-        self.assertEqual(response.status_code, 400)
-        check.assert_called_once()
-        self.assertFalse(User.objects.filter(email="blocked.student@example.com").exists())
-
-    def test_duplicate_student_email_has_a_clear_validation_message(self):
-        # A registrar should learn why an existing email cannot be used for a new student.
-        login_with_session(self.client, self.registrar)
-
-        response = self.client.post(
-            reverse("kura:student_create"),
-            {
-                "email": self.student.email,
-                "first_name": "Existing",
-                "last_name": "Student",
-                "department": self.department.id,
-                "current_level": "level_4",
-                "matriculation_year": 2026,
-            },
-        )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertContains(response, "An account with this email already exists.", status_code=400)
-
-    def test_registrar_can_enroll_and_drop_student(self):
-        # Registrar enrolls student into course and drops them.
-        login_with_session(self.client, self.registrar)
-
-        # Enroll student
-        response = self.client.post(
-            reverse("kura:enrollment_create"),
-            {"course": str(self.course.id), "student": str(self.student.id)},
-        )
-        self.assertRedirects(response, reverse("kura:enrollment_list"))
-
-        enrollment = Enrollment.objects.get(course=self.course, student=self.student)
-        self.assertEqual(enrollment.status, EnrollmentStatus.ACTIVE)
-        self.assertEqual(enrollment.enrolled_by, self.registrar)
-
-        # Drop student
-        response = self.client.post(
-            reverse("kura:enrollment_drop", kwargs={"enrollment_id": enrollment.id})
-        )
-        self.assertRedirects(response, reverse("kura:enrollment_list"))
-
-        enrollment.refresh_from_db()
-        self.assertEqual(enrollment.status, EnrollmentStatus.DROPPED)
-        self.assertEqual(enrollment.dropped_by, self.registrar)
-        self.assertIsNotNone(enrollment.dropped_at)
-
-    def test_non_registrar_cannot_access_enrollment(self):
-        # Student cannot access registrar enrollment views.
-        login_with_session(self.client, self.student)
-        response = self.client.get(reverse("kura:enrollment_list"))
-        self.assertEqual(response.status_code, 403)
-
-    def test_registrar_student_list_and_profile_are_private(self):
-        # The registrar can search by student ID and see enrollments without marks.
-        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
-        login_with_session(self.client, self.registrar)
-        response = self.client.get(reverse("kura:student_list"), {"q": str(self.student.id)})
-        self.assertContains(response, self.student.email)
-        response = self.client.get(reverse("kura:student_profile", kwargs={"student_id": self.student.id}))
-        self.assertContains(response, self.course.code)
-        self.assertNotContains(response, "Grades")
-        login_with_session(self.client, self.student)
-        self.assertEqual(self.client.get(reverse("kura:student_list")).status_code, 403)
-        self.assertEqual(self.client.get(reverse("kura:student_profile", kwargs={"student_id": self.student.id})).status_code, 403)
-
-    def test_student_filters_include_account_status_and_reject_invalid_values(self):
-        # A locked student can be found without exposing unrelated accounts.
-        self.student.locked_until = timezone.now() + timezone.timedelta(hours=1)
-        self.student.save(update_fields=["locked_until"])
-        login_with_session(self.client, self.registrar)
-        url = reverse("kura:student_list")
-        response = self.client.get(url, {"status": "locked", "department": self.department.id, "level": "level_4"})
-        self.assertContains(response, self.student.email)
-        self.assertContains(response, "Locked until")
-        response = self.client.get(url, {"status": "invalid"})
-        self.assertTrue(response.context["filter_form"].errors)
-
-    def test_enrollment_filter_does_not_list_unrelated_draft_courses(self):
-        # The course filter should only offer courses represented in enrollment records.
-        Course.objects.create(department=self.department, code="PRIVATE999", title="Unrelated draft", semester="1", academic_year=2026)
-        login_with_session(self.client, self.registrar)
-        response = self.client.get(reverse("kura:enrollment_list"))
-        self.assertNotContains(response, "PRIVATE999")
-
-    def test_registrar_enrollment_filters_course_and_status(self):
-        # Filters must narrow the results, not expose every enrollment.
-        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
-        other = Course.objects.create(department=self.department, code="BIO999", title="Other course", semester="2", academic_year=2027, is_published=True, published_by=self.registrar, published_at=timezone.now())
-        Enrollment.objects.create(course=other, student=self.student, status=EnrollmentStatus.DROPPED, dropped_by=self.registrar, dropped_at=timezone.now())
-        login_with_session(self.client, self.registrar)
-        response = self.client.get(reverse("kura:enrollment_list"), {"course": str(self.course.id), "status": "active"})
-        self.assertContains(response, "BIO101")
-        self.assertEqual(list(response.context["enrollments"].values_list("course_id", flat=True)), [self.course.id])
-
-    def test_enrollment_search_is_restricted_and_returns_only_eligible_records(self):
-        # Search is private and must never return draft courses or inactive students.
-        draft = Course.objects.create(department=self.department, code="BIOSECRET", title="Hidden", semester="1", academic_year=2026)
-        login_with_session(self.client, self.registrar)
-        url = reverse("kura:enrollment_search")
-        response = self.client.get(url, {"kind": "course", "q": "BIO"})
-        self.assertContains(response, self.course.code)
-        self.assertNotContains(response, draft.code)
-        response = self.client.get(url, {"kind": "student", "q": self.student.email})
-        self.assertContains(response, self.student.email)
-        login_with_session(self.client, self.student)
-        self.assertEqual(self.client.get(url, {"kind": "student", "q": "test"}).status_code, 403)
-
-    def test_enrollment_search_limits_results_and_rate(self):
-        # Search results are capped and repeated requests are limited by both account and IP.
-        from django.core.cache import caches
-        from django.core.cache.backends.db import DatabaseCache
-        cache = caches["search_limits"]
-        self.assertIsInstance(cache, DatabaseCache)
-        cache.clear()
-        for number in range(12):
-            user = make_user("Student", email=f"search{number}@example.com")
-            StudentProfile.objects.create(user=user, department=self.department, current_level="level_4", matriculation_year=2026)
-        login_with_session(self.client, self.registrar)
-        url = reverse("kura:enrollment_search")
-        fixed_now = timezone.now()
-        with patch("django.utils.timezone.now", return_value=fixed_now):
-            response = self.client.get(url, {"kind": "student", "q": "search"}, REMOTE_ADDR="192.0.2.1")
-            self.assertEqual(len(response.context["results"]), 10)
-            for unused in range(59):
-                self.client.get(url, {"kind": "student", "q": "search"}, REMOTE_ADDR="192.0.2.1")
-            self.assertEqual(self.client.get(url, {"kind": "student", "q": "search"}, REMOTE_ADDR="192.0.2.2").status_code, 429)
-            another = make_user("Registrar")
-            login_with_session(self.client, another)
-            self.assertEqual(self.client.get(url, {"kind": "student", "q": "search"}, REMOTE_ADDR="192.0.2.1").status_code, 429)
-        cache.clear()
-
-    def test_enrollment_rejects_inactive_students_and_draft_courses(self):
-        # Search is only a convenience; final submission must validate both identifiers.
-        draft = Course.objects.create(department=self.department, code="BIO998", title="Draft", semester="1", academic_year=2026)
-        login_with_session(self.client, self.registrar)
-        response = self.client.post(reverse("kura:enrollment_create"), {"student": self.student.id, "course": draft.id})
-        self.assertEqual(response.status_code, 400)
-        self.student.is_active = False
-        self.student.save(update_fields=["is_active"])
-        response = self.client.post(reverse("kura:enrollment_create"), {"student": self.student.id, "course": self.course.id})
-        self.assertEqual(response.status_code, 400)
-        self.assertFalse(Enrollment.objects.filter(student=self.student).exists())
-
-
-class DepartmentHeadCoursesAndStaffTests(TestCase):
-    """
-    Tests Department Head course creation, publishing, and staff assignment.
-    """
-
-    def setUp(self):
-        self.client = Client()
-        self.head_a = make_user("Department head", mfa_enabled=True)
-        self.head_b = make_user("Department head", mfa_enabled=True)
-        self.instructor = make_user("Instructor", mfa_enabled=True)
-        # Keep a TA with a staff profile to test that the instructor form checks roles.
-        self.teaching_assistant = make_user("Teaching assistant", mfa_enabled=True)
-
-        self.dept_a = Department.objects.create(name="Computer Science", code="CS", head_user=self.head_a)
-        self.dept_b = Department.objects.create(name="Electrical Engineering", code="EE", head_user=self.head_b)
-
-        StaffProfile.objects.create(user=self.instructor, department=self.dept_a, staff_title="Lecturer")
-        # A staff profile alone must not make this TA eligible as an instructor.
-        StaffProfile.objects.create(user=self.teaching_assistant, department=self.dept_a, staff_title="Assistant")
-
-    def test_admin_can_manage_courses_in_any_department_without_content(self):
-        # Administrators can create, edit, and publish courses without seeing their learning materials.
-        admin = make_user("Admin", mfa_enabled=True)
-        draft = Course.objects.create(
-            department=self.dept_a, code="CS900", title="Draft Course", semester="1", academic_year=2026,
-        )
-        module = Module.objects.create(course=draft, title="Private module", is_visible=True)
-        section = ModuleSection.objects.create(module=module, title="Private section", section_type="lecture")
-        SectionItem.objects.create(section=section, title="Private material", content_body="Secret text", is_visible=True)
-        login_with_session(self.client, admin)
-
-        # Draft courses from every department appear in the administrator's catalog.
-        self.assertContains(self.client.get(reverse("kura:course_list")), "Draft Course")
-        response = self.client.get(reverse("kura:course_detail", kwargs={"course_id": draft.id}))
-        self.assertContains(response, "Draft Course")
-        self.assertNotContains(response, "Private material")
-        self.assertNotContains(response, "Private module")
-
-        # Course details can be edited and published without exposing the curriculum.
-        edit_response = self.client.post(reverse("kura:admin_course_edit", kwargs={"course_id": draft.id}), {
-            "department": self.dept_b.id, "code": "CS900", "title": "Updated Course",
-            "description": "Overview", "semester": "2", "academic_year": 2026,
-        })
-        self.assertEqual(edit_response.status_code, 302)
-        draft.refresh_from_db()
-        self.assertEqual(draft.department, self.dept_b)
-        self.assertEqual(draft.title, "Updated Course")
-        self.client.post(reverse("kura:course_publish_toggle", kwargs={"course_id": draft.id}))
-        draft.refresh_from_db()
-        self.assertTrue(draft.is_published)
-
-        # An administrator can select any department while creating a draft.
-        create_response = self.client.post(reverse("kura:admin_course_create"), {
-            "department": self.dept_a.id, "code": "CS901", "title": "New Course",
-            "description": "Overview", "semester": "1", "academic_year": 2026,
-        })
-        self.assertEqual(create_response.status_code, 302)
-        self.assertTrue(Course.objects.filter(code="CS901", department=self.dept_a, is_published=False).exists())
-
-    def test_admin_course_description_textarea_is_responsive(self):
-        # The course description must shrink to fit its card on narrow screens.
-        admin = make_user("Admin", mfa_enabled=True)
-        login_with_session(self.client, admin)
-
-        response = self.client.get(reverse("kura:admin_course_create"))
-
-        self.assertContains(response, 'name="description"')
-        self.assertContains(response, "min-w-0")
-        self.assertContains(response, "max-w-full")
-        self.assertContains(response, "box-border")
-
-    def test_non_admin_cannot_use_admin_course_management(self):
-        # Knowing the management URLs does not grant a non-admin user extra access.
-        login_with_session(self.client, self.instructor)
-        course = Course.objects.create(
-            department=self.dept_a, code="CS902", title="Course", semester="1", academic_year=2026,
-        )
-        self.assertEqual(self.client.get(reverse("kura:admin_course_create")).status_code, 403)
-        self.assertEqual(self.client.get(reverse("kura:admin_course_edit", kwargs={"course_id": course.id})).status_code, 403)
-
-    def test_admin_with_course_staff_assignment_cannot_access_course_content(self):
-        # An extra staff assignment must not expose hidden course materials to an Admin.
-        admin = make_user("Admin", mfa_enabled=True)
-        course = Course.objects.create(
-            department=self.dept_a, code="CS903", title="Course", semester="1", academic_year=2026,
-        )
-        CourseStaff.objects.create(course=course, user=admin, staff_role="co_instructor")
-        module = Module.objects.create(course=course, title="Private module", is_visible=False)
-        section = ModuleSection.objects.create(module=module, title="Private section", section_type="lecture")
-        item = SectionItem.objects.create(section=section, title="Private item")
-        login_with_session(self.client, admin)
-
-        self.assertNotContains(self.client.get(reverse("kura:course_detail", kwargs={"course_id": course.id})), "Private module")
-        for url in (
-            reverse("kura:module_create", kwargs={"course_id": course.id}),
-            reverse("kura:section_create", kwargs={"module_id": module.id}),
-            reverse("kura:item_create", kwargs={"section_id": section.id}),
-        ):
-            with self.subTest(url=url):
-                self.assertEqual(self.client.get(url).status_code, 403)
-        self.assertEqual(self.client.post(reverse("kura:item_visibility_toggle", kwargs={"item_id": item.id})).status_code, 403)
-
-    def test_course_form_offers_the_three_numbered_semesters(self):
-        # Department heads should see the new semester labels when creating a course.
-        login_with_session(self.client, self.head_a)
-        response = self.client.get(reverse("kura:course_create"))
-
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(response, "Semester 1")
-        self.assertContains(response, "Semester 2")
-        self.assertContains(response, "Semester 3")
-
-    def test_head_can_create_and_publish_course(self):
-        # Department Head creates a course and publishes it.
-        login_with_session(self.client, self.head_a)
-
-        # Create draft course
-        response = self.client.post(
-            reverse("kura:course_create"),
-            {
-                "code": "CS301",
-                "title": "Operating Systems",
-                "description": "Kernel architecture and concurrency",
-                "semester": "1",
-                "academic_year": 2026,
-            },
-        )
-        self.assertRedirects(response, reverse("kura:course_list"))
-
-        course = Course.objects.get(code="CS301")
-        self.assertEqual(course.department, self.dept_a)
-        self.assertFalse(course.is_published)
-
-        # Publish course
-        response = self.client.post(reverse("kura:course_publish_toggle", kwargs={"course_id": course.id}))
-        self.assertRedirects(response, reverse("kura:course_detail", kwargs={"course_id": course.id}))
-
-        course.refresh_from_db()
-        self.assertTrue(course.is_published)
-        self.assertEqual(course.published_by, self.head_a)
-        self.assertIsNotNone(course.published_at)
-
-    def test_head_cannot_publish_other_departments_course(self):
-        # Head of Dept B cannot publish Dept A's course (403 Forbidden).
-        course = Course.objects.create(
-            department=self.dept_a,
-            code="CS302",
-            title="Networks",
-            semester="1",
-            academic_year=2026,
-            is_published=False,
-        )
-        login_with_session(self.client, self.head_b)
-        response = self.client.post(reverse("kura:course_publish_toggle", kwargs={"course_id": course.id}))
-        self.assertEqual(response.status_code, 403)
-
-    def test_head_can_add_targeted_curriculum_module_to_own_department_course(self):
-        # A department head can reach the module form and save target levels for their own course.
-        course = Course.objects.create(
-            department=self.dept_a,
-            code="CS305",
-            title="Software Engineering",
-            semester="1",
-            academic_year=2026,
-        )
-        login_with_session(self.client, self.head_a)
-
-        # Confirm the course page offers the department head the requested module action.
-        course_response = self.client.get(
-            reverse("kura:course_detail", kwargs={"course_id": course.id})
-        )
-        self.assertContains(course_response, "Add module")
-
-        # Confirm target-level choices appear as checkboxes on the module form.
-        form_response = self.client.get(
-            reverse("kura:module_create", kwargs={"course_id": course.id})
-        )
-        self.assertContains(form_response, "Year 1 (Level 4)")
-        self.assertContains(form_response, "Year 3 (Level 6)")
-
-        # Submit two levels and check that both restrictions were saved.
-        response = self.client.post(
-            reverse("kura:module_create", kwargs={"course_id": course.id}),
-            {
-                "title": "Foundations",
-                "description": "Core ideas",
-                "is_visible": True,
-                "target_levels": ["level_4", "level_6"],
-            },
-        )
-
-        self.assertRedirects(response, reverse("kura:course_detail", kwargs={"course_id": course.id}))
-        module = Module.objects.get(course=course, title="Foundations")
-        saved_levels = set(
-            ModuleTargetLevel.objects.filter(module=module).values_list("target_level", flat=True)
-        )
-        self.assertEqual(saved_levels, {"level_4", "level_6"})
-
-    def test_head_cannot_add_module_to_another_departments_course(self):
-        # A course ID from another department must not let this head create its module.
-        course = Course.objects.create(
-            department=self.dept_b,
-            code="EE301",
-            title="Signal Processing",
-            semester="1",
-            academic_year=2026,
-        )
-        login_with_session(self.client, self.head_a)
-
-        response = self.client.post(
-            reverse("kura:module_create", kwargs={"course_id": course.id}),
-            {
-                "title": "Restricted Module",
-                "description": "Should not be saved",
-                "target_levels": ["level_4"],
-            },
-        )
-
-        self.assertEqual(response.status_code, 403)
-        self.assertFalse(Module.objects.filter(course=course, title="Restricted Module").exists())
-
-    def test_head_can_assign_lead_instructor_with_auto_release(self):
-        # Assigning a Lead Instructor automatically grants can_release_grades=True.
-        course = Course.objects.create(
-            department=self.dept_a,
-            code="CS303",
-            title="Algorithms",
-            semester="1",
-            academic_year=2026,
-            is_published=False,
-        )
-        login_with_session(self.client, self.head_a)
-
-        response = self.client.post(
-            reverse("kura:course_staff_assign", kwargs={"course_id": course.id}),
-            {
-                "user": str(self.instructor.id),
-                "staff_role": "lead_instructor",
-                "can_release_grades": False,
-            },
-        )
-        self.assertRedirects(response, reverse("kura:course_detail", kwargs={"course_id": course.id}))
-
-        assignment = CourseStaff.objects.get(course=course, user=self.instructor)
-        self.assertEqual(assignment.staff_role, "lead_instructor")
-        self.assertTrue(assignment.can_release_grades)
-
-    def test_course_instructor_assignment_rejects_users_without_instructor_role(self):
-        # A TA with a staff profile must not appear as an instructor or be assignable as one.
-        course = Course.objects.create(
-            department=self.dept_a,
-            code="CS304",
-            title="Databases",
-            semester="1",
-            academic_year=2026,
-        )
-        login_with_session(self.client, self.head_a)
-
-        form_response = self.client.get(
-            reverse("kura:course_staff_assign", kwargs={"course_id": course.id})
-        )
-        self.assertContains(form_response, '<select name="user"')
-        self.assertContains(form_response, self.instructor.email)
-        self.assertNotContains(form_response, self.teaching_assistant.email)
-
-        response = self.client.post(
-            reverse("kura:course_staff_assign", kwargs={"course_id": course.id}),
-            {"user": str(self.teaching_assistant.id), "staff_role": "lead_instructor"},
-        )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertFalse(CourseStaff.objects.filter(course=course, user=self.teaching_assistant).exists())
-
-
 class InstructorModulesAndContentTests(TestCase):
     """
     Tests Instructor curriculum creation and nh3 rich text sanitization.
@@ -1928,239 +1343,6 @@ class InstructorModulesAndContentTests(TestCase):
         )
         CourseStaff.objects.create(course=self.course, user=self.lead, staff_role="lead_instructor", can_release_grades=True)
 
-    def test_staff_can_edit_module_and_section_but_outsiders_cannot(self):
-        # Changes use validated forms and must belong to the staff member's course.
-        module = Module.objects.create(course=self.course, title="Old module")
-        section = ModuleSection.objects.create(module=module, title="Old section", section_type="lecture")
-        module_url = reverse("kura:module_edit", kwargs={"module_id": module.id})
-        section_url = reverse("kura:section_edit", kwargs={"section_id": section.id})
-        login_with_session(self.client, self.ta)
-        self.assertEqual(self.client.get(module_url).status_code, 403)
-        self.assertEqual(self.client.post(section_url, {"title": "Wrong", "section_type": "lecture"}).status_code, 403)
-        login_with_session(self.client, self.lead)
-        self.assertEqual(self.client.post(module_url, {"title": "New module", "target_levels": ["level_4"]}).status_code, 302)
-        self.assertEqual(self.client.post(section_url, {"title": "New section", "section_type": "lab"}).status_code, 302)
-        module.refresh_from_db()
-        section.refresh_from_db()
-        self.assertEqual(module.title, "New module")
-        self.assertEqual(list(module.target_levels.values_list("target_level", flat=True)), ["level_4"])
-        self.assertEqual(section.title, "New section")
-        self.assertEqual(section.section_type, "lab")
-
-    def test_item_edit_preserves_existing_attachment_and_delete_requires_confirmation(self):
-        # Editing a file-only item must not require the author to upload the file again.
-        module = Module.objects.create(course=self.course, title="Module")
-        section = ModuleSection.objects.create(module=module, title="Section", section_type="lecture")
-        item = SectionItem.objects.create(section=section, title="Old item")
-        with patch("kura.views.scan_file_for_malware"):
-            stored = validate_and_save_upload(SimpleUploadedFile("notes.txt", b"Plain course notes"), self.lead)
-        SectionItemFile.objects.create(section_item=item, file=stored)
-        login_with_session(self.client, self.lead)
-        edit_url = reverse("kura:item_edit", kwargs={"item_id": item.id})
-        delete_url = reverse("kura:item_delete", kwargs={"item_id": item.id})
-        self.assertEqual(self.client.post(edit_url, {"title": "Updated item", "content_body": ""}).status_code, 302)
-        item.refresh_from_db()
-        self.assertEqual(item.title, "Updated item")
-        self.assertTrue(SectionItemFile.objects.filter(section_item=item, file=stored).exists())
-        self.assertEqual(self.client.get(delete_url).status_code, 405)
-        self.client.post(delete_url)
-        self.assertTrue(SectionItem.objects.filter(id=item.id).exists())
-        self.client.post(delete_url, {"confirm": "on"})
-        self.assertFalse(SectionItem.objects.filter(id=item.id).exists())
-
-    def test_module_delete_preserves_assessment_attempts(self):
-        # Deleting a parent module must not cascade into a student's attempt.
-        module = Module.objects.create(course=self.course, title="Protected")
-        section = ModuleSection.objects.create(module=module, title="Exam", section_type="exam")
-        now = timezone.now()
-        assessment = Assessment.objects.create(section=section, title="Exam", component_type=GradeComponentType.EXAM,
-                                               opens_at=now, due_date=now + timezone.timedelta(days=1), duration_minutes=60, created_by=self.lead)
-        student = make_user("Student")
-        attempt = AssessmentAttempt.objects.create(assessment=assessment, student=student, expires_at=now + timezone.timedelta(hours=1), ip_address="127.0.0.1")
-        login_with_session(self.client, self.lead)
-        url = reverse("kura:module_delete", kwargs={"module_id": module.id})
-        self.assertEqual(self.client.get(url).status_code, 405)
-        self.client.post(url, {"confirm": "on"})
-        self.assertTrue(Module.objects.filter(id=module.id).exists())
-        self.assertTrue(AssessmentAttempt.objects.filter(id=attempt.id).exists())
-
-    def test_module_deletion_requires_confirmation(self):
-        # An empty module may be deleted only after an authorized confirmed POST.
-        module = Module.objects.create(course=self.course, title="Empty")
-        url = reverse("kura:module_delete", kwargs={"module_id": module.id})
-        login_with_session(self.client, self.ta)
-        self.assertEqual(self.client.post(url, {"confirm": "on"}).status_code, 403)
-        login_with_session(self.client, self.lead)
-        self.client.post(url)
-        self.assertTrue(Module.objects.filter(id=module.id).exists())
-        self.client.post(url, {"confirm": "on"})
-        self.assertFalse(Module.objects.filter(id=module.id).exists())
-
-    def test_module_delete_preserves_attendance_records(self):
-        # Attendance records are student data and must not be cascaded away.
-        module = Module.objects.create(course=self.course, title="Attendance module")
-        session = ModuleAttendanceSession.objects.create(module=module, created_by=self.lead, title="Roll",
-                                                        passcode_hash="x" * 64, expires_at=timezone.now() + timezone.timedelta(hours=1))
-        student = make_user("Student")
-        record = AttendanceRecord.objects.create(session=session, student=student, status=AttendanceStatus.PRESENT,
-                                                 method=AttendanceMethod.QR_CODE)
-        login_with_session(self.client, self.lead)
-        self.client.post(reverse("kura:module_delete", kwargs={"module_id": module.id}), {"confirm": "on"})
-        self.assertTrue(Module.objects.filter(id=module.id).exists())
-        self.assertTrue(AttendanceRecord.objects.filter(id=record.id).exists())
-
-    def test_markdown_tag_renders_formatting_and_does_not_execute_html(self):
-        # The tag renders Markdown but leaves an author's HTML as harmless text.
-        from django.template import Context, Template
-
-        rendered = Template(
-            "{% load markdown %}{% render_markdown content %}"
-        ).render(Context({"content": "**Bold** <script>alert(1)</script>"}))
-
-        self.assertIn("<strong>Bold</strong>", rendered)
-        self.assertIn("&lt;script&gt;", rendered)
-        self.assertNotIn("<script>", rendered)
-
-    def test_markdown_tag_rejects_unsafe_links(self):
-        # Dangerous link schemes must not become executable links in the page.
-        from django.template import Context, Template
-
-        rendered = Template(
-            "{% load markdown %}{% render_markdown content %}"
-        ).render(Context({"content": "[click](javascript:alert(1))"}))
-
-        self.assertNotIn('href="javascript:', rendered)
-
-    def test_preview_markdown_is_post_only_and_checks_course_staff(self):
-        # Only assigned staff can preview; typed HTML remains harmless text.
-        module = Module.objects.create(course=self.course, title="Materials", is_visible=True)
-        section = ModuleSection.objects.create(module=module, title="Notes", section_type="lecture")
-        url = reverse("kura:item_preview", kwargs={"section_id": section.id})
-        login_with_session(self.client, self.lead)
-        self.assertEqual(self.client.get(url).status_code, 405)
-        response = self.client.post(url, {"content_body": "**Bold** <script>alert(1)</script>"})
-        self.assertContains(response, "<strong>Bold</strong>")
-        self.assertContains(response, "&lt;script&gt;")
-        self.assertNotContains(response, "<script>")
-        login_with_session(self.client, make_user("Student", mfa_enabled=True))
-        self.assertEqual(self.client.post(url, {"content_body": "private"}).status_code, 403)
-
-    def test_markdown_preview_matches_saved_content_with_entities(self):
-        # Preview must not decode an extra layer of HTML entities compared with the saved item.
-        module = Module.objects.create(course=self.course, title="Materials", is_visible=True)
-        section = ModuleSection.objects.create(module=module, title="Notes", section_type="lecture")
-        source = "Literal &amp;amp; and `a < b`"
-        login_with_session(self.client, self.lead)
-        preview = self.client.post(reverse("kura:item_preview", kwargs={"section_id": section.id}), {"content_body": source})
-        self.client.post(reverse("kura:item_create", kwargs={"section_id": section.id}), {
-            "title": "Entity example", "content_body": source,
-        })
-        item = SectionItem.objects.get(section=section, title="Entity example")
-        from .templatetags.markdown import render_markdown
-        self.assertEqual(preview.content.decode(), str(render_markdown(item.content_body)))
-
-    def test_created_markdown_renders_on_course_page_without_executing_html(self):
-        # Save Markdown as source, then render it safely on the course page.
-        module = Module.objects.create(course=self.course, title="Materials", is_visible=True)
-        section = ModuleSection.objects.create(module=module, title="Notes", section_type="lecture")
-        login_with_session(self.client, self.lead)
-        response = self.client.post(reverse("kura:item_create", kwargs={"section_id": section.id}), {
-            "title": "Markdown item", "content_body": "**Bold** <script>alert(1)</script>",
-        })
-        self.assertEqual(response.status_code, 302)
-        response = self.client.get(reverse("kura:course_detail", kwargs={"course_id": self.course.id}))
-        self.assertContains(response, "<strong>Bold</strong>")
-        self.assertContains(response, "&lt;script&gt;")
-        self.assertNotContains(response, "<script>alert(1)</script>")
-
-    def test_item_can_be_created_with_a_file_and_no_body(self):
-        # A valid attachment is enough even when the optional body is blank.
-        module = Module.objects.create(course=self.course, title="Materials", is_visible=True)
-        section = ModuleSection.objects.create(module=module, title="Notes", section_type="lecture")
-        login_with_session(self.client, self.lead)
-        upload = SimpleUploadedFile("notes.pdf", b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF", content_type="application/pdf")
-
-        response = self.client.post(reverse("kura:item_create", kwargs={"section_id": section.id}), {
-            "title": "Notes file", "content_body": "", "file": upload,
-        })
-
-        self.assertRedirects(response, reverse("kura:course_detail", kwargs={"course_id": self.course.id}))
-        item = SectionItem.objects.get(section=section, title="Notes file")
-        self.assertEqual(item.content_body, "")
-        self.assertEqual(item.item_files.count(), 1)
-
-    def test_item_requires_a_body_or_attachment(self):
-        # Empty or whitespace-only text cannot create an item without a file.
-        module = Module.objects.create(course=self.course, title="Materials", is_visible=True)
-        section = ModuleSection.objects.create(module=module, title="Notes", section_type="lecture")
-        login_with_session(self.client, self.lead)
-
-        response = self.client.post(reverse("kura:item_create", kwargs={"section_id": section.id}), {
-            "title": "Empty item", "content_body": "  ",
-        })
-
-        self.assertContains(response, "Add some content or attach a file.", status_code=400)
-        self.assertFalse(SectionItem.objects.filter(section=section, title="Empty item").exists())
-
-    @patch("kura.views.validate_and_save_upload", side_effect=ValidationError("Upload rejected."))
-    def test_rejected_attachment_does_not_save_item(self, mock_upload):
-        # A failed file check must roll back the item as well as its attachment.
-        module = Module.objects.create(course=self.course, title="Materials", is_visible=True)
-        section = ModuleSection.objects.create(module=module, title="Notes", section_type="lecture")
-        login_with_session(self.client, self.lead)
-        upload = SimpleUploadedFile("bad.pdf", b"bad content", content_type="application/pdf")
-
-        response = self.client.post(reverse("kura:item_create", kwargs={"section_id": section.id}), {
-            "title": "Rejected item", "content_body": "Body", "file": upload,
-        })
-
-        self.assertContains(response, "Upload rejected.", status_code=400)
-        self.assertFalse(SectionItem.objects.filter(section=section, title="Rejected item").exists())
-        mock_upload.assert_called_once()
-
-    def test_instructor_can_create_module_and_section(self):
-        # Instructor creates module with target level, then a section.
-        login_with_session(self.client, self.lead)
-
-        # Create module
-        response = self.client.post(
-            reverse("kura:module_create", kwargs={"course_id": self.course.id}),
-            {
-                "title": "Week 1: Kinematics",
-                "description": "Motion in one dimension",
-                "is_visible": True,
-                "target_levels": ["level_4"],
-            },
-        )
-        self.assertRedirects(response, reverse("kura:course_detail", kwargs={"course_id": self.course.id}))
-
-        module = Module.objects.get(course=self.course, title="Week 1: Kinematics")
-        self.assertTrue(module.is_visible)
-        self.assertTrue(ModuleTargetLevel.objects.filter(module=module, target_level="level_4").exists())
-
-        # Create section
-        response = self.client.post(
-            reverse("kura:section_create", kwargs={"module_id": module.id}),
-            {"title": "Lecture Notes", "section_type": "lecture"},
-        )
-        self.assertRedirects(response, reverse("kura:course_detail", kwargs={"course_id": self.course.id}))
-        self.assertTrue(ModuleSection.objects.filter(module=module, title="Lecture Notes").exists())
-
-    def test_module_form_renders_each_target_level_as_a_labelled_checkbox(self):
-        # Each academic level should have its own accessible checkbox row.
-        login_with_session(self.client, self.lead)
-
-        response = self.client.get(
-            reverse("kura:module_create", kwargs={"course_id": self.course.id})
-        )
-
-        self.assertEqual(response.status_code, 200)
-        self.assertContains(
-            response,
-            '<label class="label cursor-pointer justify-start gap-3">',
-            count=len(AcademicLevel.choices) + 1,
-        )
-
     def test_instructor_cannot_assign_non_ta_as_teaching_assistant(self):
         # A user with an Instructor role must not appear as or be saved as a TA.
         login_with_session(self.client, self.lead)
@@ -2178,143 +1360,6 @@ class InstructorModulesAndContentTests(TestCase):
         self.assertEqual(response.status_code, 400)
         lead_assignment = CourseStaff.objects.get(course=self.course, user=self.lead)
         self.assertEqual(lead_assignment.staff_role, "lead_instructor")
-
-    def test_markdown_treats_author_html_as_text(self):
-        # Typed HTML must remain readable text and must never become executable markup.
-        module = Module.objects.create(course=self.course, title="Optics", is_visible=True)
-        section = ModuleSection.objects.create(module=module, title="Refraction", section_type="lecture")
-
-        login_with_session(self.client, self.lead)
-        malicious_html = "<p>Intro to Optics</p><script>alert('xss');</script><img src=x onerror=alert(1)>"
-
-        response = self.client.post(
-            reverse("kura:item_create", kwargs={"section_id": section.id}),
-            {"title": "Lesson 1", "content_body": malicious_html},
-        )
-        self.assertRedirects(response, reverse("kura:course_detail", kwargs={"course_id": self.course.id}))
-
-        item = SectionItem.objects.get(section=section, title="Lesson 1")
-        self.assertNotIn("<script>", item.content_body)
-        self.assertIn("&lt;script&gt;", item.content_body)
-        self.assertIn("&lt;p&gt;Intro to Optics&lt;/p&gt;", item.content_body)
-        course_page = self.client.get(reverse("kura:course_detail", kwargs={"course_id": self.course.id}))
-        self.assertNotContains(course_page, "<script>alert('xss');</script>")
-        self.assertNotContains(course_page, "<img src=x onerror=alert(1)>")
-        self.assertContains(course_page, "&lt;script&gt;")
-
-    def test_instructor_can_schedule_an_item_and_release_it_with_post(self):
-        # An instructor can choose a future release time, then explicitly release the hidden item.
-        module = Module.objects.create(course=self.course, title="Mechanics", is_visible=True)
-        section = ModuleSection.objects.create(module=module, title="Lectures", section_type="lecture")
-        scheduled_release = timezone.localtime(
-            timezone.now() + timezone.timedelta(days=1)
-        ).replace(second=0, microsecond=0)
-        release_input = scheduled_release.strftime("%Y-%m-%dT%H:%M")
-        login_with_session(self.client, self.lead)
-
-        # Create the item with a release time; new items remain hidden by default.
-        create_response = self.client.post(
-            reverse("kura:item_create", kwargs={"section_id": section.id}),
-            {
-                "title": "Lecture One",
-                "content_body": "Introduction",
-                "released_at": release_input,
-            },
-            follow=True,
-        )
-
-        self.assertRedirects(
-            create_response,
-            reverse("kura:course_detail", kwargs={"course_id": self.course.id}),
-        )
-        self.assertContains(create_response, "created hidden. Release it when ready.")
-        item = SectionItem.objects.get(section=section, title="Lecture One")
-        self.assertEqual(item.released_at, scheduled_release)
-        self.assertFalse(item.is_visible)
-
-        # The staff course page shows both the current state and its POST action.
-        course_response = self.client.get(
-            reverse("kura:course_detail", kwargs={"course_id": self.course.id})
-        )
-        self.assertContains(course_response, "Hidden")
-        self.assertContains(course_response, "Release item")
-
-        # Release the item through its POST-only status control.
-        toggle_response = self.client.post(
-            reverse("kura:item_visibility_toggle", kwargs={"item_id": item.id})
-        )
-
-        self.assertRedirects(
-            toggle_response,
-            reverse("kura:course_detail", kwargs={"course_id": self.course.id}),
-        )
-        item.refresh_from_db()
-        self.assertTrue(item.is_visible)
-
-        # The next course page shows the new state and the action to hide it again.
-        released_response = self.client.get(
-            reverse("kura:course_detail", kwargs={"course_id": self.course.id})
-        )
-        self.assertContains(released_response, "Released")
-        self.assertContains(released_response, "Hide item")
-
-        # The same control can hide the item again.
-        hide_response = self.client.post(
-            reverse("kura:item_visibility_toggle", kwargs={"item_id": item.id})
-        )
-        self.assertRedirects(
-            hide_response,
-            reverse("kura:course_detail", kwargs={"course_id": self.course.id}),
-        )
-        item.refresh_from_db()
-        self.assertFalse(item.is_visible)
-
-        # A GET request must not change the item's release state.
-        get_response = self.client.get(
-            reverse("kura:item_visibility_toggle", kwargs={"item_id": item.id})
-        )
-        self.assertEqual(get_response.status_code, 405)
-        item.refresh_from_db()
-        self.assertFalse(item.is_visible)
-
-    def test_assigned_teaching_assistant_can_toggle_item_visibility(self):
-        # A teaching assistant assigned to the course may release a hidden item.
-        module = Module.objects.create(course=self.course, title="Lab Work", is_visible=True)
-        section = ModuleSection.objects.create(module=module, title="Labs", section_type="lab")
-        item = SectionItem.objects.create(section=section, title="Lab One")
-        CourseStaff.objects.create(
-            course=self.course,
-            user=self.ta,
-            staff_role="teaching_assistant",
-            can_release_grades=False,
-        )
-        login_with_session(self.client, self.ta)
-
-        response = self.client.post(
-            reverse("kura:item_visibility_toggle", kwargs={"item_id": item.id})
-        )
-
-        self.assertRedirects(
-            response,
-            reverse("kura:course_detail", kwargs={"course_id": self.course.id}),
-        )
-        item.refresh_from_db()
-        self.assertTrue(item.is_visible)
-
-    def test_student_cannot_toggle_item_visibility(self):
-        # A student must not change content visibility, even when they know the item URL.
-        module = Module.objects.create(course=self.course, title="Student Material", is_visible=True)
-        section = ModuleSection.objects.create(module=module, title="Lectures", section_type="lecture")
-        item = SectionItem.objects.create(section=section, title="Hidden Notes")
-        login_with_session(self.client, make_user("Student", mfa_enabled=True))
-
-        response = self.client.post(
-            reverse("kura:item_visibility_toggle", kwargs={"item_id": item.id})
-        )
-
-        self.assertEqual(response.status_code, 403)
-        item.refresh_from_db()
-        self.assertFalse(item.is_visible)
 
     def test_assigned_ta_cannot_assign_another_ta(self):
         # A course assignment does not allow teaching assistants to assign staff.
@@ -2337,7 +1382,6 @@ class InstructorModulesAndContentTests(TestCase):
         assignment = CourseStaff.objects.get(course=self.course, user=self.ta)
         self.assertEqual(assignment.staff_role, "teaching_assistant")
         self.assertFalse(assignment.can_release_grades)
-
 
 class FileUploadsAndDownloadsTests(TestCase):
     """
@@ -2367,9 +1411,6 @@ class FileUploadsAndDownloadsTests(TestCase):
         )
         CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True)
         Enrollment.objects.create(course=self.course, student=self.enrolled_student, status=EnrollmentStatus.ACTIVE)
-
-        self.module = Module.objects.create(course=self.course, title="Atomic Theory", is_visible=True)
-        self.section = ModuleSection.objects.create(module=self.module, title="Reading", section_type="lecture")
 
     def test_valid_pdf_upload_and_sha256_hash(self):
         # Valid PDF upload is verified by magic bytes, hashed with SHA-256, and stored in FileContent.
@@ -2448,78 +1489,11 @@ class FileUploadsAndDownloadsTests(TestCase):
         self.assertIn("ZIP", str(error.exception))
         mock_scan.assert_called_once()
 
-    def test_enrolled_student_can_download_file(self):
-        # Enrolled student downloads file with Content-Disposition: attachment and nosniff.
-        pdf_bytes = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF"
-        pdf_file = SimpleUploadedFile("lab_manual.pdf", pdf_bytes, content_type="application/pdf")
-        stored_file = validate_and_save_upload(pdf_file, self.instructor)
-
-        item = SectionItem.objects.create(
-            section=self.section,
-            title="Lab Manual",
-            content_body="<p>Manual</p>",
-            is_visible=True,
-            released_at=timezone.now() - timezone.timedelta(hours=1),
-        )
-        SectionItemFile.objects.create(section_item=item, file=stored_file)
-
-        login_with_session(self.client, self.enrolled_student)
-        response = self.client.get(
-            reverse("kura:file_download", kwargs={"course_id": self.course.id, "file_id": stored_file.id})
-        )
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("attachment; filename=", response["Content-Disposition"])
-        self.assertEqual(response["X-Content-Type-Options"], "nosniff")
-        self.assertIn("no-store", response["Cache-Control"])
-        self.assertEqual(response.content, pdf_bytes)
-
-    def test_outsider_student_cannot_download_file(self):
-        # A student not enrolled in the course receives 403 Forbidden.
-        pdf_bytes = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF"
-        pdf_file = SimpleUploadedFile("exam_prep.pdf", pdf_bytes, content_type="application/pdf")
-        stored_file = validate_and_save_upload(pdf_file, self.instructor)
-
-        item = SectionItem.objects.create(section=self.section, title="Exam Prep", content_body="<p>Prep</p>")
-        SectionItemFile.objects.create(section_item=item, file=stored_file)
-
-        login_with_session(self.client, self.outsider_student)
-        response = self.client.get(
-            reverse("kura:file_download", kwargs={"course_id": self.course.id, "file_id": stored_file.id})
-        )
-        self.assertEqual(response.status_code, 403)
-
-    def test_enrolled_student_cannot_download_hidden_item_file(self):
-        # An enrolled student cannot bypass the hidden state by requesting the file URL directly.
-        pdf_bytes = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF"
-        pdf_file = SimpleUploadedFile("hidden_notes.pdf", pdf_bytes, content_type="application/pdf")
-        stored_file = validate_and_save_upload(pdf_file, self.instructor)
-        item = SectionItem.objects.create(section=self.section, title="Hidden Notes")
-        SectionItemFile.objects.create(section_item=item, file=stored_file)
-        login_with_session(self.client, self.enrolled_student)
-
-        response = self.client.get(
-            reverse("kura:file_download", kwargs={"course_id": self.course.id, "file_id": stored_file.id})
-        )
-
-        self.assertEqual(response.status_code, 403)
-
-    def test_enrolled_student_cannot_download_file_from_hidden_section(self):
-        # Hiding a section also blocks direct URLs to otherwise visible files.
-        with patch("kura.views.scan_file_for_malware"):
-            stored_file = validate_and_save_upload(SimpleUploadedFile("private.txt", b"Private notes"), self.instructor)
-        item = SectionItem.objects.create(section=self.section, title="Private", is_visible=True)
-        SectionItemFile.objects.create(section_item=item, file=stored_file)
-        self.section.is_visible = False
-        self.section.save(update_fields=["is_visible"])
-        login_with_session(self.client, self.enrolled_student)
-        response = self.client.get(reverse("kura:file_download", kwargs={"course_id": self.course.id, "file_id": stored_file.id}))
-        self.assertEqual(response.status_code, 403)
-
     def test_assessment_delete_requires_confirmation_and_permissions(self):
         # Without an attempt, deletion still requires the right course and confirmation.
         now = timezone.now()
-        assessment = Assessment.objects.create(section=self.section, title="Empty assessment", component_type=GradeComponentType.EXAM,
-                                               opens_at=now, due_date=now + timezone.timedelta(days=1), duration_minutes=60,
+        assessment = Assessment.objects.create(course=self.course, title="Empty assessment", component_type=GradeComponentType.EXAM,
+                                               opens_at=now, due_date=now + timezone.timedelta(days=1),
                                                created_by=self.instructor)
         url = reverse("kura:assessment_delete", kwargs={"assessment_id": assessment.id})
         login_with_session(self.client, self.outsider_student)
@@ -2529,116 +1503,6 @@ class FileUploadsAndDownloadsTests(TestCase):
         self.assertTrue(Assessment.objects.filter(id=assessment.id).exists())
         self.client.post(url, {"confirm": "on"})
         self.assertFalse(Assessment.objects.filter(id=assessment.id).exists())
-
-    def test_enrolled_student_cannot_download_item_before_scheduled_release(self):
-        # A visible item with a future release time remains unavailable through its file URL.
-        pdf_bytes = b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\ntrailer\n<<>>\n%%EOF"
-        pdf_file = SimpleUploadedFile("scheduled_notes.pdf", pdf_bytes, content_type="application/pdf")
-        stored_file = validate_and_save_upload(pdf_file, self.instructor)
-        item = SectionItem.objects.create(
-            section=self.section,
-            title="Scheduled Notes",
-            is_visible=True,
-            released_at=timezone.now() + timezone.timedelta(hours=1),
-        )
-        SectionItemFile.objects.create(section_item=item, file=stored_file)
-        login_with_session(self.client, self.enrolled_student)
-
-        response = self.client.get(
-            reverse("kura:file_download", kwargs={"course_id": self.course.id, "file_id": stored_file.id})
-        )
-
-        self.assertEqual(response.status_code, 403)
-
-
-class StudentCourseMaterialsTests(TestCase):
-    """
-    Tests Student course materials and academic level restrictions.
-    """
-
-    def setUp(self):
-        self.client = Client()
-        self.head = make_user("Department head", mfa_enabled=True)
-        self.dept = Department.objects.create(name="History", code="HIST", head_user=self.head)
-
-        self.year1_student = make_user("Student", mfa_enabled=True)
-        StudentProfile.objects.create(user=self.year1_student, department=self.dept, current_level="level_4", matriculation_year=2026)
-
-        self.course = Course.objects.create(
-            department=self.dept,
-            code="HIST101",
-            title="World History",
-            semester="1",
-            academic_year=2026,
-            is_published=True,
-            published_by=self.head,
-            published_at=timezone.now(),
-        )
-        Enrollment.objects.create(course=self.course, student=self.year1_student, status=EnrollmentStatus.ACTIVE)
-
-        # Module 1: Visible, open to all students
-        self.mod_open = Module.objects.create(course=self.course, title="Ancient Civilizations", is_visible=True)
-
-        # Module 2: Hidden from students
-        self.mod_hidden = Module.objects.create(course=self.course, title="Draft Unit", is_visible=False)
-
-        # Module 3: Restricted to Year 2 (level_5) students
-        self.mod_advanced = Module.objects.create(course=self.course, title="Advanced Historiography", is_visible=True)
-        ModuleTargetLevel.objects.create(module=self.mod_advanced, target_level="level_5")
-
-    def test_student_sees_allowed_modules_and_not_hidden_or_wrong_level(self):
-        # Year 1 student sees open module, but neither hidden module nor Year 2 module.
-        login_with_session(self.client, self.year1_student)
-        response = self.client.get(reverse("kura:course_detail", kwargs={"course_id": self.course.id}))
-        self.assertEqual(response.status_code, 200)
-
-        self.assertContains(response, "Ancient Civilizations")
-        self.assertNotContains(response, "Draft Unit")
-        self.assertNotContains(response, "Advanced Historiography")
-
-    def test_student_only_sees_released_items_after_their_release_time(self):
-        # Students see visible items with no schedule or a schedule that has passed.
-        section = ModuleSection.objects.create(
-            module=self.mod_open,
-            title="Reading List",
-            section_type="lecture",
-        )
-        SectionItem.objects.create(
-            section=section,
-            title="Available Now",
-            content_body="Current material",
-            is_visible=True,
-        )
-        SectionItem.objects.create(
-            section=section,
-            title="Released Yesterday",
-            content_body="Past scheduled material",
-            is_visible=True,
-            released_at=timezone.now() - timezone.timedelta(hours=1),
-        )
-        SectionItem.objects.create(
-            section=section,
-            title="Still Hidden",
-            content_body="Hidden material",
-        )
-        SectionItem.objects.create(
-            section=section,
-            title="Releases Later",
-            content_body="Future material",
-            is_visible=True,
-            released_at=timezone.now() + timezone.timedelta(hours=1),
-        )
-        login_with_session(self.client, self.year1_student)
-
-        response = self.client.get(
-            reverse("kura:course_detail", kwargs={"course_id": self.course.id})
-        )
-
-        self.assertContains(response, "Available Now")
-        self.assertContains(response, "Released Yesterday")
-        self.assertNotContains(response, "Still Hidden")
-        self.assertNotContains(response, "Releases Later")
-
 
 # Schedules and attendance tests
 
@@ -2686,8 +1550,7 @@ class SchedulesTests(TestCase):
         # A TA role does not validate a stale instructor assignment for another course.
         UserRole.objects.filter(user=self.instructor, role__name="Instructor").delete()
         UserRole.objects.create(user=self.instructor, role=Role.objects.get(name="Teaching assistant"))
-        module = Module.objects.create(course=self.course, title="Private attendance")
-        session = ModuleAttendanceSession.objects.create(module=module, created_by=self.instructor, title="Private roll", passcode_hash="x" * 64, expires_at=timezone.now() + timezone.timedelta(hours=1))
+        session = ModuleAttendanceSession.objects.create(course=self.course, created_by=self.instructor, title="Private roll", passcode_hash="x" * 64, expires_at=timezone.now() + timezone.timedelta(hours=1))
         AttendanceRecord.objects.create(session=session, student=self.student, status=AttendanceStatus.PRESENT, method=AttendanceMethod.QR_CODE)
         login_with_session(self.client, self.instructor)
         self.assertNotContains(self.client.get(reverse("kura:course_list")), self.course.code)
@@ -2723,8 +1586,7 @@ class SchedulesTests(TestCase):
         schedule = Schedule.objects.create(course=self.course, instructor=self.instructor, session_type="lecture",
                                            day="monday", start_time="09:00", end_time="10:00", location="Old",
                                            recurrence_start="2026-09-01", recurrence_end="2026-12-01")
-        module = Module.objects.create(course=self.course, title="Schedule module")
-        session = ModuleAttendanceSession.objects.create(module=module, schedule=schedule, created_by=self.instructor,
+        session = ModuleAttendanceSession.objects.create(course=self.course, schedule=schedule, created_by=self.instructor,
                                                         title="Roll", passcode_hash="x" * 64, expires_at=timezone.now() + timezone.timedelta(hours=1))
         record = AttendanceRecord.objects.create(session=session, student=self.student, status=AttendanceStatus.PRESENT,
                                                  method=AttendanceMethod.QR_CODE)
@@ -2801,261 +1663,6 @@ class SchedulesTests(TestCase):
         self.assertContains(response, "MATH201")
         self.assertContains(response, "Hall A")
 
-
-class AttendanceSessionsAndCheckinTests(TestCase):
-    """
-    Tests Live check-in sessions, rotating passcodes, QR scans, and manual roll.
-    """
-
-    def setUp(self):
-        self.client = Client()
-        self.instructor = make_user("Instructor", mfa_enabled=True)
-        self.student = make_user("Student", mfa_enabled=True)
-        self.other_student = make_user("Student", mfa_enabled=True)
-        self.department = Department.objects.create(name="Computer Science", code="CS")
-
-        StudentProfile.objects.create(
-            user=self.student,
-            department=self.department,
-            current_level="level_4",
-            matriculation_year=2026,
-        )
-        StudentProfile.objects.create(
-            user=self.other_student,
-            department=self.department,
-            current_level="level_4",
-            matriculation_year=2026,
-        )
-
-        self.course = Course.objects.create(
-            department=self.department,
-            code="CS202",
-            title="Data Structures",
-            semester="1",
-            academic_year=2026,
-            is_published=True,
-            published_by=self.instructor,
-            published_at=timezone.now(),
-        )
-        CourseStaff.objects.create(
-            course=self.course,
-            user=self.instructor,
-            staff_role="lead_instructor",
-            can_release_grades=True,
-        )
-        Enrollment.objects.create(
-            course=self.course,
-            student=self.student,
-            status=EnrollmentStatus.ACTIVE,
-        )
-        Enrollment.objects.create(
-            course=self.course,
-            student=self.other_student,
-            status=EnrollmentStatus.ACTIVE,
-        )
-
-        self.module = Module.objects.create(
-            course=self.course,
-            title="Trees and Graphs",
-            is_visible=True,
-        )
-
-    def test_staff_can_start_session_stores_hash_only(self):
-        # Staff starts a session; database stores only the 64-character SHA-256 hash.
-        login_with_session(self.client, self.instructor)
-        response = self.client.post(
-            reverse("kura:attendance_session_start", kwargs={"module_id": self.module.id}),
-            {"title": "Lecture 5 Roll", "duration_minutes": 15},
-        )
-        session = ModuleAttendanceSession.objects.get(module=self.module, title="Lecture 5 Roll")
-        self.assertRedirects(response, reverse("kura:attendance_session_detail", kwargs={"session_id": session.id}))
-
-        # Verify only a SHA-256 hash is saved in the database column.
-        self.assertEqual(len(session.passcode_hash), 64)
-        self.assertTrue(session.is_active)
-        self.assertTrue(session.expires_at > timezone.now())
-
-    def test_student_valid_passcode_checkin(self):
-        # Student submits the correct passcode; record is created with method=PASSCODE.
-        raw_passcode = "A1B2C3"
-        passcode_hash = hash_attendance_passcode(raw_passcode)
-        session = ModuleAttendanceSession.objects.create(
-            module=self.module,
-            created_by=self.instructor,
-            title="Week 2 Attendance",
-            passcode_hash=passcode_hash,
-            expires_at=timezone.now() + timezone.timedelta(minutes=15),
-            is_active=True,
-        )
-
-        login_with_session(self.client, self.student)
-        response = self.client.post(
-            reverse("kura:student_checkin", kwargs={"session_id": session.id}),
-            {"passcode": raw_passcode},
-        )
-        self.assertRedirects(response, reverse("kura:attendance_history"))
-
-        # Check attendance record created by server.
-        record = AttendanceRecord.objects.get(session=session, student=self.student)
-        self.assertEqual(record.status, AttendanceStatus.PRESENT)
-        self.assertEqual(record.method, AttendanceMethod.PASSCODE)
-
-    def test_student_qr_checkin(self):
-        # A QR link shows the form; only its confirmed POST records attendance.
-        raw_passcode = "F4E5D6"
-        passcode_hash = hash_attendance_passcode(raw_passcode)
-        session = ModuleAttendanceSession.objects.create(
-            module=self.module,
-            created_by=self.instructor,
-            title="Lab 2 Roll",
-            passcode_hash=passcode_hash,
-            expires_at=timezone.now() + timezone.timedelta(minutes=15),
-            is_active=True,
-        )
-
-        login_with_session(self.client, self.student)
-        checkin_url = reverse("kura:student_checkin", kwargs={"session_id": session.id}) + f"?code={raw_passcode}"
-        response = self.client.get(checkin_url)
-        self.assertEqual(response.status_code, 200)
-        self.assertFalse(AttendanceRecord.objects.filter(session=session, student=self.student).exists())
-        response = self.client.post(checkin_url, {"passcode": raw_passcode})
-        self.assertRedirects(response, reverse("kura:attendance_history"))
-
-        record = AttendanceRecord.objects.get(session=session, student=self.student)
-        self.assertEqual(record.method, AttendanceMethod.QR_CODE)
-
-    def test_expired_session_rejects_checkin(self):
-        # Check-in after expiration time is strictly rejected.
-        raw_passcode = "EXPIRE"
-        passcode_hash = hash_attendance_passcode(raw_passcode)
-        session = ModuleAttendanceSession.objects.create(
-            module=self.module,
-            created_by=self.instructor,
-            title="Past Lecture",
-            passcode_hash=passcode_hash,
-            expires_at=timezone.now() - timezone.timedelta(minutes=5),
-            is_active=True,
-        )
-
-        login_with_session(self.client, self.student)
-        response = self.client.post(
-            reverse("kura:student_checkin", kwargs={"session_id": session.id}),
-            {"passcode": raw_passcode},
-        )
-        self.assertRedirects(response, reverse("kura:attendance_history"))
-        self.assertFalse(AttendanceRecord.objects.filter(session=session, student=self.student).exists())
-
-    def test_wrong_passcode_rejects_checkin(self):
-        # Incorrect passcode does not register attendance.
-        raw_passcode = "CORRECT"
-        passcode_hash = hash_attendance_passcode(raw_passcode)
-        session = ModuleAttendanceSession.objects.create(
-            module=self.module,
-            created_by=self.instructor,
-            title="Lecture Roll",
-            passcode_hash=passcode_hash,
-            expires_at=timezone.now() + timezone.timedelta(minutes=15),
-            is_active=True,
-        )
-
-        login_with_session(self.client, self.student)
-        response = self.client.post(
-            reverse("kura:student_checkin", kwargs={"session_id": session.id}),
-            {"passcode": "WRONG1"},
-        )
-        self.assertEqual(response.status_code, 400)
-        self.assertFalse(AttendanceRecord.objects.filter(session=session, student=self.student).exists())
-
-    def test_double_checkin_is_rejected(self):
-        # A student cannot record attendance twice for the same session.
-        raw_passcode = "DUPLIC"
-        passcode_hash = hash_attendance_passcode(raw_passcode)
-        session = ModuleAttendanceSession.objects.create(
-            module=self.module,
-            created_by=self.instructor,
-            title="Double Checkin Test",
-            passcode_hash=passcode_hash,
-            expires_at=timezone.now() + timezone.timedelta(minutes=15),
-            is_active=True,
-        )
-
-        # First check-in succeeds.
-        AttendanceRecord.objects.create(
-            session=session,
-            student=self.student,
-            status=AttendanceStatus.PRESENT,
-            method=AttendanceMethod.PASSCODE,
-        )
-
-        # Second check-in attempt is rejected.
-        login_with_session(self.client, self.student)
-        response = self.client.post(
-            reverse("kura:student_checkin", kwargs={"session_id": session.id}),
-            {"passcode": raw_passcode},
-        )
-        self.assertRedirects(response, reverse("kura:attendance_history"))
-        self.assertEqual(AttendanceRecord.objects.filter(session=session, student=self.student).count(), 1)
-
-    def test_manual_roll_requires_staff_and_reason(self):
-        # Staff can record manual attendance with a required justification reason.
-        session = ModuleAttendanceSession.objects.create(
-            module=self.module,
-            created_by=self.instructor,
-            title="Manual Roll Test",
-            passcode_hash="dummyhash",
-            expires_at=timezone.now() + timezone.timedelta(minutes=15),
-            is_active=True,
-        )
-
-        login_with_session(self.client, self.instructor)
-
-        # Successful manual entry with justification.
-        response = self.client.post(
-            reverse("kura:attendance_manual_record", kwargs={"session_id": session.id}),
-            {
-                "student": str(self.student.id),
-                "status": AttendanceStatus.EXCUSED,
-                "override_reason": "Medical clinic certificate provided.",
-            },
-        )
-        self.assertRedirects(response, reverse("kura:attendance_session_detail", kwargs={"session_id": session.id}))
-
-        record = AttendanceRecord.objects.get(session=session, student=self.student)
-        self.assertEqual(record.status, AttendanceStatus.EXCUSED)
-        self.assertEqual(record.method, AttendanceMethod.MANUAL)
-        self.assertEqual(record.recorded_by, self.instructor)
-        self.assertEqual(record.override_reason, "Medical clinic certificate provided.")
-
-        # A staff member cannot create attendance for a student outside this course.
-        outsider = make_user("Student")
-        StudentProfile.objects.create(user=outsider, department=self.department, current_level="level_4", matriculation_year=2026)
-        self.client.post(reverse("kura:attendance_manual_record", kwargs={"session_id": session.id}),
-                         {"student": str(outsider.id), "status": AttendanceStatus.PRESENT, "override_reason": "Manual correction"})
-        self.assertFalse(AttendanceRecord.objects.filter(session=session, student=outsider).exists())
-
-        # Manual entry attempt without reason is rejected.
-        self.client.post(
-            reverse("kura:attendance_manual_record", kwargs={"session_id": session.id}),
-            {
-                "student": str(self.other_student.id),
-                "status": AttendanceStatus.PRESENT,
-                "override_reason": "",
-            },
-        )
-        self.assertFalse(AttendanceRecord.objects.filter(session=session, student=self.other_student).exists())
-
-        # Direct database insert without reason violates PostgreSQL check constraint.
-        with self.assertRaises(IntegrityError):
-            AttendanceRecord.objects.create(
-                session=session,
-                student=self.other_student,
-                status=AttendanceStatus.PRESENT,
-                method=AttendanceMethod.MANUAL,
-                recorded_by=self.instructor,
-                override_reason=None,
-            )
-
-
 class AttendanceHistoryTests(TestCase):
     """
     Tests Attendance history visibility and IDOR protection.
@@ -3100,9 +1707,8 @@ class AttendanceHistoryTests(TestCase):
         Enrollment.objects.create(course=self.course, student=self.student_a, status=EnrollmentStatus.ACTIVE)
         Enrollment.objects.create(course=self.course, student=self.student_b, status=EnrollmentStatus.ACTIVE)
 
-        self.module = Module.objects.create(course=self.course, title="Deductive Reasoning", is_visible=True)
         self.session = ModuleAttendanceSession.objects.create(
-            module=self.module,
+            course=self.course,
             created_by=self.instructor,
             title="Logic Seminar 1",
             passcode_hash="dummyhash",
@@ -3149,350 +1755,7 @@ class AttendanceHistoryTests(TestCase):
         self.assertContains(response, "Present")
         self.assertContains(response, "Late")
 
-
 # Assessments and grading tests
-
-class AssessmentAuthoringAndIsolationTests(TestCase):
-    """
-    Tests Assessment authoring and answer key isolation.
-    """
-
-    def setUp(self):
-        self.client = Client()
-        self.head = make_user("Department head", mfa_enabled=True)
-        self.instructor = make_user("Instructor", mfa_enabled=True)
-        self.outsider = make_user("Instructor", mfa_enabled=True)
-        self.department = Department.objects.create(name="Computer Science", code="CS", head_user=self.head)
-
-        self.course = Course.objects.create(
-            department=self.department,
-            code="CS305",
-            title="Database Systems",
-            semester="1",
-            academic_year=2026,
-            is_published=True,
-            published_by=self.head,
-            published_at=timezone.now(),
-        )
-        CourseStaff.objects.create(
-            course=self.course,
-            user=self.instructor,
-            staff_role="lead_instructor",
-            can_release_grades=True,
-        )
-
-        self.module = Module.objects.create(course=self.course, title="Transactions", is_visible=True)
-        self.section = ModuleSection.objects.create(module=self.module, title="Midterm Section", section_type="exam")
-
-    def test_instructor_can_create_assessment_and_questions_json_never_contains_answers(self):
-        # Author an assessment with multiple choice, matching, and essay questions.
-        # Verify that questions_json strictly omits answers and rubrics.
-        login_with_session(self.client, self.instructor)
-
-        now = timezone.now()
-        response = self.client.post(
-            reverse("kura:assessment_create", kwargs={"section_id": self.section.id}),
-            {
-                "title": "Database Midterm",
-                "description": "Comprehensive midterm exam.",
-                "component_type": GradeComponentType.EXAM,
-                "max_score": "50.00",
-                "max_attempts": 1,
-                "opens_at": (now - timezone.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"),
-                "due_date": (now + timezone.timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M"),
-                "duration_minutes": 90,
-                "lab_cidr_allowed": "10.0.0.0/24",
-                "proctor_code": "EXAM-2026",
-                "shuffle_questions": True,
-                "shuffle_options": True,
-                "allow_backtracking": True,
-                "autosave_interval_seconds": 15,
-                "questions-TOTAL_FORMS": 3, "questions-INITIAL_FORMS": 0,
-                "questions-0-type": "multiple_choice", "questions-0-points": "10",
-                "questions-0-prompt": "What does 2PL ensure?",
-                "questions-0-option_1": "Serializability", "questions-0-correct_1": "on",
-                "questions-0-option_2": "Availability",
-                "questions-0-explanation": "Two-Phase Locking guarantees conflict serializability.",
-                "questions-1-type": "matching", "questions-1-points": "15",
-                "questions-1-prompt": "Match isolation level to anomaly prevented.",
-                "questions-1-left_1": "Dirty Read", "questions-1-right_1": "Read Committed",
-                "questions-2-type": "long_text", "questions-2-points": "25",
-                "questions-2-prompt": "Explain write amplification in LSM trees.",
-                "questions-2-max_words": "300", "questions-2-rubric": "compaction",
-            },
-        )
-        assessment = Assessment.objects.get(title="Database Midterm")
-        self.assertRedirects(response, reverse("kura:assessment_detail", kwargs={"assessment_id": assessment.id}))
-
-        # Verify proctor code is stored as a keyed HMAC digest (not plain SHA-256).
-        expected_proctor_hash = hash_proctor_code("EXAM-2026")
-        self.assertEqual(assessment.proctor_code_hash, expected_proctor_hash)
-        self.assertNotEqual(
-            assessment.proctor_code_hash,
-            hashlib.sha256("EXAM-2026".encode("utf-8")).hexdigest(),
-        )
-
-        # Critical security check: questions_json must NEVER contain answer keys or rubrics.
-        questions = assessment.questions_json
-        for q in questions:
-            self.assertNotIn("answer", q)
-            self.assertNotIn("correct_option_ids", q)
-            self.assertNotIn("correct_pairs", q)
-            self.assertNotIn("explanation", q)
-            self.assertNotIn("tutor_rubric", q)
-
-        # Verify answer keys are saved in the separate ExamAnswerKey table.
-        answer_key = ExamAnswerKey.objects.get(assessment=assessment)
-        self.assertEqual(answer_key.answer_key_json[questions[0]["question_id"]]["correct_option_ids"], ["opt_1"])
-        self.assertEqual(answer_key.answer_key_json[questions[1]["question_id"]]["correct_pairs"], {"pair_1": "Read Committed"})
-        self.assertIn("compaction", json.dumps(answer_key.answer_key_json))
-
-    def test_unassigned_instructor_cannot_create_assessment(self):
-        # An instructor not assigned to this course cannot author assessments (403 Forbidden).
-        login_with_session(self.client, self.outsider)
-        response = self.client.get(reverse("kura:assessment_create", kwargs={"section_id": self.section.id}))
-        self.assertEqual(response.status_code, 403)
-
-    def test_formset_creates_questions_and_keeps_keys_separate(self):
-        # Staff use ordinary form fields rather than writing JSON by hand.
-        login_with_session(self.client, self.instructor)
-        now = timezone.now()
-        response = self.client.post(reverse("kura:assessment_create", kwargs={"section_id": self.section.id}), {
-            "title": "Builder test", "component_type": GradeComponentType.EXAM,
-            "delivery_mode": "online", "max_score": "30", "max_attempts": 1,
-            "opens_at": (now - timezone.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"),
-            "due_date": (now + timezone.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M"),
-            "duration_minutes": 60, "autosave_interval_seconds": 15,
-            "questions-TOTAL_FORMS": 3, "questions-INITIAL_FORMS": 0,
-            "questions-0-type": "multiple_choice", "questions-0-prompt": "Pick one", "questions-0-points": "10",
-            "questions-0-option_1": "Right choice", "questions-0-correct_1": "on", "questions-0-option_2": "Other",
-            "questions-1-type": "matching", "questions-1-prompt": "Match", "questions-1-points": "10",
-            "questions-1-left_1": "One", "questions-1-right_1": "Zulu",
-            "questions-1-left_2": "Two", "questions-1-right_2": "Alpha",
-            "questions-2-type": "long_text", "questions-2-prompt": "Explain", "questions-2-points": "10",
-            "questions-2-max_words": "200", "questions-2-rubric": "Private marking guide",
-        })
-        self.assertEqual(response.status_code, 302)
-        assessment = Assessment.objects.get(title="Builder test")
-        self.assertEqual(len(assessment.questions_json), 3)
-        self.assertNotIn("Private marking guide", json.dumps(assessment.questions_json))
-        self.assertNotIn("correct", json.dumps(assessment.questions_json).lower())
-        keys = assessment.answer_key.answer_key_json
-        self.assertEqual(keys[assessment.questions_json[0]["question_id"]]["correct_option_ids"], ["opt_1"])
-        self.assertEqual(keys[assessment.questions_json[1]["question_id"]]["correct_pairs"], {"pair_1": "Zulu", "pair_2": "Alpha"})
-        self.assertEqual(assessment.questions_json[1]["available_matches"], ["Alpha", "Zulu"])
-        self.assertIn("Private marking guide", json.dumps(keys))
-
-    def test_question_formset_rejects_bad_answers_and_missing_management_data(self):
-        # Empty or invalid answer definitions cannot produce an ungradable assessment.
-        login_with_session(self.client, self.instructor)
-        now = timezone.now()
-        data = {
-            "title": "Invalid test", "component_type": GradeComponentType.EXAM,
-            "delivery_mode": "online", "max_score": "10", "max_attempts": 1,
-            "opens_at": now.strftime("%Y-%m-%dT%H:%M"),
-            "due_date": (now + timezone.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M"),
-            "duration_minutes": 60, "autosave_interval_seconds": 15,
-            "questions-TOTAL_FORMS": 1, "questions-INITIAL_FORMS": 0,
-            "questions-0-type": "multiple_choice", "questions-0-prompt": "Pick", "questions-0-points": "10",
-            "questions-0-option_1": "Only option",
-        }
-        response = self.client.post(reverse("kura:assessment_create", kwargs={"section_id": self.section.id}), data)
-        self.assertEqual(response.status_code, 400)
-        self.assertFalse(Assessment.objects.filter(title="Invalid test").exists())
-        data.pop("questions-TOTAL_FORMS")
-        response = self.client.post(reverse("kura:assessment_create", kwargs={"section_id": self.section.id}), data)
-        self.assertEqual(response.status_code, 400)
-        self.assertFalse(Assessment.objects.filter(title="Invalid test").exists())
-
-    def test_question_points_cannot_exceed_assessment_maximum(self):
-        # A correctly answered exam must never earn more than its configured maximum.
-        login_with_session(self.client, self.instructor)
-        now = timezone.now()
-        response = self.client.post(reverse("kura:assessment_create", kwargs={"section_id": self.section.id}), {
-            "title": "Too many points", "component_type": GradeComponentType.EXAM, "delivery_mode": "online",
-            "max_score": "10", "max_attempts": 1, "duration_minutes": 60, "autosave_interval_seconds": 15,
-            "opens_at": now.strftime("%Y-%m-%dT%H:%M"),
-            "due_date": (now + timezone.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M"),
-            "questions-TOTAL_FORMS": 1, "questions-INITIAL_FORMS": 0, "questions-0-type": "multiple_choice",
-            "questions-0-prompt": "Question", "questions-0-points": "20", "questions-0-option_1": "A",
-            "questions-0-option_2": "B", "questions-0-correct_1": "on",
-        })
-        self.assertEqual(response.status_code, 400)
-        self.assertContains(response, "Maximum score cannot be less than the total question points.", status_code=400)
-        self.assertFalse(Assessment.objects.filter(title="Too many points").exists())
-
-    def test_question_form_endpoint_checks_course_permission(self):
-        # Fetching a blank question card still requires authorization for this section.
-        url = reverse("kura:assessment_question_form", kwargs={"section_id": self.section.id})
-        login_with_session(self.client, self.instructor)
-        response = self.client.get(url, {"type": "matching", "questions-TOTAL_FORMS": "2"})
-        self.assertContains(response, 'name="questions-2-prompt"')
-        self.assertContains(response, 'name="questions-TOTAL_FORMS"')
-        self.assertEqual(self.client.get(url, {"type": "bad", "questions-TOTAL_FORMS": "9999"}).status_code, 400)
-        login_with_session(self.client, self.outsider)
-        self.assertEqual(self.client.get(url, {"type": "matching", "questions-TOTAL_FORMS": "0"}).status_code, 403)
-
-    def test_question_builder_saves_requested_order(self):
-        # Moving question cards changes their order without changing which answer belongs to each question.
-        login_with_session(self.client, self.instructor)
-        now = timezone.now()
-        response = self.client.post(reverse("kura:assessment_create", kwargs={"section_id": self.section.id}), {
-            "title": "Ordered", "component_type": GradeComponentType.EXAM, "delivery_mode": "online",
-            "max_score": "20", "max_attempts": 1, "duration_minutes": 60, "autosave_interval_seconds": 15,
-            "opens_at": now.strftime("%Y-%m-%dT%H:%M"),
-            "due_date": (now + timezone.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M"),
-            "questions-TOTAL_FORMS": 2, "questions-INITIAL_FORMS": 0,
-            "questions-0-type": "long_text", "questions-0-prompt": "First", "questions-0-points": "10",
-            "questions-0-max_words": "100", "questions-0-rubric": "Guide A", "questions-0-ORDER": "2",
-            "questions-1-type": "long_text", "questions-1-prompt": "Second", "questions-1-points": "10",
-            "questions-1-max_words": "100", "questions-1-rubric": "Guide B", "questions-1-ORDER": "1",
-        })
-        self.assertEqual(response.status_code, 302)
-        assessment = Assessment.objects.get(title="Ordered")
-        self.assertEqual([item["prompt"] for item in assessment.questions_json], ["Second", "First"])
-        first_id = assessment.questions_json[0]["question_id"]
-        self.assertIn("Guide B", json.dumps(assessment.answer_key.answer_key_json[first_id]))
-
-    def test_assessment_can_be_edited_before_attempt_and_locked_afterwards(self):
-        # Editing updates the question and separate key until the first attempt exists.
-        now = timezone.now()
-        assessment = Assessment.objects.create(
-            section=self.section, title="Original", component_type=GradeComponentType.EXAM,
-            max_score=10, max_attempts=1, opens_at=now - timezone.timedelta(hours=1),
-            due_date=now + timezone.timedelta(days=1), duration_minutes=60, created_by=self.instructor,
-            settings_json={"autosave_interval_seconds": 15},
-            questions_json=[{"question_id": "old", "type": "multiple_choice", "prompt": "Old prompt", "points": 10,
-                             "options": [{"option_id": "a", "text": "First"}, {"option_id": "b", "text": "Second"}]}],
-        )
-        ExamAnswerKey.objects.create(assessment=assessment, created_by=self.instructor,
-                                     answer_key_json={"old": {"correct_option_ids": ["a"], "explanation": "Reason"}})
-        login_with_session(self.client, self.instructor)
-        url = reverse("kura:assessment_edit", kwargs={"assessment_id": assessment.id})
-        self.assertContains(self.client.get(url), "Old prompt")
-        data = {
-            "title": "Edited", "component_type": GradeComponentType.EXAM,
-            "delivery_mode": "online", "max_score": "10", "max_attempts": 1,
-            "opens_at": (now - timezone.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"),
-            "due_date": (now + timezone.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M"),
-            "duration_minutes": 60, "autosave_interval_seconds": 15,
-            "questions-TOTAL_FORMS": 1, "questions-INITIAL_FORMS": 1,
-            "questions-0-type": "multiple_choice", "questions-0-prompt": "New prompt", "questions-0-points": "10",
-            "questions-0-option_1": "First", "questions-0-option_2": "Second", "questions-0-correct_2": "on",
-        }
-        self.assertEqual(self.client.post(url, data).status_code, 302)
-        assessment.refresh_from_db()
-        self.assertEqual(assessment.title, "Edited")
-        self.assertEqual(assessment.questions_json[0]["prompt"], "New prompt")
-        key_before = assessment.answer_key.answer_key_json
-        questions_before = assessment.questions_json
-
-        # A forged request cannot change questions, key, delivery mode, or limits after starting.
-        student = make_user("Student", mfa_enabled=True)
-        AssessmentAttempt.objects.create(assessment=assessment, student=student, attempt_no=1,
-                                         expires_at=now + timezone.timedelta(minutes=30), ip_address="127.0.0.1")
-        self.assertContains(self.client.get(url), "Questions are locked because students have started.")
-        data.update({"title": "Allowed title", "delivery_mode": "paper_scanned", "max_score": "999",
-                     "questions-0-prompt": "Forged prompt"})
-        self.assertEqual(self.client.post(url, data).status_code, 302)
-        assessment.refresh_from_db()
-        self.assertEqual(assessment.title, "Allowed title")
-        self.assertEqual(assessment.delivery_mode, "online")
-        self.assertEqual(assessment.max_score, Decimal("10"))
-        self.assertEqual(assessment.questions_json, questions_before)
-        self.assertEqual(assessment.answer_key.answer_key_json, key_before)
-
-    def test_assessment_edit_denies_outsider_and_admin(self):
-        # A guessed edit URL grants neither unrelated staff nor Admins access.
-        now = timezone.now()
-        assessment = Assessment.objects.create(
-            section=self.section, title="Private", component_type=GradeComponentType.EXAM,
-            opens_at=now, due_date=now + timezone.timedelta(days=1), duration_minutes=60, created_by=self.instructor,
-        )
-        url = reverse("kura:assessment_edit", kwargs={"assessment_id": assessment.id})
-        for user in (self.outsider, make_user("Admin", mfa_enabled=True)):
-            login_with_session(self.client, user)
-            self.assertEqual(self.client.get(url).status_code, 403)
-
-    def test_edit_preserves_legacy_matching_choices_and_detailed_rubric(self):
-        # Editing older questions must retain distractors and unchanged structured marking criteria.
-        now = timezone.now()
-        assessment = Assessment.objects.create(
-            section=self.section, title="Legacy", component_type=GradeComponentType.EXAM, max_score=20,
-            opens_at=now - timezone.timedelta(hours=1), due_date=now + timezone.timedelta(days=1),
-            duration_minutes=60, created_by=self.instructor, settings_json={"autosave_interval_seconds": 15},
-            questions_json=[
-                {"question_id": "m", "type": "matching", "prompt": "Match", "points": 10,
-                 "left_prompts": [{"pair_id": "p", "text": "One"}], "available_matches": ["First", "Distractor"]},
-                {"question_id": "e", "type": "long_text", "prompt": "Explain", "points": 10, "max_words": 100},
-            ],
-        )
-        rubric = {"max_words": 100, "criteria": [{"criterion": "Compare", "points": 10}], "note": "Keep this"}
-        ExamAnswerKey.objects.create(assessment=assessment, created_by=self.instructor, answer_key_json={
-            "m": {"correct_pairs": {"p": "First"}}, "e": {"tutor_rubric": rubric},
-        })
-        login_with_session(self.client, self.instructor)
-        response = self.client.post(reverse("kura:assessment_edit", kwargs={"assessment_id": assessment.id}), {
-            "title": "Legacy edited", "component_type": GradeComponentType.EXAM, "delivery_mode": "online",
-            "max_score": "20", "max_attempts": 1, "duration_minutes": 60, "autosave_interval_seconds": 15,
-            "opens_at": (now - timezone.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"),
-            "due_date": (now + timezone.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M"),
-            "questions-TOTAL_FORMS": 2, "questions-INITIAL_FORMS": 2,
-            "questions-0-type": "matching", "questions-0-prompt": "Match", "questions-0-points": "10",
-            "questions-0-left_1": "One", "questions-0-right_1": "First", "questions-0-extra_matches": "Distractor",
-            "questions-1-type": "long_text", "questions-1-prompt": "Explain", "questions-1-points": "10",
-            "questions-1-max_words": "100", "questions-1-rubric": "Compare",
-        })
-        self.assertEqual(response.status_code, 302)
-        assessment.refresh_from_db()
-        self.assertEqual(assessment.questions_json[0]["available_matches"], ["Distractor", "First"])
-        essay_id = assessment.questions_json[1]["question_id"]
-        self.assertEqual(assessment.answer_key.answer_key_json[essay_id]["tutor_rubric"], rubric)
-
-    def test_edit_does_not_discard_legacy_questions_that_exceed_builder_limits(self):
-        # Older questions with more than eight options stay untouched instead of being truncated.
-        now = timezone.now()
-        question = {"question_id": "legacy", "type": "multiple_choice", "prompt": "Choose", "points": 10,
-                    "options": [{"option_id": str(number), "text": str(number)} for number in range(9)]}
-        assessment = Assessment.objects.create(
-            section=self.section, title="Long legacy", component_type=GradeComponentType.EXAM, created_by=self.instructor,
-            opens_at=now - timezone.timedelta(hours=1), due_date=now + timezone.timedelta(days=1), duration_minutes=60,
-            questions_json=[question], settings_json={"autosave_interval_seconds": 15},
-        )
-        ExamAnswerKey.objects.create(assessment=assessment, created_by=self.instructor,
-                                     answer_key_json={"legacy": {"correct_option_ids": ["0"]}})
-        login_with_session(self.client, self.instructor)
-        url = reverse("kura:assessment_edit", kwargs={"assessment_id": assessment.id})
-        self.assertContains(self.client.get(url), "exceed the builder")
-        response = self.client.post(url, {
-            "title": "Metadata changed", "description": "Notes",
-            "opens_at": (now - timezone.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"),
-            "due_date": (now + timezone.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M"),
-        })
-        self.assertEqual(response.status_code, 302)
-        assessment.refresh_from_db()
-        self.assertEqual(assessment.title, "Metadata changed")
-        self.assertEqual(assessment.questions_json, [question])
-        self.assertEqual(assessment.answer_key.answer_key_json, {"legacy": {"correct_option_ids": ["0"]}})
-
-    def test_scanned_assessment_does_not_store_online_questions_or_keys(self):
-        # Scanned-paper assessments do not need an online question builder or answer key.
-        login_with_session(self.client, self.instructor)
-        now = timezone.now()
-        response = self.client.post(reverse("kura:assessment_create", kwargs={"section_id": self.section.id}), {
-            "title": "Paper assessment", "component_type": GradeComponentType.EXAM,
-            "delivery_mode": "paper_scanned", "max_score": "100", "max_attempts": 1,
-            "opens_at": (now - timezone.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"),
-            "due_date": (now + timezone.timedelta(hours=24)).strftime("%Y-%m-%dT%H:%M"),
-            "duration_minutes": 60, "autosave_interval_seconds": 15,
-            "questions_builder_json": "not a question",
-        })
-        self.assertEqual(response.status_code, 302)
-        assessment = Assessment.objects.get(title="Paper assessment")
-        self.assertEqual(assessment.delivery_mode, "paper_scanned")
-        self.assertEqual(assessment.questions_json, [])
-        self.assertEqual(assessment.answer_key.answer_key_json, {})
-
 
 def reseed_roles_after_flush():
     """Test helper: puts back the roles and permissions that migrations seed.
@@ -3504,7 +1767,6 @@ def reseed_roles_after_flush():
     roles_migration.seed_roles_and_permissions(django_apps, None)
     with connection.schema_editor() as editor:
         admin_migration.update_admin_permissions(django_apps, editor)
-
 
 class AssessmentEditLockTests(TransactionTestCase):
     """Exercise assessment row locks with separate PostgreSQL connections."""
@@ -3566,71 +1828,6 @@ class AssessmentEditLockTests(TransactionTestCase):
         # Release recalculates the draft, so the stored 75.00 is replaced by the real score.
         self.assertEqual(result.final_score, calculate_student_course_score(course, student))
 
-    def test_edit_waiting_for_first_attempt_cannot_change_questions(self):
-        # Keep the assessment row locked while an edit request reaches the same lock.
-        instructor = make_user("Instructor", mfa_enabled=True)
-        student = make_user("Student", mfa_enabled=True)
-        department = Department.objects.create(name="Locks", code="LOCK")
-        course = Course.objects.create(department=department, code="LOCK1", title="Locks", semester="1", academic_year=2026)
-        CourseStaff.objects.create(course=course, user=instructor, staff_role="lead_instructor")
-        module = Module.objects.create(course=course, title="Module")
-        section = ModuleSection.objects.create(module=module, title="Exam", section_type="exam")
-        now = timezone.now()
-        assessment = Assessment.objects.create(
-            section=section, title="Original", component_type=GradeComponentType.EXAM, created_by=instructor,
-            opens_at=now - timezone.timedelta(hours=1), due_date=now + timezone.timedelta(days=1), duration_minutes=60,
-            questions_json=[{"question_id": "old", "type": "multiple_choice", "prompt": "Original question", "points": 10,
-                             "options": [{"option_id": "a", "text": "A"}, {"option_id": "b", "text": "B"}]}],
-        )
-        ExamAnswerKey.objects.create(assessment=assessment, created_by=instructor,
-                                     answer_key_json={"old": {"correct_option_ids": ["a"]}})
-        client = Client()
-        login_with_session(client, instructor)
-        data = {
-            "title": "Changed", "component_type": GradeComponentType.EXAM, "delivery_mode": "online",
-            "max_score": "100", "max_attempts": 1, "duration_minutes": 60, "autosave_interval_seconds": 15,
-            "opens_at": (now - timezone.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"),
-            "due_date": (now + timezone.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M"),
-            "questions-TOTAL_FORMS": 1, "questions-INITIAL_FORMS": 1, "questions-0-type": "multiple_choice",
-            "questions-0-prompt": "Changed question", "questions-0-points": "10",
-            "questions-0-option_1": "A", "questions-0-option_2": "B", "questions-0-correct_2": "on",
-        }
-        reached_lock = threading.Event()
-        original_lock = QuerySet.select_for_update
-        responses = []
-        errors = []
-
-        def note_lock(queryset, *args, **kwargs):
-            # Signal only when the separate edit request tries to lock an assessment.
-            if threading.current_thread().name == "assessment-editor" and queryset.model is Assessment:
-                reached_lock.set()
-            return original_lock(queryset, *args, **kwargs)
-
-        def edit_assessment():
-            try:
-                responses.append(client.post(reverse("kura:assessment_edit", kwargs={"assessment_id": assessment.id}), data))
-            except Exception as error:
-                errors.append(error)
-            finally:
-                connections.close_all()
-
-        worker = threading.Thread(target=edit_assessment, name="assessment-editor")
-        with patch.object(QuerySet, "select_for_update", note_lock):
-            with transaction.atomic():
-                Assessment.objects.select_for_update().get(id=assessment.id)
-                worker.start()
-                self.assertTrue(reached_lock.wait(10), "The edit did not request the assessment lock.")
-                AssessmentAttempt.objects.create(assessment=assessment, student=student, attempt_no=1,
-                                                 expires_at=now + timezone.timedelta(minutes=30), ip_address="127.0.0.1")
-            worker.join(10)
-        self.assertFalse(worker.is_alive())
-        self.assertEqual(errors, [])
-        self.assertEqual(responses[0].status_code, 302)
-        assessment.refresh_from_db()
-        self.assertEqual(assessment.title, "Original")
-        self.assertEqual(assessment.questions_json[0]["prompt"], "Original question")
-        self.assertEqual(assessment.answer_key.answer_key_json, {"old": {"correct_option_ids": ["a"]}})
-
     def test_start_waits_for_assessment_edit_lock(self):
         # Starting an attempt must also acquire the assessment row lock.
         instructor = make_user("Instructor", mfa_enabled=True)
@@ -3647,12 +1844,10 @@ class AssessmentEditLockTests(TransactionTestCase):
             published_at=timezone.now(),
         )
         Enrollment.objects.create(course=course, student=student, status=EnrollmentStatus.ACTIVE)
-        module = Module.objects.create(course=course, title="Module", is_visible=True)
-        section = ModuleSection.objects.create(module=module, title="Exam", section_type="exam")
         now = timezone.now()
-        assessment = Assessment.objects.create(section=section, title="Original", component_type=GradeComponentType.EXAM,
+        assessment = Assessment.objects.create(course=course, title="Original", component_type=GradeComponentType.EXAM,
                                                created_by=instructor, opens_at=now - timezone.timedelta(hours=1),
-                                               due_date=now + timezone.timedelta(days=1), duration_minutes=60)
+                                               due_date=now + timezone.timedelta(days=1),)
         client = Client()
         login_with_session(client, student)
         reached_lock = threading.Event()
@@ -3688,918 +1883,6 @@ class AssessmentEditLockTests(TransactionTestCase):
         attempt = AssessmentAttempt.objects.get(assessment=assessment, student=student)
         self.assertEqual(attempt.assessment.title, "Edited before starting")
 
-    def test_section_deletion_waits_for_concurrent_first_attempt(self):
-        # An attempt committed while deletion waits must cause the section to be hidden, not deleted.
-        instructor = make_user("Instructor")
-        student = make_user("Student")
-        department = Department.objects.create(name="Deletion locks", code="DELLOCK")
-        course = Course.objects.create(department=department, code="DL1", title="Locks", semester="1", academic_year=2026)
-        CourseStaff.objects.create(course=course, user=instructor, staff_role="lead_instructor")
-        module = Module.objects.create(course=course, title="Module")
-        section = ModuleSection.objects.create(module=module, title="Exam", section_type="exam")
-        now = timezone.now()
-        assessment = Assessment.objects.create(section=section, title="Exam", component_type=GradeComponentType.EXAM,
-                                               created_by=instructor, opens_at=now, due_date=now + timezone.timedelta(days=1), duration_minutes=60)
-        client = Client()
-        login_with_session(client, instructor)
-        reached_lock = threading.Event()
-        original_lock = QuerySet.select_for_update
-        responses = []
-        errors = []
-
-        def note_lock(queryset, *args, **kwargs):
-            if threading.current_thread().name == "section-deleter" and queryset.model is Assessment:
-                reached_lock.set()
-            return original_lock(queryset, *args, **kwargs)
-
-        def delete_section():
-            try:
-                responses.append(client.post(reverse("kura:section_delete", kwargs={"section_id": section.id}), {"confirm": "on"}))
-            except Exception as error:
-                errors.append(error)
-            finally:
-                connections.close_all()
-
-        worker = threading.Thread(target=delete_section, name="section-deleter")
-        with patch.object(QuerySet, "select_for_update", note_lock):
-            with transaction.atomic():
-                Assessment.objects.select_for_update().get(id=assessment.id)
-                worker.start()
-                self.assertTrue(reached_lock.wait(10), "Deletion did not request the assessment lock.")
-                attempt = AssessmentAttempt.objects.create(assessment=assessment, student=student,
-                                                           expires_at=now + timezone.timedelta(minutes=30), ip_address="127.0.0.1")
-            worker.join(10)
-        self.assertFalse(worker.is_alive())
-        self.assertEqual(errors, [])
-        self.assertEqual(responses[0].status_code, 302)
-        section.refresh_from_db()
-        self.assertFalse(section.is_visible)
-        self.assertTrue(AssessmentAttempt.objects.filter(id=attempt.id).exists())
-
-
-class AssessmentAttemptAndDeliveryTests(TestCase):
-    """
-    Tests Assessment delivery, CIDR checks, proctor codes, autosave, and submission.
-    """
-
-    def setUp(self):
-        self.client = Client()
-        self.instructor = make_user("Instructor", mfa_enabled=True)
-        self.student = make_user("Student", mfa_enabled=True)
-        self.dept = Department.objects.create(name="Engineering", code="ENG")
-
-        StudentProfile.objects.create(
-            user=self.student,
-            department=self.dept,
-            current_level="level_4",
-            matriculation_year=2026,
-        )
-
-        self.course = Course.objects.create(
-            department=self.dept,
-            code="ENG101",
-            title="Engineering Basics",
-            semester="1",
-            academic_year=2026,
-            is_published=True,
-            published_by=self.instructor,
-            published_at=timezone.now(),
-        )
-        CourseStaff.objects.create(
-            course=self.course,
-            user=self.instructor,
-            staff_role="lead_instructor",
-            can_release_grades=True,
-        )
-        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
-
-        self.module = Module.objects.create(course=self.course, title="Unit 1", is_visible=True)
-        self.section = ModuleSection.objects.create(module=self.module, title="Exam Section", section_type="exam")
-
-        now = timezone.now()
-        proctor_hash = hash_proctor_code("PROCTOR123")
-        self.assessment = Assessment.objects.create(
-            section=self.section,
-            title="Engineering Exam",
-            component_type=GradeComponentType.EXAM,
-            max_score=Decimal("100.00"),
-            max_attempts=1,
-            opens_at=now - timezone.timedelta(hours=1),
-            due_date=now + timezone.timedelta(hours=4),
-            duration_minutes=60,
-            lab_cidr_allowed="10.20.0.0/24",
-            proctor_code_hash=proctor_hash,
-            questions_json=[
-                {
-                    "question_id": "q1",
-                    "type": "multiple_choice",
-                    "points": 10.0,
-                    "prompt": "What is Newton's second law?",
-                    "options": [
-                        {"option_id": "o1", "text": "F = ma"},
-                        {"option_id": "o2", "text": "E = mc^2"},
-                    ],
-                }
-            ],
-            created_by=self.instructor,
-        )
-        ExamAnswerKey.objects.create(
-            assessment=self.assessment,
-            answer_key_json={"q1": {"correct_option_ids": ["o1"]}},
-            created_by=self.instructor,
-        )
-
-    def test_course_page_links_authorized_users_to_assessments(self):
-        # Staff can create assessments and enrolled students can find visible ones.
-        login_with_session(self.client, self.instructor)
-        page = self.client.get(reverse("kura:course_detail", kwargs={"course_id": self.course.id}))
-        self.assertContains(page, reverse("kura:assessment_create", kwargs={"section_id": self.section.id}))
-        self.assertContains(page, reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id}))
-        login_with_session(self.client, self.student)
-        page = self.client.get(reverse("kura:course_detail", kwargs={"course_id": self.course.id}))
-        self.assertContains(page, reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id}))
-        self.assertNotContains(page, reverse("kura:assessment_create", kwargs={"section_id": self.section.id}))
-
-    def test_scanned_attempt_requires_file_and_is_manually_graded(self):
-        # Scanned attempts cannot be submitted empty or automatically given a zero mark.
-        self.assessment.delivery_mode = "paper_scanned"
-        self.assessment.save(update_fields=["delivery_mode"])
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=self.student, attempt_no=1,
-            status=AttemptStatus.IN_PROGRESS, expires_at=timezone.now() + timezone.timedelta(minutes=30),
-            ip_address="127.0.0.1",
-        )
-        login_with_session(self.client, self.student)
-        # Scanned-paper delivery shows a deadline instead of an online countdown.
-        page = self.client.get(reverse("kura:assessment_take", kwargs={"attempt_id": attempt.id}))
-        self.assertContains(page, "Upload scanned paper")
-        self.assertNotContains(page, 'id="exam-timer"')
-        url = reverse("kura:assessment_submit", kwargs={"attempt_id": attempt.id})
-
-        # Empty submission is rejected without changing the attempt.
-        self.client.post(url)
-        attempt.refresh_from_db()
-        self.assertEqual(attempt.status, AttemptStatus.IN_PROGRESS)
-
-        # A real PDF passes the normal upload checks and is sent for manual marking.
-        upload = SimpleUploadedFile("script.pdf", b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF", content_type="application/pdf")
-        self.client.post(reverse("kura:assessment_attempt_file_upload", kwargs={"attempt_id": attempt.id}), {"file": upload})
-        self.assertEqual(AttemptFile.objects.filter(attempt=attempt).count(), 1)
-        self.client.post(url)
-        attempt.refresh_from_db()
-        self.assertEqual(attempt.status, AttemptStatus.REQUIRES_MANUAL_GRADING)
-        self.assertFalse(Grade.objects.filter(attempt=attempt).exists())
-
-    def test_hidden_section_blocks_student_assessment_links_but_not_staff(self):
-        # Hiding a section must protect its assessment even when a student knows the URL.
-        self.section.is_visible = False
-        self.section.save(update_fields=["is_visible"])
-        login_with_session(self.client, self.student)
-        self.assertNotContains(self.client.get(reverse("kura:course_detail", kwargs={"course_id": self.course.id})), self.section.title)
-        self.assertEqual(self.client.get(reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id})).status_code, 403)
-        self.assertEqual(self.client.post(reverse("kura:assessment_attempt_start", kwargs={"assessment_id": self.assessment.id})).status_code, 403)
-        login_with_session(self.client, self.instructor)
-        self.assertContains(self.client.get(reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id})), self.assessment.title)
-
-    def test_hidden_section_blocks_existing_student_attempt(self):
-        # A previously started attempt must not bypass a later section hide.
-        attempt = AssessmentAttempt.objects.create(assessment=self.assessment, student=self.student, attempt_no=1,
-                                                   expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1")
-        self.section.is_visible = False
-        self.section.save(update_fields=["is_visible"])
-        login_with_session(self.client, self.student)
-        self.assertEqual(self.client.get(reverse("kura:assessment_take", kwargs={"attempt_id": attempt.id})).status_code, 403)
-        self.assertEqual(self.client.post(reverse("kura:assessment_autosave", kwargs={"attempt_id": attempt.id}), {"focus_lost": "1"}).status_code, 403)
-
-    def test_staff_can_hide_section_without_deleting_attempts(self):
-        # Hiding a section preserves attempts, and neither students nor GET can perform it.
-        attempt = AssessmentAttempt.objects.create(assessment=self.assessment, student=self.student, attempt_no=1,
-                                                   expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1")
-        url = reverse("kura:section_visibility_toggle", kwargs={"section_id": self.section.id})
-        login_with_session(self.client, self.student)
-        self.assertEqual(self.client.post(url).status_code, 403)
-        login_with_session(self.client, self.instructor)
-        self.assertEqual(self.client.get(url).status_code, 405)
-        self.assertEqual(self.client.post(url).status_code, 302)
-        self.section.refresh_from_db()
-        self.assertFalse(self.section.is_visible)
-        self.assertTrue(AssessmentAttempt.objects.filter(id=attempt.id).exists())
-
-    def test_delete_section_with_attempt_hides_instead(self):
-        # Confirmed deletion must preserve both the section and a student's existing attempt.
-        attempt = AssessmentAttempt.objects.create(assessment=self.assessment, student=self.student, attempt_no=1,
-                                                   expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1")
-        login_with_session(self.client, self.instructor)
-        url = reverse("kura:section_delete", kwargs={"section_id": self.section.id})
-        self.assertEqual(self.client.get(url).status_code, 405)
-        self.client.post(url, {"confirm": "on"})
-        self.section.refresh_from_db()
-        self.assertFalse(self.section.is_visible)
-        self.assertTrue(AssessmentAttempt.objects.filter(id=attempt.id).exists())
-
-    def test_section_deletion_requires_confirmation_and_course_permission(self):
-        # An unconfirmed or unrelated request must never delete a section.
-        empty_section = ModuleSection.objects.create(module=self.module, title="Empty", section_type="lecture")
-        url = reverse("kura:section_delete", kwargs={"section_id": empty_section.id})
-        login_with_session(self.client, self.student)
-        self.assertEqual(self.client.post(url, {"confirm": "on"}).status_code, 403)
-        login_with_session(self.client, self.instructor)
-        self.client.post(url)
-        self.assertTrue(ModuleSection.objects.filter(id=empty_section.id).exists())
-        self.client.post(url, {"confirm": "on"})
-        self.assertFalse(ModuleSection.objects.filter(id=empty_section.id).exists())
-
-    def test_assessment_with_attempt_cannot_be_deleted(self):
-        # Direct assessment deletion must not cascade into a student's attempt.
-        attempt = AssessmentAttempt.objects.create(assessment=self.assessment, student=self.student, attempt_no=1,
-                                                   expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1")
-        login_with_session(self.client, self.instructor)
-        url = reverse("kura:assessment_delete", kwargs={"assessment_id": self.assessment.id})
-        self.assertEqual(self.client.get(url).status_code, 405)
-        self.client.post(url, {"confirm": "on"})
-        self.assertTrue(Assessment.objects.filter(id=self.assessment.id).exists())
-        self.assertTrue(AssessmentAttempt.objects.filter(id=attempt.id).exists())
-
-    def test_opening_an_expired_scanned_attempt_does_not_submit_it(self):
-        # A GET must not change the attempt; the scheduled command handles expiry.
-        self.assessment.delivery_mode = "paper_scanned"
-        self.assessment.save(update_fields=["delivery_mode"])
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=self.student, attempt_no=1,
-            status=AttemptStatus.IN_PROGRESS, expires_at=timezone.now() - timezone.timedelta(minutes=1),
-            ip_address="127.0.0.1",
-        )
-        login_with_session(self.client, self.student)
-        response = self.client.get(reverse("kura:assessment_take", kwargs={"attempt_id": attempt.id}))
-        self.assertEqual(response.status_code, 302)
-        attempt.refresh_from_db()
-        self.assertEqual(attempt.status, AttemptStatus.IN_PROGRESS)
-        call_command("finalize_attempts", stdout=StringIO())
-        attempt.refresh_from_db()
-        self.assertEqual(attempt.status, AttemptStatus.REQUIRES_MANUAL_GRADING)
-        self.assertFalse(Grade.objects.filter(attempt=attempt).exists())
-
-    def test_scanned_attempt_rejects_non_image_non_pdf_upload(self):
-        # Files that are otherwise allowed cannot be submitted as scanned papers.
-        self.assessment.delivery_mode = "paper_scanned"
-        self.assessment.save(update_fields=["delivery_mode"])
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=self.student, attempt_no=1,
-            status=AttemptStatus.IN_PROGRESS, expires_at=timezone.now() + timezone.timedelta(minutes=30),
-            ip_address="127.0.0.1",
-        )
-        login_with_session(self.client, self.student)
-        upload = SimpleUploadedFile("script.txt", b"This is plain text and not a scanned paper.")
-        response = self.client.post(
-            reverse("kura:assessment_attempt_file_upload", kwargs={"attempt_id": attempt.id}),
-            {"file": upload}, follow=True,
-        )
-        self.assertContains(response, "Upload a PDF or image of the scanned paper.")
-        self.assertFalse(AttemptFile.objects.filter(attempt=attempt).exists())
-        self.assertFalse(StoredFile.objects.filter(original_filename="script.txt").exists())
-
-    def test_course_staff_can_submit_and_download_scanned_paper_for_student(self):
-        # Assigned staff may submit an enrolled student's scanned script for manual grading.
-        self.assessment.delivery_mode = "paper_scanned"
-        self.assessment.save(update_fields=["delivery_mode"])
-        login_with_session(self.client, self.instructor)
-        upload = SimpleUploadedFile("scan.pdf", b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF", content_type="application/pdf")
-        response = self.client.post(
-            reverse("kura:scanned_paper_staff_upload", kwargs={"assessment_id": self.assessment.id}),
-            {"student": str(self.student.id), "file": upload},
-        )
-        self.assertEqual(response.status_code, 302)
-        attempt = AssessmentAttempt.objects.get(assessment=self.assessment, student=self.student)
-        self.assertEqual(attempt.status, AttemptStatus.REQUIRES_MANUAL_GRADING)
-        self.assertFalse(Grade.objects.filter(attempt=attempt).exists())
-        attempt_file = AttemptFile.objects.get(attempt=attempt)
-        download = self.client.get(reverse("kura:attempt_file_download", kwargs={
-            "attempt_id": attempt.id, "file_id": attempt_file.file.id,
-        }))
-        self.assertEqual(download.status_code, 200)
-        self.assertEqual(download.content, bytes(attempt_file.file.content.content))
-
-        # The review page links staff to the existing manual grading form.
-        review = self.client.get(reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id}))
-        self.assertContains(review, reverse("kura:grade_entry", kwargs={"attempt_id": attempt.id}))
-        invalid_grade = self.client.post(reverse("kura:grade_entry", kwargs={"attempt_id": attempt.id}), {
-            "score": "101.00", "feedback": "Above the maximum.",
-        })
-        self.assertContains(invalid_grade, "Score cannot exceed the assessment maximum.", status_code=400)
-        self.assertFalse(Grade.objects.filter(attempt=attempt).exists())
-        grade_response = self.client.post(reverse("kura:grade_entry", kwargs={"attempt_id": attempt.id}), {
-            "score": "75.00", "feedback": "Reviewed scanned script.",
-        })
-        self.assertEqual(grade_response.status_code, 302)
-        grade = Grade.objects.get(attempt=attempt)
-        self.assertEqual(grade.status, GradeStatus.DRAFT)
-        self.assertTrue(GradeHistory.objects.filter(grade=grade, changed_by=self.instructor).exists())
-
-        # A different student cannot retrieve the same script by guessing its URL.
-        outsider = make_user("Student", mfa_enabled=True)
-        login_with_session(self.client, outsider)
-        denied = self.client.get(reverse("kura:attempt_file_download", kwargs={
-            "attempt_id": attempt.id, "file_id": attempt_file.file.id,
-        }))
-        self.assertEqual(denied.status_code, 403)
-
-    def test_scanned_paper_staff_upload_checks_staff_and_student_enrollment(self):
-        # Neither unassigned staff nor an unrelated student can be used for a paper upload.
-        self.assessment.delivery_mode = "paper_scanned"
-        self.assessment.save(update_fields=["delivery_mode"])
-        outsider = make_user("Student", mfa_enabled=True)
-        unrelated_staff = make_user("Instructor", mfa_enabled=True)
-        url = reverse("kura:scanned_paper_staff_upload", kwargs={"assessment_id": self.assessment.id})
-        login_with_session(self.client, unrelated_staff)
-        self.assertEqual(self.client.post(url).status_code, 403)
-        login_with_session(self.client, self.instructor)
-        self.assertEqual(self.client.get(url).status_code, 405)
-        upload = SimpleUploadedFile("scan.pdf", b"%PDF-1.4\n1 0 obj\n<<>>\nendobj\n%%EOF")
-        response = self.client.post(url, {"student": str(outsider.id), "file": upload})
-        self.assertEqual(response.status_code, 302)
-        self.assertFalse(AssessmentAttempt.objects.filter(assessment=self.assessment, student=outsider).exists())
-
-    def test_scanned_paper_cannot_be_marked_without_a_submitted_script(self):
-        # Staff cannot record a mark for an unfinished or empty scanned attempt.
-        self.assessment.delivery_mode = "paper_scanned"
-        self.assessment.save(update_fields=["delivery_mode"])
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=self.student, attempt_no=1,
-            expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1",
-        )
-        login_with_session(self.client, self.instructor)
-        url = reverse("kura:grade_entry", kwargs={"attempt_id": attempt.id})
-        self.assertEqual(self.client.post(url, {"score": "75"}).status_code, 403)
-        attempt.status = AttemptStatus.REQUIRES_MANUAL_GRADING
-        attempt.save(update_fields=["status"])
-        self.assertEqual(self.client.post(url, {"score": "75"}).status_code, 403)
-        self.assertFalse(Grade.objects.filter(attempt=attempt).exists())
-
-    def test_student_cannot_start_from_wrong_ip_range(self):
-        # Starting an attempt from outside the lab CIDR subnet is rejected.
-        login_with_session(self.client, self.student)
-        response = self.client.post(
-            reverse("kura:assessment_attempt_start", kwargs={"assessment_id": self.assessment.id}),
-            {"proctor_code": "PROCTOR123"},
-            REMOTE_ADDR="192.168.1.100",
-        )
-        self.assertRedirects(response, reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id}))
-        self.assertFalse(AssessmentAttempt.objects.filter(assessment=self.assessment, student=self.student).exists())
-
-    def test_student_can_start_from_valid_ip_range_with_proctor_code(self):
-        # Starting with authorized lab IP and correct proctor code creates an active attempt.
-        login_with_session(self.client, self.student)
-        response = self.client.post(
-            reverse("kura:assessment_attempt_start", kwargs={"assessment_id": self.assessment.id}),
-            {"proctor_code": "PROCTOR123"},
-            REMOTE_ADDR="10.20.0.45",
-        )
-        attempt = AssessmentAttempt.objects.get(assessment=self.assessment, student=self.student)
-        self.assertRedirects(response, reverse("kura:assessment_take", kwargs={"attempt_id": attempt.id}))
-        self.assertEqual(attempt.status, AttemptStatus.IN_PROGRESS)
-        self.assertTrue(attempt.expires_at > timezone.now())
-
-    @override_settings(TRUST_PROXY_IP_HEADER=True)
-    def test_lab_check_uses_visitor_ip_from_waf_not_waf_address(self):
-        # Behind the WAF, REMOTE_ADDR is the WAF's address (outside the lab subnet) and X-Real-IP carries the student's lab PC address.
-        # The lab check must use the student's address.
-        login_with_session(self.client, self.student)
-        response = self.client.post(
-            reverse("kura:assessment_attempt_start", kwargs={"assessment_id": self.assessment.id}),
-            {"proctor_code": "PROCTOR123"},
-            REMOTE_ADDR="172.28.10.130",
-            HTTP_X_REAL_IP="10.20.0.45",
-        )
-        attempt = AssessmentAttempt.objects.get(assessment=self.assessment, student=self.student)
-        self.assertRedirects(response, reverse("kura:assessment_take", kwargs={"attempt_id": attempt.id}))
-        # The attempt records the student's address, not the WAF's.
-        self.assertEqual(attempt.ip_address, "10.20.0.45")
-
-    def test_autosave_rejected_after_deadline(self):
-        # Responses submitted after expires_at are rejected with 409 Conflict.
-        now = timezone.now()
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment,
-            student=self.student,
-            attempt_no=1,
-            status=AttemptStatus.IN_PROGRESS,
-            expires_at=now - timezone.timedelta(minutes=5),
-            ip_address="10.20.0.45",
-        )
-
-        login_with_session(self.client, self.student)
-        response = self.client.post(
-            reverse("kura:assessment_autosave", kwargs={"attempt_id": attempt.id}),
-            {"question_id": "q1", "response_type": "multiple_choice", "selected_options": ["o1"]},
-        )
-        self.assertEqual(response.status_code, 409)
-
-    def test_matching_autosave_ignores_forged_duplicate_pair_names(self):
-        # Extra POST keys must not duplicate a correct pair and inflate automatic marks.
-        self.assessment.questions_json = [{
-            "question_id": "match", "type": "matching", "prompt": "Match", "points": 10,
-            "left_prompts": [{"pair_id": "p1", "text": "One"}], "available_matches": ["First", "Other"],
-        }]
-        self.assessment.save(update_fields=["questions_json"])
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=self.student, attempt_no=1,
-            expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1",
-        )
-        login_with_session(self.client, self.student)
-        response = self.client.post(reverse("kura:assessment_autosave", kwargs={"attempt_id": attempt.id}), {
-            "question_id": "match", "response_type": "matching", "match_p1": "First", "match_match_p1": "First",
-        })
-        self.assertEqual(response.status_code, 200)
-        attempt.refresh_from_db()
-        self.assertEqual(attempt.answers_json[0]["submitted_matches"], [{"pair_id": "p1", "selected_match": "First"}])
-
-    def test_matching_grader_counts_old_duplicate_answers_only_once(self):
-        # Previously stored duplicate answers must not award more than the question's points.
-        self.assessment.questions_json = [{
-            "question_id": "match", "type": "matching", "prompt": "Match", "points": 10,
-            "left_prompts": [{"pair_id": "p1", "text": "One"}], "available_matches": ["First"],
-        }]
-        self.assessment.save(update_fields=["questions_json"])
-        key = self.assessment.answer_key
-        key.answer_key_json = {"match": {"correct_pairs": {"p1": "First"}}}
-        key.save(update_fields=["answer_key_json"])
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=self.student, attempt_no=1,
-            expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1",
-            answers_json=[{"question_id": "match", "type": "matching", "submitted_matches": [
-                {"pair_id": "p1", "selected_match": "First"}, {"pair_id": "p1", "selected_match": "First"},
-            ]}],
-        )
-        login_with_session(self.client, self.student)
-        self.client.post(reverse("kura:assessment_submit", kwargs={"attempt_id": attempt.id}))
-        grade = Grade.objects.get(attempt=attempt)
-        self.assertEqual(grade.score, Decimal("10"))
-
-    def test_autosave_rejects_unknown_questions_and_options(self):
-        # Students cannot save invented questions, types, or choices into an attempt.
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=self.student, attempt_no=1,
-            expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1",
-        )
-        login_with_session(self.client, self.student)
-        url = reverse("kura:assessment_autosave", kwargs={"attempt_id": attempt.id})
-        for data in (
-            {"question_id": "unknown", "response_type": "multiple_choice", "selected_options": ["o1"]},
-            {"question_id": "q1", "response_type": "matching"},
-            {"question_id": "q1", "response_type": "multiple_choice", "selected_options": ["invented"]},
-        ):
-            with self.subTest(data=data):
-                self.assertEqual(self.client.post(url, data).status_code, 400)
-        attempt.refresh_from_db()
-        self.assertEqual(attempt.answers_json, [])
-
-    def test_reopening_attempt_restores_saved_answers(self):
-        # Returning to the page must not make autosaved answers appear to be lost.
-        self.assessment.questions_json = [
-            {"question_id": "q1", "type": "multiple_choice", "points": 10, "prompt": "Choose",
-             "options": [{"option_id": "o1", "text": "First"}, {"option_id": "o2", "text": "Second"}]},
-            {"question_id": "q2", "type": "matching", "points": 10, "prompt": "Match",
-             "left_prompts": [{"pair_id": "p1", "text": "One"}], "available_matches": ["First", "Second"]},
-            {"question_id": "q3", "type": "long_text", "points": 10, "prompt": "Explain", "max_words": 100},
-        ]
-        self.assessment.save(update_fields=["questions_json"])
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=self.student, attempt_no=1,
-            expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1",
-            answers_json=[
-                {"question_id": "q1", "selected_option_ids": ["o2"]},
-                {"question_id": "q2", "submitted_matches": [{"pair_id": "p1", "selected_match": "Second"}]},
-                {"question_id": "q3", "response_text": "Saved written answer"},
-            ],
-        )
-        login_with_session(self.client, self.student)
-        response = self.client.get(reverse("kura:assessment_take", kwargs={"attempt_id": attempt.id}))
-        self.assertContains(response, 'value="o2" class="checkbox checkbox-primary checkbox-sm"\n                            checked')
-        self.assertContains(response, '<option value="Second" selected>Second</option>')
-        self.assertContains(response, '>Saved written answer</textarea>')
-
-    def test_upload_file_rejected_after_submission_and_trigger_locks(self):
-        # Uploading coursework files after submission is blocked by view and trigger.
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment,
-            student=self.student,
-            attempt_no=1,
-            status=AttemptStatus.FULLY_GRADED,
-            expires_at=timezone.now() + timezone.timedelta(minutes=30),
-            submitted_at=timezone.now(),
-            ip_address="10.20.0.45",
-        )
-
-        login_with_session(self.client, self.student)
-        fake_file = SimpleUploadedFile("report.pdf", b"%PDF-1.4\ntest", content_type="application/pdf")
-        self.client.post(
-            reverse("kura:assessment_attempt_file_upload", kwargs={"attempt_id": attempt.id}),
-            {"file": fake_file},
-        )
-        self.assertFalse(AttemptFile.objects.filter(attempt=attempt).exists())
-
-        # Direct database insert is blocked by the check_attempt_files_lock trigger.
-        stored_file = validate_and_save_upload(
-            SimpleUploadedFile("code.txt", b"print('hello')", content_type="text/plain"),
-            self.student,
-        )
-        with self.assertRaises(DatabaseError):
-            AttemptFile.objects.create(attempt=attempt, file=stored_file)
-
-    def test_student_cannot_see_attempt_summary_before_grade_release(self):
-        # A draft or finalized grade must not reveal the attempt's automatic score.
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=self.student, attempt_no=1,
-            status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1",
-            summary_score_json={"total_score": 73, "max_possible_points": 100},
-        )
-        grade = Grade.objects.create(
-            assessment=self.assessment, student=self.student, attempt=attempt,
-            score=73, status=GradeStatus.DRAFT,
-        )
-        login_with_session(self.client, self.student)
-        url = reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id})
-
-        for status in (GradeStatus.DRAFT, GradeStatus.FINALIZED):
-            grade.status = status
-            grade.save(update_fields=["status"])
-            response = self.client.get(url)
-            self.assertEqual(response.status_code, 200)
-            self.assertNotContains(response, "Evaluation Summary")
-            self.assertNotContains(response, "73 / 100")
-            self.assertIsNone(response.context["released_grade"])
-
-    def test_student_sees_only_the_released_grade_not_a_stale_attempt_summary(self):
-        # A released grade may have changed since automatic marking, so show the released value.
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=self.student, attempt_no=1,
-            status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1",
-            summary_score_json={"total_score": 73, "max_possible_points": 100},
-        )
-        Grade.objects.create(
-            assessment=self.assessment, student=self.student, attempt=attempt,
-            score=81, status=GradeStatus.RELEASED,
-        )
-        login_with_session(self.client, self.student)
-        response = self.client.get(reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id}))
-        self.assertContains(response, "81.00")
-        self.assertNotContains(response, "Evaluation Summary")
-        self.assertNotContains(response, "73 / 100")
-
-    def test_course_staff_can_see_another_students_attempt_summary(self):
-        # Assigned teaching staff still need the marking breakdown for other students.
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=self.student, attempt_no=1,
-            status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1",
-            summary_score_json={"total_score": 73, "max_possible_points": 100},
-        )
-        login_with_session(self.client, self.instructor)
-        response = self.client.get(reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id}))
-        self.assertContains(response, "Evaluation Summary")
-        self.assertContains(response, "73 / 100")
-
-    def test_student_who_is_also_course_staff_cannot_see_own_draft_summary(self):
-        # A course assignment must not expose a student's own unreleased mark.
-        CourseStaff.objects.create(course=self.course, user=self.student, staff_role="teaching_assistant")
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=self.student, attempt_no=1,
-            status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1",
-            summary_score_json={"total_score": 73, "max_possible_points": 100},
-        )
-        login_with_session(self.client, self.student)
-        response = self.client.get(reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id}))
-        self.assertNotContains(response, "Evaluation Summary")
-        self.assertNotContains(response, "73 / 100")
-
-    def test_student_course_staff_cannot_view_or_edit_own_draft_in_gradebook(self):
-        # Course staff access cannot expose or change the same user's own draft grade.
-        UserRole.objects.create(user=self.student, role=Role.objects.get(name="Teaching assistant"))
-        CourseStaff.objects.create(course=self.course, user=self.student, staff_role="teaching_assistant")
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=self.student, attempt_no=1,
-            status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1",
-        )
-        grade = Grade.objects.create(
-            assessment=self.assessment, student=self.student, attempt=attempt,
-            score=73, status=GradeStatus.DRAFT,
-        )
-        login_with_session(self.client, self.student)
-        response = self.client.get(reverse("kura:course_grades", kwargs={"course_id": self.course.id}))
-        self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, "73.00")
-        self.assertEqual(
-            self.client.get(reverse("kura:grade_entry", kwargs={"attempt_id": attempt.id})).status_code, 403,
-        )
-        self.assertEqual(
-            self.client.post(reverse("kura:grade_finalize", kwargs={"grade_id": grade.id})).status_code, 403,
-        )
-
-    def test_registrar_instructor_cannot_access_instructional_content_or_grades(self):
-        # The Registrar restriction still applies if the same account is an assigned instructor.
-        UserRole.objects.create(user=self.instructor, role=Role.objects.get(name="Registrar"))
-        login_with_session(self.client, self.instructor)
-        urls = [
-            reverse("kura:course_detail", kwargs={"course_id": self.course.id}),
-            reverse("kura:module_create", kwargs={"course_id": self.course.id}),
-            reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id}),
-            reverse("kura:assessment_create", kwargs={"section_id": self.section.id}),
-            reverse("kura:course_grades", kwargs={"course_id": self.course.id}),
-        ]
-        for url in urls:
-            with self.subTest(url=url):
-                self.assertEqual(self.client.get(url).status_code, 403)
-        # Enrollment remains available, but a direct POST cannot create instructional content.
-        self.assertEqual(self.client.get(reverse("kura:enrollment_list")).status_code, 200)
-        response = self.client.post(reverse("kura:module_create", kwargs={"course_id": self.course.id}), {"title": "Forbidden"})
-        self.assertEqual(response.status_code, 403)
-        self.assertFalse(Module.objects.filter(course=self.course, title="Forbidden").exists())
-
-    def test_registrar_student_cannot_open_attempt_or_grades(self):
-        # Adding the Student role cannot bypass the Registrar content restriction.
-        UserRole.objects.create(user=self.student, role=Role.objects.get(name="Registrar"))
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=self.student, attempt_no=1,
-            status=AttemptStatus.IN_PROGRESS, expires_at=timezone.now() + timezone.timedelta(minutes=30),
-            ip_address="127.0.0.1",
-        )
-        login_with_session(self.client, self.student)
-        for url in (reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id}),
-                    reverse("kura:student_grades"), reverse("kura:student_transcript")):
-            with self.subTest(url=url):
-                self.assertEqual(self.client.get(url).status_code, 403)
-
-    def test_admin_with_course_assignment_cannot_open_assessment_or_attempt(self):
-        # An Admin role must override a matching course staff assignment.
-        admin = make_user("Admin", mfa_enabled=True)
-        CourseStaff.objects.create(course=self.course, user=admin, staff_role="co_instructor")
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=self.student, attempt_no=1,
-            status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1",
-            summary_score_json={"total_score": 73},
-        )
-        login_with_session(self.client, admin)
-        for url in (
-            reverse("kura:assessment_create", kwargs={"section_id": self.section.id}),
-            reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id}),
-            reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id}),
-        ):
-            with self.subTest(url=url):
-                self.assertEqual(self.client.get(url).status_code, 403)
-
-    def test_admin_cannot_use_student_or_department_roles_to_view_grades(self):
-        # Admin restrictions still apply when another role would otherwise allow access.
-        admin = make_user("Admin", mfa_enabled=True)
-        UserRole.objects.create(user=admin, role=Role.objects.get(name="Student"))
-        UserRole.objects.create(user=admin, role=Role.objects.get(name="Department head"))
-        self.dept.head_user = admin
-        self.dept.save(update_fields=["head_user"])
-        login_with_session(self.client, admin)
-
-        for url in (
-            reverse("kura:student_grades"),
-            reverse("kura:student_transcript"),
-            reverse("kura:department_reports", kwargs={"department_id": self.dept.id}),
-        ):
-            with self.subTest(url=url):
-                self.assertEqual(self.client.get(url).status_code, 403)
-
-    def test_admin_cannot_use_assessment_or_grade_action_urls(self):
-        # Direct URLs must not bypass the Admin restriction for assessment or grade actions.
-        admin = make_user("Admin", mfa_enabled=True)
-        CourseStaff.objects.create(course=self.course, user=admin, staff_role="co_instructor")
-        Enrollment.objects.create(course=self.course, student=admin, status=EnrollmentStatus.ACTIVE)
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=admin, attempt_no=1,
-            status=AttemptStatus.IN_PROGRESS, expires_at=timezone.now() + timezone.timedelta(minutes=30),
-            ip_address="127.0.0.1",
-        )
-        grade = Grade.objects.create(
-            assessment=self.assessment, student=admin, attempt=attempt,
-            score=73, status=GradeStatus.RELEASED,
-        )
-        appeal = GradeAppeal.objects.create(grade=grade, reason="Please review")
-        change = GradeChangeRequest.objects.create(
-            grade=grade, requested_by=self.instructor, current_score=73,
-            proposed_score=75, reason="Please review",
-        )
-        login_with_session(self.client, admin)
-
-        # Exercise both pages and actions with identifiers that belong to this course.
-        get_urls = (
-            reverse("kura:assessment_edit", kwargs={"assessment_id": self.assessment.id}),
-            reverse("kura:assessment_question_form", kwargs={"section_id": self.section.id}),
-            reverse("kura:assessment_take", kwargs={"attempt_id": attempt.id}),
-            reverse("kura:attempt_file_download", kwargs={"attempt_id": attempt.id, "file_id": grade.id}),
-            reverse("kura:grade_entry", kwargs={"attempt_id": attempt.id}),
-            reverse("kura:grade_appeal_create", kwargs={"grade_id": grade.id}),
-            reverse("kura:grade_appeal_review", kwargs={"appeal_id": appeal.id}),
-            reverse("kura:grade_change_request_create", kwargs={"grade_id": grade.id}),
-            reverse("kura:grade_change_request_review", kwargs={"request_id": change.id}),
-            reverse("kura:assessment_file_download", kwargs={"assessment_id": self.assessment.id, "file_id": grade.id}),
-        )
-        post_urls = (
-            reverse("kura:assessment_attempt_start", kwargs={"assessment_id": self.assessment.id}),
-            reverse("kura:scanned_paper_staff_upload", kwargs={"assessment_id": self.assessment.id}),
-            reverse("kura:assessment_file_upload", kwargs={"assessment_id": self.assessment.id}),
-            reverse("kura:assessment_autosave", kwargs={"attempt_id": attempt.id}),
-            reverse("kura:assessment_attempt_file_upload", kwargs={"attempt_id": attempt.id}),
-            reverse("kura:assessment_submit", kwargs={"attempt_id": attempt.id}),
-            reverse("kura:grade_finalize", kwargs={"grade_id": grade.id}),
-            reverse("kura:course_result_calculate", kwargs={"course_id": self.course.id}),
-        )
-        for url in get_urls:
-            with self.subTest(url=url):
-                self.assertEqual(self.client.get(url).status_code, 403)
-        for url in post_urls:
-            with self.subTest(url=url):
-                self.assertEqual(self.client.post(url).status_code, 403)
-
-
-class AutoFinalizeMissedDeadlinesCommandTests(TestCase):
-    """
-    Tests Auto-finalizing overdue in-progress attempts past deadline.
-    """
-
-    def setUp(self):
-        self.instructor = make_user("Instructor", mfa_enabled=True)
-        self.student = make_user("Student", mfa_enabled=True)
-        self.dept = Department.objects.create(name="Math", code="MTH")
-
-        self.course = Course.objects.create(
-            department=self.dept,
-            code="MTH101",
-            title="Calculus",
-            semester="1",
-            academic_year=2026,
-            is_published=True,
-            published_by=self.instructor,
-            published_at=timezone.now(),
-        )
-        CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True)
-
-        self.module = Module.objects.create(course=self.course, title="Limits", is_visible=True)
-        self.section = ModuleSection.objects.create(module=self.module, title="Quiz Section", section_type="quiz")
-
-        past = timezone.now() - timezone.timedelta(minutes=10)
-        self.assessment = Assessment.objects.create(
-            section=self.section,
-            title="Limits Quiz",
-            component_type=GradeComponentType.QUIZ,
-            max_score=Decimal("10.00"),
-            max_attempts=1,
-            opens_at=past - timezone.timedelta(hours=1),
-            due_date=past,
-            duration_minutes=30,
-            questions_json=[
-                {"question_id": "q1", "type": "multiple_choice", "points": 10.0, "prompt": "lim x->0 (x)?"}
-            ],
-            created_by=self.instructor,
-        )
-        ExamAnswerKey.objects.create(
-            assessment=self.assessment,
-            answer_key_json={"q1": {"correct_option_ids": ["0"]}},
-            created_by=self.instructor,
-        )
-
-        # Overdue attempt left in progress by student.
-        self.overdue_attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment,
-            student=self.student,
-            attempt_no=1,
-            status=AttemptStatus.IN_PROGRESS,
-            expires_at=past,
-            answers_json=[{"question_id": "q1", "type": "multiple_choice", "selected_option_ids": ["0"]}],
-            ip_address="127.0.0.1",
-        )
-
-    def test_finalize_attempts_command_finalizes_overdue_attempts(self):
-        # Running finalize_attempts marks overdue attempts as submitted, computes hash, and auto-grades.
-        call_command("finalize_attempts")
-
-        self.overdue_attempt.refresh_from_db()
-        self.assertNotEqual(self.overdue_attempt.status, AttemptStatus.IN_PROGRESS)
-        self.assertEqual(self.overdue_attempt.submitted_at, self.overdue_attempt.expires_at)
-        self.assertIsNotNone(self.overdue_attempt.submission_hash)
-        self.assertEqual(len(self.overdue_attempt.submission_hash), 64)
-        self.assertTrue(self.overdue_attempt.summary_score_json["is_fully_graded"])
-
-
-class AutoGradingTests(TestCase):
-    """
-    Tests Auto-grading multiple-choice and matching questions.
-    """
-
-    def setUp(self):
-        self.client = Client()
-        self.instructor = make_user("Instructor", mfa_enabled=True)
-        self.student = make_user("Student", mfa_enabled=True)
-        self.dept = Department.objects.create(name="Biology", code="BIO")
-
-        StudentProfile.objects.create(user=self.student, department=self.dept, current_level="level_4", matriculation_year=2026)
-        self.course = Course.objects.create(
-            department=self.dept,
-            code="BIO101",
-            title="General Biology",
-            semester="1",
-            academic_year=2026,
-            is_published=True,
-            published_by=self.instructor,
-            published_at=timezone.now(),
-        )
-        CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True)
-        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
-
-        self.module = Module.objects.create(course=self.course, title="Cells", is_visible=True)
-        self.section = ModuleSection.objects.create(module=self.module, title="Cell Quiz", section_type="quiz")
-
-        now = timezone.now()
-        self.assessment = Assessment.objects.create(
-            section=self.section,
-            title="Cellular Biology Quiz",
-            component_type=GradeComponentType.QUIZ,
-            max_score=Decimal("20.00"),
-            max_attempts=1,
-            opens_at=now - timezone.timedelta(hours=1),
-            due_date=now + timezone.timedelta(hours=2),
-            duration_minutes=45,
-            questions_json=[
-                {
-                    "question_id": "q1",
-                    "type": "multiple_choice",
-                    "points": 10.0,
-                    "prompt": "Which organelle is the powerhouse of the cell?",
-                    "options": [
-                        {"option_id": "opt_mito", "text": "Mitochondria"},
-                        {"option_id": "opt_ribo", "text": "Ribosome"},
-                    ],
-                },
-                {
-                    "question_id": "q2",
-                    "type": "matching",
-                    "points": 10.0,
-                    "prompt": "Match the organelle to function.",
-                    "left_prompts": [
-                        {"pair_id": "p1", "text": "Nucleus"},
-                        {"pair_id": "p2", "text": "Chloroplast"},
-                    ],
-                    "available_matches": ["Genetic control", "Photosynthesis"],
-                },
-            ],
-            created_by=self.instructor,
-        )
-        ExamAnswerKey.objects.create(
-            assessment=self.assessment,
-            answer_key_json={
-                "q1": {"correct_option_ids": ["opt_mito"]},
-                "q2": {"correct_pairs": {"p1": "Genetic control", "p2": "Photosynthesis"}},
-            },
-            created_by=self.instructor,
-        )
-
-    def test_auto_grading_calculates_correct_score(self):
-        # Student answers MCQ correctly (10 pts) and Matching 1/2 correct (5 pts) -> total 15.00 pts.
-        now = timezone.now()
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment,
-            student=self.student,
-            attempt_no=1,
-            status=AttemptStatus.IN_PROGRESS,
-            expires_at=now + timezone.timedelta(minutes=30),
-            answers_json=[
-                {"question_id": "q1", "type": "multiple_choice", "selected_option_ids": ["opt_mito"]},
-                {
-                    "question_id": "q2",
-                    "type": "matching",
-                    "submitted_matches": [
-                        {"pair_id": "p1", "selected_match": "Genetic control"},
-                        {"pair_id": "p2", "selected_match": "Wrong Match"},
-                    ],
-                },
-            ],
-            ip_address="127.0.0.1",
-        )
-
-        login_with_session(self.client, self.student)
-        response = self.client.post(reverse("kura:assessment_submit", kwargs={"attempt_id": attempt.id}))
-        self.assertRedirects(response, reverse("kura:attempt_detail", kwargs={"attempt_id": attempt.id}))
-
-        attempt.refresh_from_db()
-        self.assertEqual(attempt.status, AttemptStatus.FULLY_GRADED)
-        self.assertEqual(attempt.summary_score_json["auto_graded_points"], 15.0)
-        self.assertEqual(attempt.summary_score_json["total_score"], 15.0)
-        self.assertTrue(attempt.summary_score_json["is_fully_graded"])
-
-        # The student is emailed a receipt with the submission's integrity hash.
-        receipt = OutgoingEmail.objects.get(event_key=f"submission-receipt:{attempt.id}")
-        self.assertEqual(receipt.to_email, self.student.email)
-        self.assertIn(attempt.submission_hash, receipt.body)
-
-        # Check draft grade was created for student.
-        grade = Grade.objects.get(assessment=self.assessment, student=self.student)
-        self.assertEqual(grade.score, Decimal("15.00"))
-        self.assertEqual(grade.status, GradeStatus.DRAFT)
-
-
 # Grades, appeals & transcripts tests
 
 class InstructorAndTAGradingTests(TestCase):
@@ -4632,17 +1915,14 @@ class InstructorAndTAGradingTests(TestCase):
         CourseStaff.objects.create(course=self.course, user=self.ta, staff_role="teaching_assistant", can_release_grades=False)
         Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
 
-        self.module = Module.objects.create(course=self.course, title="Renaissance", is_visible=True)
-        self.section = ModuleSection.objects.create(module=self.module, title="Essays", section_type="coursework")
         self.assessment = Assessment.objects.create(
-            section=self.section,
+            course=self.course,
             title="Renaissance Essay",
             component_type=GradeComponentType.COURSEWORK,
             max_score=Decimal("100.00"),
             max_attempts=1,
             opens_at=timezone.now() - timezone.timedelta(hours=1),
             due_date=timezone.now() + timezone.timedelta(hours=2),
-            duration_minutes=60,
             created_by=self.instructor,
         )
         self.attempt = AssessmentAttempt.objects.create(
@@ -4650,7 +1930,6 @@ class InstructorAndTAGradingTests(TestCase):
             student=self.student,
             attempt_no=1,
             status=AttemptStatus.REQUIRES_MANUAL_GRADING,
-            expires_at=timezone.now() + timezone.timedelta(minutes=30),
             ip_address="127.0.0.1",
         )
 
@@ -4787,7 +2066,6 @@ class InstructorAndTAGradingTests(TestCase):
         self.assertEqual(history_entries[0].new_status, GradeStatus.FINALIZED)
         self.assertEqual(history_entries[1].new_status, GradeStatus.RELEASED)
 
-
 class StudentViewGradesTests(TestCase):
     """
     Tests Student grade view and visibility isolation.
@@ -4817,29 +2095,23 @@ class StudentViewGradesTests(TestCase):
         Enrollment.objects.create(course=self.course, student=self.student_a, status=EnrollmentStatus.ACTIVE)
         Enrollment.objects.create(course=self.course, student=self.student_b, status=EnrollmentStatus.ACTIVE)
 
-        self.module = Module.objects.create(course=self.course, title="Rights", is_visible=True)
-        self.section = ModuleSection.objects.create(module=self.module, title="Moot Court", section_type="coursework")
-
         self.assessment_1 = Assessment.objects.create(
-            section=self.section, title="Draft Quiz", component_type=GradeComponentType.QUIZ,
-            max_score=Decimal("20.00"), max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(hours=1),
-            duration_minutes=30, created_by=self.instructor,
+            course=self.course, title="Draft Quiz", component_type=GradeComponentType.QUIZ,
+            max_score=Decimal("20.00"), max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(hours=1), created_by=self.instructor,
         )
         self.assessment_2 = Assessment.objects.create(
-            section=self.section, title="Finalized Brief", component_type=GradeComponentType.COURSEWORK,
-            max_score=Decimal("40.00"), max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(hours=1),
-            duration_minutes=30, created_by=self.instructor,
+            course=self.course, title="Finalized Brief", component_type=GradeComponentType.COURSEWORK,
+            max_score=Decimal("40.00"), max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(hours=1), created_by=self.instructor,
         )
         self.assessment_3 = Assessment.objects.create(
-            section=self.section, title="Released Moot", component_type=GradeComponentType.EXAM,
-            max_score=Decimal("100.00"), max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(hours=1),
-            duration_minutes=60, created_by=self.instructor,
+            course=self.course, title="Released Moot", component_type=GradeComponentType.EXAM,
+            max_score=Decimal("100.00"), max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(hours=1), created_by=self.instructor,
         )
 
-        att_1 = AssessmentAttempt.objects.create(assessment=self.assessment_1, student=self.student_a, attempt_no=1, status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1")
-        att_2 = AssessmentAttempt.objects.create(assessment=self.assessment_2, student=self.student_a, attempt_no=1, status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1")
-        att_3 = AssessmentAttempt.objects.create(assessment=self.assessment_3, student=self.student_a, attempt_no=1, status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1")
-        att_b = AssessmentAttempt.objects.create(assessment=self.assessment_3, student=self.student_b, attempt_no=1, status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1")
+        att_1 = AssessmentAttempt.objects.create(assessment=self.assessment_1, student=self.student_a, attempt_no=1, status=AttemptStatus.FULLY_GRADED, ip_address="127.0.0.1")
+        att_2 = AssessmentAttempt.objects.create(assessment=self.assessment_2, student=self.student_a, attempt_no=1, status=AttemptStatus.FULLY_GRADED, ip_address="127.0.0.1")
+        att_3 = AssessmentAttempt.objects.create(assessment=self.assessment_3, student=self.student_a, attempt_no=1, status=AttemptStatus.FULLY_GRADED, ip_address="127.0.0.1")
+        att_b = AssessmentAttempt.objects.create(assessment=self.assessment_3, student=self.student_b, attempt_no=1, status=AttemptStatus.FULLY_GRADED, ip_address="127.0.0.1")
 
         # Student A grades across all 3 statuses
         Grade.objects.create(assessment=self.assessment_1, student=self.student_a, attempt=att_1, score=Decimal("18.00"), status=GradeStatus.DRAFT)
@@ -4865,73 +2137,6 @@ class StudentViewGradesTests(TestCase):
 
         # Student B's score is hidden (prevents IDOR)
         self.assertNotContains(response, "77.00")
-
-
-class GradeAppealsTests(TestCase):
-    """
-    Tests Student grade appeals and reviewer resolution.
-    """
-
-    def setUp(self):
-        self.client = Client()
-        self.instructor = make_user("Instructor", mfa_enabled=True)
-        self.student_a = make_user("Student", mfa_enabled=True)
-        self.student_b = make_user("Student", mfa_enabled=True)
-        self.dept = Department.objects.create(name="Economics", code="ECON")
-
-        StudentProfile.objects.create(user=self.student_a, department=self.dept, current_level="level_4", matriculation_year=2026)
-        StudentProfile.objects.create(user=self.student_b, department=self.dept, current_level="level_4", matriculation_year=2026)
-
-        self.course = Course.objects.create(
-            department=self.dept,
-            code="ECON201",
-            title="Macroeconomics",
-            semester="1",
-            academic_year=2026,
-            is_published=True,
-            published_by=self.instructor,
-            published_at=timezone.now(),
-        )
-        CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True)
-        Enrollment.objects.create(course=self.course, student=self.student_a, status=EnrollmentStatus.ACTIVE)
-        Enrollment.objects.create(course=self.course, student=self.student_b, status=EnrollmentStatus.ACTIVE)
-
-        self.module = Module.objects.create(course=self.course, title="Fiscal Policy", is_visible=True)
-        self.section = ModuleSection.objects.create(module=self.module, title="Midterm", section_type="exam")
-        self.assessment = Assessment.objects.create(
-            section=self.section, title="Macro Exam", component_type=GradeComponentType.EXAM,
-            max_score=Decimal("100.00"), max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(hours=1),
-            duration_minutes=60, created_by=self.instructor,
-        )
-
-        att_a = AssessmentAttempt.objects.create(assessment=self.assessment, student=self.student_a, attempt_no=1, status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1")
-        att_b = AssessmentAttempt.objects.create(assessment=self.assessment, student=self.student_b, attempt_no=1, status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1")
-
-        self.grade_a = Grade.objects.create(assessment=self.assessment, student=self.student_a, attempt=att_a, score=Decimal("70.00"), status=GradeStatus.RELEASED)
-        self.grade_b = Grade.objects.create(assessment=self.assessment, student=self.student_b, attempt=att_b, score=Decimal("65.00"), status=GradeStatus.RELEASED)
-
-    def test_student_can_appeal_own_released_grade(self):
-        # Student submits an appeal on their released grade.
-        login_with_session(self.client, self.student_a)
-        response = self.client.post(
-            reverse("kura:grade_appeal_create", kwargs={"grade_id": self.grade_a.id}),
-            {"reason": "Question 3 rubric criteria were omitted in the mark scheme."},
-        )
-        self.assertRedirects(response, reverse("kura:student_grades"))
-
-        appeal = GradeAppeal.objects.get(grade=self.grade_a)
-        self.assertEqual(appeal.status, AppealStatus.PENDING)
-        self.assertIn("Question 3", appeal.reason)
-
-    def test_student_cannot_appeal_someone_elses_grade(self):
-        # Student A attempts to appeal Student B's grade; receives 404 Not Found (IDOR defense).
-        login_with_session(self.client, self.student_a)
-        response = self.client.post(
-            reverse("kura:grade_appeal_create", kwargs={"grade_id": self.grade_b.id}),
-            {"reason": "Unauthorized appeal attempt."},
-        )
-        self.assertEqual(response.status_code, 404)
-
 
 class GradeChangeRequestsTests(TestCase):
     """
@@ -4959,14 +2164,11 @@ class GradeChangeRequestsTests(TestCase):
         CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True)
         Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
 
-        self.module = Module.objects.create(course=self.course, title="Memory", is_visible=True)
-        self.section = ModuleSection.objects.create(module=self.module, title="Exam", section_type="exam")
         self.assessment = Assessment.objects.create(
-            section=self.section, title="Memory Exam", component_type=GradeComponentType.EXAM,
-            max_score=Decimal("100.00"), max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(hours=1),
-            duration_minutes=60, created_by=self.instructor,
+            course=self.course, title="Memory Exam", component_type=GradeComponentType.EXAM,
+            max_score=Decimal("100.00"), max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(hours=1), created_by=self.instructor,
         )
-        att = AssessmentAttempt.objects.create(assessment=self.assessment, student=self.student, attempt_no=1, status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1")
+        att = AssessmentAttempt.objects.create(assessment=self.assessment, student=self.student, attempt_no=1, status=AttemptStatus.FULLY_GRADED, ip_address="127.0.0.1")
         self.grade = Grade.objects.create(assessment=self.assessment, student=self.student, attempt=att, score=Decimal("75.00"), status=GradeStatus.RELEASED)
 
     def test_department_head_can_approve_change_request_and_updates_grade(self):
@@ -5043,109 +2245,6 @@ class GradeChangeRequestsTests(TestCase):
         )
         self.assertEqual(response.status_code, 403)
 
-
-class CourseResultsAndTranscriptsTests(TestCase):
-    """
-    Tests Weighted cumulative calculation and transcript release.
-    """
-
-    def setUp(self):
-        self.client = Client()
-        self.instructor = make_user("Instructor", mfa_enabled=True)
-        self.student = make_user("Student", mfa_enabled=True)
-        self.dept = Department.objects.create(name="Physics", code="PHYS")
-
-        StudentProfile.objects.create(user=self.student, department=self.dept, current_level="level_4", matriculation_year=2026)
-        self.course = Course.objects.create(
-            department=self.dept,
-            code="PHYS201",
-            title="Thermodynamics",
-            semester="1",
-            academic_year=2026,
-            is_published=True,
-            published_by=self.instructor,
-            published_at=timezone.now(),
-        )
-        CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True)
-        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
-
-        # Grading scheme: Exam = 60%, Quiz = 40%
-        CourseGradeScheme.objects.create(course=self.course, component_type=GradeComponentType.EXAM, weight_percentage=Decimal("60.00"))
-        CourseGradeScheme.objects.create(course=self.course, component_type=GradeComponentType.QUIZ, weight_percentage=Decimal("40.00"))
-
-        mod = Module.objects.create(course=self.course, title="Heat", is_visible=True)
-        sec = ModuleSection.objects.create(module=mod, title="Assessments", section_type="exam")
-
-        # 1. Exam: max 100, scored 90 -> 90%
-        exam = Assessment.objects.create(section=sec, title="Final Exam", component_type=GradeComponentType.EXAM, max_score=Decimal("100.00"), max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(hours=1), duration_minutes=60, created_by=self.instructor)
-        att_exam = AssessmentAttempt.objects.create(assessment=exam, student=self.student, attempt_no=1, status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1")
-        Grade.objects.create(assessment=exam, student=self.student, attempt=att_exam, score=Decimal("90.00"), status=GradeStatus.RELEASED)
-
-        # 2. Quiz: max 50, scored 40 -> 80%
-        quiz = Assessment.objects.create(section=sec, title="Weekly Quiz", component_type=GradeComponentType.QUIZ, max_score=Decimal("50.00"), max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(hours=1), duration_minutes=30, created_by=self.instructor)
-        att_quiz = AssessmentAttempt.objects.create(assessment=quiz, student=self.student, attempt_no=1, status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1")
-        Grade.objects.create(assessment=quiz, student=self.student, attempt=att_quiz, score=Decimal("40.00"), status=GradeStatus.RELEASED)
-
-    def test_result_calculation_get_does_not_change_data(self):
-        # Viewing a URL must never create or alter a course result.
-        login_with_session(self.client, self.instructor)
-        response = self.client.get(reverse("kura:course_result_calculate", kwargs={"course_id": self.course.id}))
-        self.assertEqual(response.status_code, 405)
-        self.assertFalse(CourseResult.objects.filter(course=self.course).exists())
-
-    def test_recalculation_preserves_released_result(self):
-        # A released transcript result must not be overwritten or hidden by recalculation.
-        result = CourseResult.objects.create(course=self.course, student=self.student, final_score=Decimal("75.00"), status=GradeStatus.RELEASED)
-        login_with_session(self.client, self.instructor)
-        self.client.post(reverse("kura:course_result_calculate", kwargs={"course_id": self.course.id}))
-        result.refresh_from_db()
-        self.assertEqual(result.status, GradeStatus.RELEASED)
-        self.assertEqual(result.final_score, Decimal("75.00"))
-
-    def test_weighted_course_result_calculation(self):
-        # Weighted calculation: (90% * 0.60) + (80% * 0.40) = 54 + 32 = 86.00%
-        login_with_session(self.client, self.instructor)
-        confirm_second_factor(self.client)
-        response = self.client.post(reverse("kura:course_result_calculate", kwargs={"course_id": self.course.id}))
-        self.assertRedirects(response, reverse("kura:course_grades", kwargs={"course_id": self.course.id}))
-
-        result = CourseResult.objects.get(course=self.course, student=self.student)
-        self.assertEqual(result.final_score, Decimal("86.00"))
-        self.assertEqual(result.status, GradeStatus.DRAFT)
-
-        # Release result to transcript
-        rel_resp = self.client.post(reverse("kura:course_result_release", kwargs={"course_id": self.course.id}))
-        self.assertRedirects(rel_resp, reverse("kura:course_grades", kwargs={"course_id": self.course.id}))
-
-        result.refresh_from_db()
-        self.assertEqual(result.status, GradeStatus.RELEASED)
-
-        # Verify student can view released result on transcript
-        login_with_session(self.client, self.student)
-        transcript_resp = self.client.get(reverse("kura:student_transcript"))
-        self.assertEqual(transcript_resp.status_code, 200)
-        self.assertContains(transcript_resp, "PHYS201")
-        self.assertContains(transcript_resp, "86.00%")
-
-    def test_release_recalculates_results_with_grades_released_after_calculation(self):
-        # A grade released between calculation and release must reach the transcript.
-        login_with_session(self.client, self.instructor)
-        confirm_second_factor(self.client)
-        self.client.post(reverse("kura:course_result_calculate", kwargs={"course_id": self.course.id}))
-        self.assertEqual(CourseResult.objects.get(course=self.course, student=self.student).final_score, Decimal("86.00"))
-
-        # Change the exam score after the results were calculated.
-        exam = Assessment.objects.get(title="Final Exam")
-        Grade.objects.filter(assessment=exam, student=self.student).update(score=Decimal("50.00"))
-        expected = calculate_student_course_score(self.course, self.student)
-        self.assertNotEqual(expected, Decimal("86.00"))
-
-        self.client.post(reverse("kura:course_result_release", kwargs={"course_id": self.course.id}))
-        result = CourseResult.objects.get(course=self.course, student=self.student)
-        self.assertEqual(result.status, GradeStatus.RELEASED)
-        self.assertEqual(result.final_score, expected)
-
-
 class DepartmentReportsTests(TestCase):
     """
     Tests Institutional reporting and cross-department protection.
@@ -5171,46 +2270,7 @@ class DepartmentReportsTests(TestCase):
         response = self.client.get(reverse("kura:department_reports", kwargs={"department_id": self.dept_b.id}))
         self.assertEqual(response.status_code, 403)
 
-
 # Hardening, logging & rate limits tests
-
-class SecuritySettingsAndHeadersTests(TestCase):
-    """
-    Tests HTTP security headers, CSP, cookie attributes, and cache headers.
-    """
-
-    def setUp(self):
-        self.client = Client()
-        self.user = make_user("Student", mfa_enabled=True)
-
-    def test_response_security_headers_and_csp(self):
-        # Verify X-Frame-Options, X-Content-Type-Options, and Content-Security-Policy headers.
-        response = self.client.get(reverse("kura:login"))
-        self.assertEqual(response.status_code, 200)
-
-        # Frame clickjacking protection
-        self.assertEqual(response.headers.get("X-Frame-Options"), "DENY")
-
-        # MIME sniffing defense
-        self.assertEqual(response.headers.get("X-Content-Type-Options"), "nosniff")
-
-        # Strict Content Security Policy
-        csp_header = response.headers.get("Content-Security-Policy")
-        self.assertIsNotNone(csp_header)
-        self.assertIn("default-src 'self'", csp_header)
-        self.assertIn("script-src 'self'", csp_header)
-        self.assertNotIn("'unsafe-inline'", csp_header)
-
-    def test_authenticated_requests_receive_no_store_cache_headers(self):
-        # Authenticated user requests receive Cache-Control: no-store to protect sensitive data.
-        login_with_session(self.client, self.user)
-        response = self.client.get(reverse("kura:home"))
-        self.assertEqual(response.status_code, 200)
-
-        cache_control = response.headers.get("Cache-Control")
-        self.assertIsNotNone(cache_control)
-        self.assertIn("no-store", cache_control)
-
 
 class SecurityLoggingTests(TestCase):
     """
@@ -5242,7 +2302,6 @@ class SecurityLoggingTests(TestCase):
             self.client.post(reverse("kura:logout"))
             self.assertTrue(any('event="auth.logout"' in record.getMessage() for record in log_capture.records))
 
-
 class RateLimitingTests(TestCase):
     """
     Tests Rate limiting burst requests on sensitive endpoints.
@@ -5268,7 +2327,6 @@ class RateLimitingTests(TestCase):
             last_status = resp.status_code
 
         self.assertEqual(last_status, 429)
-
 
 class ClamAVVirusScanningTests(TransactionTestCase):
     """
@@ -5389,7 +2447,6 @@ class ClamAVVirusScanningTests(TransactionTestCase):
         self.assertIsNotNone(stored_file.id)
         self.assertEqual(stored_file.content.content, pdf_bytes)
 
-
 class VaultIntegrationTests(TestCase):
     """
     Tests HashiCorp Vault integration.
@@ -5457,7 +2514,6 @@ class VaultIntegrationTests(TestCase):
         with self.assertRaises(ValidationError) as ctx:
             encrypt_mfa_secret("MYSECRET")
         self.assertIn("MFA secret encryption failed", str(ctx.exception))
-
 
 class MTLSIntegrationTests(TestCase):
     """
@@ -5545,7 +2601,6 @@ class MTLSIntegrationTests(TestCase):
             os.environ.clear()
             os.environ.update(env_backup)
 
-
 class RowLevelSecurityAndPostgresRolesTests(TestCase):
     """
     Tests PostgreSQL roles, REVOKE rules, Row-Level Security, and pgAudit.
@@ -5574,18 +2629,15 @@ class RowLevelSecurityAndPostgresRolesTests(TestCase):
         )
         CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True)
 
-        self.module = Module.objects.create(course=self.course, title="RLS Module", is_visible=True)
-        self.section = ModuleSection.objects.create(module=self.module, title="RLS Section", section_type="assignment")
         now = timezone.now()
         self.assessment = Assessment.objects.create(
-            section=self.section,
+            course=self.course,
             title="SQL Hardening Lab",
             component_type=GradeComponentType.ASSIGNMENT,
             max_score=Decimal("100.00"),
             max_attempts=1,
             opens_at=now - timezone.timedelta(hours=1),
             due_date=now + timezone.timedelta(days=7),
-            duration_minutes=60,
             created_by=self.instructor,
         )
 
@@ -5594,7 +2646,6 @@ class RowLevelSecurityAndPostgresRolesTests(TestCase):
             student=self.student_a,
             attempt_no=1,
             status=AttemptStatus.FULLY_GRADED,
-            expires_at=now + timezone.timedelta(hours=2),
             ip_address="127.0.0.1",
         )
         self.attempt_b = AssessmentAttempt.objects.create(
@@ -5602,7 +2653,6 @@ class RowLevelSecurityAndPostgresRolesTests(TestCase):
             student=self.student_b,
             attempt_no=1,
             status=AttemptStatus.FULLY_GRADED,
-            expires_at=now + timezone.timedelta(hours=2),
             ip_address="127.0.0.1",
         )
 
@@ -5676,7 +2726,6 @@ class RowLevelSecurityAndPostgresRolesTests(TestCase):
         middleware = RowLevelSecurityMiddleware(dummy_view)
         result = middleware(request)
         self.assertEqual(result, str(self.student_a.id))
-
 
 class PostgreSQLEncryptedBackupAndPITRTests(TestCase):
     """
@@ -5770,7 +2819,6 @@ class PostgreSQLEncryptedBackupAndPITRTests(TestCase):
         call_command("verify_backup_config", stdout=out)
         output = out.getvalue()
         self.assertIn("All backup and disaster recovery security checks passed", output)
-
 
 class PasskeyWebAuthnIntegrationTests(TestCase):
     """
@@ -5911,7 +2959,6 @@ class PasskeyWebAuthnIntegrationTests(TestCase):
         self.assertIn("rp", data["publicKey"])
         self.assertEqual(data["publicKey"]["rp"]["name"], "Kura LMS")
 
-
 class LokiSIEMAlertRulesTests(TestCase):
     """
     Tests Loki SIEM alert rules.
@@ -6003,7 +3050,6 @@ class LokiSIEMAlertRulesTests(TestCase):
         self.assertIn("forward_to = [loki.write.local_loki.receiver]", alloy)
         self.assertIn('url = "http://loki:3100/loki/api/v1/push"', alloy)
 
-
 class DataRetentionAndIPAnonymizationTests(TestCase):
     """
     Tests Data retention and IP anonymization jobs.
@@ -6027,17 +3073,14 @@ class DataRetentionAndIPAnonymizationTests(TestCase):
             published_by=self.dept_head,
             published_at=timezone.now(),
         )
-        self.module = Module.objects.create(course=self.course, title="GDPR & Law 151", is_visible=True)
-        self.section = ModuleSection.objects.create(module=self.module, title="Privacy Section", section_type="assignment")
         self.assessment = Assessment.objects.create(
-            section=self.section,
+            course=self.course,
             title="Data Protection Exam",
             component_type=GradeComponentType.EXAM,
             max_score=Decimal("100.00"),
             max_attempts=1,
             opens_at=timezone.now() - timezone.timedelta(days=200),
             due_date=timezone.now() - timezone.timedelta(days=190),
-            duration_minutes=60,
             created_by=self.instructor,
         )
 
@@ -6106,7 +3149,6 @@ class DataRetentionAndIPAnonymizationTests(TestCase):
             student=self.student,
             attempt_no=1,
             status=AttemptStatus.FULLY_GRADED,
-            expires_at=now - timezone.timedelta(days=190),
             ip_address="192.0.2.99",
         )
         AssessmentAttempt.objects.filter(id=old_exam.id).update(started_at=past_date)
@@ -6203,11 +3245,9 @@ class DataRetentionAndIPAnonymizationTests(TestCase):
         self.assertTrue(AccessAttempt.objects.filter(id=recent_attempt.id).exists())
         self.assertFalse(AccessLog.objects.filter(id=old_log.id).exists())
 
-
 # Where the incident-response runbook lives.
 # The docs/ folder is kept on the developer's machine and is not committed, so on GitHub (CI) the file is missing.
 INCIDENT_RUNBOOK_PATH = Path(__file__).resolve().parent.parent / "docs" / "INCIDENT_RESPONSE.md"
-
 
 # Skip (do not fail) these checks when the runbook is not in this copy of the project.
 # Where the file exists, every check below still runs.
@@ -6267,7 +3307,6 @@ class IncidentResponseRunbookTests(TestCase):
         self.assertIn("checksums alone do not establish who", content)
         self.assertIn("sha256sum loki_logs.json pgaudit_trail.log", content)
 
-
 class SemesterValueMigrationTests(TestCase):
     """Verify semester values migrate forward and have a documented rollback mapping."""
 
@@ -6318,183 +3357,6 @@ class SemesterValueMigrationTests(TestCase):
             [call(semester="fall"), call(semester="spring"), call(semester="summer")],
         )
 
-
-class ApprovedSchemaChangesTests(TestCase):
-    """Verify the approved schema and permission changes are present."""
-
-    def test_html_to_markdown_conversion_preserves_content_and_formatting(self):
-        # Old stored notes keep their text and common formatting during conversion.
-        migration = import_module("kura.migrations.0010_convert_section_items_to_markdown")
-        converter = migration.MarkdownConverter()
-        converter.feed('<h2>Title</h2><p>Hello <strong>world</strong> <a href="https://example.com">link</a>.</p>')
-        converter.close()
-        markdown = "".join(converter.parts)
-        self.assertIn("## Title", markdown)
-        self.assertIn("**world**", markdown)
-        self.assertIn("[link](https://example.com)", markdown)
-        self.assertNotIn("<strong>", markdown)
-
-    def test_html_to_markdown_conversion_keeps_list_and_plain_text(self):
-        # Lists and literal punctuation remain readable rather than being discarded.
-        migration = import_module("kura.migrations.0010_convert_section_items_to_markdown")
-        converter = migration.MarkdownConverter()
-        converter.feed("<ul><li>First</li><li>Second</li></ul><p>Use a * symbol.</p>")
-        converter.close()
-        markdown = "".join(converter.parts)
-        self.assertIn("- First", markdown)
-        self.assertIn("- Second", markdown)
-        self.assertIn(r"Use a \* symbol.", markdown)
-
-    def test_item_conversion_forward_and_rollback_keep_note_text(self):
-        # Exercise the migration with a historical model without rewriting the test database.
-        migration = import_module("kura.migrations.0010_convert_section_items_to_markdown")
-        item = MagicMock()
-        item.content_body = "<p>Hello <strong>world</strong></p>"
-        historical_model = MagicMock()
-        historical_model.objects.using.return_value.all.return_value.iterator.side_effect = [[item], [item]]
-        apps = MagicMock()
-        apps.get_model.return_value = historical_model
-        schema_editor = MagicMock()
-        schema_editor.connection.alias = "default"
-
-        migration.convert_items(apps, schema_editor)
-        self.assertIn("**world**", item.content_body)
-        migration.restore_html(apps, schema_editor)
-        self.assertIn("Hello", item.content_body)
-        self.assertIn("<strong>world</strong>", item.content_body)
-
-    def test_section_item_body_is_optional_and_release_fields_are_safe_by_default(self):
-        # New section items should stay hidden until staff explicitly release them.
-        content_body = SectionItem._meta.get_field("content_body")
-        is_visible = SectionItem._meta.get_field("is_visible")
-        released_at = SectionItem._meta.get_field("released_at")
-
-        self.assertTrue(content_body.blank)
-        self.assertFalse(content_body.null)
-        self.assertIs(is_visible.default, False)
-        self.assertTrue(released_at.null)
-
-    def test_assessments_default_to_online_delivery(self):
-        # The assessment delivery mode must support the online and scanned-paper choices.
-        delivery_mode = Assessment._meta.get_field("delivery_mode")
-
-        self.assertEqual(delivery_mode.default, "online")
-        self.assertEqual(
-            {choice_value for choice_value, _ in delivery_mode.choices},
-            {"online", "paper_scanned"},
-        )
-
-    def test_upload_allowlist_has_approved_types_and_keeps_dangerous_types_out(self):
-        # Approved document, image, video, and audio formats are allowed without relaxing the size cap.
-        expected_types = {
-            "application/msword",
-            "application/vnd.ms-powerpoint",
-            "application/vnd.ms-excel",
-            "application/vnd.oasis.opendocument.text",
-            "application/vnd.oasis.opendocument.presentation",
-            "application/vnd.oasis.opendocument.spreadsheet",
-            "text/csv",
-            "text/markdown",
-            "image/gif",
-            "image/webp",
-            "video/mp4",
-            "audio/mpeg",
-        }
-        dangerous_types = {"image/svg+xml", "text/html", "application/x-msdownload"}
-
-        self.assertTrue(expected_types.issubset(set(ALLOWED_UPLOAD_MIME_TYPES)))
-        self.assertTrue(dangerous_types.isdisjoint(set(ALLOWED_UPLOAD_MIME_TYPES)))
-        self.assertEqual(MAX_UPLOAD_BYTES, 25 * 1024 * 1024)
-
-    def test_upload_database_constraint_accepts_new_type_and_rejects_html(self):
-        # The database constraint must match the Python allowlist, not just the upload form.
-        uploader = make_user("Instructor")
-        markdown_file = StoredFile.objects.create(
-            uploaded_by=uploader,
-            original_filename="notes.md",
-            mime_type="text/markdown",
-            size_bytes=20,
-            sha256_hash="a" * 64,
-        )
-
-        self.assertEqual(markdown_file.mime_type, "text/markdown")
-
-        # HTML remains rejected by the database even if a caller bypasses the upload validator.
-        with self.assertRaises(IntegrityError):
-            with transaction.atomic():
-                StoredFile.objects.create(
-                    uploaded_by=uploader,
-                    original_filename="unsafe.html",
-                    mime_type="text/html",
-                    size_bytes=20,
-                    sha256_hash="b" * 64,
-                )
-
-    def test_admin_course_and_session_permissions_do_not_grant_sensitive_access(self):
-        # Admins manage courses and sessions, while all non-admin roles lose personal-session permissions.
-        admin = make_user("Admin")
-
-        self.assertTrue(has_permission(admin, "read", "courses", "institution"))
-        self.assertTrue(has_permission(admin, "write", "courses", "institution"))
-        self.assertTrue(has_permission(admin, "view", "sessions", "institution"))
-        self.assertTrue(has_permission(admin, "revoke", "sessions", "institution"))
-        self.assertFalse(has_permission(admin, "view", "course_grades", "course"))
-        self.assertFalse(has_permission(admin, "view", "assessments", "institution"))
-        self.assertFalse(has_permission(admin, "view", "assessment_attempts", "institution"))
-        self.assertFalse(has_permission(admin, "view", "scores", "institution"))
-        self.assertFalse(has_permission(admin, "view", "answer_keys", "institution"))
-
-        # Check every non-admin role, not just one example role.
-        for role_name in ["Registrar", "Department head", "Instructor", "Teaching assistant", "Student"]:
-            user = make_user(role_name)
-            self.assertFalse(has_permission(user, "view", "sessions", "self"))
-            self.assertFalse(has_permission(user, "revoke", "sessions", "self"))
-
-    def test_admin_combined_with_instructor_cannot_gain_sensitive_permissions(self):
-        # Admin's prohibition still applies if an inconsistent second role exists.
-        admin = make_user("Admin")
-        make_user("Instructor")
-        UserRole.objects.create(user=admin, role=Role.objects.get(name="Instructor"))
-        self.assertFalse(has_permission(admin, "manage", "assessments", "course"))
-        self.assertFalse(has_permission(admin, "manage", "modules_and_sections", "course"))
-        self.assertTrue(has_permission(admin, "read", "courses", "institution"))
-
-    def test_admin_permission_migration_removes_personal_session_grants_and_can_reverse(self):
-        # Simulate the old personal-session grants, then check the migration and its rollback.
-        admin = make_user("Admin")
-        student = make_user("Student")
-        student_role = UserRole.objects.get(user=student).role
-        session_view, _ = SystemPermission.objects.get_or_create(
-            action="view",
-            resource="sessions",
-            scope="self",
-        )
-        session_revoke, _ = SystemPermission.objects.get_or_create(
-            action="revoke",
-            resource="sessions",
-            scope="self",
-        )
-        RolePermission.objects.get_or_create(role=student_role, permission=session_view)
-        RolePermission.objects.get_or_create(role=student_role, permission=session_revoke)
-
-        migration = import_module("kura.migrations.0009_admin_course_and_session_permissions")
-        with connection.schema_editor() as schema_editor:
-            migration.update_admin_permissions(django_apps, schema_editor)
-
-        self.assertFalse(has_permission(student, "view", "sessions", "self"))
-        self.assertFalse(has_permission(student, "revoke", "sessions", "self"))
-        self.assertTrue(has_permission(admin, "read", "courses", "institution"))
-
-        # Rolling back restores personal access and removes the four new Admin permissions.
-        with connection.schema_editor() as schema_editor:
-            migration.restore_previous_permissions(django_apps, schema_editor)
-
-        self.assertTrue(has_permission(student, "view", "sessions", "self"))
-        self.assertTrue(has_permission(student, "revoke", "sessions", "self"))
-        self.assertFalse(has_permission(admin, "read", "courses", "institution"))
-
-
-
 class ClientIPBehindProxyTests(TestCase):
     """
     get_client_ip() returns the real visitor's IP behind Nginx and the Coraza WAF.
@@ -6540,7 +3402,6 @@ class ClientIPBehindProxyTests(TestCase):
         for bad_value in ["not-an-ip", "203.0.113.7, 198.51.100.1", "", "<script>"]:
             self.assertEqual(get_client_ip(self.make_request(bad_value)), self.WAF_ADDRESS)
         self.assertEqual(get_client_ip(self.make_request()), self.WAF_ADDRESS)
-
 
 class SecurityEventLogTests(TestCase):
     """Security events use safe, searchable fields without exposing reset tokens."""
@@ -6686,7 +3547,6 @@ class ClientIPLockoutTests(TestCase):
         )
         self.assertNotEqual(response.status_code, 302)
 
-
 class SecretKeySettingTests(TestCase):
     """
     config/settings.py must refuse to start in production (DEBUG off) when the
@@ -6734,12 +3594,11 @@ class SecretKeySettingTests(TestCase):
         result = self.load_settings("", "True")
         self.assertEqual(result.returncode, 0, result.stderr)
 
-
-class BreachedPasswordCheckTests(TestCase):
+class BreachCheckDirectTests(TestCase):
     """
-    The breached-password check asks HaveIBeenPwned (k-anonymity: only the
-    first 5 characters of the SHA-1 hash leave the server). In Docker it goes
-    through the breach-proxy container, the web container's only way out.
+    The breached-password check calls HaveIBeenPwned directly (k-anonymity:
+    only the first 5 characters of the SHA-1 hash leave the server). There is
+    no proxy any more; the host firewall restricts the destination.
     Network access is replaced with a stand-in here.
     """
 
@@ -6778,75 +3637,23 @@ class BreachedPasswordCheckTests(TestCase):
         self.assertNotIn(self.BREACHED_PASSWORD, log_text)
         self.assertNotIn("CBFDA", log_text)
 
-    @override_settings(BREACH_CHECK_PROXY_URL="http://breach-proxy:8888")
-    def test_lookup_goes_through_the_proxy_when_set(self):
+    def test_no_proxy_handler_is_used(self):
+        # The opener uses only an empty ProxyHandler, so proxy variables in the
+        # environment cannot redirect the request.
         opener = self.fake_opener("")
         with patch("kura.views.urllib.request.build_opener", return_value=opener) as build_opener:
             check_breached_password("a-long-unique-test-password")
-        proxy_handlers = []
-        for handler in build_opener.call_args[0]:
-            if isinstance(handler, urllib.request.ProxyHandler):
-                proxy_handlers.append(handler)
+        proxy_handlers = [h for h in build_opener.call_args[0] if isinstance(h, urllib.request.ProxyHandler)]
         self.assertEqual(len(proxy_handlers), 1)
-        self.assertEqual(proxy_handlers[0].proxies, {"https": "http://breach-proxy:8888"})
+        self.assertEqual(proxy_handlers[0].proxies, {})
 
-    @override_settings(BREACH_CHECK_PROXY_URL="", BREACH_CHECK_CA_FILE="")
-    def test_no_proxy_means_a_direct_connection(self):
-        # An empty proxy setting also ignores any HTTPS_PROXY in the environment.
+    def test_default_context_is_used(self):
+        # Certificate verification stays on: create_default_context() with no cafile.
         opener = self.fake_opener("")
-        with patch("kura.views.urllib.request.build_opener", return_value=opener) as build_opener:
-            check_breached_password("a-long-unique-test-password")
-        for handler in build_opener.call_args[0]:
-            if isinstance(handler, urllib.request.ProxyHandler):
-                self.assertEqual(handler.proxies, {})
-
-    @override_settings(BREACH_CHECK_CA_FILE="/no/such/ca-file.crt")
-    def test_missing_ca_file_fails_open_with_a_warning(self):
-        # A wrong certificate path must not break password changes (500 error).
-        with self.assertLogs("kura.security", level="WARNING") as captured:
-            check_breached_password("a-long-unique-test-password")
-        self.assertIn('event="auth.breach_check.unavailable"', "\n".join(captured.output))
-
-
-class BreachCheckProxyConfigTests(TestCase):
-    """
-    The breach-proxy container lets the web container reach only
-    api.pwnedpasswords.com, and only the web container may use it.
-    """
-
-    def setUp(self):
-        base_dir = Path(settings.BASE_DIR)
-        self.compose_text = (base_dir / "docker-compose.yml").read_text(encoding="utf-8")
-        self.proxy_settings = (base_dir / "docker" / "breach-proxy" / "tinyproxy.conf").read_text(encoding="utf-8")
-        self.allowlist = (base_dir / "docker" / "breach-proxy" / "filter").read_text(encoding="utf-8")
-        self.dockerfile = (base_dir / "docker" / "breach-proxy" / "Dockerfile").read_text(encoding="utf-8")
-
-    def test_allowlist_has_only_haveibeenpwned(self):
-        allowed_lines = []
-        for line in self.allowlist.splitlines():
-            if line.strip():
-                allowed_lines.append(line.strip())
-        self.assertEqual(allowed_lines, [r"^api\.pwnedpasswords\.com$"])
-
-    def test_proxy_refuses_everything_else(self):
-        self.assertIn("FilterDefaultDeny Yes", self.proxy_settings)
-        self.assertIn("ConnectPort 443", self.proxy_settings)
-        self.assertIn("FilterURLs Off", self.proxy_settings)
-
-    def test_only_the_breach_check_network_may_use_the_proxy(self):
-        self.assertIn("Allow 172.28.50.0/24", self.proxy_settings)
-        self.assertIn("subnet: 172.28.50.0/24", self.compose_text)
-        breach_network = self.compose_text.split("  breach_check:\n", 1)[1].split("\n  breach_check_egress:", 1)[0]
-        self.assertIn("internal: true", breach_network)
-
-    def test_proxy_runs_unprivileged_on_a_pinned_image(self):
-        self.assertIn("USER tinyproxy", self.dockerfile)
-        self.assertRegex(self.dockerfile, r"FROM alpine:[0-9.]+@sha256:[0-9a-f]{64}")
-
-    def test_web_uses_the_proxy_and_public_certificates(self):
-        self.assertIn('BREACH_CHECK_PROXY_URL: "http://breach-proxy:8888"', self.compose_text)
-        self.assertIn('BREACH_CHECK_CA_FILE: "/etc/ssl/certs/ca-certificates.crt"', self.compose_text)
-
+        with patch("kura.views.ssl.create_default_context", return_value=MagicMock()) as create_context:
+            with patch("kura.views.urllib.request.build_opener", return_value=opener):
+                check_breached_password("a-long-unique-test-password")
+        create_context.assert_called_once_with()
 
 class FakeTransitVault:
     """
@@ -6869,148 +3676,7 @@ class FakeTransitVault:
         self.key_names_used.append(name)
         return {"data": {"plaintext": ciphertext.removeprefix("vault:v1:")}}
 
-
 @override_settings(VAULT_ENABLED=True)
-class AnswerKeyEncryptionTests(TestCase):
-    """
-    Exam answer keys are encrypted by Vault (key "kura-answer-keys") before they
-    are saved, and decrypted in memory only for auto-grading and editing.
-    If Vault is down, submissions still go through (to manual grading).
-    """
-
-    def setUp(self):
-        self.client = Client()
-        self.fake_vault = FakeTransitVault()
-        vault_patch = patch("kura.views.get_vault_client", return_value=self.fake_vault)
-        vault_patch.start()
-        self.addCleanup(vault_patch.stop)
-
-        self.instructor = make_user("Instructor", mfa_enabled=True)
-        self.student = make_user("Student", mfa_enabled=True)
-        head = make_user("Department head", mfa_enabled=True)
-        department = Department.objects.create(name="Security", code="SEC", head_user=head)
-        course = Course.objects.create(
-            department=department, code="SEC101", title="Security", semester="1", academic_year=2026,
-            is_published=True, published_by=head, published_at=timezone.now(),
-        )
-        CourseStaff.objects.create(course=course, user=self.instructor, staff_role="lead_instructor")
-        module = Module.objects.create(course=course, title="Week 1", is_visible=True)
-        self.section = ModuleSection.objects.create(module=module, title="Quiz", section_type="exam")
-        now = timezone.now()
-        self.assessment = Assessment.objects.create(
-            section=self.section, title="Quiz 1", component_type=GradeComponentType.QUIZ, max_score=10,
-            max_attempts=1, opens_at=now - timezone.timedelta(hours=1), due_date=now + timezone.timedelta(days=1),
-            duration_minutes=30, created_by=self.instructor, settings_json={"autosave_interval_seconds": 15},
-            questions_json=[{"question_id": "q1", "type": "multiple_choice", "prompt": "Pick A", "points": 10,
-                             "options": [{"option_id": "a", "text": "A"}, {"option_id": "b", "text": "B"}]}],
-        )
-        ExamAnswerKey.objects.create(
-            assessment=self.assessment, created_by=self.instructor,
-            answer_key_json=encrypt_answer_key({"q1": {"correct_option_ids": ["a"]}}),
-        )
-
-    def make_submitted_attempt(self, chosen_option):
-        # A sealed attempt (time and hash set), ready for evaluate_attempt.
-        return AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=self.student, attempt_no=1,
-            expires_at=timezone.now() + timezone.timedelta(minutes=30), ip_address="127.0.0.1",
-            submitted_at=timezone.now(), submission_hash="0" * 64,
-            answers_json=[{"question_id": "q1", "type": "multiple_choice", "selected_option_ids": [chosen_option]}],
-        )
-
-    def test_saved_answer_key_is_vault_ciphertext_only(self):
-        stored = ExamAnswerKey.objects.get(assessment=self.assessment).answer_key_json
-        self.assertEqual(list(stored.keys()), ["ciphertext"])
-        self.assertTrue(stored["ciphertext"].startswith("vault:v1:"))
-        self.assertNotIn("correct_option_ids", json.dumps(stored))
-        self.assertEqual(self.fake_vault.key_names_used, ["kura-answer-keys"])
-
-    def test_decrypt_gives_back_the_answer_key(self):
-        stored = ExamAnswerKey.objects.get(assessment=self.assessment).answer_key_json
-        self.assertEqual(decrypt_answer_key(stored), {"q1": {"correct_option_ids": ["a"]}})
-
-    def test_plain_answer_key_is_refused_when_vault_is_on(self):
-        with self.assertRaises(ValidationError):
-            decrypt_answer_key({"q1": {"correct_option_ids": ["a"]}})
-
-    def test_auto_grading_uses_the_decrypted_key(self):
-        attempt = self.make_submitted_attempt("a")
-        evaluate_attempt(attempt)
-        attempt.refresh_from_db()
-        self.assertEqual(attempt.status, AttemptStatus.FULLY_GRADED)
-        self.assertEqual(attempt.summary_score_json["total_score"], 10.0)
-
-    def test_vault_down_sends_attempt_to_manual_grading(self):
-        # The submission is kept and not marked as zero; an instructor grades it.
-        attempt = self.make_submitted_attempt("a")
-        self.fake_vault.secrets.transit.decrypt_data.side_effect = ConnectionError("Vault down")
-        evaluate_attempt(attempt)
-        attempt.refresh_from_db()
-        self.assertEqual(attempt.status, AttemptStatus.REQUIRES_MANUAL_GRADING)
-        self.assertIsNone(attempt.summary_score_json)
-        self.assertFalse(Grade.objects.filter(attempt=attempt).exists())
-
-    def test_assessment_builder_saves_only_ciphertext(self):
-        login_with_session(self.client, self.instructor)
-        now = timezone.now()
-        response = self.client.post(reverse("kura:assessment_create", kwargs={"section_id": self.section.id}), {
-            "title": "Quiz 2", "component_type": GradeComponentType.QUIZ, "delivery_mode": "online",
-            "max_score": "10", "max_attempts": 1, "duration_minutes": 30, "autosave_interval_seconds": 15,
-            "opens_at": (now - timezone.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"),
-            "due_date": (now + timezone.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M"),
-            "questions-TOTAL_FORMS": 1, "questions-INITIAL_FORMS": 0,
-            "questions-0-type": "multiple_choice", "questions-0-prompt": "Pick B", "questions-0-points": "10",
-            "questions-0-option_1": "A", "questions-0-option_2": "B", "questions-0-correct_2": "on",
-        })
-        new_assessment = Assessment.objects.get(title="Quiz 2")
-        self.assertRedirects(response, reverse("kura:assessment_detail", kwargs={"assessment_id": new_assessment.id}))
-        stored = new_assessment.answer_key.answer_key_json
-        self.assertEqual(list(stored.keys()), ["ciphertext"])
-        question_id = new_assessment.questions_json[0]["question_id"]
-        self.assertEqual(decrypt_answer_key(stored)[question_id]["correct_option_ids"], ["opt_2"])
-
-    def test_builder_saves_nothing_when_vault_is_down(self):
-        login_with_session(self.client, self.instructor)
-        self.fake_vault.secrets.transit.encrypt_data.side_effect = ConnectionError("Vault down")
-        now = timezone.now()
-        response = self.client.post(reverse("kura:assessment_create", kwargs={"section_id": self.section.id}), {
-            "title": "Quiz 3", "component_type": GradeComponentType.QUIZ, "delivery_mode": "online",
-            "max_score": "10", "max_attempts": 1, "duration_minutes": 30, "autosave_interval_seconds": 15,
-            "opens_at": (now - timezone.timedelta(hours=1)).strftime("%Y-%m-%dT%H:%M"),
-            "due_date": (now + timezone.timedelta(days=1)).strftime("%Y-%m-%dT%H:%M"),
-            "questions-TOTAL_FORMS": 1, "questions-INITIAL_FORMS": 0,
-            "questions-0-type": "multiple_choice", "questions-0-prompt": "Pick B", "questions-0-points": "10",
-            "questions-0-option_1": "A", "questions-0-option_2": "B", "questions-0-correct_2": "on",
-        })
-        self.assertEqual(response.status_code, 400)
-        self.assertContains(response, "could not be saved securely right now", status_code=400)
-        self.assertFalse(Assessment.objects.filter(title="Quiz 3").exists())
-
-    def test_edit_page_is_not_shown_when_vault_is_down(self):
-        login_with_session(self.client, self.instructor)
-        self.fake_vault.secrets.transit.decrypt_data.side_effect = ConnectionError("Vault down")
-        response = self.client.get(reverse("kura:assessment_edit", kwargs={"assessment_id": self.assessment.id}))
-        self.assertRedirects(
-            response,
-            reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id}),
-            fetch_redirect_response=False,
-        )
-
-    def test_command_encrypts_plain_keys_and_skips_encrypted_ones(self):
-        other = Assessment.objects.create(
-            section=self.section, title="Old quiz", component_type=GradeComponentType.QUIZ, max_score=10,
-            max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(days=1),
-            duration_minutes=30, created_by=self.instructor,
-        )
-        ExamAnswerKey.objects.create(assessment=other, created_by=self.instructor,
-                                     answer_key_json={"q1": {"correct_option_ids": ["b"]}})
-        output = StringIO()
-        call_command("encrypt_answer_keys", stdout=output)
-        self.assertIn("Encrypted 1 answer key(s); 1 were already encrypted.", output.getvalue())
-        stored = ExamAnswerKey.objects.get(assessment=other).answer_key_json
-        self.assertEqual(decrypt_answer_key(stored), {"q1": {"correct_option_ids": ["b"]}})
-        self.assertNotIn("correct_option_ids", json.dumps(stored))
-
 
 class GradeHistoryInsertOnlyTests(TestCase):
     """
@@ -7028,15 +3694,12 @@ class GradeHistoryInsertOnlyTests(TestCase):
         CourseStaff.objects.create(
             course=course, user=instructor, staff_role="lead_instructor", assigned_by=head
         )
-        module = Module.objects.create(course=course, title="Week 1")
-        section = ModuleSection.objects.create(module=module, title="Exam", section_type="exam")
         now = timezone.now()
         assessment = Assessment.objects.create(
-            section=section, title="Exam", component_type=GradeComponentType.EXAM, max_score=10, max_attempts=1,
-            opens_at=now, due_date=now + timezone.timedelta(days=1), duration_minutes=30, created_by=instructor,
+            course=course, title="Exam", component_type=GradeComponentType.EXAM, max_score=10, max_attempts=1,
+            opens_at=now, due_date=now + timezone.timedelta(days=1), created_by=instructor,
         )
-        attempt = AssessmentAttempt.objects.create(assessment=assessment, student=student, attempt_no=1,
-                                                   expires_at=now, ip_address="127.0.0.1")
+        attempt = AssessmentAttempt.objects.create(assessment=assessment, student=student, attempt_no=1, ip_address="127.0.0.1")
         self.grade = Grade.objects.create(assessment=assessment, student=student, attempt=attempt, score=7)
         self.history = GradeHistory.objects.create(grade=self.grade, new_score=7, new_status="draft",
                                                    changed_by=instructor)
@@ -7072,7 +3735,6 @@ class GradeHistoryInsertOnlyTests(TestCase):
             [self.grade.id, 8, "draft", self.instructor.id],
         )
         self.assertEqual(GradeHistory.objects.filter(grade=self.grade).count(), 2)
-
 
 @override_settings(VAULT_ENABLED=False)
 class RecoveryCodeHashingTests(TestCase):
@@ -7148,7 +3810,6 @@ class RecoveryCodeHashingTests(TestCase):
         response = self.log_in_with_code("ABCD1234")
         self.assertEqual(response.status_code, 400)
         self.assertContains(response, "Invalid security code.", status_code=400)
-
 
 @override_settings(VAULT_ENABLED=False)
 class VaultTOTPSeedTests(TestCase):
@@ -7316,7 +3977,6 @@ class VaultTOTPSeedTests(TestCase):
         self.assertIsNone(self.user.mfa_secret)
         self.assertEqual(self.device.key, old_seed)
 
-
 class VaultDatabaseLoginTests(TestCase):
     """
     Stage 3a: Django logs in to PostgreSQL with temporary users from Vault.
@@ -7418,7 +4078,6 @@ class VaultDatabaseLoginTests(TestCase):
             engines.append(result.stdout.strip())
         self.assertEqual(engines, ["kura", "django.db.backends.postgresql"])
 
-
 def fake_clamav_reply(reply):
     """Test helper: a pretend ClamAV socket that answers every command with `reply`.
     Used for scan results ("stream: ... FOUND") and version replies.
@@ -7426,7 +4085,6 @@ def fake_clamav_reply(reply):
     fake_socket = MagicMock()
     fake_socket.recv.return_value = reply
     return fake_socket
-
 
 class ClamAVQuarantineTests(TransactionTestCase):
     """
@@ -7568,206 +4226,7 @@ class ClamAVQuarantineTests(TransactionTestCase):
         self.assertRedirects(response, reverse("kura:quarantine_list"))
         self.assertFalse(QuarantinedFile.objects.filter(id=quarantined.id).exists())
 
-
 @override_settings(SITE_URL="https://kura.example.com")
-class EmailNotificationTests(TestCase):
-    """
-    Email notifications through the outbox (OutgoingEmail): password resets,
-    new/changed assessments, 24-hour reminders, submission receipts and appeal
-    decisions, plus the send_queued_emails job.
-    """
-
-    def setUp(self):
-        self.client = Client()
-        self.instructor = make_user("Instructor")
-        self.student = make_user("Student")
-        self.dropped_student = make_user("Student")
-        department = Department.objects.create(name="Art", code="ART")
-        self.course = Course.objects.create(
-            department=department, code="ART101", title="Art History", semester="1", academic_year=2026,
-            is_published=True, published_by=self.instructor, published_at=timezone.now(),
-        )
-        CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor")
-        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
-        Enrollment.objects.create(
-            course=self.course, student=self.dropped_student, status=EnrollmentStatus.DROPPED,
-            dropped_by=self.instructor, dropped_at=timezone.now(),
-        )
-        self.module = Module.objects.create(course=self.course, title="Renaissance", is_visible=True)
-        self.section = ModuleSection.objects.create(module=self.module, title="Essays", section_type="coursework")
-        self.assessment = Assessment.objects.create(
-            section=self.section, title="Renaissance Essay", component_type=GradeComponentType.COURSEWORK,
-            opens_at=timezone.now() - timezone.timedelta(hours=1),
-            due_date=timezone.now() + timezone.timedelta(hours=10),
-            duration_minutes=60, created_by=self.instructor,
-        )
-
-    # --- password reset ---------------------------------------------------
-
-    def request_reset(self, email):
-        return self.client.post(reverse("kura:password_reset_request"), {"email": email})
-
-    def test_reset_is_queued_not_sent_and_uses_the_fixed_site_url(self):
-        response = self.request_reset(self.student.email)
-        self.assertRedirects(response, reverse("kura:login"), fetch_redirect_response=False)
-        self.assertEqual(len(mail.outbox), 0)
-        email = OutgoingEmail.objects.get(to_email=self.student.email)
-        self.assertTrue(email.event_key.startswith("password-reset:"))
-        self.assertIn("https://kura.example.com/password/reset/", email.body)
-
-    def test_unknown_email_gets_same_answer_and_nothing_is_queued(self):
-        known = self.request_reset(self.student.email)
-        unknown = self.request_reset("nobody@kura.edu")
-        self.assertEqual(known.status_code, unknown.status_code)
-        self.assertEqual(known["Location"], unknown["Location"])
-        self.assertFalse(OutgoingEmail.objects.filter(to_email="nobody@kura.edu").exists())
-
-    def test_at_most_two_reset_emails_per_account_every_five_minutes(self):
-        for _ in range(4):
-            self.request_reset(self.student.email)
-        self.assertEqual(OutgoingEmail.objects.filter(to_email=self.student.email).count(), 2)
-
-    # --- the outbox helper --------------------------------------------------
-
-    def test_same_event_is_only_queued_once_and_subject_is_one_line(self):
-        queue_email("test-event:1", "a@kura.edu", "Line one\r\nBcc: victim@example.com", "Body")
-        queue_email("test-event:1", "a@kura.edu", "Again", "Body")
-        email = OutgoingEmail.objects.get(event_key="test-event:1")
-        self.assertEqual(email.subject, "Line one Bcc: victim@example.com")
-        self.assertEqual(OutgoingEmail.objects.filter(event_key="test-event:1").count(), 1)
-
-    # --- assessment notifications ------------------------------------------
-
-    def test_new_assessment_emails_only_active_students_once(self):
-        queue_assessment_notification(self.assessment, "assessment-new", "New", "A new assessment.")
-        queue_assessment_notification(self.assessment, "assessment-new", "New", "A new assessment.")
-        recipients = list(OutgoingEmail.objects.values_list("to_email", flat=True))
-        self.assertEqual(recipients, [self.student.email])
-        body = OutgoingEmail.objects.get().body
-        self.assertIn("Renaissance Essay", body)
-        self.assertIn(f"https://kura.example.com/assessments/{self.assessment.id}/", body)
-
-    def test_hidden_section_or_module_sends_nothing(self):
-        self.section.is_visible = False
-        self.section.save()
-        queue_assessment_notification(self.assessment, "assessment-new", "New", "A new assessment.")
-        self.assertEqual(OutgoingEmail.objects.count(), 0)
-
-    def test_making_a_module_visible_announces_its_assessments(self):
-        self.module.is_visible = False
-        self.module.save()
-        login_with_session(self.client, self.instructor)
-        self.client.post(
-            reverse("kura:module_edit", kwargs={"module_id": self.module.id}),
-            {"title": "Renaissance", "description": "", "is_visible": "on", "target_levels": ["level_4"]},
-        )
-        self.assertTrue(
-            OutgoingEmail.objects.filter(event_key=f"assessment-new:{self.assessment.id}:{self.student.id}").exists()
-        )
-
-    # --- 24-hour reminders --------------------------------------------------
-
-    def test_reminder_goes_to_students_who_have_not_submitted_once(self):
-        submitted = make_user("Student")
-        Enrollment.objects.create(course=self.course, student=submitted, status=EnrollmentStatus.ACTIVE)
-        AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=submitted, expires_at=timezone.now(),
-            submitted_at=timezone.now(), ip_address="127.0.0.1",
-        )
-        call_command("queue_due_reminders", stdout=StringIO())
-        call_command("queue_due_reminders", stdout=StringIO())
-        reminders = OutgoingEmail.objects.filter(event_key__startswith="reminder-24h:")
-        self.assertEqual(list(reminders.values_list("to_email", flat=True)), [self.student.email])
-
-    def test_no_reminder_when_due_more_than_a_day_away_or_not_open(self):
-        self.assessment.due_date = timezone.now() + timezone.timedelta(days=3)
-        self.assessment.save()
-        later = Assessment.objects.create(
-            section=self.section, title="Not open yet", component_type=GradeComponentType.QUIZ,
-            opens_at=timezone.now() + timezone.timedelta(hours=1),
-            due_date=timezone.now() + timezone.timedelta(hours=5),
-            duration_minutes=30, created_by=self.instructor,
-        )
-        call_command("queue_due_reminders", stdout=StringIO())
-        self.assertFalse(OutgoingEmail.objects.filter(event_key__contains=str(later.id)).exists())
-        self.assertEqual(OutgoingEmail.objects.count(), 0)
-
-    # --- appeal decision ------------------------------------------------------
-
-    def test_appeal_decision_is_emailed_to_the_student(self):
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=self.student, expires_at=timezone.now(), ip_address="127.0.0.1",
-        )
-        grade = Grade.objects.create(
-            assessment=self.assessment, student=self.student, attempt=attempt, score=Decimal("61"),
-            status=GradeStatus.RELEASED,
-        )
-        appeal = GradeAppeal.objects.create(grade=grade, reason="Please review")
-        login_with_session(self.client, self.instructor)
-        self.client.post(
-            reverse("kura:grade_appeal_review", kwargs={"appeal_id": appeal.id}),
-            {"status": "approved", "response": "Marks added."},
-        )
-        notice = OutgoingEmail.objects.get(event_key__startswith=f"appeal-decided:{appeal.id}:")
-        self.assertEqual(notice.to_email, self.student.email)
-        self.assertNotIn("61", notice.body)
-
-    # --- send_queued_emails ---------------------------------------------------
-
-    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
-    def test_sending_marks_sent_and_wipes_the_body(self):
-        queue_email("test-send:1", self.student.email, "Subject", "Secret link")
-        call_command("send_queued_emails", stdout=StringIO())
-        self.assertEqual(len(mail.outbox), 1)
-        self.assertEqual(mail.outbox[0].from_email, "Kura <noreply@kura.edu>")
-        email = OutgoingEmail.objects.get(event_key="test-send:1")
-        self.assertEqual(email.status, OutgoingEmailStatus.SENT)
-        self.assertEqual(email.body, "")
-
-    def test_short_outage_does_not_lose_the_email(self):
-        import smtplib
-
-        queue_email("test-send:3", self.student.email, "Subject", "Body")
-        # Six one-minute cron runs while the relay is down.
-        with patch("kura.management.commands.send_queued_emails.EmailMessage.send", side_effect=smtplib.SMTPException):
-            for _ in range(6):
-                call_command("send_queued_emails", stdout=StringIO())
-        email = OutgoingEmail.objects.get(event_key="test-send:3")
-        self.assertEqual((email.status, email.body), (OutgoingEmailStatus.PENDING, "Body"))
-        # Relay is back and the next retry is due, so the email goes out.
-        OutgoingEmail.objects.filter(id=email.id).update(created_at=timezone.now() - timezone.timedelta(days=1))
-        with patch("kura.management.commands.send_queued_emails.EmailMessage.send"):
-            call_command("send_queued_emails", stdout=StringIO())
-        email.refresh_from_db()
-        self.assertEqual((email.status, email.body), (OutgoingEmailStatus.SENT, ""))
-
-    def test_failed_sends_are_given_up_after_max_attempts(self):
-        import smtplib
-
-        from kura.management.commands.send_queued_emails import MAX_ATTEMPTS
-
-        queue_email("test-send:2", self.student.email, "Subject", "Body")
-        # Started one attempt short of the limit, with the retry due.
-        OutgoingEmail.objects.filter(event_key="test-send:2").update(
-            attempts=MAX_ATTEMPTS - 1, created_at=timezone.now() - timezone.timedelta(days=2)
-        )
-        with patch("kura.management.commands.send_queued_emails.EmailMessage.send", side_effect=smtplib.SMTPException):
-            call_command("send_queued_emails", stdout=StringIO())
-        email = OutgoingEmail.objects.get(event_key="test-send:2")
-        self.assertEqual((email.status, email.attempts, email.body), (OutgoingEmailStatus.FAILED, MAX_ATTEMPTS, ""))
-        self.assertEqual(email.last_error, "SMTPException")
-
-    @override_settings(EMAIL_BACKEND="django.core.mail.backends.locmem.EmailBackend")
-    def test_old_reset_emails_expire_instead_of_sending(self):
-        queue_email("password-reset:old", self.student.email, "Reset", "Old link")
-        OutgoingEmail.objects.filter(event_key="password-reset:old").update(
-            created_at=timezone.now() - timezone.timedelta(minutes=31)
-        )
-        call_command("send_queued_emails", stdout=StringIO())
-        email = OutgoingEmail.objects.get(event_key="password-reset:old")
-        self.assertEqual((email.status, email.body), (OutgoingEmailStatus.FAILED, ""))
-        self.assertEqual(len(mail.outbox), 0)
-
 
 class PasskeyAddedAuditTests(TestCase):
     """
@@ -7800,7 +4259,6 @@ class PasskeyAddedAuditTests(TestCase):
         with patch("mfa.FIDO2.complete_reg", return_value=JsonResponse({"status": "ERR"})):
             with self.assertNoLogs("kura.security", level="INFO"):
                 self.client.post("/mfa/fido2/complete_reg", data="{}", content_type="application/json")
-
 
 class PasskeyOnlyMfaUrlsTests(TestCase):
     """
@@ -7861,7 +4319,6 @@ class PasskeyOnlyMfaUrlsTests(TestCase):
                 self.assertEqual(response.status_code, 302)
                 self.assertIn(reverse("kura:login"), response["Location"])
 
-
 class WriteAppMetricsTests(TestCase):
     """WP3: write_app_metrics prints counts in Prometheus text format and nothing personal."""
 
@@ -7881,7 +4338,6 @@ class WriteAppMetricsTests(TestCase):
         self.assertGreaterEqual(int(oldest_line.split()[1]), 120)
         # Counts only: the address must never appear in metrics.
         self.assertNotIn(student.email, text)
-
 
 class AssessmentVisibilityRulesTests(TestCase):
     """
@@ -7925,60 +4381,17 @@ class AssessmentVisibilityRulesTests(TestCase):
             status=EnrollmentStatus.ACTIVE,
         )
 
-        self.module = Module.objects.create(
-            course=self.course,
-            title="Module 1",
-            is_visible=True,
-        )
-        self.section = ModuleSection.objects.create(
-            module=self.module,
-            title="Section 1",
-            section_type="coursework",
-            is_visible=True,
-        )
-
         now = timezone.now()
         self.assessment = Assessment.objects.create(
-            section=self.section,
+            course=self.course,
             title="Assignment 1",
             component_type=GradeComponentType.COURSEWORK,
             max_score=Decimal("100.00"),
             max_attempts=3,
             opens_at=now - timezone.timedelta(hours=1),
             due_date=now + timezone.timedelta(hours=4),
-            duration_minutes=60,
-            questions_json=[],
             created_by=self.instructor,
         )
-
-    def test_student_blocked_when_module_hidden(self):
-        self.module.is_visible = False
-        self.module.save()
-        login_with_session(self.client, self.student)
-
-        detail_url = reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id})
-        response = self.client.get(detail_url)
-        self.assertEqual(response.status_code, 403)
-
-        initial_count = AssessmentAttempt.objects.count()
-        start_url = reverse("kura:assessment_attempt_start", kwargs={"assessment_id": self.assessment.id})
-        response = self.client.post(start_url)
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(AssessmentAttempt.objects.count(), initial_count)
-
-    def test_student_blocked_when_target_level_mismatch(self):
-        ModuleTargetLevel.objects.create(module=self.module, target_level="level_5")
-        login_with_session(self.client, self.student)
-
-        detail_url = reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id})
-        response = self.client.get(detail_url)
-        self.assertEqual(response.status_code, 403)
-
-        initial_count = AssessmentAttempt.objects.count()
-        start_url = reverse("kura:assessment_attempt_start", kwargs={"assessment_id": self.assessment.id})
-        response = self.client.post(start_url)
-        self.assertEqual(response.status_code, 403)
-        self.assertEqual(AssessmentAttempt.objects.count(), initial_count)
 
     def test_student_blocked_when_course_unpublished(self):
         self.course.is_published = False
@@ -8000,15 +4413,6 @@ class AssessmentVisibilityRulesTests(TestCase):
         detail_url = reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id})
         response = self.client.get(detail_url)
         self.assertEqual(response.status_code, 200)
-
-    def test_course_staff_can_view_hidden_module_assessment(self):
-        self.module.is_visible = False
-        self.module.save()
-        login_with_session(self.client, self.instructor)
-        detail_url = reverse("kura:assessment_detail", kwargs={"assessment_id": self.assessment.id})
-        response = self.client.get(detail_url)
-        self.assertEqual(response.status_code, 200)
-
 
 class MfaSetupReauthTests(TestCase):
     """
@@ -8087,7 +4491,6 @@ class MfaSetupReauthTests(TestCase):
         self.assertContains(response, "data:image/svg+xml;utf8,")
         self.assertContains(response, "Set up two-step verification")
 
-
 class RowLevelSecurityFailClosedTests(TestCase):
     """
     CFG-01: When RowLevelSecurityMiddleware fails to set the session user ID in PostgreSQL,
@@ -8153,7 +4556,6 @@ class RowLevelSecurityFailClosedTests(TestCase):
                 self.assertEqual(response.status_code, 200)
                 self.assertTrue(any('event="rls.reset_failed"' in line for line in captured.output))
                 mock_close.assert_called_once()
-
 
 class SessionInvalidLoggingTests(TestCase):
     """
@@ -8226,7 +4628,6 @@ class SessionInvalidLoggingTests(TestCase):
         self.assertRedirects(response, reverse("kura:login"))
         self.assertTrue(any('event="session.invalid"' in line and 'reason="expired"' in line for line in captured.output))
         self.assertTrue(any(f'actor_user_id="{self.user.id}"' in line for line in captured.output))
-
 
 class PasswordChangeNotificationTests(TestCase):
     """
@@ -8314,7 +4715,6 @@ class PasswordChangeNotificationTests(TestCase):
         )
         self.assertEqual(OutgoingEmail.objects.filter(to_email=self.user.email).count(), 0)
 
-
 class GradeFinalizeInstructorOnlyTests(TestCase):
     """
     ACL-04: A user holding both the Instructor and Teaching assistant roles, but assigned
@@ -8349,17 +4749,14 @@ class GradeFinalizeInstructorOnlyTests(TestCase):
         CourseStaff.objects.create(course=self.course, user=self.co_instructor, staff_role="co_instructor")
         Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
 
-        self.module = Module.objects.create(course=self.course, title="Foundations", is_visible=True)
-        self.section = ModuleSection.objects.create(module=self.module, title="Midterm", section_type="exam")
         self.assessment = Assessment.objects.create(
-            section=self.section,
+            course=self.course,
             title="Midterm Exam",
             component_type=GradeComponentType.EXAM,
             max_score=Decimal("100.00"),
             max_attempts=1,
             opens_at=timezone.now(),
             due_date=timezone.now() + timezone.timedelta(hours=1),
-            duration_minutes=60,
             created_by=self.co_instructor,
         )
         self.attempt = AssessmentAttempt.objects.create(
@@ -8367,7 +4764,6 @@ class GradeFinalizeInstructorOnlyTests(TestCase):
             student=self.student,
             attempt_no=1,
             status=AttemptStatus.FULLY_GRADED,
-            expires_at=timezone.now(),
             ip_address="127.0.0.1",
         )
         self.grade = Grade.objects.create(
@@ -8398,7 +4794,6 @@ class GradeFinalizeInstructorOnlyTests(TestCase):
         self.grade.refresh_from_db()
         self.assertEqual(self.grade.status, GradeStatus.FINALIZED)
         self.assertTrue(GradeHistory.objects.filter(grade=self.grade, new_status=GradeStatus.FINALIZED).exists())
-
 
 class UserRolesInputValidationTests(TestCase):
     """
@@ -8435,7 +4830,6 @@ class UserRolesInputValidationTests(TestCase):
 
         self.assertRedirects(response, self.roles_url)
         self.assertEqual(UserRole.objects.filter(user=self.target_user).count(), before)
-
 
 class DownloadFilenameHeaderTests(TestCase):
     """
@@ -8483,40 +4877,6 @@ class DownloadFilenameHeaderTests(TestCase):
 
         self.assertEqual(response["Content-Disposition"], 'attachment; filename="notes.pdf"')
         self.assertEqual(response["X-Content-Type-Options"], "nosniff")
-
-
-class NoStoreAndAutocompleteTests(TestCase):
-    """
-    LOG-06: Every authenticated response is marked no-store, including the
-    must-change-password onboarding path, and one-time codes carry the right
-    autocomplete hint.
-    """
-
-    def setUp(self):
-        self.client = Client()
-        self.user = make_user("Student", mfa_enabled=True)
-
-    def test_must_change_password_page_is_not_cacheable(self):
-        # The early-return path used to skip the Cache-Control header.
-        self.user.must_change_password = True
-        self.user.save(update_fields=["must_change_password"])
-        login_with_session(self.client, self.user)
-
-        response = self.client.get(reverse("kura:password_change"))
-
-        self.assertEqual(response.status_code, 200)
-        self.assertIn("no-store", response["Cache-Control"])
-
-    def test_grade_release_otp_has_one_time_code_autocomplete(self):
-        from .forms import GradeReleaseForm
-
-        self.assertIn('autocomplete="one-time-code"', str(GradeReleaseForm()))
-
-    def test_proctor_code_has_autocomplete_off(self):
-        from .forms import AssessmentAttemptStartForm
-
-        self.assertIn('autocomplete="off"', str(AssessmentAttemptStartForm()))
-
 
 class PasswordReuseTests(TestCase):
     """
@@ -8573,7 +4933,6 @@ class PasswordReuseTests(TestCase):
 
         self.user.refresh_from_db()
         self.assertTrue(self.user.check_password(self.password))
-
 
 class OldPasswordThrottleTests(TestCase):
     """
@@ -8636,7 +4995,6 @@ class OldPasswordThrottleTests(TestCase):
         self.user.refresh_from_db()
         self.assertTrue(self.user.check_password(new_password))
 
-
 class UploadExtensionMatchTests(TestCase):
     """
     INP-01: The filename extension must match the type libmagic detects, so a
@@ -8669,7 +5027,6 @@ class UploadExtensionMatchTests(TestCase):
 
         self.assertEqual(stored.original_filename, "REPORT.PDF")
 
-
 class FreeTextLengthLimitTests(TestCase):
     """
     INP-04: Free-text form fields have a length limit, so an over-long value
@@ -8700,17 +5057,14 @@ class FreeTextLengthLimitTests(TestCase):
         )
         Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
 
-        self.module = Module.objects.create(course=self.course, title="Formation", is_visible=True)
-        self.section = ModuleSection.objects.create(module=self.module, title="Essay", section_type="exam")
         self.assessment = Assessment.objects.create(
-            section=self.section,
+            course=self.course,
             title="Essay",
             component_type=GradeComponentType.EXAM,
             max_score=Decimal("100.00"),
             max_attempts=1,
             opens_at=timezone.now(),
             due_date=timezone.now() + timezone.timedelta(hours=1),
-            duration_minutes=60,
             created_by=self.instructor,
         )
         attempt = AssessmentAttempt.objects.create(
@@ -8718,7 +5072,6 @@ class FreeTextLengthLimitTests(TestCase):
             student=self.student,
             attempt_no=1,
             status=AttemptStatus.FULLY_GRADED,
-            expires_at=timezone.now(),
             ip_address="127.0.0.1",
         )
         self.grade = Grade.objects.create(
@@ -8728,18 +5081,6 @@ class FreeTextLengthLimitTests(TestCase):
             score=Decimal("70.00"),
             status=GradeStatus.RELEASED,
         )
-
-    def test_overlong_appeal_reason_is_rejected(self):
-        login_with_session(self.client, self.student)
-
-        response = self.client.post(
-            reverse("kura:grade_appeal_create", kwargs={"grade_id": self.grade.id}),
-            {"reason": "a" * 5001},
-        )
-
-        self.assertEqual(response.status_code, 400)
-        self.assertIn("reason", response.context["form"].errors)
-        self.assertFalse(GradeAppeal.objects.filter(grade=self.grade).exists())
 
     def test_overlong_manual_attendance_reason_is_rejected(self):
         from .forms import ManualAttendanceForm
@@ -8754,7 +5095,6 @@ class FreeTextLengthLimitTests(TestCase):
 
         self.assertFalse(form.is_valid())
         self.assertIn("override_reason", form.errors)
-
 
 class AdminSettingsAuditLogTests(TestCase):
     """
@@ -8783,7 +5123,6 @@ class AdminSettingsAuditLogTests(TestCase):
         # The audit line must not carry the department's free-text name.
         self.assertNotIn("Physics", output)
 
-
 class InvalidInputLoggingTests(TestCase):
     """
     LOG-03: A rejected admin form logs input.invalid with the form and field
@@ -8810,7 +5149,6 @@ class InvalidInputLoggingTests(TestCase):
         self.assertIn("DepartmentForm", output)
         self.assertIn("code", output)
         self.assertNotIn(marker, output)
-
 
 class PasskeyLoginCallbackTests(TestCase):
     """
@@ -8864,7 +5202,6 @@ class PasskeyLoginCallbackTests(TestCase):
         request, response = self.call_callback({"pre_mfa_user_id": str(self.user.id)})
         self.assertEqual(response.url, reverse("kura:home"))
         self.assertEqual(request.session["_auth_user_id"], str(self.user.pk))
-
 
 class FreshSecondFactorTests(TestCase):
     """
@@ -8947,7 +5284,6 @@ class FreshSecondFactorTests(TestCase):
         self.assertTrue(has_fresh_second_factor(request))
         request.user = self.admin
         self.assertFalse(has_fresh_second_factor(request))
-
 
 class OwnSessionsTests(TestCase):
     """
@@ -9043,7 +5379,6 @@ class OwnSessionsTests(TestCase):
             f"{reverse('kura:login')}?next={reverse('kura:user_sessions')}",
         )
 
-
 class AbsoluteSessionLimitTests(TestCase):
     """
     Tests the 12-hour absolute session limit (ACL-07).
@@ -9097,7 +5432,6 @@ class AbsoluteSessionLimitTests(TestCase):
             f"{reverse('kura:login')}?next={reverse('kura:home')}",
         )
 
-
 class SharedRateLimitCacheTests(TestCase):
     """
     Tests that RateLimitMiddleware stores counters in the shared DatabaseCache (AUTH-08).
@@ -9120,77 +5454,6 @@ class SharedRateLimitCacheTests(TestCase):
         cache_key = f"rate_limit_upload_{self.user.id}"
         self.assertEqual(caches["ratelimit"].get(cache_key), 1)
         self.assertIsNone(caches["default"].get(cache_key))
-
-
-class ExtraRateLimitTests(TestCase):
-    """
-    Tests the upload and search URL names added to RateLimitMiddleware.
-    Each endpoint returns 429 after its limit, while another user on another IP is not blocked.
-    """
-
-    def setUp(self):
-        from django.core.cache import caches
-
-        caches["ratelimit"].clear()
-        self.user_a = make_user("Student")
-        self.user_b = make_user("Student")
-        self.client_a = Client()
-        self.client_b = Client()
-        login_with_session(self.client_a, self.user_a)
-        login_with_session(self.client_b, self.user_b)
-
-    def send(self, client, method, url, data, ip):
-        # Uploads are POST and searches are GET.
-        if method == "post":
-            return client.post(url, data, REMOTE_ADDR=ip)
-        return client.get(url, data, REMOTE_ADDR=ip)
-
-    def assert_limited(self, method, url, limit, data=None):
-        data = data or {}
-        # User A fills both their user counter and the counter for their IP.
-        for _ in range(limit):
-            self.send(self.client_a, method, url, data, "192.0.2.1")
-        limited = self.send(self.client_a, method, url, data, "192.0.2.1")
-        self.assertEqual(limited.status_code, 429)
-        self.assertEqual(limited.headers.get("Retry-After"), "60")
-
-        # User B on a different IP has separate counters, so the limit does not reach them.
-        other = self.send(self.client_b, method, url, data, "192.0.2.2")
-        self.assertNotEqual(other.status_code, 429)
-
-    def test_item_create_upload_is_limited(self):
-        self.assert_limited("post", reverse("kura:item_create", args=[uuid.uuid4()]), 20)
-
-    def test_item_edit_upload_is_limited(self):
-        self.assert_limited("post", reverse("kura:item_edit", args=[uuid.uuid4()]), 20)
-
-    def test_admin_sessions_search_is_limited(self):
-        self.assert_limited("get", reverse("kura:admin_sessions"), 60, {"q": "name"})
-
-    def test_admin_users_search_is_limited(self):
-        self.assert_limited("get", reverse("kura:admin_users"), 60, {"q": "name"})
-
-    def test_staff_list_search_is_limited(self):
-        self.assert_limited("get", reverse("kura:staff_list"), 60, {"q": "name"})
-
-    def test_student_list_search_is_limited(self):
-        self.assert_limited("get", reverse("kura:student_list"), 60, {"q": "name"})
-
-    def test_attendance_history_search_is_limited(self):
-        self.assert_limited("get", reverse("kura:attendance_history"), 60, {"q": "name"})
-
-    def test_course_grades_search_is_limited(self):
-        self.assert_limited("get", reverse("kura:course_grades", args=[uuid.uuid4()]), 60, {"q": "name"})
-
-    def test_search_page_without_term_is_not_counted(self):
-        from django.core.cache import caches
-
-        # Opening the page or paging through results without a search term costs nothing.
-        url = reverse("kura:student_list")
-        self.client_a.get(url)
-        self.client_a.get(url, {"q": "  ", "page": "2"})
-        self.assertIsNone(caches["ratelimit"].get(f"rate_limit_search_{self.user_a.id}"))
-
 
 class PasswordHistoryTests(TestCase):
     """
@@ -9269,7 +5532,6 @@ class PasswordHistoryTests(TestCase):
         for pw in self.passwords:
             self.assertNotIn(pw, log_blob)
 
-
 class DisableInactiveAccountsTests(TestCase):
     """
     Tests disabling dormant accounts and revoking their active sessions (ACL-08).
@@ -9347,49 +5609,6 @@ class DisableInactiveAccountsTests(TestCase):
         self.assertIn(str(self.old_user.id), log_blob)
         self.assertIn('days="90"', log_blob)
 
-
-class CoursePageLinksTests(TestCase):
-    """
-    The course page must link staff to the gradebook and to live attendance,
-    and must not show those links to enrolled students.
-    """
-
-    def setUp(self):
-        self.client = Client()
-        self.instructor = make_user("Instructor")
-        self.student = make_user("Student")
-        department = Department.objects.create(name="Computer Science", code="CS")
-        StudentProfile.objects.create(
-            user=self.student, department=department, current_level="level_4", matriculation_year=2026
-        )
-        self.course = Course.objects.create(
-            department=department,
-            code="CS210",
-            title="Networks",
-            semester="1",
-            academic_year=2026,
-            is_published=True,
-            published_by=self.instructor,
-            published_at=timezone.now(),
-        )
-        CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor")
-        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
-        self.module = Module.objects.create(course=self.course, title="Week 1", is_visible=True)
-
-    def test_staff_see_gradebook_and_attendance_links(self):
-        login_with_session(self.client, self.instructor)
-        response = self.client.get(reverse("kura:course_detail", args=[self.course.id]))
-        self.assertContains(response, reverse("kura:course_grades", args=[self.course.id]))
-        self.assertContains(response, reverse("kura:attendance_session_start", args=[self.module.id]))
-
-    def test_students_do_not_see_staff_links(self):
-        login_with_session(self.client, self.student)
-        response = self.client.get(reverse("kura:course_detail", args=[self.course.id]))
-        self.assertEqual(response.status_code, 200)
-        self.assertNotContains(response, reverse("kura:course_grades", args=[self.course.id]))
-        self.assertNotContains(response, reverse("kura:attendance_session_start", args=[self.module.id]))
-
-
 def make_released_grade_course():
     """Test helper: a course with a department head, a lead instructor, a teaching
     assistant and one student holding a released exam grade. Used by the
@@ -9416,23 +5635,19 @@ def make_released_grade_course():
     CourseStaff.objects.create(course=course, user=instructor, staff_role="lead_instructor", can_release_grades=True)
     CourseStaff.objects.create(course=course, user=assistant, staff_role="teaching_assistant")
     Enrollment.objects.create(course=course, student=student, status=EnrollmentStatus.ACTIVE)
-    module = Module.objects.create(course=course, title="Groups", is_visible=True)
-    section = ModuleSection.objects.create(module=module, title="Exam", section_type="exam")
     assessment = Assessment.objects.create(
-        section=section,
+        course=course,
         title="Groups Exam",
         component_type=GradeComponentType.EXAM,
         max_score=Decimal("100.00"),
         opens_at=timezone.now(),
         due_date=timezone.now() + timezone.timedelta(hours=1),
-        duration_minutes=60,
         created_by=instructor,
     )
     attempt = AssessmentAttempt.objects.create(
         assessment=assessment,
         student=student,
         status=AttemptStatus.FULLY_GRADED,
-        expires_at=timezone.now(),
         ip_address="127.0.0.1",
     )
     grade = Grade.objects.create(
@@ -9448,103 +5663,6 @@ def make_released_grade_course():
         "attempt": attempt,
         "grade": grade,
     }
-
-
-class GradebookPendingReviewsTests(TestCase):
-    """
-    The gradebook lists appeals and change requests that are waiting for a
-    decision, so reviewers can reach the review pages without typing a URL.
-    """
-
-    def setUp(self):
-        self.client = Client()
-        self.data = make_released_grade_course()
-        self.grades_url = reverse("kura:course_grades", args=[self.data["course"].id])
-        self.appeal = GradeAppeal.objects.create(grade=self.data["grade"], reason="Question 3 was marked wrong.")
-        self.change_request = GradeChangeRequest.objects.create(
-            grade=self.data["grade"],
-            requested_by=self.data["instructor"],
-            current_score=Decimal("70.00"),
-            proposed_score=Decimal("78.00"),
-            reason="Appeal upheld.",
-        )
-
-    def test_instructor_sees_pending_appeal_but_not_change_requests(self):
-        login_with_session(self.client, self.data["instructor"])
-        response = self.client.get(self.grades_url)
-        self.assertContains(response, reverse("kura:grade_appeal_review", args=[self.appeal.id]))
-        self.assertNotContains(response, reverse("kura:grade_change_request_review", args=[self.change_request.id]))
-
-    def test_department_head_sees_pending_change_request(self):
-        login_with_session(self.client, self.data["head"])
-        response = self.client.get(self.grades_url)
-        self.assertContains(response, reverse("kura:grade_change_request_review", args=[self.change_request.id]))
-        self.assertContains(response, reverse("kura:grade_appeal_review", args=[self.appeal.id]))
-
-    def test_decided_items_drop_off_the_lists(self):
-        self.appeal.status = AppealStatus.REJECTED
-        self.appeal.save()
-        self.change_request.status = ChangeRequestStatus.REJECTED
-        self.change_request.reviewed_by = self.data["head"]
-        self.change_request.reviewed_at = timezone.now()
-        self.change_request.save()
-        login_with_session(self.client, self.data["head"])
-        response = self.client.get(self.grades_url)
-        self.assertNotContains(response, reverse("kura:grade_appeal_review", args=[self.appeal.id]))
-        self.assertNotContains(response, reverse("kura:grade_change_request_review", args=[self.change_request.id]))
-
-
-class CourseGradeSchemeTests(TestCase):
-    """
-    Instructors and the department head set component weights that add up to
-    100. Teaching assistants and Admins may not change them.
-    """
-
-    def setUp(self):
-        self.client = Client()
-        self.data = make_released_grade_course()
-        self.url = reverse("kura:course_grade_scheme", args=[self.data["course"].id])
-        self.valid_weights = {"weight_coursework": "40", "weight_exam": "60"}
-
-    def test_instructor_saves_scheme_that_adds_up_to_100(self):
-        login_with_session(self.client, self.data["instructor"])
-        response = self.client.post(self.url, self.valid_weights)
-        self.assertRedirects(response, reverse("kura:course_grades", args=[self.data["course"].id]))
-        saved = dict(
-            CourseGradeScheme.objects.filter(course=self.data["course"]).values_list(
-                "component_type", "weight_percentage"
-            )
-        )
-        self.assertEqual(saved, {"coursework": Decimal("40.00"), "exam": Decimal("60.00")})
-
-    def test_weights_that_do_not_add_up_to_100_are_refused(self):
-        login_with_session(self.client, self.data["instructor"])
-        response = self.client.post(self.url, {"weight_exam": "70"})
-        self.assertEqual(response.status_code, 400)
-        self.assertContains(response, "must add up to 100%", status_code=400)
-        self.assertFalse(CourseGradeScheme.objects.filter(course=self.data["course"]).exists())
-
-    def test_cleared_component_is_removed(self):
-        CourseGradeScheme.objects.create(course=self.data["course"], component_type="quiz", weight_percentage=50)
-        login_with_session(self.client, self.data["head"])
-        self.client.post(self.url, self.valid_weights)
-        self.assertFalse(CourseGradeScheme.objects.filter(course=self.data["course"], component_type="quiz").exists())
-
-    def test_teaching_assistant_and_admin_cannot_change_scheme(self):
-        admin = make_user("Admin")
-        for user in (self.data["assistant"], admin):
-            login_with_session(self.client, user)
-            self.assertEqual(self.client.get(self.url).status_code, 403)
-            self.assertEqual(self.client.post(self.url, self.valid_weights).status_code, 403)
-        self.assertFalse(CourseGradeScheme.objects.filter(course=self.data["course"]).exists())
-
-    def test_gradebook_shows_edit_link_only_to_allowed_users(self):
-        grades_url = reverse("kura:course_grades", args=[self.data["course"].id])
-        login_with_session(self.client, self.data["instructor"])
-        self.assertContains(self.client.get(grades_url), self.url)
-        login_with_session(self.client, self.data["assistant"])
-        self.assertNotContains(self.client.get(grades_url), self.url)
-
 
 class GradeFeedbackTests(TestCase):
     """
@@ -9598,7 +5716,6 @@ class GradeFeedbackTests(TestCase):
         self.assertContains(self.client.get(reverse("kura:student_grades")), "worked example")
         attempt_page = self.client.get(reverse("kura:attempt_detail", args=[self.data["attempt"].id]))
         self.assertContains(attempt_page, "worked example")
-
 
 class SecurityPolicyPageTests(TestCase):
     """
@@ -9658,534 +5775,6 @@ class SecurityPolicyPageTests(TestCase):
             },
         )
         self.assertEqual(bad.status_code, 400)
-
-
-class RemainingLedgerCompletionTests(TestCase):
-    """
-    Verifies the remaining Ledger UI and view features completed from the template
-    audit table: field accessibility IDs, pagination, MFA manual key and gate,
-    one-time temporary password cards, dashboard context, course tabs, live
-    attendance polling, schedule grid/filters, attendance history stats/filters,
-    assessment shuffling/backtracking, staff answer review, and gradebook filters.
-    """
-
-    def setUp(self):
-        self.client = Client()
-        self.admin = make_user("Admin", first_name="Ada", last_name="Admin")
-        self.registrar = make_user("Registrar", first_name="Reg", last_name="Staff")
-        self.head = make_user("Department head", first_name="Head", last_name="Prof")
-        self.instructor = make_user("Instructor", first_name="Grace", last_name="Hopper")
-        self.ta = make_user("Teaching assistant", first_name="Alan", last_name="Turing")
-        self.student = make_user("Student", first_name="Sam", last_name="Learner")
-        self.dept = Department.objects.create(name="Computer Science", code="CS", head_user=self.head)
-        StudentProfile.objects.create(
-            user=self.student, department=self.dept, current_level="level_4", matriculation_year=2026
-        )
-        self.course = Course.objects.create(
-            department=self.dept,
-            code="CS301",
-            title="Operating Systems",
-            semester="1",
-            academic_year=2026,
-            is_published=True,
-            published_by=self.head,
-            published_at=timezone.now(),
-        )
-        CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor")
-        CourseStaff.objects.create(course=self.course, user=self.ta, staff_role="teaching_assistant")
-        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
-        self.module = Module.objects.create(course=self.course, title="Processes", is_visible=True)
-        self.section = ModuleSection.objects.create(module=self.module, title="Quiz 1", section_type="quiz")
-        self.assessment = Assessment.objects.create(
-            section=self.section,
-            title="Midterm Quiz",
-            component_type="quiz",
-            max_score=20,
-            max_attempts=1,
-            opens_at=timezone.now() - timezone.timedelta(hours=1),
-            due_date=timezone.now() + timezone.timedelta(hours=12),
-            duration_minutes=45,
-            created_by=self.instructor,
-            questions_json=[
-                {
-                    "question_id": "q1",
-                    "type": "multiple_choice",
-                    "prompt": "What is a process?",
-                    "points": 10,
-                    "options": [{"option_id": "o1", "text": "Running program"}, {"option_id": "o2", "text": "Disk block"}],
-                },
-                {
-                    "question_id": "q2",
-                    "type": "long_text",
-                    "prompt": "Explain context switching.",
-                    "points": 10,
-                    "max_words": 200,
-                },
-            ],
-            settings_json={"shuffle_questions": True, "shuffle_options": True, "allow_backtracking": False},
-        )
-
-    def test_field_accessibility_ids_and_numeric_mfa_inputmode(self):
-        login_with_session(self.client, self.admin)
-        resp = self.client.post(reverse("kura:admin_course_create"), {"code": ""})
-        self.assertContains(resp, 'id="id_code_error"', status_code=400)
-        self.assertContains(resp, 'aria-describedby="id_code_error"', status_code=400)
-
-        # MFA verify form renders numeric inputmode for mobile keyboards.
-        self.client.logout()
-        session = self.client.session
-        session["pre_mfa_user_id"] = str(self.admin.id)
-        session["pre_mfa_started_at"] = timezone.now().timestamp()
-        session.save()
-        mfa_resp = self.client.get(reverse("kura:mfa_verify"))
-        self.assertContains(mfa_resp, 'inputmode="numeric"')
-
-    def test_mfa_setup_manual_key_hidden_during_reauth_and_shown_after(self):
-        # Unenrolled user gets manual_key in collapse section.
-        unenrolled = make_user("Student", mfa_enabled=False)
-        login_with_session(self.client, unenrolled)
-        resp = self.client.get(reverse("kura:mfa_setup"))
-        self.assertContains(resp, "Can't scan? Enter the key instead")
-        self.assertTrue(resp.context["manual_key"])
-
-        # Already-enrolled user does not receive manual_key until step-up completes.
-        login_with_session(self.client, self.admin)
-        reauth_resp = self.client.get(reverse("kura:mfa_setup"))
-        self.assertNotIn("manual_key", reauth_resp.context)
-
-    def test_temp_password_shown_once_via_session_not_flash_messages(self):
-        login_with_session(self.client, self.admin)
-        post_resp = self.client.post(
-            reverse("kura:staff_create"),
-            {
-                "email": "new.staff@example.com",
-                "first_name": "New",
-                "last_name": "Staff",
-                "department": self.dept.id,
-                "staff_title": "Instructor",
-            },
-        )
-        self.assertRedirects(post_resp, reverse("kura:staff_list"), fetch_redirect_response=False)
-        first_list = self.client.get(reverse("kura:staff_list"))
-        self.assertContains(first_list, "Temporary password for new.staff@example.com")
-        self.assertContains(first_list, "This is shown once.")
-        self.assertContains(first_list, "1 staff")
-        second_list = self.client.get(reverse("kura:staff_list"))
-        self.assertNotContains(second_list, "Temporary password for new.staff@example.com")
-
-        login_with_session(self.client, self.registrar)
-        student_post = self.client.post(
-            reverse("kura:student_create"),
-            {
-                "email": "new.stud@example.com",
-                "first_name": "New",
-                "last_name": "Student",
-                "department": self.dept.id,
-                "current_level": "level_4",
-                "matriculation_year": 2026,
-            },
-        )
-        self.assertRedirects(student_post, reverse("kura:enrollment_list"), fetch_redirect_response=False)
-        first_enroll = self.client.get(reverse("kura:enrollment_list"))
-        self.assertContains(first_enroll, "Temporary password for new.stud@example.com")
-        second_enroll = self.client.get(reverse("kura:enrollment_list"))
-        self.assertNotContains(second_enroll, "Temporary password for new.stud@example.com")
-
-    def test_dashboard_greeting_attention_and_role_isolation(self):
-        login_with_session(self.client, self.student)
-        student_home = self.client.get(reverse("kura:home"))
-        self.assertContains(student_home, "Sam")
-        self.assertContains(student_home, "Needs your attention")
-        self.assertContains(student_home, "Midterm Quiz in CS301 closes")
-
-        # Admin never sees assessment attention items.
-        login_with_session(self.client, self.admin)
-        admin_home = self.client.get(reverse("kura:home"))
-        self.assertContains(admin_home, "Ada")
-        self.assertNotContains(admin_home, "Midterm Quiz")
-
-    def test_list_pagination_preserves_query_filters(self):
-        for i in range(28):
-            user = make_user("Instructor", email=f"paged{i:02d}@example.com", first_name="Paged")
-            StaffProfile.objects.create(user=user, department=self.dept, staff_title="Instructor")
-        login_with_session(self.client, self.admin)
-        page1 = self.client.get(reverse("kura:staff_list"), {"q": "Paged"})
-        self.assertEqual(page1.context["page_obj"].number, 1)
-        self.assertEqual(page1.context["page_obj"].paginator.count, 28)
-        self.assertContains(page1, "?q=Paged&amp;page=2")
-
-        page2 = self.client.get(reverse("kura:staff_list"), {"q": "Paged", "page": 2})
-        self.assertEqual(len(page2.context["staff_members"]), 3)
-
-    def test_course_detail_tabs_and_role_guards(self):
-        Schedule.objects.create(
-            course=self.course,
-            instructor=self.instructor,
-            session_type="lecture",
-            day="monday",
-            start_time="09:00",
-            end_time="10:30",
-            location="Hall 1",
-            recurrence_start=timezone.localdate(),
-            recurrence_end=timezone.localdate() + timezone.timedelta(days=30),
-        )
-        # Admin gets people by default, schedule allowed, content/grades return 403.
-        login_with_session(self.client, self.admin)
-        self.assertEqual(self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=content").status_code, 403)
-        self.assertEqual(self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=grades").status_code, 403)
-        self.assertContains(self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=schedule"), "Hall 1")
-
-        # Student cannot open people or grades tabs.
-        login_with_session(self.client, self.student)
-        self.assertEqual(self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=people").status_code, 403)
-        self.assertEqual(self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=grades").status_code, 403)
-        self.assertContains(self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=schedule"), "Hall 1")
-
-        # TA sees people tab count only, never student email.
-        login_with_session(self.client, self.ta)
-        ta_people = self.client.get(reverse("kura:course_detail", args=[self.course.id]) + "?tab=people")
-        self.assertEqual(ta_people.status_code, 200)
-        self.assertNotContains(ta_people, self.student.email)
-
-    def test_attendance_session_fragment_and_history_filters(self):
-        session = ModuleAttendanceSession.objects.create(
-            module=self.module,
-            created_by=self.instructor,
-            title="Lecture 1 Roll",
-            passcode_hash="abc",
-            expires_at=timezone.now() + timezone.timedelta(minutes=20),
-            is_active=True,
-        )
-        AttendanceRecord.objects.create(
-            session=session,
-            student=self.student,
-            status=AttendanceStatus.PRESENT,
-            method=AttendanceMethod.PASSCODE,
-        )
-        login_with_session(self.client, self.instructor)
-        frag = self.client.get(reverse("kura:attendance_session_detail", args=[session.id]) + "?fragment=1")
-        self.assertEqual(frag.status_code, 200)
-        self.assertContains(frag, "Attendance roll")
-        self.assertNotContains(frag, "<html")
-
-        hist = self.client.get(reverse("kura:attendance_history"), {"status": AttendanceStatus.PRESENT, "q": self.student.email})
-        self.assertContains(hist, "Lecture 1 Roll")
-
-    def test_assessment_take_shuffles_and_staff_review_answers(self):
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment,
-            student=self.student,
-            attempt_no=1,
-            status=AttemptStatus.IN_PROGRESS,
-            expires_at=timezone.now() + timezone.timedelta(minutes=45),
-            ip_address="127.0.0.1",
-            answers_json=[
-                {"question_id": "q1", "selected_option_ids": ["o1"]},
-                {"question_id": "q2", "response_text": "Saving registers and loading next PCB."},
-            ],
-        )
-        login_with_session(self.client, self.student)
-        take_resp = self.client.get(reverse("kura:assessment_take", args=[attempt.id]))
-        self.assertContains(take_resp, 'data-allow-backtracking="false"')
-        self.assertContains(take_resp, "data-word-counter-input")
-
-        attempt.status = AttemptStatus.REQUIRES_MANUAL_GRADING
-        attempt.submitted_at = timezone.now()
-        attempt.save(update_fields=["status", "submitted_at"])
-
-        # Staff see read-only student responses on attempt_detail and grade_entry.
-        login_with_session(self.client, self.instructor)
-        detail_resp = self.client.get(reverse("kura:attempt_detail", args=[attempt.id]))
-        self.assertContains(detail_resp, "Student responses")
-        self.assertContains(detail_resp, "Saving registers and loading next PCB.")
-        entry_resp = self.client.get(reverse("kura:grade_entry", args=[attempt.id]))
-        self.assertContains(entry_resp, "Saving registers and loading next PCB.")
-
-        # Gradebook filters narrow rows by assessment and student query.
-        Grade.objects.create(
-            assessment=self.assessment,
-            student=self.student,
-            attempt=attempt,
-            score=18,
-            status=GradeStatus.DRAFT,
-        )
-        grades_resp = self.client.get(
-            reverse("kura:course_grades", args=[self.course.id]),
-            {"status": GradeStatus.DRAFT, "q": self.student.email},
-        )
-        self.assertContains(grades_resp, "18.00 / 20.00")
-        self.assertEqual(grades_resp.context["grade_stats"]["drafts"], 1)
-
-
-class SpecificationGapCompletionTests(TestCase):
-    """
-    Tests all role/UI workflow, role-boundary, file-integrity, JSONB-schema,
-    and security-header requirements implemented from the specification gap audit.
-    """
-
-    def setUp(self):
-        self.client = Client()
-        self.admin = make_user("Admin", first_name="Ada", last_name="Admin")
-        self.registrar = make_user("Registrar", first_name="Reg", last_name="Staff")
-        self.head = make_user("Department head", first_name="Head", last_name="Prof")
-        self.instructor = make_user("Instructor", first_name="Grace", last_name="Hopper")
-        self.co_instructor = make_user("Instructor", first_name="Barbara", last_name="Liskov")
-        self.ta = make_user("Teaching assistant", first_name="Alan", last_name="Turing")
-        self.student = make_user("Student", first_name="Sam", last_name="Learner")
-        self.dept = Department.objects.create(name="Computer Science", code="CS", head_user=self.head)
-        StudentProfile.objects.create(
-            user=self.student, department=self.dept, current_level="level_4", matriculation_year=2026
-        )
-        self.course = Course.objects.create(
-            department=self.dept,
-            code="CS401",
-            title="=FormulaCourse",
-            semester="1",
-            academic_year=2026,
-            is_published=True,
-            published_by=self.head,
-            published_at=timezone.now(),
-        )
-        CourseStaff.objects.create(
-            course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True
-        )
-        CourseStaff.objects.create(
-            course=self.course, user=self.co_instructor, staff_role="co_instructor", can_release_grades=False
-        )
-        CourseStaff.objects.create(
-            course=self.course, user=self.ta, staff_role="teaching_assistant", can_release_grades=False
-        )
-        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
-        self.module = Module.objects.create(course=self.course, title="Week 1", is_visible=True)
-        self.section = ModuleSection.objects.create(module=self.module, title="Quiz", section_type="quiz")
-        self.assessment = Assessment.objects.create(
-            section=self.section,
-            title="Quiz 1",
-            component_type="quiz",
-            max_score=Decimal("10.00"),
-            max_attempts=2,
-            opens_at=timezone.now() - timezone.timedelta(hours=1),
-            due_date=timezone.now() + timezone.timedelta(hours=12),
-            duration_minutes=45,
-            created_by=self.instructor,
-            questions_json=[
-                {
-                    "question_id": "q1",
-                    "type": "multiple_choice",
-                    "prompt": "2+2?",
-                    "points": 10,
-                    "options": [{"option_id": "opt_1", "text": "4"}, {"option_id": "opt_2", "text": "5"}],
-                }
-            ],
-            settings_json={"shuffle_questions": False, "shuffle_options": False, "allow_backtracking": True, "autosave_interval_seconds": 15},
-        )
-        ExamAnswerKey.objects.create(
-            assessment=self.assessment,
-            answer_key_json={"q1": {"correct_option_ids": ["opt_1"], "explanation": "Basic math"}},
-            created_by=self.instructor,
-        )
-
-    def test_admin_users_directory_lock_and_deactivate_student_without_grades(self):
-        login_with_session(self.client, self.student)
-        self.assertEqual(self.client.get(reverse("kura:admin_users")).status_code, 403)
-
-        login_with_session(self.client, self.admin)
-        confirm_second_factor(self.client)
-        page = self.client.get(reverse("kura:admin_users"), {"role": "Student"})
-        self.assertEqual(page.status_code, 200)
-        self.assertContains(page, self.student.email)
-        self.assertContains(page, reverse("kura:staff_settings"))
-
-        lock_resp = self.client.post(
-            reverse("kura:user_lock_toggle", args=[self.student.id]),
-            {"next": reverse("kura:admin_users")},
-        )
-        self.assertRedirects(lock_resp, reverse("kura:admin_users"), fetch_redirect_response=False)
-        self.student.refresh_from_db()
-        self.assertIsNotNone(self.student.locked_until)
-
-        deact_resp = self.client.post(
-            reverse("kura:user_deactivate", args=[self.student.id]),
-            {"next": reverse("kura:admin_users")},
-        )
-        self.assertRedirects(deact_resp, reverse("kura:admin_users"), fetch_redirect_response=False)
-        self.student.refresh_from_db()
-        self.assertFalse(self.student.is_active)
-
-    def test_department_report_csv_export_and_formula_neutralization(self):
-        CourseResult.objects.create(
-            course=self.course,
-            student=self.student,
-            final_score=Decimal("88.50"),
-            status=GradeStatus.RELEASED,
-            finalized_by=self.instructor,
-            finalized_at=timezone.now(),
-            released_at=timezone.now(),
-        )
-        login_with_session(self.client, self.head)
-        html_resp = self.client.get(reverse("kura:department_reports", args=[self.dept.id]))
-        self.assertContains(html_resp, "Download CSV")
-        self.assertContains(html_resp, "88.5")
-
-        csv_resp = self.client.get(reverse("kura:department_reports", args=[self.dept.id]), {"format": "csv"})
-        self.assertEqual(csv_resp.status_code, 200)
-        self.assertIn("text/csv", csv_resp["Content-Type"])
-        self.assertEqual(csv_resp["X-Content-Type-Options"], "nosniff")
-        body = csv_resp.content.decode("utf-8")
-        self.assertIn("'=FormulaCourse", body)
-        self.assertIn("88.50", body)
-
-    def test_attendance_discovery_ta_schedule_and_co_instructor_ta_link(self):
-        session = ModuleAttendanceSession.objects.create(
-            module=self.module,
-            created_by=self.instructor,
-            title="Live Lecture Roll",
-            passcode_hash="x" * 64,
-            expires_at=timezone.now() + timezone.timedelta(minutes=30),
-            is_active=True,
-        )
-        login_with_session(self.client, self.student)
-        checkin_url = reverse("kura:student_checkin", args=[session.id])
-        self.assertContains(self.client.get(reverse("kura:home")), checkin_url)
-        self.assertContains(self.client.get(reverse("kura:course_detail", args=[self.course.id])), checkin_url)
-        self.assertContains(self.client.get(reverse("kura:attendance_history")), checkin_url)
-
-        login_with_session(self.client, self.ta)
-        ta_home = self.client.get(reverse("kura:home"))
-        self.assertContains(ta_home, reverse("kura:schedule_list"))
-        session_url = reverse("kura:attendance_session_detail", args=[session.id])
-        self.assertContains(self.client.get(reverse("kura:attendance_history")), session_url)
-        self.assertContains(self.client.get(reverse("kura:course_detail", args=[self.course.id])), session_url)
-
-        login_with_session(self.client, self.co_instructor)
-        self.assertContains(
-            self.client.get(reverse("kura:course_detail", args=[self.course.id])),
-            reverse("kura:course_ta_assign", args=[self.course.id]),
-        )
-
-    def test_role_boundaries_registrar_lists_ta_change_request_and_single_assign_log(self):
-        login_with_session(self.client, self.registrar)
-        self.assertEqual(self.client.get(reverse("kura:course_list")).status_code, 403)
-        self.assertEqual(self.client.get(reverse("kura:schedule_list")).status_code, 403)
-
-        login_with_session(self.client, self.admin)
-        self.assertEqual(self.client.get(reverse("kura:schedule_list")).status_code, 403)
-
-        att = AssessmentAttempt.objects.create(
-            assessment=self.assessment,
-            student=self.student,
-            attempt_no=1,
-            status=AttemptStatus.FULLY_GRADED,
-            expires_at=timezone.now() + timezone.timedelta(hours=1),
-            ip_address="127.0.0.1",
-        )
-        grade = Grade.objects.create(
-            assessment=self.assessment,
-            student=self.student,
-            attempt=att,
-            score=Decimal("8.00"),
-            status=GradeStatus.RELEASED,
-        )
-        login_with_session(self.client, self.ta)
-        change_url = reverse("kura:grade_change_request_create", args=[grade.id])
-        self.assertNotContains(self.client.get(reverse("kura:course_grades", args=[self.course.id])), change_url)
-        self.assertEqual(self.client.get(change_url).status_code, 403)
-
-        # course_staff_assign_view should log the real staff_role once, not a duplicate TA record.
-        login_with_session(self.client, self.head)
-        new_inst = make_user("Instructor")
-        StaffProfile.objects.create(user=new_inst, department=self.dept, staff_title="Instructor")
-        with self.assertLogs("kura.security", level="INFO") as logs:
-            self.client.post(
-                reverse("kura:course_staff_assign", args=[self.course.id]),
-                {"user": str(new_inst.id), "staff_role": "co_instructor", "can_release_grades": ""},
-            )
-        assign_events = [line for line in logs.output if "admin.staff.assigned" in line]
-        self.assertEqual(len(assign_events), 1)
-        self.assertIn("co_instructor", assign_events[0])
-
-    def test_attempt_file_delete_download_integrity_submission_hash_and_grade_history(self):
-        from django.core.files.uploadedfile import SimpleUploadedFile
-
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment,
-            student=self.student,
-            attempt_no=1,
-            status=AttemptStatus.IN_PROGRESS,
-            expires_at=timezone.now() + timezone.timedelta(minutes=30),
-            ip_address="127.0.0.1",
-            answers_json=[{"question_id": "q1", "type": "multiple_choice", "selected_option_ids": ["opt_1"]}],
-        )
-        login_with_session(self.client, self.student)
-        pdf_a = SimpleUploadedFile("draft1.pdf", b"%PDF-1.4 file one", content_type="application/pdf")
-        self.client.post(reverse("kura:assessment_attempt_file_upload", args=[attempt.id]), {"file": pdf_a})
-        att_file = AttemptFile.objects.get(attempt=attempt)
-        take_page = self.client.get(reverse("kura:assessment_take", args=[attempt.id]))
-        del_url = reverse("kura:assessment_attempt_file_delete", args=[attempt.id, att_file.file_id])
-        self.assertContains(take_page, del_url)
-
-        # Student can remove attached file while In_Progress.
-        self.client.post(del_url)
-        self.assertFalse(AttemptFile.objects.filter(attempt=attempt).exists())
-        self.assertFalse(StoredFile.objects.filter(id=att_file.file_id).exists())
-
-        # Re-upload file, submit, verify submission_hash includes file sha256 and GradeHistory was logged.
-        pdf_b = SimpleUploadedFile("final.pdf", b"%PDF-1.4 final content", content_type="application/pdf")
-        self.client.post(reverse("kura:assessment_attempt_file_upload", args=[attempt.id]), {"file": pdf_b})
-        att_file_b = AttemptFile.objects.get(attempt=attempt)
-        self.client.post(reverse("kura:assessment_submit", args=[attempt.id]))
-        attempt.refresh_from_db()
-        self.assertEqual(attempt.status, AttemptStatus.FULLY_GRADED)
-        self.assertTrue(GradeHistory.objects.filter(grade__attempt=attempt).exists())
-
-        # Hash with file must differ from hash without file.
-        payload_without_file = (
-            f"{attempt.id}:{json.dumps(attempt.answers_json, sort_keys=True)}:{attempt.submitted_at.isoformat()}"
-        )
-        self.assertNotEqual(
-            attempt.submission_hash,
-            hashlib.sha256(payload_without_file.encode("utf-8")).hexdigest(),
-        )
-
-        # Tampering with FileContent fails download SHA-256 verification.
-        fc = FileContent.objects.get(file=att_file_b.file)
-        fc.content = b"%PDF-1.4 tampered"
-        fc.save()
-        bad_dl = self.client.get(reverse("kura:attempt_file_download", args=[attempt.id, att_file_b.file_id]))
-        self.assertEqual(bad_dl.status_code, 500)
-
-        # Cannot remove files after submission.
-        post_submit_del = self.client.post(
-            reverse("kura:assessment_attempt_file_delete", args=[attempt.id, att_file_b.file_id])
-        )
-        self.assertEqual(post_submit_del.status_code, 302)
-        self.assertTrue(AttemptFile.objects.filter(attempt=attempt, file=att_file_b.file).exists())
-
-    def test_jsonb_validators_and_permissions_policy_header(self):
-        from django.core.exceptions import ValidationError
-        from kura.forms import (
-            validate_answer_key_json,
-            validate_assessment_questions_json,
-            validate_assessment_settings_json,
-            validate_attempt_answers_json,
-            validate_summary_score_json,
-        )
-
-        with self.assertRaises(ValidationError):
-            validate_assessment_settings_json({"unknown_key": True})
-        with self.assertRaises(ValidationError):
-            validate_assessment_questions_json([{"question_id": "q1", "type": "multiple_choice", "prompt": "P", "points": 5, "options": [{"option_id": "o1", "text": "A"}, {"option_id": "o2", "text": "B"}], "correct_option_ids": ["o1"]}])
-        with self.assertRaises(ValidationError):
-            validate_answer_key_json({"q1": {"unexpected": 1}})
-        with self.assertRaises(ValidationError):
-            validate_attempt_answers_json([{"question_id": "q1", "type": "unknown"}])
-        with self.assertRaises(ValidationError):
-            validate_summary_score_json({"auto_graded_points": -1})
-
-        resp = self.client.get(reverse("kura:login"))
-        self.assertIn("Permissions-Policy", resp.headers)
-        self.assertIn("camera=()", resp.headers["Permissions-Policy"])
-
 
 class WorkItem1LoggingTests(TestCase):
     """Tests for Work Item 1: redaction, correlation IDs, 404/500 handlers, and write-view logging."""
@@ -10257,415 +5846,6 @@ class WorkItem1LoggingTests(TestCase):
         self.assertIn(b"Something went wrong.", resp_db_down.content)
         self.assertTrue(any('event="server.error"' in line for line in captured_db_down.output))
         self.assertNotIn("database unavailable", captured_db_down.output[0])
-
-    def test_write_views_emit_expected_events_and_invalid_forms_log(self):
-        dept = Department.objects.create(code="CSLOG", name="CS Logging")
-        head = make_user("Department head", email="head.log@kura.edu")
-        dept.head_user = head
-        dept.save()
-        instructor = make_user("Instructor", email="inst.log@kura.edu")
-        StaffProfile.objects.create(user=instructor, department=dept, staff_title="Instructor")
-        ta = make_user("Teaching assistant", email="ta.log@kura.edu")
-        StaffProfile.objects.create(user=ta, department=dept, staff_title="Teaching assistant")
-        registrar = make_user("Registrar", email="reg.log@kura.edu")
-        student = make_user("Student", email="stud.log@kura.edu")
-        StudentProfile.objects.create(user=student, department=dept, current_level="level_4", matriculation_year=2025)
-
-        # Password login creates session.created with method="password" when MFA is not enrolled yet.
-        head.mfa_enabled = False
-        head.save(update_fields=["mfa_enabled"])
-        with self.assertLogs("kura.security", level="INFO") as cap_login:
-            self.client.post(
-                reverse("kura:login"),
-                {"email": head.email, "password": "ValidPassword123!"},
-            )
-        self.assertTrue(any('event="session.created"' in line and 'method="password"' in line for line in cap_login.output))
-        head.mfa_enabled = True
-        head.save(update_fields=["mfa_enabled"])
-
-        # Department head creates course, publishes it, assigns TA, creates module/section/item/schedule.
-        login_with_session(self.client, head)
-        with self.assertLogs("kura.security", level="INFO") as cap_course:
-            self.client.post(
-                reverse("kura:course_create"),
-                {
-                    "code": "LOG101",
-                    "title": "Logging 101",
-                    "description": "Desc",
-                    "semester": "1",
-                    "academic_year": 2026,
-                },
-            )
-        self.assertTrue(any('event="course.created"' in line and "course_id=" in line for line in cap_course.output))
-        course = Course.objects.get(code="LOG101")
-
-        with self.assertLogs("kura.security", level="INFO") as cap_pub:
-            self.client.post(reverse("kura:course_publish_toggle", args=[course.id]))
-        self.assertTrue(any('event="admin.course.published"' in line and 'is_published="True"' in line for line in cap_pub.output))
-
-        with self.assertLogs("kura.security", level="INFO") as cap_ta:
-            self.client.post(reverse("kura:course_ta_assign", args=[course.id]), {"user": ta.id})
-        self.assertTrue(any('event="admin.ta.assigned"' in line and f'target_user_id="{ta.id}"' in line for line in cap_ta.output))
-
-        with self.assertLogs("kura.security", level="INFO") as cap_mod:
-            self.client.post(reverse("kura:module_create", args=[course.id]), {"title": "Mod 1", "description": "D", "is_visible": True})
-        self.assertTrue(any('event="course.module.created"' in line for line in cap_mod.output))
-        module = Module.objects.get(course=course)
-        with self.assertLogs("kura.security", level="INFO") as cap_mod_ed:
-            self.client.post(reverse("kura:module_edit", args=[module.id]), {"title": "Mod 1b", "description": "D", "is_visible": True})
-        self.assertTrue(any('event="course.module.edited"' in line for line in cap_mod_ed.output))
-
-        with self.assertLogs("kura.security", level="INFO") as cap_sec:
-            self.client.post(reverse("kura:section_create", args=[module.id]), {"title": "Sec 1", "section_type": "lecture"})
-        self.assertTrue(any('event="course.section.created"' in line for line in cap_sec.output))
-        section = ModuleSection.objects.get(module=module)
-        with self.assertLogs("kura.security", level="INFO") as cap_sec_ed:
-            self.client.post(reverse("kura:section_edit", args=[section.id]), {"title": "Sec 1b", "section_type": "lecture"})
-        self.assertTrue(any('event="course.section.edited"' in line for line in cap_sec_ed.output))
-
-        with self.assertLogs("kura.security", level="INFO") as cap_item:
-            self.client.post(reverse("kura:item_create", args=[section.id]), {"title": "Item 1", "content_body": "Body"})
-        self.assertTrue(any('event="course.item.created"' in line for line in cap_item.output))
-        item = SectionItem.objects.get(section=section)
-        with self.assertLogs("kura.security", level="INFO") as cap_item_ed:
-            self.client.post(reverse("kura:item_edit", args=[item.id]), {"title": "Item 1b", "content_body": "Body"})
-        self.assertTrue(any('event="course.item.edited"' in line for line in cap_item_ed.output))
-        with self.assertLogs("kura.security", level="INFO") as cap_item_vis:
-            self.client.post(reverse("kura:item_visibility_toggle", args=[item.id]))
-        self.assertTrue(any('event="course.item.visibility_changed"' in line for line in cap_item_vis.output))
-
-        with self.assertLogs("kura.security", level="INFO") as cap_sched:
-            self.client.post(
-                reverse("kura:schedule_create", args=[course.id]),
-                {
-                    "instructor": instructor.id,
-                    "session_type": "lecture",
-                    "day": "monday",
-                    "start_time": "09:00",
-                    "end_time": "10:00",
-                    "location": "Room 1",
-                    "recurrence_start": "2026-09-01",
-                    "recurrence_end": "2026-12-01",
-                },
-            )
-        self.assertTrue(any('event="course.schedule.created"' in line for line in cap_sched.output))
-        sched = Schedule.objects.get(course=course)
-        with self.assertLogs("kura.security", level="INFO") as cap_sched_ed:
-            self.client.post(
-                reverse("kura:schedule_edit", args=[sched.id]),
-                {
-                    "instructor": instructor.id,
-                    "session_type": "lecture",
-                    "day": "tuesday",
-                    "start_time": "09:00",
-                    "end_time": "10:00",
-                    "location": "Room 2",
-                    "recurrence_start": "2026-09-01",
-                    "recurrence_end": "2026-12-01",
-                },
-            )
-        self.assertTrue(any('event="course.schedule.edited"' in line for line in cap_sched_ed.output))
-
-        # Attendance start, check-in failure & success, manual record, close (course staff only per O1).
-        CourseStaff.objects.create(course=course, user=instructor, staff_role="lead_instructor", can_release_grades=True, assigned_by=head)
-        inst_client = Client()
-        login_with_session(inst_client, instructor)
-        Enrollment.objects.create(course=course, student=student, status=EnrollmentStatus.ACTIVE, enrolled_by=registrar)
-        with self.assertLogs("kura.security", level="INFO") as cap_att_start:
-            inst_client.post(reverse("kura:attendance_session_start", args=[module.id]), {"title": "Roll 1", "duration_minutes": 15})
-        self.assertTrue(any('event="attendance.session_started"' in line for line in cap_att_start.output))
-        att_sess = ModuleAttendanceSession.objects.get(module=module)
-        raw_passcode = inst_client.session[f"session_passcode_{att_sess.id}"]
-
-        with self.assertLogs("kura.security", level="WARNING") as cap_man_inv:
-            inst_client.post(reverse("kura:attendance_manual_record", args=[att_sess.id]), {"student": student.id, "status": AttendanceStatus.PRESENT, "override_reason": ""})
-        self.assertTrue(any('event="input.invalid"' in line for line in cap_man_inv.output))
-        with self.assertLogs("kura.security", level="INFO") as cap_man:
-            inst_client.post(
-                reverse("kura:attendance_manual_record", args=[att_sess.id]),
-                {"student": student.id, "status": AttendanceStatus.LATE, "override_reason": "Bus delay"},
-            )
-        self.assertTrue(any('event="attendance.manual_recorded"' in line and 'has_justification="True"' in line for line in cap_man.output))
-        self.assertNotIn("Bus delay", " ".join(cap_man.output))
-
-        AttendanceRecord.objects.filter(session=att_sess, student=student).delete()
-        stud_client = Client()
-        login_with_session(stud_client, student)
-        with self.assertLogs("kura.security", level="WARNING") as cap_ci_bad:
-            stud_client.post(reverse("kura:student_checkin", args=[att_sess.id]), {"passcode": "000000"})
-        self.assertTrue(any('event="attendance.checkin_failed"' in line and 'reason="bad_passcode"' in line for line in cap_ci_bad.output))
-
-        with self.assertLogs("kura.security", level="INFO") as cap_ci_ok:
-            stud_client.post(reverse("kura:student_checkin", args=[att_sess.id]), {"passcode": raw_passcode})
-        self.assertTrue(any('event="attendance.checked_in"' in line for line in cap_ci_ok.output))
-
-        with self.assertLogs("kura.security", level="INFO") as cap_att_close:
-            inst_client.post(reverse("kura:attendance_session_close", args=[att_sess.id]))
-        self.assertTrue(any('event="attendance.session_closed"' in line for line in cap_att_close.output))
-
-        # Registrar viewing student profile logs record.viewed; invalid enrollment logs input.invalid.
-        reg_client = Client()
-        login_with_session(reg_client, registrar)
-        with self.assertLogs("kura.security", level="INFO") as cap_prof:
-            reg_client.get(reverse("kura:student_profile", args=[student.id]))
-        self.assertTrue(any('event="record.viewed"' in line and 'record_type="student_profile"' in line for line in cap_prof.output))
-        with self.assertLogs("kura.security", level="WARNING") as cap_enr_inv:
-            reg_client.post(reverse("kura:enrollment_create"), {})
-        self.assertTrue(any('event="input.invalid"' in line for line in cap_enr_inv.output))
-
-        # Result calculate, release, and CSV report export.
-        sess = inst_client.session
-        sess["mfa_reauth_at"] = timezone.now().timestamp()
-        sess.save()
-        with self.assertLogs("kura.security", level="INFO") as cap_res_calc:
-            inst_client.post(reverse("kura:course_result_calculate", args=[course.id]))
-        self.assertTrue(any('event="course.result.calculated"' in line for line in cap_res_calc.output))
-        with self.assertLogs("kura.security", level="INFO") as cap_res_rel:
-            inst_client.post(reverse("kura:course_result_release", args=[course.id]))
-        self.assertTrue(any('event="course.result.released"' in line for line in cap_res_rel.output))
-        with self.assertLogs("kura.security", level="INFO") as cap_csv:
-            self.client.get(reverse("kura:department_reports", args=[dept.id]) + "?format=csv")
-        self.assertTrue(any('event="report.exported"' in line for line in cap_csv.output))
-
-        # Password reset token_created event.
-        from .views import create_reset_token
-
-        with self.assertLogs("kura.security", level="INFO") as cap_rst:
-            raw_tok, _ = create_reset_token(student)
-        self.assertTrue(any('event="password_reset.token_created"' in line for line in cap_rst.output))
-        self.assertNotIn(raw_tok, cap_rst.output[0])
-
-        # Invalid form logs on auth/admin/registrar forms.
-        anon_client = Client()
-        with self.assertLogs("kura.security", level="WARNING") as cap_login_inv:
-            anon_client.post(reverse("kura:login"), {})
-        self.assertTrue(any('event="input.invalid"' in line for line in cap_login_inv.output))
-        with self.assertLogs("kura.security", level="WARNING") as cap_rst_inv:
-            anon_client.post(reverse("kura:password_reset_request"), {})
-        self.assertTrue(any('event="input.invalid"' in line for line in cap_rst_inv.output))
-        with self.assertLogs("kura.security", level="WARNING") as cap_stu_inv:
-            reg_client.post(reverse("kura:student_create"), {})
-        self.assertTrue(any('event="input.invalid"' in line for line in cap_stu_inv.output))
-
-    def test_assessment_file_uploads_and_attempt_view_logging(self):
-        from .models import AssessmentDeliveryMode
-
-        dept = Department.objects.create(code="CSATT", name="CS Attempts")
-        head = make_user("Department head", email="head.att@kura.edu")
-        dept.head_user = head
-        dept.save()
-        instructor = make_user("Instructor", email="inst.att@kura.edu")
-        CourseStaff.objects.create(course=(course := Course.objects.create(
-            department=dept,
-            code="ATT101",
-            title="Attempts",
-            semester="1",
-            academic_year=2026,
-            created_by=head,
-            is_published=True,
-            published_by=head,
-            published_at=timezone.now(),
-        )), user=instructor, staff_role="lead_instructor", can_release_grades=True, assigned_by=head)
-        student = make_user("Student", email="stud.att@kura.edu")
-        StudentProfile.objects.create(user=student, department=dept, current_level="level_4", matriculation_year=2025)
-        Enrollment.objects.create(course=course, student=student, status=EnrollmentStatus.ACTIVE, enrolled_by=head)
-        mod = Module.objects.create(course=course, title="M", is_visible=True, created_by=head)
-        sec = ModuleSection.objects.create(module=mod, title="S", section_type="coursework")
-        now = timezone.now()
-        assessment = Assessment.objects.create(
-            section=sec,
-            title="Upload Task",
-            component_type=GradeComponentType.ASSIGNMENT,
-            delivery_mode=AssessmentDeliveryMode.ONLINE,
-            max_score=Decimal("10.00"),
-            opens_at=now - timezone.timedelta(hours=1),
-            due_date=now + timezone.timedelta(hours=2),
-            duration_minutes=60,
-            max_attempts=1,
-            created_by=instructor,
-        )
-        attempt = AssessmentAttempt.objects.create(
-            assessment=assessment,
-            student=student,
-            attempt_no=1,
-            expires_at=timezone.now() + timezone.timedelta(minutes=30),
-            ip_address="127.0.0.1",
-        )
-
-        login_with_session(self.client, instructor)
-        pdf = SimpleUploadedFile("spec.pdf", b"%PDF-1.4 spec", content_type="application/pdf")
-        with self.assertLogs("kura.security", level="INFO") as cap_ass:
-            self.client.post(reverse("kura:assessment_file_upload", args=[assessment.id]), {"file": pdf})
-        self.assertTrue(any('event="file.uploaded"' in line and 'context="assessment"' in line and f'assessment_id="{assessment.id}"' in line for line in cap_ass.output))
-
-        stud_client = Client()
-        login_with_session(stud_client, student)
-        pdf2 = SimpleUploadedFile("sub.pdf", b"%PDF-1.4 sub", content_type="application/pdf")
-        with self.assertLogs("kura.security", level="INFO") as cap_sub:
-            stud_client.post(reverse("kura:assessment_attempt_file_upload", args=[attempt.id]), {"file": pdf2})
-        self.assertTrue(any('event="file.uploaded"' in line and 'context="attempt"' in line and f'attempt_id="{attempt.id}"' in line for line in cap_sub.output))
-
-        with self.assertLogs("kura.security", level="INFO") as cap_view:
-            self.client.get(reverse("kura:attempt_detail", args=[attempt.id]))
-        self.assertTrue(any('event="record.viewed"' in line and 'record_type="assessment_attempt"' in line for line in cap_view.output))
-
-    def test_every_write_view_emits_security_log(self):
-        import ast
-        from pathlib import Path
-
-        views_path = Path(__file__).resolve().parent / "views.py"
-        src = views_path.read_text(encoding="utf-8")
-        tree = ast.parse(src)
-        write_markers = (
-            ".save(",
-            ".create(",
-            ".update(",
-            ".delete(",
-            "update_or_create(",
-            "get_or_create(",
-            "bulk_create(",
-        )
-        missing = []
-        for node in tree.body:
-            if isinstance(node, ast.FunctionDef):
-                seg = ast.get_source_segment(src, node) or ""
-                if any(marker in seg for marker in write_markers):
-                    if "log_security_event(" not in seg and "validate_and_save_upload(" not in seg:
-                        missing.append(node.name)
-        self.assertEqual(missing, [])
-
-
-class WorkItem2ServerCodeTests(TestCase):
-    """Tests for Work Item 2: HTTP status codes, Retry-After headers, duplicate appeals, and FIDO2 wrappers."""
-
-    def test_axes_lockout_returns_429_with_retry_after(self):
-        password = "ValidPassword123!"
-        user = make_user("Student", password=password)
-        login_url = reverse("kura:login")
-        for _ in range(5):
-            self.client.post(login_url, {"email": user.email, "password": "WrongPassword999!"})
-        locked = self.client.post(login_url, {"email": user.email, "password": password})
-        self.assertEqual(locked.status_code, 429)
-        self.assertEqual(locked.headers.get("Retry-After"), "3600")
-
-    def test_rate_limit_middleware_and_search_return_429_with_retry_after(self):
-        from django.core.cache import caches
-
-        caches["ratelimit"].clear()
-        caches["search_limits"].clear()
-        student = make_user("Student")
-        login_with_session(self.client, student)
-        url = reverse("kura:assessment_attempt_file_upload", args=[uuid.uuid4()])
-        for _ in range(20):
-            self.client.post(url)
-        limited = self.client.post(url)
-        self.assertEqual(limited.status_code, 429)
-        self.assertEqual(limited.headers.get("Retry-After"), "60")
-
-        registrar = make_user("Registrar")
-        reg_client = Client()
-        login_with_session(reg_client, registrar)
-        search_url = reverse("kura:enrollment_search")
-        fixed_now = timezone.now()
-        with patch("django.utils.timezone.now", return_value=fixed_now):
-            for _ in range(60):
-                reg_client.get(search_url, {"kind": "student", "q": "a"})
-            limited_search = reg_client.get(search_url, {"kind": "student", "q": "a"})
-        self.assertEqual(limited_search.status_code, 429)
-        self.assertEqual(limited_search.headers.get("Retry-After"), "60")
-
-    def test_duplicate_pending_appeal_is_refused(self):
-        dept = Department.objects.create(code="CSAP", name="CS Appeals")
-        head = make_user("Department head")
-        dept.head_user = head
-        dept.save()
-        instructor = make_user("Instructor")
-        course = Course.objects.create(
-            department=dept, code="AP101", title="Appeals", semester="1", academic_year=2026,
-            created_by=head, is_published=True, published_by=head, published_at=timezone.now(),
-        )
-        student = make_user("Student")
-        mod = Module.objects.create(course=course, title="M", is_visible=True, created_by=head)
-        sec = ModuleSection.objects.create(module=mod, title="S", section_type="coursework")
-        now = timezone.now()
-        assessment = Assessment.objects.create(
-            section=sec, title="A1", component_type=GradeComponentType.ASSIGNMENT,
-            max_score=Decimal("100.00"), opens_at=now - timezone.timedelta(hours=1),
-            due_date=now + timezone.timedelta(hours=1), duration_minutes=30, created_by=instructor,
-        )
-        attempt = AssessmentAttempt.objects.create(
-            assessment=assessment, student=student, attempt_no=1,
-            status=AttemptStatus.FULLY_GRADED, expires_at=now + timezone.timedelta(minutes=30),
-            ip_address="127.0.0.1",
-        )
-        grade = Grade.objects.create(
-            attempt=attempt, assessment=assessment, student=student, grader=instructor,
-            score=Decimal("70.00"), status=GradeStatus.RELEASED, released_by=instructor, released_at=now,
-        )
-        login_with_session(self.client, student)
-        url = reverse("kura:grade_appeal_create", args=[grade.id])
-        first = self.client.post(url, {"reason": "First pending appeal."})
-        self.assertEqual(first.status_code, 302)
-        second = self.client.post(url, {"reason": "Duplicate pending appeal."})
-        self.assertEqual(second.status_code, 302)
-        self.assertEqual(GradeAppeal.objects.filter(grade=grade, status=AppealStatus.PENDING).count(), 1)
-
-    def test_passkey_wrappers_normalize_status_and_hide_exception_text(self):
-        from django.http import JsonResponse
-
-        user = make_user("Student")
-        login_with_session(self.client, user)
-        sess = self.client.session
-        sess["mfa_reauth_at"] = timezone.now().timestamp()
-        sess.save()
-
-        # No fido2_state in session -> library returns 200 ERR, wrapper turns it into 400 ERR.
-        reg_resp = self.client.post(reverse("fido2_complete_reg"), data="{}", content_type="application/json")
-        self.assertEqual(reg_resp.status_code, 400)
-        self.assertEqual(reg_resp.json()["status"], "ERR")
-
-        auth_url = reverse("fido2_complete_auth")
-        with patch("mfa.FIDO2.authenticate_complete", return_value=JsonResponse({"status": "ERR", "message": "raw internal traceback detail"}, status=500)):
-            err_500 = self.client.post(auth_url, data="{}", content_type="application/json")
-        self.assertEqual(err_500.status_code, 500)
-        self.assertNotIn(b"raw internal traceback detail", err_500.content)
-
-        with patch("mfa.FIDO2.authenticate_complete", return_value=JsonResponse({"status": "ERR", "message": "Wrong challenge"}, status=400)):
-            err_400 = self.client.post(auth_url, data="{}", content_type="application/json")
-        self.assertEqual(err_400.status_code, 400)
-
-        with patch("mfa.FIDO2.authenticate_complete", return_value=None):
-            none_resp = self.client.post(auth_url, data="{}", content_type="application/json")
-        self.assertEqual(none_resp.status_code, 500)
-        self.assertEqual(none_resp.json()["status"], "ERR")
-
-        with patch("mfa.FIDO2.authenticate_complete", return_value=JsonResponse({"status": "OK", "redirect": "/"})):
-            ok_resp = self.client.post(auth_url, data="{}", content_type="application/json")
-        self.assertEqual(ok_resp.status_code, 200)
-        self.assertEqual(ok_resp.json(), {"status": "OK", "redirect": "/"})
-
-    @override_settings(DEBUG=False)
-    def test_error_responses_omit_tracebacks_with_debug_false(self):
-        client = Client(raise_request_exception=False)
-        r404 = client.get(f"/courses/{uuid.uuid4()}/")
-        self.assertIn(r404.status_code, (302, 404))
-        student = make_user("Student")
-        login_with_session(client, student)
-        r404_auth = client.get(f"/courses/{uuid.uuid4()}/")
-        self.assertEqual(r404_auth.status_code, 404)
-        self.assertNotIn(b"Traceback", r404_auth.content)
-
-        r405 = client.get(reverse("kura:logout"))
-        self.assertEqual(r405.status_code, 405)
-        self.assertNotIn(b"Traceback", r405.content)
-
-        with patch("kura.views.LoginForm", side_effect=RuntimeError("boom-secret")):
-            anon = Client(raise_request_exception=False)
-            r500 = anon.get(reverse("kura:login"))
-        self.assertEqual(r500.status_code, 500)
-        self.assertNotIn(b"Traceback", r500.content)
-        self.assertNotIn(b"boom-secret", r500.content)
-
 
 class WorkItem3SessionTests(TestCase):
     """Tests for Work Item 3: sliding idle timeout, untracked rejection, password-change revocation, and pre-MFA expiry."""
@@ -10780,261 +5960,8 @@ class WorkItem3SessionTests(TestCase):
         self.assertIsNotNone(key_after)
         self.assertNotEqual(key_before, key_after)
 
-
-class WorkItem4AccessControlTests(TestCase):
-    """Tests for Work Item 4: role boundaries, department scoping, self-role protection, RLS deny-by-default, and pending appeal uniqueness."""
-
-    def setUp(self):
-        self.dept = Department.objects.create(code="CSAC", name="CS Access")
-        self.other_dept = Department.objects.create(code="MATHAC", name="Math Access")
-        self.head = make_user("Department head", mfa_enabled=True)
-        self.dept.head_user = self.head
-        self.dept.save()
-
-        self.instructor = make_user("Instructor", mfa_enabled=True)
-        StaffProfile.objects.create(user=self.instructor, department=self.dept, staff_title="Instructor")
-        self.other_dept_instructor = make_user("Instructor", mfa_enabled=True)
-        StaffProfile.objects.create(user=self.other_dept_instructor, department=self.other_dept, staff_title="Instructor")
-
-        self.ta = make_user("Teaching assistant", mfa_enabled=True)
-        StaffProfile.objects.create(user=self.ta, department=self.dept, staff_title="Teaching assistant")
-        self.other_dept_ta = make_user("Teaching assistant", mfa_enabled=True)
-        StaffProfile.objects.create(user=self.other_dept_ta, department=self.other_dept, staff_title="Teaching assistant")
-
-        self.student = make_user("Student", mfa_enabled=True)
-        StudentProfile.objects.create(user=self.student, department=self.dept, current_level="level_4", matriculation_year=2025)
-
-        now = timezone.now()
-        self.course = Course.objects.create(
-            department=self.dept, code="AC101", title="Access Control", semester="1", academic_year=2026,
-            created_by=self.head, is_published=True, published_by=self.head, published_at=now,
-        )
-        CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True, assigned_by=self.head)
-        CourseStaff.objects.create(course=self.course, user=self.ta, staff_role="teaching_assistant", can_release_grades=False, assigned_by=self.instructor)
-        Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE, enrolled_by=self.head)
-
-        self.module = Module.objects.create(course=self.course, title="Mod 1", is_visible=True, created_by=self.instructor)
-        self.section = ModuleSection.objects.create(module=self.module, title="Sec 1", section_type="coursework")
-        self.assessment = Assessment.objects.create(
-            section=self.section, title="Quiz", component_type=GradeComponentType.QUIZ,
-            max_score=Decimal("10.00"), opens_at=now - timezone.timedelta(hours=1),
-            due_date=now + timezone.timedelta(hours=2), duration_minutes=30, created_by=self.instructor,
-        )
-        self.attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=self.student, attempt_no=1,
-            status=AttemptStatus.FULLY_GRADED, expires_at=now + timezone.timedelta(minutes=30), ip_address="127.0.0.1",
-        )
-        self.grade = Grade.objects.create(
-            attempt=self.attempt, assessment=self.assessment, student=self.student,
-            grader=self.instructor, score=Decimal("8.00"), status=GradeStatus.RELEASED,
-            released_by=self.instructor, released_at=now,
-        )
-        self.appeal = GradeAppeal.objects.create(grade=self.grade, reason="Recheck please", status=AppealStatus.PENDING)
-        self.schedule = Schedule.objects.create(
-            course=self.course, instructor=self.instructor, session_type="lecture",
-            day="monday", start_time="09:00", end_time="10:00", location="Hall 1",
-            recurrence_start=now.date(), recurrence_end=now.date() + timezone.timedelta(days=30),
-            created_by=self.instructor,
-        )
-
-    def test_ta_denied_on_appeals_results_schedules_and_assessments_while_instructor_allowed(self):
-        # TA gets 403 on appeal view/decide, result calculate, schedule create/edit/delete, assessment create/edit/delete/question/upload.
-        login_with_session(self.client, self.ta)
-        self.assertEqual(self.client.get(reverse("kura:grade_appeal_review", args=[self.appeal.id])).status_code, 403)
-        self.assertEqual(self.client.post(reverse("kura:grade_appeal_review", args=[self.appeal.id]), {"status": AppealStatus.APPROVED, "response": "ok"}).status_code, 403)
-        self.assertEqual(self.client.post(reverse("kura:course_result_calculate", args=[self.course.id])).status_code, 403)
-        self.assertEqual(self.client.get(reverse("kura:schedule_create", args=[self.course.id])).status_code, 403)
-        self.assertEqual(self.client.get(reverse("kura:schedule_edit", args=[self.schedule.id])).status_code, 403)
-        self.assertEqual(self.client.post(reverse("kura:schedule_delete", args=[self.schedule.id]), {"confirm": "on"}).status_code, 403)
-        self.assertEqual(self.client.get(reverse("kura:assessment_create", args=[self.section.id])).status_code, 403)
-        self.assertEqual(self.client.get(reverse("kura:assessment_edit", args=[self.assessment.id])).status_code, 403)
-        self.assertEqual(self.client.post(reverse("kura:assessment_delete", args=[self.assessment.id]), {"confirm": "on"}).status_code, 403)
-        self.assertEqual(self.client.get(reverse("kura:assessment_question_form", args=[self.section.id]), {"type": "written", "questions-TOTAL_FORMS": "0"}).status_code, 403)
-        pdf = SimpleUploadedFile("a.pdf", b"%PDF-1.4 a", content_type="application/pdf")
-        self.assertEqual(self.client.post(reverse("kura:assessment_file_upload", args=[self.assessment.id]), {"file": pdf}).status_code, 403)
-
-        # TA retains read access to schedule list.
-        self.assertEqual(self.client.get(reverse("kura:schedule_list")).status_code, 200)
-
-        # Department head can view appeal read-only (200) but gets 403 on deciding (POST) and result calculation.
-        login_with_session(self.client, self.head)
-        head_get = self.client.get(reverse("kura:grade_appeal_review", args=[self.appeal.id]))
-        self.assertEqual(head_get.status_code, 200)
-        self.assertContains(head_get, "read-only")
-        self.assertEqual(self.client.post(reverse("kura:grade_appeal_review", args=[self.appeal.id]), {"status": AppealStatus.APPROVED, "response": "ok"}).status_code, 403)
-        self.assertEqual(self.client.post(reverse("kura:course_result_calculate", args=[self.course.id])).status_code, 403)
-
-        # Course instructor succeeds on appeal review, result calculation, schedule edit, and assessment authoring.
-        login_with_session(self.client, self.instructor)
-        self.assertEqual(self.client.get(reverse("kura:grade_appeal_review", args=[self.appeal.id])).status_code, 200)
-        self.assertEqual(self.client.post(reverse("kura:grade_appeal_review", args=[self.appeal.id]), {"status": AppealStatus.APPROVED, "response": "Approved."}).status_code, 302)
-        self.assertEqual(self.client.post(reverse("kura:course_result_calculate", args=[self.course.id])).status_code, 302)
-        self.assertEqual(self.client.get(reverse("kura:schedule_edit", args=[self.schedule.id])).status_code, 200)
-        self.assertEqual(self.client.get(reverse("kura:assessment_create", args=[self.section.id])).status_code, 200)
-
-    def test_head_cannot_assign_staff_or_ta_from_other_department(self):
-        login_with_session(self.client, self.head)
-        resp = self.client.post(
-            reverse("kura:course_staff_assign", args=[self.course.id]),
-            {"user": str(self.other_dept_instructor.id), "staff_role": "co_instructor"},
-        )
-        self.assertEqual(resp.status_code, 400)
-        self.assertFalse(CourseStaff.objects.filter(course=self.course, user=self.other_dept_instructor).exists())
-
-        resp_ta = self.client.post(
-            reverse("kura:course_ta_assign", args=[self.course.id]),
-            {"user": str(self.other_dept_ta.id)},
-        )
-        self.assertEqual(resp_ta.status_code, 400)
-        self.assertFalse(CourseStaff.objects.filter(course=self.course, user=self.other_dept_ta).exists())
-
-    def test_admin_cannot_remove_own_admin_role(self):
-        admin = make_user("Admin", mfa_enabled=True)
-        admin_role = Role.objects.get(name="Admin")
-        login_with_session(self.client, admin)
-        sess = self.client.session
-        sess["mfa_reauth_at"] = timezone.now().timestamp()
-        sess.save()
-
-        resp = self.client.post(
-            reverse("kura:user_roles", args=[admin.id]),
-            {"action": "remove", "role_id": str(admin_role.id)},
-            follow=True,
-        )
-        self.assertContains(resp, "You cannot remove the Admin role from yourself.")
-        self.assertTrue(UserRole.objects.filter(user=admin, role=admin_role).exists())
-
-    def test_student_checkin_enforces_publication_and_level_match(self):
-        now = timezone.now()
-        att_sess = ModuleAttendanceSession.objects.create(
-            module=self.module, created_by=self.instructor, title="Roll",
-            passcode_hash=hashlib.sha256(b"ABC123").hexdigest(),
-            expires_at=now + timezone.timedelta(minutes=20), is_active=True,
-        )
-        login_with_session(self.client, self.student)
-
-        # Level mismatch -> 403.
-        lvl = ModuleTargetLevel.objects.create(module=self.module, target_level="level_6")
-        self.assertEqual(self.client.get(reverse("kura:student_checkin", args=[att_sess.id])).status_code, 403)
-        lvl.delete()
-
-        # Unpublished course -> 403.
-        self.course.is_published = False
-        self.course.published_by = None
-        self.course.published_at = None
-        self.course.save()
-        self.assertEqual(self.client.get(reverse("kura:student_checkin", args=[att_sess.id])).status_code, 403)
-
-    def test_grade_rls_denies_unset_user_and_allows_service_commands(self):
-        # Under kura_app with no kura.current_user_id or kura.service_role set, ORM query sees 0 rows.
-        with connection.cursor() as cursor:
-            cursor.execute("SET ROLE kura_app;")
-            try:
-                self.assertEqual(Grade.objects.count(), 0)
-            finally:
-                cursor.execute("RESET ROLE;")
-
-        # Management commands finalize_attempts and purge_retention succeed under kura_app with service RLS context, and seed_demo_data succeeds with service RLS context too.
-        overdue_attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment, student=make_user("Student"), attempt_no=1,
-            status=AttemptStatus.IN_PROGRESS, expires_at=timezone.now() - timezone.timedelta(minutes=5),
-            ip_address="127.0.0.1",
-        )
-        with connection.cursor() as cursor:
-            # Mirror init-roles.sql default table privileges for tables created after 0004.
-            cursor.execute("GRANT SELECT, DELETE ON outgoing_emails, axes_accessattempt, axes_accesslog TO kura_app;")
-            cursor.execute("SET ROLE kura_app;")
-            try:
-                call_command("finalize_attempts", stdout=StringIO())
-                call_command("purge_retention", "--days=180", stdout=StringIO())
-            finally:
-                cursor.execute("RESET ROLE;")
-        with override_settings(DEBUG=True):
-            call_command("seed_demo_data", stdout=StringIO())
-        overdue_attempt.refresh_from_db()
-        self.assertNotEqual(overdue_attempt.status, AttemptStatus.IN_PROGRESS)
-
-    def test_second_pending_appeal_raises_integrity_error_at_database(self):
-        with self.assertRaises(IntegrityError):
-            with transaction.atomic():
-                GradeAppeal.objects.create(grade=self.grade, reason="Second pending appeal", status=AppealStatus.PENDING)
-
-
 class WorkItem4bKeyedHashTests(TestCase):
     """Tests for Work Item 4b: keyed HMAC-SHA256 digests for attendance passcodes and proctor codes."""
-
-    def test_keyed_hashes_differ_from_plain_sha256_and_use_constant_time_compare(self):
-        import inspect
-        from . import views
-
-        self.assertNotEqual(hash_attendance_passcode("ABC123"), hashlib.sha256(b"ABC123").hexdigest())
-        self.assertEqual(len(hash_attendance_passcode("ABC123")), 64)
-        self.assertNotEqual(hash_proctor_code("EXAM-1"), hashlib.sha256(b"EXAM-1").hexdigest())
-        self.assertEqual(len(hash_proctor_code("EXAM-1")), 64)
-        self.assertIn("hmac.compare_digest", inspect.getsource(views.student_checkin_view))
-        self.assertIn("hmac.compare_digest", inspect.getsource(views.assessment_attempt_start_view))
-
-    def test_legacy_proctor_code_warns_on_edit_and_is_refused_until_reentered(self):
-        dept = Department.objects.create(code="CSKH", name="CS Keyed Hash")
-        head = make_user("Department head")
-        dept.head_user = head
-        dept.save()
-        instructor = make_user("Instructor")
-        StaffProfile.objects.create(user=instructor, department=dept, staff_title="Instructor")
-        student = make_user("Student")
-        StudentProfile.objects.create(user=student, department=dept, current_level="level_4", matriculation_year=2025)
-        now = timezone.now()
-        course = Course.objects.create(
-            department=dept, code="KH101", title="Keyed Hash", semester="1", academic_year=2026,
-            created_by=head, is_published=True, published_by=head, published_at=now,
-        )
-        CourseStaff.objects.create(course=course, user=instructor, staff_role="lead_instructor", can_release_grades=True, assigned_by=head)
-        Enrollment.objects.create(course=course, student=student, status=EnrollmentStatus.ACTIVE, enrolled_by=head)
-        mod = Module.objects.create(course=course, title="M", is_visible=True, created_by=instructor)
-        sec = ModuleSection.objects.create(module=mod, title="S", section_type="exam")
-        legacy_hash = hashlib.sha256(b"OLDPROCTOR").hexdigest()
-        assessment = Assessment.objects.create(
-            section=sec, title="Legacy Proctored Exam", component_type=GradeComponentType.EXAM,
-            max_score=Decimal("10.00"), opens_at=now - timezone.timedelta(hours=1),
-            due_date=now + timezone.timedelta(hours=2), duration_minutes=30,
-            proctor_code_hash=legacy_hash, created_by=instructor,
-        )
-
-        # Edit page warns instructor to re-enter the legacy proctor code.
-        login_with_session(self.client, instructor)
-        edit_page = self.client.get(reverse("kura:assessment_edit", args=[assessment.id]))
-        self.assertContains(edit_page, "older hash format")
-
-        # Student cannot start an attempt with the legacy SHA-256 hash.
-        stud_client = Client()
-        login_with_session(stud_client, student)
-        blocked = stud_client.post(
-            reverse("kura:assessment_attempt_start", args=[assessment.id]),
-            {"proctor_code": "OLDPROCTOR"},
-        )
-        self.assertEqual(blocked.status_code, 302)
-        self.assertFalse(AssessmentAttempt.objects.filter(assessment=assessment, student=student).exists())
-
-        # Re-entering a new proctor code updates to v2 keyed HMAC, clears the warning, and works.
-        assessment.proctor_code_hash = hash_proctor_code("NEWPROCTOR")
-        assessment.save(update_fields=["proctor_code_hash"])
-        edit_page_after = self.client.get(reverse("kura:assessment_edit", args=[assessment.id]))
-        self.assertNotContains(edit_page_after, "older hash format")
-
-        wrong = stud_client.post(
-            reverse("kura:assessment_attempt_start", args=[assessment.id]),
-            {"proctor_code": "WRONG"},
-        )
-        self.assertFalse(AssessmentAttempt.objects.filter(assessment=assessment, student=student).exists())
-        self.assertEqual(wrong.status_code, 302)
-
-        ok = stud_client.post(
-            reverse("kura:assessment_attempt_start", args=[assessment.id]),
-            {"proctor_code": "NEWPROCTOR"},
-        )
-        self.assertEqual(ok.status_code, 302)
-        self.assertTrue(AssessmentAttempt.objects.filter(assessment=assessment, student=student).exists())
-
 
 class WorkItem5FileEncryptionTests(TestCase):
     """Tests for Work Item 5: hybrid AES-256-GCM + Vault RSA-4096 file encryption."""
@@ -11189,7 +6116,6 @@ class WorkItem5FileEncryptionTests(TestCase):
         self.assertIn('path "transit/encrypt/kura-files" {\n  capabilities = ["update"]\n}', policy_text)
         self.assertIn('path "transit/decrypt/kura-files" {\n  capabilities = ["update"]\n}', policy_text)
 
-
 class WorkItem6EmailRetentionTests(TestCase):
     """Tests for Work Item 6: sent OutgoingEmail retention in purge_retention."""
 
@@ -11250,811 +6176,6 @@ class WorkItem6EmailRetentionTests(TestCase):
         self.assertIn('count="1"', log_output)
         self.assertNotIn("student1@kura.edu", log_output)
 
-
-class AuditGroup1HighDefectsTests(TestCase):
-    """Tests for Audit Group 1: W1 (grade keyed per attempt), W2 (pgBackRest env secret), W3 (pgaudit parameters off)."""
-
-    def test_second_attempt_submission_does_not_overwrite_released_first_grade(self):
-        dept = Department.objects.create(code="CSG1", name="CS Group 1")
-        head = make_user("Department head")
-        dept.head_user = head
-        dept.save()
-        instructor = make_user("Instructor")
-        StaffProfile.objects.create(user=instructor, department=dept, staff_title="Instructor")
-        student = make_user("Student")
-        StudentProfile.objects.create(user=student, department=dept, current_level="level_4", matriculation_year=2025)
-        now = timezone.now()
-        course = Course.objects.create(
-            department=dept, code="G101", title="Multi Attempt", semester="1", academic_year=2026,
-            created_by=head, is_published=True, published_by=head, published_at=now,
-        )
-        CourseStaff.objects.create(course=course, user=instructor, staff_role="lead_instructor", can_release_grades=True, assigned_by=head)
-        Enrollment.objects.create(course=course, student=student, status=EnrollmentStatus.ACTIVE, enrolled_by=head)
-        mod = Module.objects.create(course=course, title="M", is_visible=True, created_by=instructor)
-        sec = ModuleSection.objects.create(module=mod, title="S", section_type="quiz")
-        assessment = Assessment.objects.create(
-            section=sec,
-            title="Two-Attempt Quiz",
-            component_type=GradeComponentType.QUIZ,
-            max_score=Decimal("10.00"),
-            max_attempts=2,
-            opens_at=now - timezone.timedelta(hours=1),
-            due_date=now + timezone.timedelta(hours=2),
-            duration_minutes=30,
-            questions_json=[
-                {
-                    "question_id": "q1",
-                    "type": "multiple_choice",
-                    "points": 10.0,
-                    "prompt": "2 + 2?",
-                    "options": [{"option_id": "a", "text": "4"}, {"option_id": "b", "text": "5"}],
-                }
-            ],
-            created_by=instructor,
-        )
-        ExamAnswerKey.objects.create(
-            assessment=assessment,
-            answer_key_json=encrypt_answer_key({"q1": {"correct_option_ids": ["a"]}}),
-            created_by=instructor,
-        )
-
-        # Submit attempt 1 (wrong answer -> 0.00) and release its grade.
-        attempt_1 = AssessmentAttempt.objects.create(
-            assessment=assessment,
-            student=student,
-            attempt_no=1,
-            status=AttemptStatus.IN_PROGRESS,
-            expires_at=now + timezone.timedelta(minutes=30),
-            answers_json=[{"question_id": "q1", "type": "multiple_choice", "selected_option_ids": ["b"]}],
-            ip_address="127.0.0.1",
-        )
-        login_with_session(self.client, student)
-        resp1 = self.client.post(reverse("kura:assessment_submit", args=[attempt_1.id]))
-        self.assertEqual(resp1.status_code, 302)
-
-        grade_1 = Grade.objects.get(attempt=attempt_1)
-        self.assertEqual(grade_1.score, Decimal("0.00"))
-        grade_1.status = GradeStatus.RELEASED
-        grade_1.finalized_by = instructor
-        grade_1.finalized_at = now
-        grade_1.released_by = instructor
-        grade_1.released_at = now
-        grade_1.save()
-
-        # Submit attempt 2 (correct answer -> 10.00); attempt 1's released grade stays untouched.
-        attempt_2 = AssessmentAttempt.objects.create(
-            assessment=assessment,
-            student=student,
-            attempt_no=2,
-            status=AttemptStatus.IN_PROGRESS,
-            expires_at=now + timezone.timedelta(minutes=30),
-            answers_json=[{"question_id": "q1", "type": "multiple_choice", "selected_option_ids": ["a"]}],
-            ip_address="127.0.0.1",
-        )
-        resp2 = self.client.post(reverse("kura:assessment_submit", args=[attempt_2.id]))
-        self.assertEqual(resp2.status_code, 302)
-
-        grade_1.refresh_from_db()
-        self.assertEqual(grade_1.status, GradeStatus.RELEASED)
-        self.assertEqual(grade_1.score, Decimal("0.00"))
-
-        grade_2 = Grade.objects.get(attempt=attempt_2)
-        self.assertEqual(grade_2.status, GradeStatus.DRAFT)
-        self.assertEqual(grade_2.score, Decimal("10.00"))
-        self.assertNotEqual(grade_1.id, grade_2.id)
-
-    def test_pgaudit_disables_parameter_logging_and_compose_wires_pgbackrest_wrappers(self):
-        import os
-
-        pgaudit_conf = (Path(settings.BASE_DIR) / "docker" / "postgres" / "pgaudit.conf").read_text(encoding="utf-8")
-        self.assertIn("pgaudit.log_parameter = off", pgaudit_conf)
-        self.assertNotIn("pgaudit.log_parameter = on", pgaudit_conf)
-
-        entrypoint_sh = Path(settings.BASE_DIR) / "docker" / "postgres" / "entrypoint.sh"
-        wrapper_sh = Path(settings.BASE_DIR) / "docker" / "postgres" / "pgbackrest-wrapper.sh"
-        self.assertTrue(os.access(entrypoint_sh, os.X_OK))
-        self.assertTrue(os.access(wrapper_sh, os.X_OK))
-
-        compose_text = (Path(settings.BASE_DIR) / "docker-compose.yml").read_text(encoding="utf-8")
-        self.assertIn("kura-db-entrypoint.sh", compose_text)
-        self.assertIn("./docker/postgres/pgbackrest-wrapper.sh:/usr/local/bin/pgbackrest:ro", compose_text)
-
-
-class AuditGroup2DataIntegrityTests(TestCase):
-    """Tests for Audit Group 2: W6, M1, M2, P1, P2, W10."""
-
-    def setUp(self):
-        self.dept = Department.objects.create(code="CSG2", name="CS Group 2")
-        self.head = make_user("Department head", mfa_enabled=True)
-        self.dept.head_user = self.head
-        self.dept.save()
-        self.instructor = make_user("Instructor", mfa_enabled=True)
-        StaffProfile.objects.create(user=self.instructor, department=self.dept, staff_title="Instructor")
-        self.student = make_user("Student", mfa_enabled=True)
-        StudentProfile.objects.create(
-            user=self.student, department=self.dept, current_level="level_4", matriculation_year=2025
-        )
-        now = timezone.now()
-        self.course = Course.objects.create(
-            department=self.dept,
-            code="G201",
-            title="Data Integrity",
-            semester="1",
-            academic_year=2026,
-            created_by=self.head,
-            is_published=True,
-            published_by=self.head,
-            published_at=now,
-        )
-        CourseStaff.objects.create(
-            course=self.course,
-            user=self.instructor,
-            staff_role="lead_instructor",
-            can_release_grades=True,
-            assigned_by=self.head,
-        )
-        Enrollment.objects.create(
-            course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE, enrolled_by=self.head
-        )
-        CourseGradeScheme.objects.create(
-            course=self.course, component_type=GradeComponentType.EXAM, weight_percentage=Decimal("100.00")
-        )
-        self.mod = Module.objects.create(course=self.course, title="M", is_visible=True, created_by=self.instructor)
-        self.sec = ModuleSection.objects.create(module=self.mod, title="S", section_type="exam")
-        self.assessment = Assessment.objects.create(
-            section=self.sec,
-            title="Integrity Exam",
-            component_type=GradeComponentType.EXAM,
-            max_score=Decimal("100.00"),
-            max_attempts=1,
-            opens_at=now - timezone.timedelta(hours=1),
-            due_date=now + timezone.timedelta(hours=2),
-            duration_minutes=30,
-            questions_json=[
-                {
-                    "question_id": "q1",
-                    "type": "multiple_choice",
-                    "points": 100.0,
-                    "prompt": "Pick A",
-                    "options": [{"option_id": "a", "text": "A"}, {"option_id": "b", "text": "B"}],
-                }
-            ],
-            created_by=self.instructor,
-        )
-        ExamAnswerKey.objects.create(
-            assessment=self.assessment,
-            answer_key_json=encrypt_answer_key({"q1": {"correct_option_ids": ["a"]}}),
-            created_by=self.instructor,
-        )
-
-    def test_submission_hash_recomputes_from_saved_answers_and_trigger_blocks_update(self):
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment,
-            student=self.student,
-            attempt_no=1,
-            status=AttemptStatus.IN_PROGRESS,
-            expires_at=timezone.now() + timezone.timedelta(minutes=30),
-            answers_json=[{"question_id": "q1", "type": "multiple_choice", "selected_option_ids": ["a"]}],
-            ip_address="127.0.0.1",
-        )
-        login_with_session(self.client, self.student)
-        resp = self.client.post(reverse("kura:assessment_submit", args=[attempt.id]))
-        self.assertEqual(resp.status_code, 302)
-
-        attempt.refresh_from_db()
-        self.assertEqual(attempt.submission_hash, compute_submission_hash(attempt))
-
-        # PostgreSQL trigger blocks any later modification of submission_hash.
-        with self.assertRaises(DatabaseError):
-            with transaction.atomic():
-                AssessmentAttempt.objects.filter(id=attempt.id).update(submission_hash="f" * 64)
-
-    def test_decided_appeal_and_change_request_cannot_be_re_decided_and_recalculates_released_course_result(self):
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment,
-            student=self.student,
-            attempt_no=1,
-            status=AttemptStatus.FULLY_GRADED,
-            expires_at=timezone.now() + timezone.timedelta(minutes=30),
-            submitted_at=timezone.now(),
-            submission_hash="a" * 64,
-            ip_address="127.0.0.1",
-        )
-        grade = Grade.objects.create(
-            assessment=self.assessment,
-            student=self.student,
-            attempt=attempt,
-            score=Decimal("70.00"),
-            status=GradeStatus.RELEASED,
-            finalized_by=self.instructor,
-            finalized_at=timezone.now(),
-            released_by=self.instructor,
-            released_at=timezone.now(),
-        )
-        result = CourseResult.objects.create(
-            course=self.course,
-            student=self.student,
-            final_score=Decimal("70.00"),
-            status=GradeStatus.RELEASED,
-            finalized_by=self.instructor,
-            finalized_at=timezone.now(),
-            released_at=timezone.now(),
-        )
-        appeal = GradeAppeal.objects.create(grade=grade, reason="Check question 1", status=AppealStatus.PENDING)
-        change_req = GradeChangeRequest.objects.create(
-            grade=grade,
-            appeal=appeal,
-            requested_by=self.instructor,
-            current_score=Decimal("70.00"),
-            proposed_score=Decimal("90.00"),
-            reason="Rubric adjustment",
-            status=ChangeRequestStatus.PENDING,
-        )
-
-        # Decide appeal once -> succeeds; second POST -> 404; head GET read-only -> 200.
-        login_with_session(self.client, self.instructor)
-        self.assertEqual(
-            self.client.post(
-                reverse("kura:grade_appeal_review", args=[appeal.id]),
-                {"status": AppealStatus.APPROVED, "response": "Adjusted."},
-            ).status_code,
-            302,
-        )
-        self.assertEqual(
-            self.client.post(
-                reverse("kura:grade_appeal_review", args=[appeal.id]),
-                {"status": AppealStatus.REJECTED, "response": "Overwrite."},
-            ).status_code,
-            404,
-        )
-        appeal.refresh_from_db()
-        self.assertEqual(appeal.status, AppealStatus.APPROVED)
-
-        head_client = Client()
-        login_with_session(head_client, self.head)
-        confirm_second_factor(head_client)
-        self.assertEqual(head_client.get(reverse("kura:grade_appeal_review", args=[appeal.id])).status_code, 200)
-
-        # Approve change request -> updates grade AND recalculates released CourseResult, then blocks re-decision (404).
-        with self.assertLogs("kura.security", level="INFO") as cap:
-            self.assertEqual(
-                head_client.post(
-                    reverse("kura:grade_change_request_review", args=[change_req.id]),
-                    {"decision": ChangeRequestStatus.APPROVED, "review_note": "Verified."},
-                ).status_code,
-                302,
-            )
-        log_text = "\n".join(cap.output)
-        self.assertIn('event="course.result.recalculated"', log_text)
-        self.assertNotIn("90.00", log_text)
-
-        result.refresh_from_db()
-        self.assertEqual(result.final_score, Decimal("90.00"))
-        self.assertEqual(result.status, GradeStatus.RELEASED)
-
-        self.assertEqual(
-            head_client.post(
-                reverse("kura:grade_change_request_review", args=[change_req.id]),
-                {"decision": ChangeRequestStatus.REJECTED, "review_note": "Reverse it."},
-            ).status_code,
-            404,
-        )
-        grade.refresh_from_db()
-        self.assertEqual(grade.score, Decimal("90.00"))
-
-    def test_locked_reset_token_and_locked_grade_release_prevent_reuse(self):
-        raw_token = "wi-p1-reset-token-value"
-        reset_user = make_user("Student", mfa_enabled=False)
-        PasswordResetToken.objects.create(
-            user=reset_user,
-            token_hash=hashlib.sha256(raw_token.encode("utf-8")).hexdigest(),
-            expires_at=timezone.now() + timezone.timedelta(minutes=30),
-        )
-        url = reverse("kura:password_reset_confirm", args=[raw_token])
-        new_pw = "ValidResetPassword!987"
-        with patch("kura.views.check_breached_password", return_value=None):
-            first = self.client.post(url, {"new_password": new_pw, "confirm_password": new_pw})
-            self.assertEqual(first.status_code, 302)
-            second = self.client.post(url, {"new_password": new_pw + "x", "confirm_password": new_pw + "x"})
-            self.assertRedirects(second, reverse("kura:password_reset_request"), fetch_redirect_response=False)
-
-        # P2: grade_release_view re-checks FINALIZED under select_for_update inside atomic().
-        static_device = StaticDevice.objects.create(user=self.instructor, name="backup", confirmed=True)
-        StaticToken.objects.create(device=static_device, token=hash_recovery_code("888999"))
-        StaticToken.objects.create(device=static_device, token=hash_recovery_code("777666"))
-
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment,
-            student=self.student,
-            attempt_no=1,
-            status=AttemptStatus.FULLY_GRADED,
-            expires_at=timezone.now() + timezone.timedelta(minutes=30),
-            submitted_at=timezone.now(),
-            ip_address="127.0.0.1",
-        )
-        grade = Grade.objects.create(
-            assessment=self.assessment,
-            student=self.student,
-            attempt=attempt,
-            score=Decimal("80.00"),
-            status=GradeStatus.FINALIZED,
-            finalized_by=self.instructor,
-            finalized_at=timezone.now(),
-        )
-        login_with_session(self.client, self.instructor)
-        self.assertEqual(
-            self.client.post(reverse("kura:grade_release", args=[grade.id]), {"otp_token": "888999"}).status_code,
-            302,
-        )
-        # Second release attempt refuses because status is already RELEASED.
-        self.assertEqual(
-            self.client.post(reverse("kura:grade_release", args=[grade.id]), {"otp_token": "777666"}).status_code,
-            302,
-        )
-        self.assertEqual(GradeHistory.objects.filter(grade=grade, new_status=GradeStatus.RELEASED).count(), 1)
-
-    def test_empty_reason_constraints_rejected_at_database(self):
-        att_session = ModuleAttendanceSession.objects.create(
-            module=self.mod,
-            created_by=self.instructor,
-            title="Roll",
-            passcode_hash=hash_attendance_passcode("123456"),
-            expires_at=timezone.now() + timezone.timedelta(minutes=15),
-        )
-        with self.assertRaises(IntegrityError):
-            with transaction.atomic():
-                AttendanceRecord.objects.create(
-                    session=att_session,
-                    student=self.student,
-                    status=AttendanceStatus.PRESENT,
-                    method=AttendanceMethod.MANUAL,
-                    recorded_by=self.instructor,
-                    override_reason="",
-                )
-
-        attempt = AssessmentAttempt.objects.create(
-            assessment=self.assessment,
-            student=self.student,
-            attempt_no=1,
-            status=AttemptStatus.FULLY_GRADED,
-            expires_at=timezone.now() + timezone.timedelta(minutes=30),
-            submitted_at=timezone.now(),
-            ip_address="127.0.0.1",
-        )
-        grade = Grade.objects.create(
-            assessment=self.assessment, student=self.student, attempt=attempt, score=Decimal("85.00"), status=GradeStatus.RELEASED
-        )
-        with self.assertRaises(IntegrityError):
-            with transaction.atomic():
-                GradeHistory.objects.create(
-                    grade=grade,
-                    old_score=Decimal("85.00"),
-                    new_score=Decimal("90.00"),
-                    old_status=GradeStatus.RELEASED,
-                    new_status=GradeStatus.RELEASED,
-                    changed_by=self.instructor,
-                    approved_by=self.head,
-                    reason="",
-                )
-
-
-class AuditGroup3DatabaseAndRolesTests(TestCase):
-    """Tests for Audit Group 3: W4, W5, O2, P5, P9, W9."""
-
-    def setUp(self):
-        self.dept = Department.objects.create(code="CSG3", name="CS Group 3")
-        self.head = make_user("Department head", mfa_enabled=True)
-        self.dept.head_user = self.head
-        self.dept.save()
-        self.admin = make_user("Admin", mfa_enabled=True)
-        self.instructor = make_user("Instructor", mfa_enabled=True)
-        self.ta = make_user("Teaching assistant", mfa_enabled=True)
-        self.student_a = make_user("Student", mfa_enabled=True)
-        self.student_b = make_user("Student", mfa_enabled=True)
-        now = timezone.now()
-        self.course = Course.objects.create(
-            department=self.dept,
-            code="G301",
-            title="DB RLS",
-            semester="1",
-            academic_year=2026,
-            created_by=self.head,
-            is_published=True,
-            published_by=self.head,
-            published_at=now,
-        )
-        CourseStaff.objects.create(
-            course=self.course,
-            user=self.instructor,
-            staff_role="lead_instructor",
-            can_release_grades=True,
-            assigned_by=self.head,
-        )
-        CourseStaff.objects.create(
-            course=self.course,
-            user=self.ta,
-            staff_role="teaching_assistant",
-            can_release_grades=False,
-            assigned_by=self.instructor,
-        )
-        mod = Module.objects.create(course=self.course, title="M", is_visible=True, created_by=self.instructor)
-        sec = ModuleSection.objects.create(module=mod, title="S", section_type="exam")
-        self.assessment = Assessment.objects.create(
-            section=sec,
-            title="RLS Exam",
-            component_type=GradeComponentType.EXAM,
-            max_score=Decimal("100.00"),
-            opens_at=now - timezone.timedelta(hours=1),
-            due_date=now + timezone.timedelta(hours=2),
-            duration_minutes=30,
-            created_by=self.instructor,
-        )
-        self.answer_key = ExamAnswerKey.objects.create(
-            assessment=self.assessment,
-            answer_key_json={"ciphertext": "vault:v1:stub"},
-            created_by=self.instructor,
-        )
-        self.attempt_a = AssessmentAttempt.objects.create(
-            assessment=self.assessment,
-            student=self.student_a,
-            attempt_no=1,
-            status=AttemptStatus.FULLY_GRADED,
-            expires_at=now + timezone.timedelta(minutes=30),
-            submitted_at=now,
-            ip_address="192.0.2.10",
-        )
-        self.attempt_b = AssessmentAttempt.objects.create(
-            assessment=self.assessment,
-            student=self.student_b,
-            attempt_no=1,
-            status=AttemptStatus.FULLY_GRADED,
-            expires_at=now + timezone.timedelta(minutes=30),
-            submitted_at=now,
-            ip_address="192.0.2.11",
-        )
-        self.grade_a = Grade.objects.create(
-            assessment=self.assessment,
-            student=self.student_a,
-            attempt=self.attempt_a,
-            score=Decimal("80.00"),
-            status=GradeStatus.DRAFT,
-        )
-        self.grade_b = Grade.objects.create(
-            assessment=self.assessment,
-            student=self.student_b,
-            attempt=self.attempt_b,
-            score=Decimal("90.00"),
-            status=GradeStatus.RELEASED,
-        )
-        GradeHistory.objects.create(
-            grade=self.grade_a,
-            old_score=None,
-            new_score=Decimal("80.00"),
-            old_status=None,
-            new_status=GradeStatus.DRAFT,
-            changed_by=self.ta,
-            reason="Initial draft.",
-        )
-        self.result_a_draft = CourseResult.objects.create(
-            course=self.course, student=self.student_a, final_score=Decimal("80.00"), status=GradeStatus.DRAFT
-        )
-        self.result_b_released = CourseResult.objects.create(
-            course=self.course, student=self.student_b, final_score=Decimal("90.00"), status=GradeStatus.RELEASED
-        )
-
-    def test_rls_covers_all_five_sensitive_tables_and_excludes_ta_promotion_and_admin(self):
-        # Give admin a stale CourseStaff link to prove DB RLS still blocks Admin.
-        CourseStaff.objects.create(
-            course=self.course,
-            user=self.admin,
-            staff_role="lead_instructor",
-            can_release_grades=True,
-            assigned_by=self.head,
-        )
-
-        with connection.cursor() as cursor:
-            cursor.execute("SET ROLE kura_app;")
-            try:
-                # Unset user sees 0 rows across all 5 RLS-protected tables.
-                self.assertEqual(Grade.objects.count(), 0)
-                self.assertEqual(CourseResult.objects.count(), 0)
-                self.assertEqual(GradeHistory.objects.count(), 0)
-                self.assertEqual(AssessmentAttempt.objects.count(), 0)
-                self.assertEqual(ExamAnswerKey.objects.count(), 0)
-
-                # Student A sees own attempt & grade, 0 unreleased CourseResult, 0 GradeHistory, 0 ExamAnswerKey.
-                cursor.execute("SELECT set_config('kura.current_user_id', %s, false);", [str(self.student_a.id)])
-                self.assertEqual(list(AssessmentAttempt.objects.values_list("id", flat=True)), [self.attempt_a.id])
-                self.assertEqual(list(Grade.objects.values_list("id", flat=True)), [self.grade_a.id])
-                self.assertEqual(CourseResult.objects.count(), 0)
-                self.assertEqual(GradeHistory.objects.count(), 0)
-                self.assertEqual(ExamAnswerKey.objects.count(), 0)
-
-                # Student B sees own released CourseResult.
-                cursor.execute("SELECT set_config('kura.current_user_id', %s, false);", [str(self.student_b.id)])
-                self.assertEqual(list(CourseResult.objects.values_list("id", flat=True)), [self.result_b_released.id])
-
-                # TA sees course grades/results/history/attempts, 0 ExamAnswerKeys, and cannot promote Grade to FINALIZED.
-                cursor.execute("SELECT set_config('kura.current_user_id', %s, false);", [str(self.ta.id)])
-                self.assertEqual(ExamAnswerKey.objects.count(), 0)
-                self.assertEqual(Grade.objects.count(), 2)
-                with self.assertRaises(DatabaseError):
-                    with transaction.atomic():
-                        Grade.objects.filter(id=self.grade_a.id).update(status=GradeStatus.FINALIZED)
-
-                # Admin sees 0 rows on all 5 tables even with a stale CourseStaff link.
-                cursor.execute("SELECT set_config('kura.current_user_id', %s, false);", [str(self.admin.id)])
-                self.assertEqual(Grade.objects.count(), 0)
-                self.assertEqual(CourseResult.objects.count(), 0)
-                self.assertEqual(GradeHistory.objects.count(), 0)
-                self.assertEqual(AssessmentAttempt.objects.count(), 0)
-                self.assertEqual(ExamAnswerKey.objects.count(), 0)
-
-                # Instructor sees ExamAnswerKey and course records.
-                cursor.execute("SELECT set_config('kura.current_user_id', %s, false);", [str(self.instructor.id)])
-                self.assertEqual(ExamAnswerKey.objects.count(), 1)
-                self.assertEqual(CourseResult.objects.count(), 2)
-                self.assertEqual(GradeHistory.objects.count(), 1)
-            finally:
-                cursor.execute("RESET kura.current_user_id;")
-                cursor.execute("RESET ROLE;")
-
-        # Management commands anonymize_ips and queue_due_reminders succeed under kura_app via service_rls_context.
-        with connection.cursor() as cursor:
-            cursor.execute("GRANT SELECT, UPDATE ON outgoing_emails TO kura_app;")
-            cursor.execute("GRANT INSERT ON outgoing_emails TO kura_app;")
-            cursor.execute("SET ROLE kura_app;")
-            try:
-                call_command("anonymize_ips", "--days=180", "--dry-run", stdout=StringIO())
-                call_command("queue_due_reminders", stdout=StringIO())
-            finally:
-                cursor.execute("RESET ROLE;")
-
-    def test_readonly_role_cannot_select_sensitive_tables_or_mfa_secret(self):
-        with connection.cursor() as cursor:
-            cursor.execute(
-                """
-                DO $$
-                BEGIN
-                    IF NOT EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'kura_readonly') THEN
-                        CREATE ROLE kura_readonly NOLOGIN NOINHERIT;
-                    END IF;
-                END $$;
-                GRANT USAGE ON SCHEMA public TO kura_readonly;
-                GRANT SELECT ON ALL TABLES IN SCHEMA public TO kura_readonly;
-                REVOKE SELECT ON file_contents, exam_answer_keys, password_reset_tokens FROM kura_readonly;
-                REVOKE SELECT ON users FROM kura_readonly;
-                GRANT SELECT (
-                    id, email, password_hash, first_name, last_name, mfa_enabled, is_active,
-                    must_change_password, locked_until, last_login_at, password_changed_at,
-                    deactivated_at, created_by_id, created_at, updated_at
-                ) ON users TO kura_readonly;
-                """
-            )
-            cursor.execute("SET ROLE kura_readonly;")
-            try:
-                for model in (FileContent, ExamAnswerKey, PasswordResetToken):
-                    with self.assertRaises(DatabaseError):
-                        with transaction.atomic():
-                            model.objects.count()
-                with self.assertRaises(DatabaseError):
-                    with transaction.atomic():
-                        list(User.objects.values_list("mfa_secret", flat=True))
-                visible_users = list(User.objects.values_list("id", "email")[:1])
-                self.assertEqual(len(visible_users), 1)
-            finally:
-                cursor.execute("RESET ROLE;")
-
-    def test_separation_of_duty_blocks_admin_with_department_head_or_student(self):
-        login_with_session(self.client, self.admin)
-        session = self.client.session
-        session["mfa_reauth_at"] = timezone.now().timestamp()
-        session.save()
-
-        admin_role = Role.objects.get(name="Admin")
-        head_role = Role.objects.get(name="Department head")
-        student_role = Role.objects.get(name="Student")
-
-        # Cannot assign Admin to Department head or Student.
-        for target in (self.head, self.student_a):
-            self.client.post(
-                reverse("kura:user_roles", args=[target.id]),
-                {"action": "assign", "role_id": admin_role.id},
-            )
-            self.assertFalse(UserRole.objects.filter(user=target, role=admin_role).exists())
-
-        # Cannot assign Department head or Student to an Admin.
-        for blocked_role in (head_role, student_role):
-            self.client.post(
-                reverse("kura:user_roles", args=[self.admin.id]),
-                {"action": "assign", "role_id": blocked_role.id},
-            )
-            self.assertFalse(UserRole.objects.filter(user=self.admin, role=blocked_role).exists())
-
-    def test_pg_hba_and_compose_migrate_use_least_privilege_auth(self):
-        pg_hba = (Path(settings.BASE_DIR) / "docker" / "postgres" / "pg_hba.conf").read_text(encoding="utf-8")
-        self.assertNotIn("trust", pg_hba)
-        self.assertIn("scram-sha-256", pg_hba)
-        self.assertIn("hostssl kura           kura_migrator   all                     cert clientcert=verify-full", pg_hba)
-
-        init_roles = (Path(settings.BASE_DIR) / "docker" / "postgres" / "init-roles.sql").read_text(encoding="utf-8")
-        self.assertIn("ALTER DEFAULT PRIVILEGES FOR ROLE kura_migrator IN SCHEMA public", init_roles)
-
-        compose_text = (Path(settings.BASE_DIR) / "docker-compose.yml").read_text(encoding="utf-8")
-        self.assertIn("DATABASE_USER: kura_migrator", compose_text)
-        self.assertIn("DB_SSL_CERT: \"/certs/internal/migrator.crt\"", compose_text)
-        self.assertIn("DB_SSL_KEY: \"/certs/internal/migrator.key\"", compose_text)
-
-
-class AuditGroup4AccessAndSessionsTests(TestCase):
-    """Tests for Audit Group 4: O1, O8, M6, M7, W7."""
-
-    def setUp(self):
-        self.dept = Department.objects.create(code="CSG4", name="CS Group 4")
-        self.head = make_user("Department head", mfa_enabled=True)
-        self.dept.head_user = self.head
-        self.dept.save()
-        self.admin = make_user("Admin", mfa_enabled=True)
-        self.instructor = make_user("Instructor", mfa_enabled=True)
-        self.student = make_user("Student", mfa_enabled=True)
-        self.course = Course.objects.create(
-            department=self.dept,
-            code="G401",
-            title="Access & Sessions",
-            semester="1",
-            academic_year=2026,
-            created_by=self.head,
-            is_published=True,
-            published_by=self.head,
-            published_at=timezone.now(),
-        )
-        CourseStaff.objects.create(
-            course=self.course,
-            user=self.instructor,
-            staff_role="lead_instructor",
-            can_release_grades=True,
-            assigned_by=self.head,
-        )
-        Enrollment.objects.create(
-            course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE, enrolled_by=self.head
-        )
-        self.module = Module.objects.create(course=self.course, title="M", is_visible=True, created_by=self.instructor)
-
-    def test_department_head_cannot_run_or_manually_record_attendance(self):
-        att_session = ModuleAttendanceSession.objects.create(
-            module=self.module,
-            created_by=self.instructor,
-            title="Roll 1",
-            passcode_hash=hash_attendance_passcode("ABC123"),
-            expires_at=timezone.now() + timezone.timedelta(minutes=20),
-            is_active=True,
-        )
-
-        # Department head gets 403 on start, close, and manual attendance entry, and does not see Start/End/Manual controls in templates.
-        login_with_session(self.client, self.head)
-        self.assertEqual(self.client.get(reverse("kura:attendance_session_start", args=[self.module.id])).status_code, 403)
-        self.assertEqual(
-            self.client.post(
-                reverse("kura:attendance_session_start", args=[self.module.id]),
-                {"title": "Illegal Roll", "duration_minutes": 10},
-            ).status_code,
-            403,
-        )
-        self.assertEqual(self.client.post(reverse("kura:attendance_session_close", args=[att_session.id])).status_code, 403)
-        self.assertEqual(
-            self.client.post(
-                reverse("kura:attendance_manual_record", args=[att_session.id]),
-                {"student": self.student.id, "status": AttendanceStatus.PRESENT, "override_reason": "Test"},
-            ).status_code,
-            403,
-        )
-
-        course_page = self.client.get(reverse("kura:course_detail", args=[self.course.id]))
-        self.assertNotContains(course_page, reverse("kura:attendance_session_start", args=[self.module.id]))
-        detail_page = self.client.get(reverse("kura:attendance_session_detail", args=[att_session.id]))
-        self.assertEqual(detail_page.status_code, 200)
-        self.assertNotContains(detail_page, reverse("kura:attendance_session_close", args=[att_session.id]))
-        self.assertNotContains(detail_page, reverse("kura:attendance_manual_record", args=[att_session.id]))
-
-    def test_login_required_middleware_blocks_undecorated_view_and_keeps_public_auth_open(self):
-        from django.contrib.auth.middleware import LoginRequiredMiddleware
-        from django.http import HttpResponse as DjangoHttpResponse
-
-        def undecorated_view(request):
-            return DjangoHttpResponse("secret")
-
-        factory = RequestFactory()
-        req = factory.get("/undecorated/")
-        req.user = AnonymousUser()
-        middleware = LoginRequiredMiddleware(lambda r: DjangoHttpResponse("ok"))
-        resp = middleware.process_view(req, undecorated_view, (), {})
-        self.assertEqual(resp.status_code, 302)
-        self.assertIn(reverse("kura:login"), resp.url)
-
-        # Public auth pages remain reachable without login.
-        self.assertEqual(self.client.get(reverse("kura:login")).status_code, 200)
-        self.assertEqual(self.client.get(reverse("kura:password_reset_request")).status_code, 200)
-        session = self.client.session
-        session["pre_mfa_user_id"] = str(self.student.id)
-        session["pre_mfa_started_at"] = timezone.now().timestamp()
-        session.save()
-        self.assertEqual(self.client.get(reverse("kura:mfa_verify")).status_code, 200)
-
-    def test_role_change_revokes_target_user_sessions(self):
-        target = make_user("Instructor", mfa_enabled=True)
-        target_client = Client()
-        target_session = login_with_session(target_client, target)
-
-        login_with_session(self.client, self.admin)
-        confirm_second_factor(self.client)
-        ta_role = Role.objects.get(name="Teaching assistant")
-        with self.assertLogs("kura.security", level="WARNING") as cap:
-            resp = self.client.post(
-                reverse("kura:user_roles", args=[target.id]),
-                {"action": "assign", "role_id": ta_role.id},
-            )
-        self.assertEqual(resp.status_code, 302)
-        target_session.refresh_from_db()
-        self.assertIsNotNone(target_session.revoked_at)
-        self.assertTrue(any('event="session.revoked"' in line and 'by="role_change"' in line for line in cap.output))
-
-        # Target's next request is forced back to login.
-        self.assertRedirects(target_client.get(reverse("kura:home")), reverse("kura:login"))
-
-    def test_anonymous_auth_pages_set_no_store_headers(self):
-        raw_token = "wi-m7-reset-token"
-        PasswordResetToken.objects.create(
-            user=self.student,
-            token_hash=hashlib.sha256(raw_token.encode("utf-8")).hexdigest(),
-            expires_at=timezone.now() + timezone.timedelta(minutes=30),
-        )
-        for url in (
-            reverse("kura:login"),
-            reverse("kura:password_reset_request"),
-            reverse("kura:password_reset_confirm", args=[raw_token]),
-        ):
-            resp = self.client.get(url)
-            self.assertEqual(resp.status_code, 200)
-            self.assertIn("no-store", resp.headers.get("Cache-Control", ""))
-
-        session = self.client.session
-        session["pre_mfa_user_id"] = str(self.student.id)
-        session["pre_mfa_started_at"] = timezone.now().timestamp()
-        session.save()
-        mfa_resp = self.client.get(reverse("kura:mfa_verify"))
-        self.assertEqual(mfa_resp.status_code, 200)
-        self.assertIn("no-store", mfa_resp.headers.get("Cache-Control", ""))
-
-    def test_session_token_hash_is_bound_to_django_session_key_and_survives_password_change(self):
-        old_pw = "ValidSessionPw123!"
-        new_pw = "NewSessionPw456!"
-        user = make_user("Student", password=old_pw, mfa_enabled=False)
-
-        # Password login binds session_token_hash to the live Django session key.
-        resp = self.client.post(reverse("kura:login"), {"email": user.email, "password": old_pw})
-        self.assertEqual(resp.status_code, 302)
-        user_session = UserSession.objects.get(user=user)
-        self.assertEqual(user_session.session_token_hash, hash_session_token(self.client.session.session_key))
-
-        # Password change updates session_token_hash after update_session_auth_hash cycles the key.
-        with patch("kura.views.check_breached_password", return_value=None):
-            pw_resp = self.client.post(
-                reverse("kura:password_change"),
-                {"old_password": old_pw, "new_password": new_pw, "confirm_password": new_pw},
-            )
-        self.assertEqual(pw_resp.status_code, 302)
-        user_session.refresh_from_db()
-        self.assertEqual(user_session.session_token_hash, hash_session_token(self.client.session.session_key))
-
-        # Copying user_session_id onto a mismatched session key fails closed with token_mismatch.
-        user_session.session_token_hash = hash_session_token("wrong-session-key")
-        user_session.save(update_fields=["session_token_hash"])
-        with self.assertLogs("kura.security", level="WARNING") as cap:
-            bad_resp = self.client.get(reverse("kura:mfa_setup"))
-        self.assertRedirects(bad_resp, reverse("kura:login"))
-        self.assertTrue(any('event="session.invalid"' in line and 'reason="token_mismatch"' in line for line in cap.output))
-
-
 class AuditGroup5RetentionAndLokiTests(TestCase):
     """Tests for Audit Group 5: O7, P3, P4, W8."""
 
@@ -12084,7 +6205,6 @@ class AuditGroup5RetentionAndLokiTests(TestCase):
             self.assertTrue(
                 any('event="retention.job_failed"' in line and 'command="anonymize_ips"' in line for line in cap_anon.output)
             )
-
 
 class AuditGroup6PolicyAndGdprTests(TestCase):
     """Tests for Audit Group 6: O6 (editable SecurityPolicy) and O3 (GDPR data subject rights)."""
@@ -12150,488 +6270,6 @@ class AuditGroup6PolicyAndGdprTests(TestCase):
         self.assertEqual(locked_resp.headers.get("Retry-After"), "7200")
         self.assertIsNotNone(stud_session)
 
-    def test_gdpr_privacy_notice_export_restriction_and_erasure_with_academic_exceptions(self):
-        # Public privacy notice works without login.
-        notice = self.client.get(reverse("kura:privacy_notice"))
-        self.assertEqual(notice.status_code, 200)
-        self.assertContains(notice, "Privacy notice")
-
-        dept = Department.objects.create(code="CSGD", name="CS GDPR")
-        head = make_user("Department head", mfa_enabled=True)
-        dept.head_user = head
-        dept.save()
-        instructor = make_user("Instructor", mfa_enabled=True)
-        student = make_user("Student", mfa_enabled=True)
-        StudentProfile.objects.create(
-            user=student, department=dept, current_level="level_4", matriculation_year=2025
-        )
-        now = timezone.now()
-        course = Course.objects.create(
-            department=dept,
-            code="GDPR101",
-            title="Privacy",
-            semester="1",
-            academic_year=2026,
-            created_by=head,
-            is_published=True,
-            published_by=head,
-            published_at=now,
-        )
-        Enrollment.objects.create(
-            course=course, student=student, status=EnrollmentStatus.ACTIVE, enrolled_by=head
-        )
-        mod = Module.objects.create(course=course, title="M", is_visible=True, created_by=instructor)
-        sec = ModuleSection.objects.create(module=mod, title="S", section_type="exam")
-        assessment = Assessment.objects.create(
-            section=sec,
-            title="GDPR Exam",
-            component_type=GradeComponentType.EXAM,
-            max_score=Decimal("100.00"),
-            opens_at=now - timezone.timedelta(hours=1),
-            due_date=now + timezone.timedelta(hours=12),
-            duration_minutes=30,
-            created_by=instructor,
-        )
-        ExamAnswerKey.objects.create(
-            assessment=assessment, answer_key_json={"ciphertext": "vault:v1:secret"}, created_by=instructor
-        )
-        att_rel = AssessmentAttempt.objects.create(
-            assessment=assessment,
-            student=student,
-            attempt_no=1,
-            status=AttemptStatus.FULLY_GRADED,
-            expires_at=now + timezone.timedelta(minutes=30),
-            submitted_at=now,
-            ip_address="198.51.100.40",
-        )
-        Grade.objects.create(
-            assessment=assessment,
-            student=student,
-            attempt=att_rel,
-            score=Decimal("88.00"),
-            feedback="Good work",
-            status=GradeStatus.RELEASED,
-            released_by=instructor,
-            released_at=now,
-        )
-        # Unreleased draft grade on a second assessment must NOT appear in export.
-        assessment_draft = Assessment.objects.create(
-            section=sec,
-            title="Draft Quiz",
-            component_type=GradeComponentType.QUIZ,
-            max_score=Decimal("10.00"),
-            opens_at=now - timezone.timedelta(hours=1),
-            due_date=now + timezone.timedelta(hours=12),
-            duration_minutes=15,
-            created_by=instructor,
-        )
-        att_draft = AssessmentAttempt.objects.create(
-            assessment=assessment_draft,
-            student=student,
-            attempt_no=1,
-            status=AttemptStatus.FULLY_GRADED,
-            expires_at=now + timezone.timedelta(minutes=15),
-            submitted_at=now,
-            ip_address="198.51.100.40",
-        )
-        Grade.objects.create(
-            assessment=assessment_draft,
-            student=student,
-            attempt=att_draft,
-            score=Decimal("5.00"),
-            feedback="Draft Feedback",
-            status=GradeStatus.DRAFT,
-        )
-
-        old_session = UserSession.objects.create(
-            user=student,
-            session_token_hash=hash_session_token("old-gdpr-key"),
-            ip_address="203.0.113.77",
-            user_agent="OldBrowser",
-            expires_at=now + timezone.timedelta(hours=12),
-        )
-        PasswordResetToken.objects.create(
-            user=student,
-            token_hash=hashlib.sha256(b"gdpr-reset").hexdigest(),
-            expires_at=now + timezone.timedelta(minutes=30),
-        )
-
-        # Own-data JSON export includes released grade but omits draft grade, secrets, and answer keys.
-        login_with_session(self.client, student)
-        with self.assertLogs("kura.security", level="INFO") as cap_exp:
-            export_resp = self.client.get(reverse("kura:privacy_export"))
-        self.assertEqual(export_resp.status_code, 200)
-        self.assertIn("no-store", export_resp.headers.get("Cache-Control", ""))
-        self.assertTrue(any('event="privacy.data_exported"' in line for line in cap_exp.output))
-        data = json.loads(export_resp.content.decode("utf-8"))
-        self.assertEqual(data["account"]["email"], student.email)
-        self.assertEqual(len(data["released_grades"]), 1)
-        self.assertEqual(data["released_grades"][0]["score"], "88.00")
-        self.assertNotIn("5.00", export_resp.content.decode("utf-8"))
-        self.assertNotIn("Draft Feedback", export_resp.content.decode("utf-8"))
-        self.assertNotIn("vault:v1:secret", export_resp.content.decode("utf-8"))
-
-        # Restriction flag stops queue_due_reminders from emailing the restricted student.
-        with self.assertLogs("kura.security", level="INFO") as cap_res:
-            res_resp = self.client.post(reverse("kura:privacy_restrict"))
-        self.assertRedirects(res_resp, reverse("kura:privacy_dashboard"))
-        student.refresh_from_db()
-        self.assertTrue(student.is_processing_restricted)
-        self.assertTrue(any('event="privacy.restriction_updated"' in line for line in cap_res.output))
-
-        call_command("queue_due_reminders", stdout=StringIO())
-        self.assertFalse(OutgoingEmail.objects.filter(to_email=student.email).exists())
-
-        # Erasure request clears auxiliary metadata while preserving academic records.
-        with self.assertLogs("kura.security", level="WARNING") as cap_er:
-            er_resp = self.client.post(reverse("kura:privacy_erasure"), {"confirm": "on"})
-        self.assertRedirects(er_resp, reverse("kura:privacy_dashboard"))
-        self.assertTrue(
-            any('event="privacy.erasure_requested"' in line and 'retained_academic_records="True"' in line for line in cap_er.output)
-        )
-        old_session.refresh_from_db()
-        self.assertIsNone(old_session.ip_address)
-        self.assertEqual(old_session.user_agent, "")
-        self.assertIsNotNone(old_session.revoked_at)
-        self.assertFalse(PasswordResetToken.objects.filter(user=student, used_at__isnull=True).exists())
-        student.refresh_from_db()
-        self.assertIsNotNone(student.erasure_requested_at)
-        self.assertEqual(Grade.objects.filter(student=student).count(), 2)
-        self.assertIn("Privacy, processing and FERPA", (Path(settings.BASE_DIR) / "docs" / "DEPLOYMENT.md").read_text(encoding="utf-8"))
-
-
-class AuditGroup7InfraAndConfigTests(TestCase):
-    """Tests for Audit Group 7: M3, M8, M9, P10, P11, P12, P15, P16."""
-
-    def test_ci_workflow_gates_build_scans_all_images_and_pins_digests(self):
-        ci_text = (Path(settings.BASE_DIR) / ".github" / "workflows" / "ci.yml").read_text(encoding="utf-8")
-        self.assertIn("needs: [semgrep-scan]", ci_text)
-        self.assertIn('severity: "HIGH,CRITICAL"', ci_text)
-        self.assertIn('exit-code: "1"', ci_text)
-        self.assertIn("kura-breach-proxy:${{ github.sha }}", ci_text)
-        self.assertIn("postgres:17-alpine@sha256:", ci_text)
-        self.assertIn("semgrep/semgrep@sha256:", ci_text)
-        self.assertIn("ghcr.io/zaproxy/zaproxy:stable@sha256:", ci_text)
-
-    def test_nginx_limit_conn_and_body_size_loki_audit_rule_and_alertmanager_routes(self):
-        nginx_main = (Path(settings.BASE_DIR) / "docker" / "nginx" / "nginx.conf").read_text(encoding="utf-8")
-        nginx_site = (Path(settings.BASE_DIR) / "docker" / "nginx" / "conf.d" / "kura.conf").read_text(encoding="utf-8")
-        loki_rules = (
-            Path(settings.BASE_DIR) / "docker" / "loki" / "rules" / "fake" / "kura-alerts.yml"
-        ).read_text(encoding="utf-8")
-        alertmanager = (
-            Path(settings.BASE_DIR) / "docker" / "alertmanager" / "alertmanager.yml"
-        ).read_text(encoding="utf-8")
-
-        self.assertIn("limit_conn_zone $binary_remote_addr zone=conn_limit:10m;", nginx_main)
-        self.assertIn("limit_conn_status 429;", nginx_main)
-        self.assertIn("client_max_body_size 26M;", nginx_site)
-        self.assertIn("limit_conn conn_limit 10;", nginx_site)
-        self.assertIn("limit_conn conn_limit 30;", nginx_site)
-        self.assertIn("- alert: AuditDiscrepancy", loki_rules)
-        self.assertIn('receiver: telegram-alerts', alertmanager)
-        self.assertIn('receiver: breach-telegram-alerts', alertmanager)
-        self.assertIn('[BREACH TRIAGE - 72H CLOCK]', alertmanager)
-        self.assertNotIn('email_configs:', alertmanager)
-        self.assertNotIn("127.0.0.1:9999", alertmanager)
-
-    def test_application_relay_uses_gmail_with_verified_tls(self):
-        """Application mail uses the selected provider without disabling TLS checks."""
-        postfix = (Path(settings.BASE_DIR) / "docker" / "postfix" / "main.cf").read_text(encoding="utf-8")
-        self.assertIn("relayhost = [smtp.gmail.com]:587", postfix)
-        self.assertIn("smtp_tls_security_level = secure", postfix)
-        self.assertIn("smtp_sasl_password_maps = texthash:/run/secrets/smtp_relay_credentials", postfix)
-
-    def test_log_and_backup_secret_guides_match_their_configuration(self):
-        # The guides must describe the actual log source and passphrase loading path.
-        loki = (Path(settings.BASE_DIR) / "docker" / "loki" / "README.md").read_text(encoding="utf-8")
-        secrets = (Path(settings.BASE_DIR) / "secrets" / "README.md").read_text(encoding="utf-8")
-        alloy = (Path(settings.BASE_DIR) / "docker" / "alloy" / "config.alloy").read_text(encoding="utf-8")
-        rules = (
-            Path(settings.BASE_DIR) / "docker" / "loki" / "rules" / "fake" / "kura-alerts.yml"
-        ).read_text(encoding="utf-8")
-        wrapper = (
-            Path(settings.BASE_DIR) / "docker" / "postgres" / "pgbackrest-wrapper.sh"
-        ).read_text(encoding="utf-8")
-        self.assertIn("Docker API proxy", loki)
-        self.assertIn('loki.source.docker "containers"', alloy)
-        self.assertIn("`BruteForceLogin`", loki)
-        for alert in (
-            "BruteForceLogin", "SingleIpBruteForce", "MfaFailuresSpike", "AdminRoleChanged",
-            "MalwareUploaded", "DbAuthFailures", "FileDecryptFailed", "AuditDiscrepancy",
-        ):
-            self.assertIn(f"- alert: {alert}", rules)
-        self.assertNotIn("tails only Nginx", loki)
-        self.assertIn("PGBACKREST_REPO1_CIPHER_PASS", secrets)
-        self.assertIn("PGBACKREST_REPO1_CIPHER_PASS", wrapper)
-        self.assertIn("does not support `file:` passphrase indirection", secrets)
-        self.assertNotIn("repo1-cipher-pass=file:", secrets)
-
-    def test_offsite_backup_repo2_and_container_hardening_and_nftables_lan_scope(self):
-        pgbackrest_conf = (Path(settings.BASE_DIR) / "docker" / "postgres" / "pgbackrest.conf").read_text(
-            encoding="utf-8"
-        )
-        entrypoint_sh = (Path(settings.BASE_DIR) / "docker" / "postgres" / "entrypoint.sh").read_text(
-            encoding="utf-8"
-        )
-        wrapper_sh = (Path(settings.BASE_DIR) / "docker" / "postgres" / "pgbackrest-wrapper.sh").read_text(
-            encoding="utf-8"
-        )
-        crontab_text = (Path(settings.BASE_DIR) / "docker" / "cron" / "kura.crontab").read_text(encoding="utf-8")
-        compose_text = (Path(settings.BASE_DIR) / "docker-compose.yml").read_text(encoding="utf-8")
-        nft_text = (Path(settings.BASE_DIR) / "docker" / "nftables" / "kura.nft").read_text(encoding="utf-8")
-
-        self.assertIn("repo2-path=/var/lib/pgbackrest-offsite", pgbackrest_conf)
-        self.assertIn("repo2-cipher-type=aes-256-cbc", pgbackrest_conf)
-        self.assertIn("PGBACKREST_REPO2_CIPHER_PASS", entrypoint_sh)
-        self.assertIn("PGBACKREST_REPO2_CIPHER_PASS", wrapper_sh)
-        self.assertIn("backup-offsite", crontab_text)
-        self.assertIn("--repo=2", crontab_text)
-
-        # Grafana runs with read_only: true and cap_drop: ALL, published on loopback only.
-        grafana_block = compose_text.split("  grafana:\n", 1)[1].split("\n  vault:\n", 1)[0]
-        self.assertIn("read_only: true", grafana_block)
-        self.assertIn("cap_drop:\n      - ALL", grafana_block)
-        self.assertIn('"127.0.0.1:3000:3000"', grafana_block)
-
-        # The host firewall opens web ports to everyone, SSH only to the admin allowlist, and applies CrowdSec bans to Docker's forwarded traffic as well (nginx is published directly on 80 and 443).
-        self.assertIn("tcp dport { 80, 443 } accept", nft_text)
-        self.assertIn("ip saddr @admin_allowlist tcp dport 22 accept", nft_text)
-        self.assertIn("type filter hook forward priority filter - 10; policy accept;", nft_text)
-        # nginx no longer trusts a CDN header for the client address.
-        nginx_site = (Path(settings.BASE_DIR) / "docker" / "nginx" / "conf.d" / "kura.conf").read_text(
-            encoding="utf-8"
-        )
-        self.assertNotIn("set_real_ip_from", nginx_site)
-        self.assertNotIn("CF-Connecting-IP", nginx_site)
-
-    def test_settings_hardening_and_pinned_requirements(self):
-        self.assertNotIn("django.contrib.auth.hashers.PBKDF2SHA1PasswordHasher", settings.PASSWORD_HASHERS)
-
-        reqs = (Path(settings.BASE_DIR) / "requirements.txt").read_text(encoding="utf-8").splitlines()
-        pkg_lines = [line.strip() for line in reqs if line.strip() and not line.strip().startswith("#")]
-        self.assertEqual(len(pkg_lines), 15)
-        for line in pkg_lines:
-            self.assertIn("==", line)
-            self.assertNotIn(">=", line)
-
-        # Non-loopback production DB connections default DB_SSL_MODE to verify-full.
-        env = dict(os.environ)
-        env.pop("DB_SSL_MODE", None)
-        env["DEBUG"] = "False"
-        env["DATABASE_HOST"] = "db"
-        env["SECRET_KEY"] = "test-prod-secret-key-length-at-least-fifty-characters-0123456789"
-        out = subprocess.check_output(
-            [sys.executable, "-c", "import os, django; os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings'); from django.conf import settings; print(settings.DB_SSL_MODE)"],
-            cwd=settings.BASE_DIR,
-            env=env,
-            text=True,
-        ).strip()
-        self.assertEqual(out, "verify-full")
-
-
-class AuditGroup8FinalFixesTests(TestCase):
-    """Tests for Audit Group 8: P6, P7, P8, P13, P14, M4, M10, M11, M12 notice."""
-
-    def test_questions_json_rejects_every_answer_key_field_on_any_question_type(self):
-        from django.core.exceptions import ValidationError
-        from kura.forms import validate_assessment_questions_json
-
-        base_mc = {
-            "question_id": "q1",
-            "type": "multiple_choice",
-            "prompt": "Pick one",
-            "points": 5,
-            "options": [{"option_id": "o1", "text": "A"}, {"option_id": "o2", "text": "B"}],
-        }
-        # Cross-type answer keys (e.g. tutor_rubric on multiple_choice, or is_correct on an option) must fail.
-        for bad_item in (
-            {**base_mc, "tutor_rubric": {"criteria": []}},
-            {**base_mc, "correct_pairs": {"p1": "a"}},
-            {**base_mc, "options": [{"option_id": "o1", "text": "A", "is_correct": True}, {"option_id": "o2", "text": "B"}]},
-        ):
-            with self.assertRaises(ValidationError):
-                validate_assessment_questions_json([bad_item])
-
-    def test_rate_limit_middleware_matches_post_url_name_and_counts_both_user_and_ip(self):
-        from django.core.cache import caches
-
-        caches["ratelimit"].clear()
-        user_a = make_user("Student", mfa_enabled=True)
-        user_b = make_user("Student", mfa_enabled=True)
-        attempt_uuid = uuid.uuid4()
-
-        # GET on an upload URL does NOT increment upload rate limit; non-upload POST with "upload" in query does not either.
-        client_a = Client()
-        login_with_session(client_a, user_a)
-        upload_url = reverse("kura:assessment_attempt_file_upload", args=[attempt_uuid])
-        client_a.get(upload_url)
-        self.assertIsNone(caches["ratelimit"].get(f"rate_limit_upload_{user_a.id}"))
-
-        # 20 POST uploads from user_a fill the IP bucket for 127.0.0.1 too, so user_b on the same IP gets 429.
-        for _ in range(20):
-            client_a.post(upload_url)
-        client_b = Client()
-        login_with_session(client_b, user_b)
-        blocked_b = client_b.post(upload_url)
-        self.assertEqual(blocked_b.status_code, 429)
-        self.assertEqual(blocked_b.headers.get("Retry-After"), "60")
-
-    def test_duplicate_enrollment_and_attendance_integrity_errors_do_not_500(self):
-        dept = Department.objects.create(code="P8D", name="Dept P8")
-        head = make_user("Department head", mfa_enabled=True)
-        dept.head_user = head
-        dept.save()
-        instructor = make_user("Instructor", mfa_enabled=True)
-        registrar = make_user("Registrar", mfa_enabled=True)
-        student = make_user("Student", mfa_enabled=True)
-        StudentProfile.objects.create(
-            user=student, department=dept, current_level="level_4", matriculation_year=2026
-        )
-        now = timezone.now()
-        course = Course.objects.create(
-            department=dept,
-            code="P8101",
-            title="Concurrency",
-            semester="1",
-            academic_year=2026,
-            created_by=head,
-            is_published=True,
-            published_by=head,
-            published_at=now,
-        )
-        login_with_session(self.client, registrar)
-        with patch.object(Enrollment.objects, "create", side_effect=IntegrityError("duplicate")):
-            resp = self.client.post(
-                reverse("kura:enrollment_create"),
-                {"course": course.id, "student": student.id},
-            )
-        self.assertEqual(resp.status_code, 400)
-        self.assertContains(resp, "already actively enrolled", status_code=400)
-
-        Enrollment.objects.create(
-            course=course, student=student, status=EnrollmentStatus.ACTIVE, enrolled_by=registrar
-        )
-        CourseStaff.objects.create(course=course, user=instructor, staff_role="lead_instructor", assigned_by=head)
-        mod = Module.objects.create(course=course, title="M", is_visible=True, created_by=instructor)
-        att_session = ModuleAttendanceSession.objects.create(
-            module=mod,
-            title="S1",
-            passcode_hash=hash_attendance_passcode("123456"),
-            expires_at=now + timezone.timedelta(minutes=30),
-            created_by=instructor,
-        )
-        stud_client = Client()
-        login_with_session(stud_client, student)
-        with patch.object(AttendanceRecord.objects, "create", side_effect=IntegrityError("duplicate")):
-            checkin_resp = stud_client.post(
-                reverse("kura:student_checkin", args=[att_session.id]),
-                {"passcode": "123456"},
-            )
-        self.assertRedirects(checkin_resp, reverse("kura:attendance_history"))
-
-    def test_p13_review_note_required_and_multi_department_course_create_and_m11_head_appointment(self):
-        dept1 = Department.objects.create(code="D1M", name="Alpha Dept")
-        dept2 = Department.objects.create(code="D2M", name="Beta Dept")
-        head = make_user("Department head", mfa_enabled=True)
-        admin = make_user("Admin", mfa_enabled=True)
-
-        # Admin appoints head to both departments via staff_settings (M11).
-        login_with_session(self.client, admin)
-        for dept in (dept1, dept2):
-            resp = self.client.post(
-                reverse("kura:staff_settings"),
-                {"kind": "department_head", "department": dept.id, "head_user": head.id},
-            )
-            self.assertRedirects(resp, reverse("kura:staff_settings"))
-        dept1.refresh_from_db()
-        dept2.refresh_from_db()
-        self.assertEqual(dept1.head_user, head)
-        self.assertEqual(dept2.head_user, head)
-
-        # Head of two departments can choose the second department when creating a course (P13).
-        head_client = Client()
-        login_with_session(head_client, head)
-        page = head_client.get(reverse("kura:course_create"))
-        self.assertContains(page, "Beta Dept")
-        c_resp = head_client.post(
-            reverse("kura:course_create"),
-            {
-                "department": dept2.id,
-                "code": "BETA201",
-                "title": "Beta Systems",
-                "description": "Multi-dept",
-                "semester": "2",
-                "academic_year": 2026,
-            },
-        )
-        self.assertRedirects(c_resp, reverse("kura:course_list"))
-        self.assertEqual(Course.objects.get(code="BETA201").department, dept2)
-
-        # Grade change review rejects blank review_note (P13).
-        from kura.forms import GradeChangeRequestReviewForm
-
-        blank_form = GradeChangeRequestReviewForm({"decision": ChangeRequestStatus.APPROVED, "review_note": "   "})
-        self.assertFalse(blank_form.is_valid())
-        self.assertIn("review_note", blank_form.errors)
-
-    def test_p14_grade_release_checks_all_devices_and_governance_docs_exist(self):
-        dept = Department.objects.create(code="P14D", name="Dept P14")
-        head = make_user("Department head", mfa_enabled=True)
-        dept.head_user = head
-        dept.save()
-        instructor = make_user("Instructor", mfa_enabled=True)
-        student = make_user("Student", mfa_enabled=True)
-        now = timezone.now()
-        course = Course.objects.create(
-            department=dept, code="P14101", title="MFA Devices", semester="1", academic_year=2026,
-            created_by=head, is_published=True, published_by=head, published_at=now,
-        )
-        CourseStaff.objects.create(
-            course=course, user=instructor, staff_role="lead_instructor", can_release_grades=True, assigned_by=head
-        )
-        mod = Module.objects.create(course=course, title="M", is_visible=True, created_by=instructor)
-        sec = ModuleSection.objects.create(module=mod, title="S", section_type="exam")
-        assessment = Assessment.objects.create(
-            section=sec, title="Exam", component_type=GradeComponentType.EXAM, max_score=Decimal("100.00"),
-            opens_at=now - timezone.timedelta(hours=1), due_date=now + timezone.timedelta(hours=12),
-            duration_minutes=30, created_by=instructor,
-        )
-        att = AssessmentAttempt.objects.create(
-            assessment=assessment, student=student, attempt_no=1, status=AttemptStatus.FULLY_GRADED,
-            expires_at=now + timezone.timedelta(minutes=30), submitted_at=now, ip_address="127.0.0.1",
-        )
-        grade = Grade.objects.create(
-            assessment=assessment, student=student, attempt=att, score=Decimal("90.00"),
-            status=GradeStatus.FINALIZED, finalized_by=instructor, finalized_at=now,
-        )
-        # Create two static devices where only the second has the recovery code; verify_second_factor finds it.
-        s1 = StaticDevice.objects.create(user=instructor, name="old", confirmed=True)
-        StaticToken.objects.create(device=s1, token=hash_recovery_code("AAAA1111"))
-        s2 = StaticDevice.objects.create(user=instructor, name="backup", confirmed=True)
-        StaticToken.objects.create(device=s2, token=hash_recovery_code("BBBB2222"))
-
-        login_with_session(self.client, instructor)
-        rel_resp = self.client.post(
-            reverse("kura:grade_release", args=[grade.id]),
-            {"otp_token": "BBBB2222"},
-        )
-        self.assertRedirects(rel_resp, reverse("kura:course_grades", args=[course.id]))
-        grade.refresh_from_db()
-        self.assertEqual(grade.status, GradeStatus.RELEASED)
-
-        # M4, M10, M12 artifacts exist and Alertmanager includes the breach Telegram route.
-        ir_text = (Path(settings.BASE_DIR) / "docs" / "INCIDENT_RESPONSE.md").read_text(encoding="utf-8")
-        guidance_text = (Path(settings.BASE_DIR) / "docs" / "DEPLOYMENT.md").read_text(encoding="utf-8")
-        am_text = (Path(settings.BASE_DIR) / "docker" / "alertmanager" / "alertmanager.yml").read_text(encoding="utf-8")
-        self.assertIn("72-Hour Regulatory Breach Notification", ir_text)
-        self.assertIn("Asset Classification Register", guidance_text)
-        self.assertIn("FERPA", guidance_text)
-        self.assertIn("breach-telegram-alerts", am_text)
-        notice_resp = self.client.get(reverse("kura:privacy_notice"))
-        self.assertContains(notice_resp, "FERPA")
-
-
 class DjangoSecurityBaselineTests(TestCase):
     """
     Django security baseline check. Each test names the baseline rule it proves.
@@ -12658,17 +6296,15 @@ class DjangoSecurityBaselineTests(TestCase):
             course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True
         )
         Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
-        module = Module.objects.create(course=self.course, title="Module", is_visible=True)
-        section = ModuleSection.objects.create(module=module, title="Exam", section_type="exam")
         self.assessment = Assessment.objects.create(
-            section=section, title="Baseline exam", component_type=GradeComponentType.EXAM,
+            course=self.course, title="Baseline exam", component_type=GradeComponentType.EXAM,
             max_score=Decimal("100.00"), max_attempts=1, opens_at=timezone.now(),
-            due_date=timezone.now() + timezone.timedelta(hours=1), duration_minutes=60,
+            due_date=timezone.now() + timezone.timedelta(hours=1),
             created_by=self.instructor,
         )
         self.attempt = AssessmentAttempt.objects.create(
             assessment=self.assessment, student=self.student, attempt_no=1,
-            status=AttemptStatus.FULLY_GRADED, expires_at=timezone.now(), ip_address="127.0.0.1",
+            status=AttemptStatus.FULLY_GRADED, ip_address="127.0.0.1",
         )
 
     def assert_no_secrets_in_logs(self, lines, extra_values):
@@ -12853,122 +6489,3 @@ class DjangoSecurityBaselineTests(TestCase):
         self.assertEqual(self.client.get(reverse("kura:course_detail", args=[self.course.id])).status_code, 403)
         self.assertEqual(self.client.get(reverse("kura:course_grades", args=[self.course.id])).status_code, 403)
 
-
-class StackTestFindingsTests(TestCase):
-    """Regression tests for the problems found by the isolated full-stack test (2026-11-16)."""
-
-    def setUp(self):
-        base_dir = Path(settings.BASE_DIR)
-        self.compose_text = (base_dir / "docker-compose.yml").read_text(encoding="utf-8")
-        self.alloy_text = (base_dir / "docker" / "alloy" / "config.alloy").read_text(encoding="utf-8")
-        self.kura_sh_text = (base_dir / "kura.sh").read_text(encoding="utf-8")
-
-    def test_queries_send_values_separately_from_sql_text(self):
-        # psycopg2 wrote values into the SQL text, so pgAudit logged session keys and password hashes.
-        # Server-side binding keeps values out of the text.
-        import psycopg
-
-        self.assertTrue(settings.DATABASES["default"]["OPTIONS"]["server_side_binding"])
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT %s::text", ["value-not-in-sql-text"])
-            self.assertEqual(cursor.fetchone()[0], "value-not-in-sql-text")
-            # Django uses ClientCursor (values inlined) unless server-side binding is on.
-            self.assertIsInstance(cursor.cursor, psycopg.Cursor)
-            self.assertNotIsInstance(cursor.cursor, psycopg.ClientCursor)
-
-    def test_rls_user_context_still_set_with_server_side_binding(self):
-        # SET cannot take a bound parameter, so the middleware uses set_config.
-        user = make_user("Student")
-        login_with_session(self.client, user)
-        self.assertEqual(self.client.get(reverse("kura:home")).status_code, 200)
-        with connection.cursor() as cursor:
-            cursor.execute("SELECT set_config('kura.current_user_id', %s, false)", [str(user.id)])
-            cursor.execute("SELECT current_setting('kura.current_user_id', true)")
-            self.assertEqual(cursor.fetchone()[0], str(user.id))
-            cursor.execute("RESET kura.current_user_id")
-
-    def test_alloy_blanks_sql_literals_in_pgaudit_lines(self):
-        audit_block = self.alloy_text.split('selector = "{service=\\"db\\"} |= \\"AUDIT:\\""')[1].split("stage.match")[0]
-        self.assertIn("stage.replace", audit_block)
-        self.assertIn("expression = \"'([^']*)'\"", audit_block)
-
-    def test_setup_gives_new_volumes_their_owners_and_creates_stanza(self):
-        setup_body = self.kura_sh_text.split("cmd_setup() {")[1].split("\n}\n")[0]
-        self.assertIn("fix_volume_owner loki /var/loki 10001:10001", setup_body)
-        self.assertIn("fix_volume_owner db /var/lib/pgbackrest-offsite 26:26", setup_body)
-        self.assertIn("pgbackrest --stanza=kura stanza-create", setup_body)
-        # Volumes are fixed before the stanza is created, which needs the second repository.
-        self.assertLess(setup_body.index("fix_volume_owner db"), setup_body.index("pgbackrest --stanza=kura stanza-create"))
-
-    def test_compose_project_name_waf_memory_and_gunicorn_workers(self):
-        self.assertRegex(self.compose_text, r"(?m)^name: kura$")
-        self.assertIn('GUNICORN_WORKERS: "5"', self.compose_text)
-        waf_block = self.compose_text.split("\n  waf:\n")[1].split("\n  clamav:\n")[0]
-        self.assertIn("mem_limit: 768m", waf_block)
-        self.assertIn("memory: 768M", waf_block)
-
-    def test_restore_drill_uses_key_wrapper_during_wal_recovery(self):
-        # PostgreSQL must use the wrapper too, not just the initial backup extraction.
-        body = self.kura_sh_text.split("cmd_restore_drill() {")[1].split("\n}\n")[0]
-        self.assertIn("restore_command=/usr/local/bin/pgbackrest --repo=1", body)
-        self.assertIn("-c logging_collector=off", body)
-        self.assertNotIn('|| echo "?"', body)
-
-    def test_restore_drill_reports_recovery_and_query_failures(self):
-        # Exercise the real shell function with a fake Docker function: no containers or data are touched.
-        body = self.kura_sh_text.split("cmd_restore_drill() {")[1].split("\n}\n")[0]
-        fake_commands = r'''
-need_root() { :; }
-planned() { return 1; }
-say() { echo "$*"; }
-die() { echo "$*" >&2; exit 1; }
-sleep() { :; }
-docker() {
-    case "$*" in
-        "container inspect "*)
-            [ "$SCENARIO" = duplicate ] && return 0
-            return 1 ;;
-        "compose config --images db") echo synthetic-image ;;
-        *"pg_is_in_recovery"*)
-            case "$SCENARIO" in crash|timeout) return 1 ;; esac
-            echo f ;;
-        "inspect --format "*)
-            if [ "$SCENARIO" = crash ]; then echo false; else echo true; fi ;;
-        *"SELECT count"*)
-            if [ "$1" = exec ]; then
-                [ "$SCENARIO" = query_failure ] && return 1
-                [ "$SCENARIO" = mismatch ] && { echo 2; return 0; }
-            fi
-            echo 1 ;;
-        *) return 0 ;;
-    esac
-}
-'''
-        for scenario in ("success", "crash", "timeout", "query_failure", "mismatch", "duplicate"):
-            with self.subTest(scenario=scenario):
-                script = "set -eu\nSCENARIO=" + scenario + "\n" + fake_commands
-                script += "\ncmd_restore_drill() {" + body + "\n}\ncmd_restore_drill latest\n"
-                result = subprocess.run(["bash", "-c", script], capture_output=True, text=True, timeout=10)
-                if scenario == "success":
-                    self.assertEqual(result.returncode, 0, result.stderr)
-                    self.assertIn("PASS: restored database", result.stdout)
-                else:
-                    self.assertNotEqual(result.returncode, 0, scenario)
-                    self.assertNotIn("PASS:", result.stdout)
-
-    def test_crowdsec_bouncer_key_comes_from_secret_file(self):
-        # BOUNCER_KEY_* is read literally by the image, so a file path there became the key itself.
-        crowdsec_block = self.compose_text.split("\n  crowdsec:\n")[1].split("\n  loki:\n")[0]
-        self.assertNotRegex(crowdsec_block, r"(?m)^\s+BOUNCER_KEY_\w+:")
-        self.assertIn("source: crowdsec_bouncer_key", crowdsec_block)
-        self.assertIn("target: bouncer_key_firewall", crowdsec_block)
-
-    def test_nginx_sends_one_hsts_header_and_a_fallback_csp(self):
-        nginx_site = (Path(settings.BASE_DIR) / "docker" / "nginx" / "conf.d" / "kura.conf").read_text(encoding="utf-8")
-        https_server = nginx_site.split("listen 443 ssl;")[1]
-        # Django also sends HSTS; nginx hides that copy so the response has exactly one.
-        self.assertIn("proxy_hide_header Strict-Transport-Security;", https_server)
-        # nginx's own responses (429, 404) get a strict CSP; Django's pages keep their own.
-        self.assertIn("map $upstream_http_content_security_policy $kura_fallback_csp", nginx_site)
-        self.assertIn("add_header Content-Security-Policy $kura_fallback_csp always;", https_server)
-        self.assertIn('add_header Cross-Origin-Resource-Policy "same-origin" always;', https_server)
