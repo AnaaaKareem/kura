@@ -195,10 +195,10 @@ services:
       # Vault AppRole login for Django (credentials from environment; no Docker secret files needed).
       VAULT_ROLE_ID: "1e2b5b2e-6590-6ba0-8c4b-24fbd83d1ece"
       VAULT_SECRET_ID: "16fdc08c-7255-275f-9067-bbea747ca06f"
-    # Runs as nonroot:nonroot (distroless built-in user). No entrypoint, no setpriv,
-    # no capability changes needed. Gunicorn reads cert key files directly.
-    user: "nonroot:nonroot"
-    command: ["/python/bin/gunicorn", "-c", "gunicorn.conf.py", "config.wsgi:application"]
+    # Runs as kura (UID 10001) with no entrypoint: gunicorn starts directly.
+    # Migrations run in the kura-migrate service as kura_migrator before web starts.
+    user: "10001:10001"
+    command: ["gunicorn", "-c", "gunicorn.conf.py", "config.wsgi:application"]
     cap_drop:
       - ALL
     security_opt:
@@ -223,7 +223,7 @@ services:
       vault:
         condition: service_healthy
     healthcheck:
-      test: ["CMD", "/python/bin/python3", "-c", "import os, ssl, urllib.request; mtls = os.environ.get('MTLS_ENABLED', 'False').lower() in ('true', '1'); ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile='/certs/internal/ca.crt') if mtls else None; ctx.load_cert_chain('/certs/internal/web.crt', '/certs/internal/web.key') if mtls else None; ctx.check_hostname = False if mtls else None; urllib.request.urlopen('https://127.0.0.1:8443/login/' if mtls else 'http://127.0.0.1:8000/login/', context=ctx)"]
+      test: ["CMD", "python", "-c", "import os, ssl, urllib.request; mtls = os.environ.get('MTLS_ENABLED', 'False').lower() in ('true', '1'); ctx = ssl.create_default_context(ssl.Purpose.SERVER_AUTH, cafile='/certs/internal/ca.crt') if mtls else None; ctx.load_cert_chain('/certs/internal/web.crt', '/certs/internal/web.key') if mtls else None; ctx.check_hostname = False if mtls else None; urllib.request.urlopen('https://127.0.0.1:8443/login/' if mtls else 'http://127.0.0.1:8000/login/', context=ctx)"]
       interval: 15s
       timeout: 5s
       start_period: 60s
@@ -246,6 +246,8 @@ services:
       - ./certs/internal/ca.crt:/certs/internal/ca.crt:ro
       - ./certs/internal/migrator.crt:/certs/internal/migrator.crt:ro
       - ./certs/internal/migrator.key:/certs/internal/migrator.key:ro
+    secrets:
+      - django_secret_key
     environment:
       DEBUG: "False"
       DATABASE_NAME: kura
@@ -263,11 +265,13 @@ services:
         condition: service_healthy
       vault:
         condition: service_healthy
+    networks:
+      - backend
     cap_drop:
       - ALL
     security_opt:
       - no-new-privileges:true
-    command: ["/python/bin/python3", "manage.py", "migrate", "--noinput"]
+    command: ["python", "manage.py", "migrate", "--noinput"]
 
   # Nginx Alpine accepts TLS 1.3 only, with HSTS, rate limits, a 25MB body limit and hidden server tokens.
   # Keep its root read-only, drop capabilities and isolate it on the frontend network.
