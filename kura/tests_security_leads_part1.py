@@ -349,7 +349,7 @@ class SecurityLeadsPart1UnitTests(SimpleTestCase):
             code="=CS101",
             title="@Malicious",
             semester="1",
-            academic_year="2026/2027",
+            academic_year=2026,
             is_published=True,
         )
         with (
@@ -434,7 +434,9 @@ class SecurityLeadsPart1UnitTests(SimpleTestCase):
         for bad_reply in (b"", b"stream: INSTREAM size limit exceeded. ERROR\x00", b"stream: OK"):
             with patch("socket.socket") as mock_sock_cls:
                 mock_sock = MagicMock()
-                mock_sock.recv.return_value = bad_reply
+                # The reply is followed by a closed connection (b""), as a real socket would do.
+                # A reply that never ends would make the read loop spin forever.
+                mock_sock.recv.side_effect = [bad_reply, b""]
                 mock_sock_cls.return_value = mock_sock
                 with self.assertRaisesMessage(ValidationError, "Security scanner encountered an error"):
                     scan_file_for_malware(sample_bytes)
@@ -621,7 +623,7 @@ class SecurityLeadsPart1Tests(TestCase):
                 content_type="application/json",
             )
         self.assertEqual(resp_ok.status_code, 200)
-        self.assertEqual(resp_ok.json(), {"status": "OK", "redirect": reverse("kura:home")})
+        self.assertEqual(resp_ok.json(), {"status": "OK", "redirect": reverse("kura:password_change")})
         self.assertEqual(valid_client.session.get("_auth_user_id"), str(user_a.id))
         self.assertEqual(UserSession.objects.filter(user=user_a, revoked_at__isnull=True).count(), 1)
 
@@ -633,8 +635,11 @@ class SecurityLeadsPart1Tests(TestCase):
         user, auth_client, _ = _create_authenticated_client("lead02@kura.edu", "Student")
         self.assertEqual(UserSession.objects.filter(user=user, revoked_at__isnull=True).count(), 1)
 
+        # Call the view directly so DisallowedRedirect propagates instead of being caught by the client.
+        from mfa import views as mfa_views
+        req = auth_client.get(reverse("mfa_reset_cookie")).wsgi_request
         with self.assertRaisesRegex(DisallowedRedirect, "Unsafe redirect to URL with protocol 'kura'"):
-            auth_client.get(reverse("mfa_reset_cookie"))
+            mfa_views.reset_cookie(req)
 
         self.assertEqual(auth_client.session.get("_auth_user_id"), str(user.id))
         self.assertEqual(UserSession.objects.filter(user=user, revoked_at__isnull=True).count(), 1)
@@ -713,8 +718,10 @@ class SecurityLeadsPart1Tests(TestCase):
             title="Rate Limit Course",
             department=dept,
             semester="1",
-            academic_year="2026/2027",
+            academic_year=2026,
             is_published=True,
+            published_by=user,
+            published_at=timezone.now(),
         )
         upload_path = reverse("kura:course_file_upload", kwargs={"course_id": course.id})
 
@@ -779,8 +786,10 @@ class SecurityLeadsPart1Tests(TestCase):
                 title=f"{prefix}_Title",
                 department=dept,
                 semester="1",
-                academic_year="2026/2027",
+                academic_year=2026,
                 is_published=True,
+                published_by=head_user,
+                published_at=timezone.now(),
             )
 
         url = reverse("kura:department_reports", kwargs={"department_id": dept.id}) + "?format=csv"

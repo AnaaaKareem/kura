@@ -25,6 +25,11 @@ FROM python:3.14-slim@sha256:930e1abba7c4e8f96ed93e8012c35d174d7732752731bbd5e8e
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1
 
+# Cache-busting arg: bump this value to force re-copy of the application source
+# (e.g. after editing test fixtures or source code).
+ARG CACHEBUST=0
+ENV CACHEBUST=${CACHEBUST}
+
 WORKDIR /app
 
 COPY --from=builder /install /usr/local
@@ -69,6 +74,7 @@ COPY --from=static /app/staticfiles /app/staticfiles
 # Copy application source code needed at runtime (gunicorn imports config.wsgi)
 COPY --from=static /app/kura /app/kura
 COPY --from=static /app/config /app/config
+COPY --from=static /app/templates /app/templates
 COPY --from=static /app/manage.py /app/manage.py
 COPY --from=static /app/gunicorn.conf.py /app/gunicorn.conf.py
 

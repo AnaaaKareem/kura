@@ -111,7 +111,11 @@ class SecurityRouteContractUnitTests(SimpleTestCase):
         views reject POST with 405 Method Not Allowed.
         """
         rf = RequestFactory()
-        actor = SimpleNamespace(is_authenticated=True, id=uuid.uuid4())
+        actor = SimpleNamespace(
+            is_authenticated=True,
+            is_active=True,
+            id=uuid.uuid4(),
+        )
         dummy_uuid = uuid.uuid4()
 
         post_only_views = [
@@ -131,7 +135,10 @@ class SecurityRouteContractUnitTests(SimpleTestCase):
                 view_fn = getattr(import_module(mod_name), fn_name)
                 req = _attach_session_and_messages(rf.get("/dummy/"))
                 req.user = actor
-                with patch("kura.views.can_access_learning_records", return_value=True):
+                with (
+                    patch("kura.views.can_access_learning_records", return_value=True),
+                    patch("kura.views.has_role", side_effect=lambda u, r: r != "Admin"),
+                ):
                     resp = view_fn(req, **kw)
                 self.assertEqual(resp.status_code, 405)
 
@@ -158,7 +165,14 @@ class SecurityRouteContractUnitTests(SimpleTestCase):
         grade release, and grade change requests.
         """
         rf = RequestFactory()
-        actor = SimpleNamespace(is_authenticated=True, is_active=True, id=uuid.uuid4(), mfa_enabled=True, email="a@kura.edu")
+        actor = SimpleNamespace(
+            is_authenticated=True,
+            is_active=True,
+            id=uuid.uuid4(),
+            pk=uuid.uuid4(),
+            mfa_enabled=True,
+            email="a@kura.edu",
+        )
         other_id = uuid.uuid4()
 
         # Override 3: start_fido2 / fido2_begin_reg lack fresh_mfa check, while fido2_complete_reg enforces it.
@@ -171,9 +185,11 @@ class SecurityRouteContractUnitTests(SimpleTestCase):
         # Override 4: course_list denies Registrar; schedule_list denies Admin and Registrar.
         req_reg = _attach_session_and_messages(rf.get("/courses/"))
         req_reg.user = actor
-        with patch("kura.views.has_role", side_effect=lambda u, r: r == "Registrar"), self.assertRaises(PermissionDenied):
+        with patch("kura.views.has_role", side_effect=lambda u, r: r == "Registrar"), patch(
+            "kura.permissions.has_role", side_effect=lambda u, r: r == "Registrar"
+        ), self.assertRaises(PermissionDenied):
             course_list_view(req_reg)
-        with patch("kura.views.can_access_learning_records", return_value=False), self.assertRaises(PermissionDenied):
+        with patch("kura.views.has_role", side_effect=lambda u, r: r == "Admin"), self.assertRaises(PermissionDenied):
             schedule_list_view(req_reg)
 
         # Override 5: course_create loads ALL departments headed by request.user (not single first-found).
@@ -371,6 +387,7 @@ class SecurityRouteContractUnitTests(SimpleTestCase):
         with (
             patch("kura.views.can_access_learning_records", return_value=True),
             patch("kura.views.has_role", return_value=False),
+            patch("kura.views.is_course_staff", return_value=False),
             patch("kura.views.get_object_or_404", return_value=self_attempt),
             self.assertRaises(PermissionDenied),
         ):
@@ -410,6 +427,8 @@ class SecurityRouteContractUnitTests(SimpleTestCase):
             is_processing_restricted=False,
             erasure_requested_at=None,
             created_at=now,
+            is_authenticated=True,
+            is_active=True,
             save=MagicMock(),
         )
 
@@ -545,6 +564,7 @@ class SecurityRouteAuthorizationMatrixTests(TestCase):
             "passkey": {"key_id": objs["passkey_stu1"].id},
             "user_session": {"session_id": create_authenticated_client(users["student_1"])[1].id},
             "target_user": {"user_id": users["student_2"].id},
+            "student_1": {"student_id": users["student_1"].id},
             "quarantined_file": {"quarantined_file_id": objs["quarantined_file"].id},
             "course_a1": {"course_id": courses["course_a1"].id},
             "enrollment_a1": {"enrollment_id": objs["enrollment_a1"].id},
@@ -569,8 +589,8 @@ class SecurityRouteAuthorizationMatrixTests(TestCase):
         """Plan ID: CLS-01..CLS-08 | Risk ID: R01, R10, R12
         Dynamically test all 90 named routes for anonymous fail-closed behavior and CSRF rejection.
         """
-        csrf_client = Client(enforce_csrf_checks=True)
-        csrf_client.force_login(self.fx["users"]["admin"], backend="kura.backends.KuraAuthBackend")
+        # A tracked session is required, otherwise SessionValidationMiddleware redirects before CSRF runs.
+        csrf_client, _ = create_authenticated_client(self.fx["users"]["admin"], enforce_csrf_checks=True)
 
         for route_name, meta in ROUTE_CLASS_MAP.items():
             url = self._resolve_url(route_name, meta["kw"])

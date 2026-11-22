@@ -169,9 +169,9 @@ ROUTE_CLASS_MAP = {
 }
 
 
-def create_authenticated_client(user, fresh_mfa=True, ip_address="127.0.0.1"):
+def create_authenticated_client(user, fresh_mfa=True, ip_address="127.0.0.1", enforce_csrf_checks=False):
     """Create a Django Client backed by a valid tracked UserSession for `user`."""
-    client = Client()
+    client = Client(enforce_csrf_checks=enforce_csrf_checks)
     client.force_login(user, backend="kura.backends.KuraAuthBackend")
     session = client.session
     if not session.session_key:
@@ -200,7 +200,9 @@ def _create_synthetic_user(email, role_names, mfa_enabled=True):
     user.mfa_enabled = mfa_enabled
     totp_key = random_hex(20)
     user.mfa_secret = totp_key if mfa_enabled else ""
-    user.save(update_fields=["mfa_enabled", "mfa_secret"])
+    # Synthetic users have already finished first-login onboarding; otherwise middleware redirects every request.
+    user.must_change_password = False
+    user.save(update_fields=["mfa_enabled", "mfa_secret", "must_change_password"])
     for role_name in role_names:
         role, _ = Role.objects.get_or_create(name=role_name)
         UserRole.objects.get_or_create(user=user, role=role)
@@ -259,16 +261,18 @@ def build_security_fixture_set():
         code="CS101",
         title="Secure Software",
         semester="1",
-        academic_year="2026/2027",
+        academic_year=2026,
         created_by=head_a,
         is_published=True,
+        published_by=head_a,
+        published_at=timezone.now(),
     )
     course_a2 = Course.objects.create(
         department=dept_a,
         code="CS102",
         title="Draft Systems",
         semester="2",
-        academic_year="2026/2027",
+        academic_year=2026,
         created_by=head_a,
         is_published=False,
     )
@@ -277,16 +281,18 @@ def build_security_fixture_set():
         code="MATH101",
         title="Discrete Math",
         semester="1",
-        academic_year="2026/2027",
+        academic_year=2026,
         created_by=head_b,
         is_published=True,
+        published_by=head_b,
+        published_at=timezone.now(),
     )
     course_b2 = Course.objects.create(
         department=dept_b,
         code="MATH102",
         title="Algebra Draft",
         semester="2",
-        academic_year="2026/2027",
+        academic_year=2026,
         created_by=head_b,
         is_published=False,
     )
@@ -391,7 +397,7 @@ def build_security_fixture_set():
         assessment=assessment_open,
         student=student_1,
         attempt_no=2,
-        status=AttemptStatus.SUBMITTED,
+        status=AttemptStatus.IN_PROGRESS,
         submitted_at=now - timedelta(hours=1),
         submission_hash=hashlib.sha256(b"submission").hexdigest(),
         ip_address="127.0.0.1",
@@ -400,7 +406,7 @@ def build_security_fixture_set():
         assessment=assessment_open,
         student=dual_ta_student,
         attempt_no=1,
-        status=AttemptStatus.SUBMITTED,
+        status=AttemptStatus.IN_PROGRESS,
         submitted_at=now - timedelta(hours=1),
         submission_hash=hashlib.sha256(b"dual").hexdigest(),
         ip_address="127.0.0.1",
@@ -414,23 +420,31 @@ def build_security_fixture_set():
         attempt=attempt_submitted,
         score=Decimal("78.00"),
         status=GradeStatus.DRAFT,
-        graded_by=instructor_a,
+        grader=instructor_a,
     )
     grade_finalized = Grade.objects.create(
         assessment=assessment_open,
         student=student_1,
-        attempt=attempt_submitted,
+        attempt=attempt_in_progress,
         score=Decimal("82.00"),
         status=GradeStatus.FINALIZED,
-        graded_by=instructor_a,
+        grader=instructor_a,
+    )
+    # Grade.attempt is one-to-one, so the released grade needs its own attempt.
+    attempt_released = AssessmentAttempt.objects.create(
+        assessment=assessment_open,
+        student=student_1,
+        attempt_no=3,
+        status=AttemptStatus.IN_PROGRESS,
+        ip_address="127.0.0.1",
     )
     grade_released = Grade.objects.create(
         assessment=assessment_open,
         student=student_1,
-        attempt=attempt_submitted,
+        attempt=attempt_released,
         score=Decimal("88.00"),
         status=GradeStatus.RELEASED,
-        graded_by=instructor_a,
+        grader=instructor_a,
         released_by=instructor_a,
         released_at=now - timedelta(minutes=10),
     )
@@ -456,13 +470,12 @@ def build_security_fixture_set():
         student=student_1,
         final_score=Decimal("88.00"),
         status=GradeStatus.RELEASED,
-        released_by=instructor_a,
+        finalized_by=instructor_a,
         released_at=now - timedelta(minutes=5),
     )
     quarantined = QuarantinedFile.objects.create(
         uploaded_by=student_1,
         original_filename="eicar.pdf",
-        mime_type="application/pdf",
         size_bytes=68,
         sha256_hash=hashlib.sha256(b"eicar").hexdigest(),
         detection="Eicar-Test-Signature",
