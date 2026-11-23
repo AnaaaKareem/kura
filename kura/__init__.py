@@ -57,16 +57,8 @@ if "jose" not in _sys.modules:
     def _raw_rs_to_der(r, s, curve):
         # JWS ECDSA signatures are raw r || s (IEEE P1363). cryptography's
         # verify() expects DER-encoded signatures. Convert raw r||s -> DER.
-        if curve == "P-256":
-            field_size = 32
-        elif curve == "P-384":
-            field_size = 48
-        elif curve == "P-521":
-            field_size = 66
-        else:
+        if curve not in ("P-256", "P-384", "P-521"):
             raise ValueError(f"Unsupported curve: {curve}")
-        r_bytes = _int_to_bytes(r, field_size)
-        s_bytes = _int_to_bytes(s, field_size)
         return _encode_dss_signature(r, s)
 
     def _der_to_raw_rs(sig_der, field_size):

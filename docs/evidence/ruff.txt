@@ -1,0 +1,3036 @@
+All checks passed!
+unformatted: File would be reformatted
+   --> architecture.py:79:31
+    |
+78  |         ci_pipeline = GithubActions("ruff + pip-audit\nDjango tests (PostgreSQL 17)\nSemgrep SAST")
+    -         image_scanner = Trivy(
+    -             "Docker build + Trivy\n(web, nginx;\nfails on fixable\nHigh or Critical)"
+    -         )
+79  +         image_scanner = Trivy("Docker build + Trivy\n(web, nginx;\nfails on fixable\nHigh or Critical)")
+80  |         # The ZAP baseline job scans only the signed-out login page and runs with -I, so warnings do not fail the build.
+--------------------------------------------------------------------------------
+88  |         with Cluster("Layer 1: host firewall"):
+    -             host_firewall = Firewall("nftables\ndefault DROP\n(HTTPS 443 + HTTP 80 open,\nSSH 22 only from\nadmin allowlist)")
+89  +             host_firewall = Firewall(
+90  +                 "nftables\ndefault DROP\n(HTTPS 443 + HTTP 80 open,\nSSH 22 only from\nadmin allowlist)"
+91  +             )
+92  |             crowdsec = Firewall("CrowdSec\nKura parsers + scenarios,\nsshd collection,\nbans real client IPs")
+--------------------------------------------------------------------------------
+97  |         with Cluster("Layer 2: frontend network"):
+    -             nginx = Nginx("nginx\nports 80 + 443\nTLS 1.3, HSTS,\nself-signed cert (lab),\n10 req/s general,\n10 req/min sign-in,\n25 MiB cap")
+98  +             nginx = Nginx(
+99  +                 "nginx\nports 80 + 443\nTLS 1.3, HSTS,\nself-signed cert (lab),\n10 req/s general,\n10 req/min sign-in,\n25 MiB cap"
+100 +             )
+101 |             waf = Firewall("Coraza WAF\nOWASP Core Rule Set")
+--------------------------------------------------------------------------------
+111 |             vault = Vault(
+    -                 "HashiCorp Vault\nTransit (MFA seeds,\nfile keys),\n"
+    -                 "dynamic DB users (15 min),\nPKI (30-day certs)"
+112 +                 "HashiCorp Vault\nTransit (MFA seeds,\nfile keys),\ndynamic DB users (15 min),\nPKI (30-day certs)"
+113 |             )
+    |
+
+unformatted: File would be reformatted
+   --> config/settings.py:165:24
+    |
+164 | DB_OPTIONS = {}
+    - _default_db_ssl_mode = "" if (DEBUG or DATABASES["default"]["HOST"] in ("localhost", "127.0.0.1", "::1")) else "verify-full"
+165 + _default_db_ssl_mode = (
+166 +     "" if (DEBUG or DATABASES["default"]["HOST"] in ("localhost", "127.0.0.1", "::1")) else "verify-full"
+167 + )
+168 | DB_SSL_MODE = os.environ.get("DB_SSL_MODE", _default_db_ssl_mode)
+    |
+
+unformatted: File would be reformatted
+   --> kura/__init__.py:14:1
+    |
+13  | """
+14  +
+15  | import sys as _sys
+--------------------------------------------------------------------------------
+104 |
+    -             hash_alg = (
+    -                 hashes.SHA256() if alg == "RS256"
+    -                 else hashes.SHA384() if alg == "RS384"
+    -                 else hashes.SHA512()
+    -             )
+105 +             hash_alg = hashes.SHA256() if alg == "RS256" else hashes.SHA384() if alg == "RS384" else hashes.SHA512()
+106 |             try:
+--------------------------------------------------------------------------------
+112 |
+    -             hash_alg = (
+    -                 hashes.SHA256() if alg == "ES256"
+    -                 else hashes.SHA384() if alg == "ES384"
+    -                 else hashes.SHA512()
+    -             )
+113 +             hash_alg = hashes.SHA256() if alg == "ES256" else hashes.SHA384() if alg == "ES384" else hashes.SHA512()
+114 |             # JWS signature is raw r || s; convert to DER for cryptography.
+115 |             curve = {"ES256": "P-256", "ES384": "P-384", "ES512": "P-521"}[alg]
+116 |             sig_der = _raw_rs_to_der(
+117 |                 int.from_bytes(signature[: len(signature) // 2], "big"),
+    -                 int.from_bytes(signature[len(signature) // 2:], "big"),
+118 +                 int.from_bytes(signature[len(signature) // 2 :], "big"),
+119 |                 curve,
+--------------------------------------------------------------------------------
+188 |             hash_alg = (
+    -                 hashes.SHA256() if algorithm == "RS256"
+    -                 else hashes.SHA384() if algorithm == "RS384"
+189 +                 hashes.SHA256()
+190 +                 if algorithm == "RS256"
+191 +                 else hashes.SHA384()
+192 +                 if algorithm == "RS384"
+193 |                 else hashes.SHA512()
+--------------------------------------------------------------------------------
+199 |             hash_alg = (
+    -                 hashes.SHA256() if algorithm == "ES256"
+    -                 else hashes.SHA384() if algorithm == "ES384"
+200 +                 hashes.SHA256()
+201 +                 if algorithm == "ES256"
+202 +                 else hashes.SHA384()
+203 +                 if algorithm == "ES384"
+204 |                 else hashes.SHA512()
+--------------------------------------------------------------------------------
+216 |     class _JoseModule:
+    -         jwt = type("JWT", (), {
+    -             "decode": staticmethod(jwt_decode),
+    -             "encode": staticmethod(jwt_encode),
+    -         })()
+217 +         jwt = type(
+218 +             "JWT",
+219 +             (),
+220 +             {
+221 +                 "decode": staticmethod(jwt_decode),
+222 +                 "encode": staticmethod(jwt_encode),
+223 +             },
+224 +         )()
+225 |
+226 |     _sys.modules["jose"] = _JoseModule()
+227 |     _sys.modules["jose.jwt"] = _JoseModule().jwt
+    -     _sys.modules["jose.exceptions"] = type("Exceptions", (), {
+    -         "JWTError": ValueError,
+    -         "ExpiredSignatureError": ValueError,
+    -         "JWTClaimsError": ValueError,
+    -     })()
+228 +     _sys.modules["jose.exceptions"] = type(
+229 +         "Exceptions",
+230 +         (),
+231 +         {
+232 +             "JWTError": ValueError,
+233 +             "ExpiredSignatureError": ValueError,
+234 +             "JWTClaimsError": ValueError,
+235 +         },
+236 +     )()
+237 |
+    |
+
+unformatted: File would be reformatted
+    --> kura/forms.py:236:47
+     |
+235  |         if self.request is not None:
+     -             authenticated_user = authenticate(
+     -                 self.request, username=self.user.email, password=old_password
+     -             )
+236  +             authenticated_user = authenticate(self.request, username=self.user.email, password=old_password)
+237  |             password_matches = authenticated_user is not None
+--------------------------------------------------------------------------------
+484  |         label="Staff title",
+     -         choices=[("", "Select a title")] + [(name, name) for name in
+     -                  ["Admin", "Registrar", "Department head", "Instructor", "Teaching assistant"]],
+485  +         choices=[("", "Select a title")]
+486  +         + [(name, name) for name in ["Admin", "Registrar", "Department head", "Instructor", "Teaching assistant"]],
+487  |         widget=forms.Select(attrs={"class": "form-select"}),
+488  |     )
+489  |
+     -     building = forms.ModelChoiceField(queryset=Building.objects.order_by("name"), required=False,
+     -                                       widget=forms.Select(attrs={"class": "form-select", "data-office-building": ""}))
+     -     room = forms.ModelChoiceField(queryset=Room.objects.none(), required=False,
+     -                                   widget=forms.Select(attrs={"class": "form-select", "data-office-room": ""}))
+490  +     building = forms.ModelChoiceField(
+491  +         queryset=Building.objects.order_by("name"),
+492  +         required=False,
+493  +         widget=forms.Select(attrs={"class": "form-select", "data-office-building": ""}),
+494  +     )
+495  +     room = forms.ModelChoiceField(
+496  +         queryset=Room.objects.none(),
+497  +         required=False,
+498  +         widget=forms.Select(attrs={"class": "form-select", "data-office-room": ""}),
+499  +     )
+500  |
+--------------------------------------------------------------------------------
+786  |         if department is not None:
+     -             self.fields["user"].queryset = self.fields["user"].queryset.filter(
+     -                 staff_profile__department=department
+     -             )
+787  +             self.fields["user"].queryset = self.fields["user"].queryset.filter(staff_profile__department=department)
+788  |
+--------------------------------------------------------------------------------
+808  |         if department is not None:
+     -             self.fields["user"].queryset = self.fields["user"].queryset.filter(
+     -                 staff_profile__department=department
+     -             )
+809  +             self.fields["user"].queryset = self.fields["user"].queryset.filter(staff_profile__department=department)
+810  |
+--------------------------------------------------------------------------------
+974  |         max_length=255,
+     -         widget=forms.TextInput(
+     -             attrs={"class": "form-control", "placeholder": "e.g. Coursework 1"}
+     -         ),
+975  +         widget=forms.TextInput(attrs={"class": "form-control", "placeholder": "e.g. Coursework 1"}),
+976  |     )
+--------------------------------------------------------------------------------
+1008 |         label="Opening Window",
+     -         widget=forms.DateTimeInput(
+     -             format="%Y-%m-%dT%H:%M", attrs={"class": "form-control", "type": "datetime-local"}
+     -         ),
+1009 +         widget=forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"class": "form-control", "type": "datetime-local"}),
+1010 |     )
+1011 |
+1012 |     due_date = forms.DateTimeField(
+1013 |         label="Submission Due Date",
+     -         widget=forms.DateTimeInput(
+     -             format="%Y-%m-%dT%H:%M", attrs={"class": "form-control", "type": "datetime-local"}
+     -         ),
+1014 +         widget=forms.DateTimeInput(format="%Y-%m-%dT%H:%M", attrs={"class": "form-control", "type": "datetime-local"}),
+1015 |     )
+--------------------------------------------------------------------------------
+1032 |
+     -     title = forms.CharField(
+     -         label="Title", max_length=255, widget=forms.TextInput(attrs={"class": "form-control"})
+     -     )
+1033 +     title = forms.CharField(label="Title", max_length=255, widget=forms.TextInput(attrs={"class": "form-control"}))
+1034 |     file = forms.FileField(label="Choose File", widget=forms.FileInput(attrs={"class": "form-control"}))
+--------------------------------------------------------------------------------
+1168 |     day = forms.ChoiceField(choices=[("", "All days")] + list(DayOfWeek.choices), required=False)
+     -     session_type = forms.ChoiceField(choices=[("", "All formats")] + list(SessionType.choices), required=False, label="Format")
+1169 +     session_type = forms.ChoiceField(
+1170 +         choices=[("", "All formats")] + list(SessionType.choices), required=False, label="Format"
+1171 +     )
+1172 |
+--------------------------------------------------------------------------------
+1207 |     q = forms.CharField(required=False, max_length=150, label="Student")
+     -     assessment = forms.ModelChoiceField(queryset=Assessment.objects.none(), required=False, empty_label="All assessments")
+1208 +     assessment = forms.ModelChoiceField(
+1209 +         queryset=Assessment.objects.none(), required=False, empty_label="All assessments"
+1210 +     )
+1211 |     status = forms.ChoiceField(choices=[("", "All statuses")] + list(GradeStatus.choices), required=False)
+     |
+
+unformatted: File would be reformatted
+  --> kura/logging_utils.py:37:1
+   |
+36 |
+37 +
+38 | security_logger = logging.getLogger("kura.security")
+   |
+
+unformatted: File would be reformatted
+   --> kura/management/commands/anonymize_ips.py:79:102
+    |
+78  |                 # 2. Anonymize historic AttendanceRecords
+    -                 attendance_records = AttendanceRecord.objects.filter(verified_at__lt=cutoff).exclude(ip_address__isnull=True)
+79  +                 attendance_records = AttendanceRecord.objects.filter(verified_at__lt=cutoff).exclude(
+80  +                     ip_address__isnull=True
+81  +                 )
+82  |                 attendance_count = 0
+--------------------------------------------------------------------------------
+111 |                 else:
+    -                     axes_attempts = AccessAttempt.objects.filter(attempt_time__lt=cutoff).exclude(ip_address__isnull=True)
+112 +                     axes_attempts = AccessAttempt.objects.filter(attempt_time__lt=cutoff).exclude(
+113 +                         ip_address__isnull=True
+114 +                     )
+115 |                     axes_attempt_count = 0
+    |
+
+unformatted: File would be reformatted
+  --> kura/management/commands/disable_inactive_accounts.py:84:32
+   |
+83 |         self.stdout.write(
+   -             self.style.SUCCESS(
+   -                 f"Disabled {disabled_count} inactive account(s) ({admin_disabled_count} Admin)."
+   -             )
+84 +             self.style.SUCCESS(f"Disabled {disabled_count} inactive account(s) ({admin_disabled_count} Admin).")
+85 |         )
+   |
+
+unformatted: File would be reformatted
+  --> kura/management/commands/finalize_attempts.py:27:31
+   |
+26 |                 with transaction.atomic():
+   -                     attempt = AssessmentAttempt.objects.select_for_update().select_related("assessment").get(
+   -                         id=overdue_attempt.id
+27 +                     attempt = (
+28 +                         AssessmentAttempt.objects.select_for_update()
+29 +                         .select_related("assessment")
+30 +                         .get(id=overdue_attempt.id)
+31 |                     )
+   |
+
+unformatted: File would be reformatted
+   --> kura/management/commands/send_queued_emails.py:67:32
+    |
+66  |         for expired_email_id in expired_ids:
+    -             log_security_event(None, "email.expired", {"email_id": expired_email_id, "error_type": "Expired"}, level=logging.WARNING)
+67  +             log_security_event(
+68  +                 None, "email.expired", {"email_id": expired_email_id, "error_type": "Expired"}, level=logging.WARNING
+69  +             )
+70  |
+--------------------------------------------------------------------------------
+133 |         # Print only counts, never addresses or contents.
+    -         self.stdout.write(
+    -             f"Sent {sent_count}, failed {failed_count}, expired {len(expired_ids)}."
+    -         )
+134 +         self.stdout.write(f"Sent {sent_count}, failed {failed_count}, expired {len(expired_ids)}.")
+    |
+
+unformatted: File would be reformatted
+  --> kura/management/commands/verify_backup_config.py:75:32
+   |
+74 |         if "repo1-cipher-pass=file:" in pgbackrest_config_text:
+   -             raise CommandError("[-] pgBackRest does not support file: syntax for repo1-cipher-pass; use PGBACKREST_REPO1_CIPHER_PASS")
+75 +             raise CommandError(
+76 +                 "[-] pgBackRest does not support file: syntax for repo1-cipher-pass; use PGBACKREST_REPO1_CIPHER_PASS"
+77 +             )
+78 |
+79 |         wrapper_path = base_dir / "docker" / "postgres" / "pgbackrest-wrapper.sh"
+80 |         entrypoint_path = base_dir / "docker" / "postgres" / "entrypoint.sh"
+81 |         if not wrapper_path.exists() or "PGBACKREST_REPO1_CIPHER_PASS" not in wrapper_path.read_text(encoding="utf-8"):
+   -             raise CommandError("[-] pgbackrest-wrapper.sh must export PGBACKREST_REPO1_CIPHER_PASS from the Docker secret")
+   -         if not entrypoint_path.exists() or "PGBACKREST_REPO1_CIPHER_PASS" not in entrypoint_path.read_text(encoding="utf-8"):
+   -             raise CommandError("[-] docker/postgres/entrypoint.sh must export PGBACKREST_REPO1_CIPHER_PASS from the Docker secret")
+82 +             raise CommandError(
+83 +                 "[-] pgbackrest-wrapper.sh must export PGBACKREST_REPO1_CIPHER_PASS from the Docker secret"
+84 +             )
+85 +         if not entrypoint_path.exists() or "PGBACKREST_REPO1_CIPHER_PASS" not in entrypoint_path.read_text(
+86 +             encoding="utf-8"
+87 +         ):
+88 +             raise CommandError(
+89 +                 "[-] docker/postgres/entrypoint.sh must export PGBACKREST_REPO1_CIPHER_PASS from the Docker secret"
+90 +             )
+91 |
+   |
+
+unformatted: File would be reformatted
+  --> kura/management/commands/write_app_metrics.py:53:14
+   |
+52 |             ("kura_outbox_failed_total", "counter", "Emails given up on after all attempts.", failed_count),
+   -             ("kura_quarantined_files", "gauge", "Uploads rejected by ClamAV and kept in quarantine.", quarantined_count),
+53 +             (
+54 +                 "kura_quarantined_files",
+55 +                 "gauge",
+56 +                 "Uploads rejected by ClamAV and kept in quarantine.",
+57 +                 quarantined_count,
+58 +             ),
+59 |             ("kura_active_sessions", "gauge", "Sessions that are still valid.", active_sessions),
+   |
+
+unformatted: File would be reformatted
+   --> kura/middleware.py:99:20
+    |
+98  |                 request.session.set_expiry(idle_seconds)
+    -             except (ValueError, TypeError):
+99  +             except ValueError, TypeError:
+100 |                 log_security_event(request, "session.invalid", {"reason": "revoked"}, level=logging.WARNING)
+    |
+
+unformatted: File would be reformatted
+    --> kura/models.py:1149:20
+     |
+1148 |                 condition=~models.Q(old_status=GradeStatus.RELEASED)
+     -                 | (
+     -                     models.Q(approved_by__isnull=False)
+     -                     & models.Q(reason__isnull=False)
+     -                     & ~models.Q(reason="")
+     -                 ),
+1149 +                 | (models.Q(approved_by__isnull=False) & models.Q(reason__isnull=False) & ~models.Q(reason="")),
+1150 |                 name="released_grade_change_requires_approval_and_reason",
+     |
+
+unformatted: File would be reformatted
+   --> kura/permissions.py:238:12
+    |
+237 |         age = timezone.now().timestamp() - float(confirmed_at)
+    -     except (ValueError, TypeError):
+238 +     except ValueError, TypeError:
+239 |         return False
+    |
+
+unformatted: File would be reformatted
+    --> kura/tests.py:112:1
+     |
+111  |
+112  +
+113  | class EmailConfigurationTests(TestCase):
+--------------------------------------------------------------------------------
+140  |         from config import settings
+141  +
+142  |         # EMAIL_BACKEND is set at import time from DEBUG; override_settings(DEBUG)
+--------------------------------------------------------------------------------
+157  |         import ssl
+158  +
+159  |         # ssl.create_default_context() verifies certificates by default
+--------------------------------------------------------------------------------
+166  |         import os
+167  +
+168  |         # EMAIL_HOST_PASSWORD must come from Vault KV, not from os.environ or
+--------------------------------------------------------------------------------
+179  |         from config import settings
+180  +
+181  |         if settings.DEBUG:
+--------------------------------------------------------------------------------
+208  |
+209  +
+210  | def login_with_session(client, user):
+--------------------------------------------------------------------------------
+227  |
+228  +
+229  | def confirm_second_factor(client):
+--------------------------------------------------------------------------------
+236  |
+237  +
+238  | class RolesAndPermissionsTests(TestCase):
+--------------------------------------------------------------------------------
+363  |         department = Department.objects.create(name="Role change", code="ROLECHANGE")
+     -         course = Course.objects.create(department=department, code="RC1", title="Role", semester="1", academic_year=2026)
+364  +         course = Course.objects.create(
+365  +             department=department, code="RC1", title="Role", semester="1", academic_year=2026
+366  +         )
+367  |         student = make_user("Student")
+--------------------------------------------------------------------------------
+374  |         department = Department.objects.create(name="Release tests", code="RELEASE")
+     -         course = Course.objects.create(department=department, code="REL1", title="Release", semester="1", academic_year=2026)
+375  +         course = Course.objects.create(
+376  +             department=department, code="REL1", title="Release", semester="1", academic_year=2026
+377  +         )
+378  |         assistant = make_user("Teaching assistant")
+379  |         former_instructor = make_user("Student")
+380  |         instructor_as_assistant = make_user("Instructor")
+     -         CourseStaff.objects.create(course=course, user=assistant, staff_role="teaching_assistant", can_release_grades=True)
+     -         CourseStaff.objects.create(course=course, user=former_instructor, staff_role="lead_instructor", can_release_grades=True)
+     -         CourseStaff.objects.create(course=course, user=instructor_as_assistant, staff_role="teaching_assistant", can_release_grades=True)
+381  +         CourseStaff.objects.create(
+382  +             course=course, user=assistant, staff_role="teaching_assistant", can_release_grades=True
+383  +         )
+384  +         CourseStaff.objects.create(
+385  +             course=course, user=former_instructor, staff_role="lead_instructor", can_release_grades=True
+386  +         )
+387  +         CourseStaff.objects.create(
+388  +             course=course, user=instructor_as_assistant, staff_role="teaching_assistant", can_release_grades=True
+389  +         )
+390  |         self.assertFalse(can_release_grades(assistant, course))
+--------------------------------------------------------------------------------
+424  |
+425  +
+426  | class LoginAndLogoutTests(TestCase):
+--------------------------------------------------------------------------------
+558  |
+559  +
+560  | class FirstLoginPasswordChangeTests(TestCase):
+--------------------------------------------------------------------------------
+578  |         login_with_session(self.client, self.user)
+     -         response = self.client.post(reverse("kura:password_change"), {
+     -             "old_password": self.password,
+     -             "new_password": "NewSecurePassword456!",
+     -             "confirm_password": "NewSecurePassword456!",
+     -         })
+579  +         response = self.client.post(
+580  +             reverse("kura:password_change"),
+581  +             {
+582  +                 "old_password": self.password,
+583  +                 "new_password": "NewSecurePassword456!",
+584  +                 "confirm_password": "NewSecurePassword456!",
+585  +             },
+586  +         )
+587  |         self.assertEqual(response.status_code, 400)
+--------------------------------------------------------------------------------
+608  |         # Show a distinct confirmation card after a successful password change.
+     -         self.assertContains(response, 'data-password-change-confirmation')
+609  +         self.assertContains(response, "data-password-change-confirmation")
+610  |
+--------------------------------------------------------------------------------
+666  |
+667  +
+668  | class DemoDataSeedCommandTests(TestCase):
+--------------------------------------------------------------------------------
+722  |
+723  +
+724  | class PasswordResetTests(TestCase):
+--------------------------------------------------------------------------------
+746  |         raw_token, reset_record = self.make_reset_token()
+     -         response = self.client.post(reverse("kura:password_reset_confirm", kwargs={"token": raw_token}), {
+     -             "code": "000000",
+     -             "new_password": "BrandNewPassword789!",
+     -             "confirm_password": "BrandNewPassword789!",
+     -         })
+747  +         response = self.client.post(
+748  +             reverse("kura:password_reset_confirm", kwargs={"token": raw_token}),
+749  +             {
+750  +                 "code": "000000",
+751  +                 "new_password": "BrandNewPassword789!",
+752  +                 "confirm_password": "BrandNewPassword789!",
+753  +             },
+754  +         )
+755  |         self.assertEqual(response.status_code, 400)
+--------------------------------------------------------------------------------
+846  |
+     -         response = self.client.get(
+     -             reverse("kura:password_reset_confirm", kwargs={"token": raw_token})
+     -         )
+847  +         response = self.client.get(reverse("kura:password_reset_confirm", kwargs={"token": raw_token}))
+848  |         self.assertRedirects(response, reverse("kura:password_reset_request"))
+--------------------------------------------------------------------------------
+860  |
+     -         response = self.client.get(
+     -             reverse("kura:password_reset_confirm", kwargs={"token": raw_token})
+     -         )
+861  +         response = self.client.get(reverse("kura:password_reset_confirm", kwargs={"token": raw_token}))
+862  |         self.assertRedirects(response, reverse("kura:password_reset_request"))
+863  |
+864  +
+865  | class MFATests(TestCase):
+--------------------------------------------------------------------------------
+907  |
+908  +
+909  | class MySessionsTests(TestCase):
+--------------------------------------------------------------------------------
+970  |         login_with_session(self.client, admin)
+     -         response = self.client.get(reverse("kura:admin_sessions"), {
+     -             "q": "Amira", "role": "Student", "ip": "192.168", "state": "active",
+     -         })
+971  +         response = self.client.get(
+972  +             reverse("kura:admin_sessions"),
+973  +             {
+974  +                 "q": "Amira",
+975  +                 "role": "Student",
+976  +                 "ip": "192.168",
+977  +                 "state": "active",
+978  +             },
+979  +         )
+980  |         self.assertEqual(response.status_code, 200)
+--------------------------------------------------------------------------------
+987  |         admin_session = UserSession.objects.create(
+     -             user=admin, session_token_hash=secrets.token_hex(32),
+988  +             user=admin,
+989  +             session_token_hash=secrets.token_hex(32),
+990  |             expires_at=timezone.now() + timezone.timedelta(days=1),
+--------------------------------------------------------------------------------
+1009 |         self.assertNotContains(response, self.user_a.email)
+     -         self.assertFormError(response.context["form"], "state", "Select a valid choice. unknown is not one of the available choices.")
+1010 +         self.assertFormError(
+1011 +             response.context["form"], "state", "Select a valid choice. unknown is not one of the available choices."
+1012 +         )
+1013 |
+--------------------------------------------------------------------------------
+1030 |         with self.assertLogs("kura.security", level="INFO") as logs:
+     -             response = self.client.post(reverse("kura:admin_sessions_revoke"), {
+     -                 "action": "one", "session_id": str(self.session_a.id),
+     -             })
+1031 +             response = self.client.post(
+1032 +                 reverse("kura:admin_sessions_revoke"),
+1033 +                 {
+1034 +                     "action": "one",
+1035 +                     "session_id": str(self.session_a.id),
+1036 +                 },
+1037 +             )
+1038 |         self.assertEqual(response.status_code, 302)
+--------------------------------------------------------------------------------
+1049 |         login_with_session(self.client, admin)
+     -         response = self.client.post(reverse("kura:admin_sessions_revoke"), {
+     -             "action": "all", "user_id": str(self.user_a.id),
+     -         })
+1050 +         response = self.client.post(
+1051 +             reverse("kura:admin_sessions_revoke"),
+1052 +             {
+1053 +                 "action": "all",
+1054 +                 "user_id": str(self.user_a.id),
+1055 +             },
+1056 +         )
+1057 |         self.assertEqual(response.status_code, 302)
+--------------------------------------------------------------------------------
+1068 |                 self.assertEqual(self.client.get(reverse("kura:admin_sessions")).status_code, 403)
+     -                 response = self.client.post(reverse("kura:admin_sessions_revoke"), {
+     -                     "action": "one", "session_id": str(self.session_b.id),
+     -                 })
+1069 +                 response = self.client.post(
+1070 +                     reverse("kura:admin_sessions_revoke"),
+1071 +                     {
+1072 +                         "action": "one",
+1073 +                         "session_id": str(self.session_b.id),
+1074 +                     },
+1075 +                 )
+1076 |                 self.assertEqual(response.status_code, 403)
+--------------------------------------------------------------------------------
+1086 |         self.assertEqual(self.client.get(url).status_code, 405)
+     -         self.assertEqual(self.client.post(url, {"action": "one", "session_id": str(self.session_a.id)}).status_code, 403)
+1087 +         self.assertEqual(
+1088 +             self.client.post(url, {"action": "one", "session_id": str(self.session_a.id)}).status_code, 403
+1089 +         )
+1090 |         self.session_a.refresh_from_db()
+--------------------------------------------------------------------------------
+1141 |
+1142 +
+1143 | class AdminStaffAccountsTests(TestCase):
+--------------------------------------------------------------------------------
+1175 |         login_with_session(self.client, self.admin)
+     -         response = self.client.post(reverse("kura:staff_create"), {
+     -             "email": "blocked.staff@example.com", "department": self.department.id, "staff_title": "Instructor",
+     -         })
+1176 +         response = self.client.post(
+1177 +             reverse("kura:staff_create"),
+1178 +             {
+1179 +                 "email": "blocked.staff@example.com",
+1180 +                 "department": self.department.id,
+1181 +                 "staff_title": "Instructor",
+1182 +             },
+1183 +         )
+1184 |         self.assertEqual(response.status_code, 400)
+--------------------------------------------------------------------------------
+1222 |         url = reverse("kura:staff_settings")
+     -         self.assertEqual(self.client.post(url, {"kind": "department", "code": "MATH", "name": "Mathematics"}).status_code, 302)
+1223 +         self.assertEqual(
+1224 +             self.client.post(url, {"kind": "department", "code": "MATH", "name": "Mathematics"}).status_code, 302
+1225 +         )
+1226 |         self.assertEqual(self.client.post(url, {"kind": "building", "name": "Building B"}).status_code, 302)
+1227 |         building = Building.objects.get(name="Building B")
+     -         self.assertEqual(self.client.post(url, {"kind": "room", "building": building.pk, "name": "Room 204"}).status_code, 302)
+1228 +         self.assertEqual(
+1229 +             self.client.post(url, {"kind": "room", "building": building.pk, "name": "Room 204"}).status_code, 302
+1230 +         )
+1231 |         self.assertTrue(Room.objects.filter(building=building, name="Room 204").exists())
+--------------------------------------------------------------------------------
+1243 |         room = Room.objects.create(building=other, name="204")
+     -         response = self.client.post(reverse("kura:staff_create"), {
+     -             "email": "test-office@example.com", "department": self.department.pk,
+     -             "staff_title": "Instructor", "building": building.pk, "room": room.pk,
+     -         })
+1244 +         response = self.client.post(
+1245 +             reverse("kura:staff_create"),
+1246 +             {
+1247 +                 "email": "test-office@example.com",
+1248 +                 "department": self.department.pk,
+1249 +                 "staff_title": "Instructor",
+1250 +                 "building": building.pk,
+1251 +                 "room": room.pk,
+1252 +             },
+1253 +         )
+1254 |         self.assertEqual(response.status_code, 400)
+--------------------------------------------------------------------------------
+1344 |
+1345 +
+1346 | class AdminRolesTests(TestCase):
+--------------------------------------------------------------------------------
+1391 |
+1392 +
+1393 | class InstructorModulesAndContentTests(TestCase):
+--------------------------------------------------------------------------------
+1415 |         )
+     -         CourseStaff.objects.create(course=self.course, user=self.lead, staff_role="lead_instructor", can_release_grades=True)
+1416 +         CourseStaff.objects.create(
+1417 +             course=self.course, user=self.lead, staff_role="lead_instructor", can_release_grades=True
+1418 +         )
+1419 |
+1420 |     def test_instructor_cannot_assign_non_ta_as_teaching_assistant(self):
+1421 |         # A user with an Instructor role must not appear as or be saved as a TA.
+1422 |         login_with_session(self.client, self.lead)
+     -         form_response = self.client.get(
+     -             reverse("kura:course_ta_assign", kwargs={"course_id": self.course.id})
+     -         )
+1423 +         form_response = self.client.get(reverse("kura:course_ta_assign", kwargs={"course_id": self.course.id}))
+1424 |         self.assertContains(form_response, self.ta.email)
+--------------------------------------------------------------------------------
+1440 |         login_with_session(self.client, self.ta)
+     -         response = self.client.post(reverse("kura:course_ta_assign", kwargs={"course_id": self.course.id}), {"user": str(other_ta.id)})
+1441 +         response = self.client.post(
+1442 +             reverse("kura:course_ta_assign", kwargs={"course_id": self.course.id}), {"user": str(other_ta.id)}
+1443 +         )
+1444 |         self.assertEqual(response.status_code, 403)
+--------------------------------------------------------------------------------
+1459 |
+1460 +
+1461 | class FileUploadsAndDownloadsTests(TestCase):
+--------------------------------------------------------------------------------
+1473 |
+     -         StudentProfile.objects.create(user=self.enrolled_student, department=self.dept, current_level="level_4", matriculation_year=2026)
+     -         StudentProfile.objects.create(user=self.outsider_student, department=self.dept, current_level="level_4", matriculation_year=2026)
+1474 +         StudentProfile.objects.create(
+1475 +             user=self.enrolled_student, department=self.dept, current_level="level_4", matriculation_year=2026
+1476 +         )
+1477 +         StudentProfile.objects.create(
+1478 +             user=self.outsider_student, department=self.dept, current_level="level_4", matriculation_year=2026
+1479 +         )
+1480 |
+--------------------------------------------------------------------------------
+1490 |         )
+     -         CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True)
+1491 +         CourseStaff.objects.create(
+1492 +             course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True
+1493 +         )
+1494 |         Enrollment.objects.create(course=self.course, student=self.enrolled_student, status=EnrollmentStatus.ACTIVE)
+--------------------------------------------------------------------------------
+1509 |         # A file with an executable header disguised as .pdf is rejected by python-magic.
+     -         fake_pdf = SimpleUploadedFile("malware.pdf", b"\x7fELF\x02\x01\x01\x00executable", content_type="application/pdf")
+1510 +         fake_pdf = SimpleUploadedFile(
+1511 +             "malware.pdf", b"\x7fELF\x02\x01\x01\x00executable", content_type="application/pdf"
+1512 +         )
+1513 |         with self.assertRaises(ValidationError):
+--------------------------------------------------------------------------------
+1535 |                 archive.writestr("mimetype", mime_type, compress_type=zipfile.ZIP_STORED)
+     -                 archive.writestr("content.xml", '<?xml version="1.0"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"/>')
+     -                 archive.writestr("META-INF/manifest.xml", '<?xml version="1.0"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"/>')
+1536 +                 archive.writestr(
+1537 +                     "content.xml",
+1538 +                     '<?xml version="1.0"?><office:document-content xmlns:office="urn:oasis:names:tc:opendocument:xmlns:office:1.0"/>',
+1539 +                 )
+1540 +                 archive.writestr(
+1541 +                     "META-INF/manifest.xml",
+1542 +                     '<?xml version="1.0"?><manifest:manifest xmlns:manifest="urn:oasis:names:tc:opendocument:xmlns:manifest:1.0"/>',
+1543 +                 )
+1544 |             samples.append((f"document.{extension}", content.getvalue(), mime_type))
+--------------------------------------------------------------------------------
+1583 |         now = timezone.now()
+     -         assessment = Assessment.objects.create(course=self.course, title="Empty assessment", component_type=GradeComponentType.EXAM,
+     -                                                opens_at=now, due_date=now + timezone.timedelta(days=1),
+     -                                                created_by=self.instructor)
+1584 +         assessment = Assessment.objects.create(
+1585 +             course=self.course,
+1586 +             title="Empty assessment",
+1587 +             component_type=GradeComponentType.EXAM,
+1588 +             opens_at=now,
+1589 +             due_date=now + timezone.timedelta(days=1),
+1590 +             created_by=self.instructor,
+1591 +         )
+1592 |         url = reverse("kura:assessment_delete", kwargs={"assessment_id": assessment.id})
+--------------------------------------------------------------------------------
+1600 |
+1601 +
+1602 | # Schedules and attendance tests
+1603 |
+1604 +
+1605 | class SchedulesTests(TestCase):
+--------------------------------------------------------------------------------
+1648 |         UserRole.objects.create(user=self.instructor, role=Role.objects.get(name="Teaching assistant"))
+     -         session = ModuleAttendanceSession.objects.create(course=self.course, created_by=self.instructor, title="Private roll", passcode_hash="x" * 64, expires_at=timezone.now() + timezone.timedelta(hours=1))
+     -         AttendanceRecord.objects.create(session=session, student=self.student, status=AttendanceStatus.PRESENT, method=AttendanceMethod.QR_CODE)
+1649 +         session = ModuleAttendanceSession.objects.create(
+1650 +             course=self.course,
+1651 +             created_by=self.instructor,
+1652 +             title="Private roll",
+1653 +             passcode_hash="x" * 64,
+1654 +             expires_at=timezone.now() + timezone.timedelta(hours=1),
+1655 +         )
+1656 +         AttendanceRecord.objects.create(
+1657 +             session=session, student=self.student, status=AttendanceStatus.PRESENT, method=AttendanceMethod.QR_CODE
+1658 +         )
+1659 |         login_with_session(self.client, self.instructor)
+--------------------------------------------------------------------------------
+1689 |         # A schedule can be edited and explicitly deleted only by assigned staff.
+     -         schedule = Schedule.objects.create(course=self.course, instructor=self.instructor, session_type="lecture",
+     -                                            day="monday", start_time="09:00", end_time="10:00", location="Old",
+     -                                            recurrence_start="2026-09-01", recurrence_end="2026-12-01")
+     -         session = ModuleAttendanceSession.objects.create(course=self.course, schedule=schedule, created_by=self.instructor,
+     -                                                         title="Roll", passcode_hash="x" * 64, expires_at=timezone.now() + timezone.timedelta(hours=1))
+     -         record = AttendanceRecord.objects.create(session=session, student=self.student, status=AttendanceStatus.PRESENT,
+     -                                                  method=AttendanceMethod.QR_CODE)
+1690 +         schedule = Schedule.objects.create(
+1691 +             course=self.course,
+1692 +             instructor=self.instructor,
+1693 +             session_type="lecture",
+1694 +             day="monday",
+1695 +             start_time="09:00",
+1696 +             end_time="10:00",
+1697 +             location="Old",
+1698 +             recurrence_start="2026-09-01",
+1699 +             recurrence_end="2026-12-01",
+1700 +         )
+1701 +         session = ModuleAttendanceSession.objects.create(
+1702 +             course=self.course,
+1703 +             schedule=schedule,
+1704 +             created_by=self.instructor,
+1705 +             title="Roll",
+1706 +             passcode_hash="x" * 64,
+1707 +             expires_at=timezone.now() + timezone.timedelta(hours=1),
+1708 +         )
+1709 +         record = AttendanceRecord.objects.create(
+1710 +             session=session, student=self.student, status=AttendanceStatus.PRESENT, method=AttendanceMethod.QR_CODE
+1711 +         )
+1712 |         edit_url = reverse("kura:schedule_edit", kwargs={"schedule_id": schedule.id})
+--------------------------------------------------------------------------------
+1717 |         login_with_session(self.client, self.instructor)
+     -         response = self.client.post(edit_url, {"instructor": self.instructor.id, "session_type": "lecture", "day": "monday",
+     -                                                "start_time": "09:00", "end_time": "10:30", "location": "New hall",
+     -                                                "recurrence_start": "2026-09-01", "recurrence_end": "2026-12-01"})
+1718 +         response = self.client.post(
+1719 +             edit_url,
+1720 +             {
+1721 +                 "instructor": self.instructor.id,
+1722 +                 "session_type": "lecture",
+1723 +                 "day": "monday",
+1724 +                 "start_time": "09:00",
+1725 +                 "end_time": "10:30",
+1726 +                 "location": "New hall",
+1727 +                 "recurrence_start": "2026-09-01",
+1728 +                 "recurrence_end": "2026-12-01",
+1729 +             },
+1730 +         )
+1731 |         self.assertEqual(response.status_code, 302)
+--------------------------------------------------------------------------------
+1794 |
+1795 +
+1796 | class AttendanceHistoryTests(TestCase):
+--------------------------------------------------------------------------------
+1887 |
+1888 +
+1889 | # Assessments and grading tests
+1890 |
+1891 +
+1892 | def reseed_roles_after_flush():
+--------------------------------------------------------------------------------
+1902 |
+1903 +
+1904 | class AssessmentEditLockTests(TransactionTestCase):
+--------------------------------------------------------------------------------
+1917 |         department = Department.objects.create(name="Result locks", code="RESULTLOCK")
+     -         course = Course.objects.create(department=department, code="RL1", title="Result locks", semester="1", academic_year=2026)
+     -         CourseStaff.objects.create(course=course, user=instructor, staff_role="lead_instructor", can_release_grades=True)
+1918 +         course = Course.objects.create(
+1919 +             department=department, code="RL1", title="Result locks", semester="1", academic_year=2026
+1920 +         )
+1921 +         CourseStaff.objects.create(
+1922 +             course=course, user=instructor, staff_role="lead_instructor", can_release_grades=True
+1923 +         )
+1924 |         Enrollment.objects.create(course=course, student=student, status=EnrollmentStatus.ACTIVE)
+     -         result = CourseResult.objects.create(course=course, student=student, final_score=Decimal("75.00"), status=GradeStatus.DRAFT)
+1925 +         result = CourseResult.objects.create(
+1926 +             course=course, student=student, final_score=Decimal("75.00"), status=GradeStatus.DRAFT
+1927 +         )
+1928 |         client = Client()
+--------------------------------------------------------------------------------
+1986 |         now = timezone.now()
+     -         assessment = Assessment.objects.create(course=course, title="Original", component_type=GradeComponentType.EXAM,
+     -                                                created_by=instructor, opens_at=now - timezone.timedelta(hours=1),
+     -                                                due_date=now + timezone.timedelta(days=1),)
+1987 +         assessment = Assessment.objects.create(
+1988 +             course=course,
+1989 +             title="Original",
+1990 +             component_type=GradeComponentType.EXAM,
+1991 +             created_by=instructor,
+1992 +             opens_at=now - timezone.timedelta(hours=1),
+1993 +             due_date=now + timezone.timedelta(days=1),
+1994 +         )
+1995 |         client = Client()
+--------------------------------------------------------------------------------
+2008 |             try:
+     -                 responses.append(client.post(reverse("kura:assessment_attempt_start", kwargs={"assessment_id": assessment.id})))
+2009 +                 responses.append(
+2010 +                     client.post(reverse("kura:assessment_attempt_start", kwargs={"assessment_id": assessment.id}))
+2011 +                 )
+2012 |             except Exception as error:
+--------------------------------------------------------------------------------
+2031 |
+2032 +
+2033 | # Grades, appeals & transcripts tests
+2034 |
+2035 +
+2036 | class InstructorAndTAGradingTests(TestCase):
+--------------------------------------------------------------------------------
+2050 |
+     -         StudentProfile.objects.create(user=self.student, department=self.department, current_level="level_4", matriculation_year=2026)
+2051 +         StudentProfile.objects.create(
+2052 +             user=self.student, department=self.department, current_level="level_4", matriculation_year=2026
+2053 +         )
+2054 |         self.course = Course.objects.create(
+--------------------------------------------------------------------------------
+2063 |         )
+     -         CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True)
+     -         CourseStaff.objects.create(course=self.course, user=self.ta, staff_role="teaching_assistant", can_release_grades=False)
+2064 +         CourseStaff.objects.create(
+2065 +             course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True
+2066 +         )
+2067 +         CourseStaff.objects.create(
+2068 +             course=self.course, user=self.ta, staff_role="teaching_assistant", can_release_grades=False
+2069 +         )
+2070 |         Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
+--------------------------------------------------------------------------------
+2138 |         login_with_session(self.client, head)
+     -         response = self.client.post(reverse("kura:grade_entry", kwargs={"attempt_id": self.attempt.id}), {"score": "80"})
+2139 +         response = self.client.post(
+2140 +             reverse("kura:grade_entry", kwargs={"attempt_id": self.attempt.id}), {"score": "80"}
+2141 +         )
+2142 |         self.assertEqual(response.status_code, 403)
+--------------------------------------------------------------------------------
+2146 |         # Editing a finalized score must not silently return it to draft.
+     -         grade = Grade.objects.create(assessment=self.assessment, student=self.student, attempt=self.attempt,
+     -                                      grader=self.ta, score=Decimal("80.00"), status=GradeStatus.FINALIZED)
+2147 +         grade = Grade.objects.create(
+2148 +             assessment=self.assessment,
+2149 +             student=self.student,
+2150 +             attempt=self.attempt,
+2151 +             grader=self.ta,
+2152 +             score=Decimal("80.00"),
+2153 +             status=GradeStatus.FINALIZED,
+2154 +         )
+2155 |         login_with_session(self.client, self.ta)
+--------------------------------------------------------------------------------
+2165 |         self.department.save(update_fields=["head_user"])
+     -         grade = Grade.objects.create(assessment=self.assessment, student=self.student, attempt=self.attempt,
+     -                                      grader=self.ta, score=Decimal("80.00"), status=GradeStatus.DRAFT)
+2166 +         grade = Grade.objects.create(
+2167 +             assessment=self.assessment,
+2168 +             student=self.student,
+2169 +             attempt=self.attempt,
+2170 +             grader=self.ta,
+2171 +             score=Decimal("80.00"),
+2172 +             status=GradeStatus.DRAFT,
+2173 +         )
+2174 |         login_with_session(self.client, head)
+--------------------------------------------------------------------------------
+2181 |         # A repeated finalize request must not change an already released grade.
+     -         grade = Grade.objects.create(assessment=self.assessment, student=self.student, attempt=self.attempt,
+     -                                      grader=self.ta, score=Decimal("80.00"), status=GradeStatus.RELEASED)
+2182 +         grade = Grade.objects.create(
+2183 +             assessment=self.assessment,
+2184 +             student=self.student,
+2185 +             attempt=self.attempt,
+2186 +             grader=self.ta,
+2187 +             score=Decimal("80.00"),
+2188 +             status=GradeStatus.RELEASED,
+2189 +         )
+2190 |         login_with_session(self.client, self.instructor)
+--------------------------------------------------------------------------------
+2242 |
+2243 +
+2244 | class StudentViewGradesTests(TestCase):
+--------------------------------------------------------------------------------
+2255 |
+     -         StudentProfile.objects.create(user=self.student_a, department=self.dept, current_level="level_4", matriculation_year=2026)
+     -         StudentProfile.objects.create(user=self.student_b, department=self.dept, current_level="level_4", matriculation_year=2026)
+2256 +         StudentProfile.objects.create(
+2257 +             user=self.student_a, department=self.dept, current_level="level_4", matriculation_year=2026
+2258 +         )
+2259 +         StudentProfile.objects.create(
+2260 +             user=self.student_b, department=self.dept, current_level="level_4", matriculation_year=2026
+2261 +         )
+2262 |
+--------------------------------------------------------------------------------
+2272 |         )
+     -         CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True)
+2273 +         CourseStaff.objects.create(
+2274 +             course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True
+2275 +         )
+2276 |         Enrollment.objects.create(course=self.course, student=self.student_a, status=EnrollmentStatus.ACTIVE)
+2277 |         Enrollment.objects.create(course=self.course, student=self.student_b, status=EnrollmentStatus.ACTIVE)
+2278 |
+2279 |         self.assessment_1 = Assessment.objects.create(
+     -             course=self.course, title="Draft Quiz", component_type=GradeComponentType.QUIZ,
+     -             max_score=Decimal("20.00"), max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(hours=1), created_by=self.instructor,
+2280 +             course=self.course,
+2281 +             title="Draft Quiz",
+2282 +             component_type=GradeComponentType.QUIZ,
+2283 +             max_score=Decimal("20.00"),
+2284 +             max_attempts=1,
+2285 +             opens_at=timezone.now(),
+2286 +             due_date=timezone.now() + timezone.timedelta(hours=1),
+2287 +             created_by=self.instructor,
+2288 |         )
+2289 |         self.assessment_2 = Assessment.objects.create(
+     -             course=self.course, title="Finalized Brief", component_type=GradeComponentType.COURSEWORK,
+     -             max_score=Decimal("40.00"), max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(hours=1), created_by=self.instructor,
+2290 +             course=self.course,
+2291 +             title="Finalized Brief",
+2292 +             component_type=GradeComponentType.COURSEWORK,
+2293 +             max_score=Decimal("40.00"),
+2294 +             max_attempts=1,
+2295 +             opens_at=timezone.now(),
+2296 +             due_date=timezone.now() + timezone.timedelta(hours=1),
+2297 +             created_by=self.instructor,
+2298 |         )
+2299 |         self.assessment_3 = Assessment.objects.create(
+     -             course=self.course, title="Released Moot", component_type=GradeComponentType.EXAM,
+     -             max_score=Decimal("100.00"), max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(hours=1), created_by=self.instructor,
+2300 +             course=self.course,
+2301 +             title="Released Moot",
+2302 +             component_type=GradeComponentType.EXAM,
+2303 +             max_score=Decimal("100.00"),
+2304 +             max_attempts=1,
+2305 +             opens_at=timezone.now(),
+2306 +             due_date=timezone.now() + timezone.timedelta(hours=1),
+2307 +             created_by=self.instructor,
+2308 |         )
+2309 |
+     -         att_1 = AssessmentAttempt.objects.create(assessment=self.assessment_1, student=self.student_a, attempt_no=1, status=AttemptStatus.FULLY_GRADED, ip_address="127.0.0.1")
+     -         att_2 = AssessmentAttempt.objects.create(assessment=self.assessment_2, student=self.student_a, attempt_no=1, status=AttemptStatus.FULLY_GRADED, ip_address="127.0.0.1")
+     -         att_3 = AssessmentAttempt.objects.create(assessment=self.assessment_3, student=self.student_a, attempt_no=1, status=AttemptStatus.FULLY_GRADED, ip_address="127.0.0.1")
+     -         att_b = AssessmentAttempt.objects.create(assessment=self.assessment_3, student=self.student_b, attempt_no=1, status=AttemptStatus.FULLY_GRADED, ip_address="127.0.0.1")
+2310 +         att_1 = AssessmentAttempt.objects.create(
+2311 +             assessment=self.assessment_1,
+2312 +             student=self.student_a,
+2313 +             attempt_no=1,
+2314 +             status=AttemptStatus.FULLY_GRADED,
+2315 +             ip_address="127.0.0.1",
+2316 +         )
+2317 +         att_2 = AssessmentAttempt.objects.create(
+2318 +             assessment=self.assessment_2,
+2319 +             student=self.student_a,
+2320 +             attempt_no=1,
+2321 +             status=AttemptStatus.FULLY_GRADED,
+2322 +             ip_address="127.0.0.1",
+2323 +         )
+2324 +         att_3 = AssessmentAttempt.objects.create(
+2325 +             assessment=self.assessment_3,
+2326 +             student=self.student_a,
+2327 +             attempt_no=1,
+2328 +             status=AttemptStatus.FULLY_GRADED,
+2329 +             ip_address="127.0.0.1",
+2330 +         )
+2331 +         att_b = AssessmentAttempt.objects.create(
+2332 +             assessment=self.assessment_3,
+2333 +             student=self.student_b,
+2334 +             attempt_no=1,
+2335 +             status=AttemptStatus.FULLY_GRADED,
+2336 +             ip_address="127.0.0.1",
+2337 +         )
+2338 |
+2339 |         # Student A grades across all 3 statuses
+     -         Grade.objects.create(assessment=self.assessment_1, student=self.student_a, attempt=att_1, score=Decimal("18.00"), status=GradeStatus.DRAFT)
+     -         Grade.objects.create(assessment=self.assessment_2, student=self.student_a, attempt=att_2, score=Decimal("35.00"), status=GradeStatus.FINALIZED)
+     -         Grade.objects.create(assessment=self.assessment_3, student=self.student_a, attempt=att_3, score=Decimal("94.00"), status=GradeStatus.RELEASED)
+2340 +         Grade.objects.create(
+2341 +             assessment=self.assessment_1,
+2342 +             student=self.student_a,
+2343 +             attempt=att_1,
+2344 +             score=Decimal("18.00"),
+2345 +             status=GradeStatus.DRAFT,
+2346 +         )
+2347 +         Grade.objects.create(
+2348 +             assessment=self.assessment_2,
+2349 +             student=self.student_a,
+2350 +             attempt=att_2,
+2351 +             score=Decimal("35.00"),
+2352 +             status=GradeStatus.FINALIZED,
+2353 +         )
+2354 +         Grade.objects.create(
+2355 +             assessment=self.assessment_3,
+2356 +             student=self.student_a,
+2357 +             attempt=att_3,
+2358 +             score=Decimal("94.00"),
+2359 +             status=GradeStatus.RELEASED,
+2360 +         )
+2361 |
+2362 |         # Student B released grade
+     -         Grade.objects.create(assessment=self.assessment_3, student=self.student_b, attempt=att_b, score=Decimal("77.00"), status=GradeStatus.RELEASED)
+2363 +         Grade.objects.create(
+2364 +             assessment=self.assessment_3,
+2365 +             student=self.student_b,
+2366 +             attempt=att_b,
+2367 +             score=Decimal("77.00"),
+2368 +             status=GradeStatus.RELEASED,
+2369 +         )
+2370 |
+--------------------------------------------------------------------------------
+2387 |
+2388 +
+2389 | class GradeChangeRequestsTests(TestCase):
+--------------------------------------------------------------------------------
+2400 |
+     -         StudentProfile.objects.create(user=self.student, department=self.dept, current_level="level_4", matriculation_year=2026)
+2401 +         StudentProfile.objects.create(
+2402 +             user=self.student, department=self.dept, current_level="level_4", matriculation_year=2026
+2403 +         )
+2404 |         self.course = Course.objects.create(
+--------------------------------------------------------------------------------
+2413 |         )
+     -         CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True)
+2414 +         CourseStaff.objects.create(
+2415 +             course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True
+2416 +         )
+2417 |         Enrollment.objects.create(course=self.course, student=self.student, status=EnrollmentStatus.ACTIVE)
+2418 |
+2419 |         self.assessment = Assessment.objects.create(
+     -             course=self.course, title="Memory Exam", component_type=GradeComponentType.EXAM,
+     -             max_score=Decimal("100.00"), max_attempts=1, opens_at=timezone.now(), due_date=timezone.now() + timezone.timedelta(hours=1), created_by=self.instructor,
+2420 +             course=self.course,
+2421 +             title="Memory Exam",
+2422 +             component_type=GradeComponentType.EXAM,
+2423 +             max_score=Decimal("100.00"),
+2424 +             max_attempts=1,
+2425 +             opens_at=timezone.now(),
+2426 +             due_date=timezone.now() + timezone.timedelta(hours=1),
+2427 +             created_by=self.instructor,
+2428 +         )
+2429 +         att = AssessmentAttempt.objects.create(
+2430 +             assessment=self.assessment,
+2431 +             student=self.student,
+2432 +             attempt_no=1,
+2433 +             status=AttemptStatus.FULLY_GRADED,
+2434 +             ip_address="127.0.0.1",
+2435 +         )
+2436 +         self.grade = Grade.objects.create(
+2437 +             assessment=self.assessment,
+2438 +             student=self.student,
+2439 +             attempt=att,
+2440 +             score=Decimal("75.00"),
+2441 +             status=GradeStatus.RELEASED,
+2442 |         )
+     -         att = AssessmentAttempt.objects.create(assessment=self.assessment, student=self.student, attempt_no=1, status=AttemptStatus.FULLY_GRADED, ip_address="127.0.0.1")
+     -         self.grade = Grade.objects.create(assessment=self.assessment, student=self.student, attempt=att, score=Decimal("75.00"), status=GradeStatus.RELEASED)
+2443 |
+--------------------------------------------------------------------------------
+2517 |
+2518 +
+2519 | class DepartmentReportsTests(TestCase):
+--------------------------------------------------------------------------------
+2543 |
+2544 +
+2545 | # Hardening, logging & rate limits tests
+2546 |
+2547 +
+2548 | class SecurityLoggingTests(TestCase):
+--------------------------------------------------------------------------------
+2612 |
+2613 +
+2614 | class RateLimitingTests(TestCase):
+--------------------------------------------------------------------------------
+2625 |         from django.core.cache import caches
+2626 +
+2627 |         caches["ratelimit"].clear()
+--------------------------------------------------------------------------------
+2640 |
+2641 +
+2642 | class ClamAVVirusScanningTests(TransactionTestCase):
+--------------------------------------------------------------------------------
+2760 |
+2761 +
+2762 | class VaultIntegrationTests(TestCase):
+--------------------------------------------------------------------------------
+2821 |         from hvac.exceptions import VaultError
+2822 +
+2823 |         mock_client = MagicMock()
+--------------------------------------------------------------------------------
+2830 |
+2831 +
+2832 | class MTLSIntegrationTests(TestCase):
+--------------------------------------------------------------------------------
+2844 |         from pathlib import Path
+2845 +
+2846 |         base_dir = Path(__file__).resolve().parent.parent / "certs" / "internal"
+--------------------------------------------------------------------------------
+2922 |
+2923 +
+2924 | class RowLevelSecurityAndPostgresRolesTests(TestCase):
+--------------------------------------------------------------------------------
+2936 |
+     -         StudentProfile.objects.create(user=self.student_a, department=self.dept, current_level="level_4", matriculation_year=2026)
+     -         StudentProfile.objects.create(user=self.student_b, department=self.dept, current_level="level_4", matriculation_year=2026)
+2937 +         StudentProfile.objects.create(
+2938 +             user=self.student_a, department=self.dept, current_level="level_4", matriculation_year=2026
+2939 +         )
+2940 +         StudentProfile.objects.create(
+2941 +             user=self.student_b, department=self.dept, current_level="level_4", matriculation_year=2026
+2942 +         )
+2943 |
+--------------------------------------------------------------------------------
+2953 |         )
+     -         CourseStaff.objects.create(course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True)
+2954 +         CourseStaff.objects.create(
+2955 +             course=self.course, user=self.instructor, staff_role="lead_instructor", can_release_grades=True
+2956 +         )
+2957 |
+--------------------------------------------------------------------------------
+3047 |             from django.db import connection
+3048 +
+3049 |             with connection.cursor() as cursor:
+--------------------------------------------------------------------------------
+3056 |
+3057 +
+3058 | @unittest.skipUnless(
+--------------------------------------------------------------------------------
+3071 |         from django.conf import settings
+3072 +
+3073 |         self.base_dir = Path(settings.BASE_DIR)
+--------------------------------------------------------------------------------
+3146 |         import io
+3147 +
+3148 |         # The key file may belong to the database container user (see above).
+--------------------------------------------------------------------------------
+3156 |
+3157 +
+3158 | class PasskeyWebAuthnIntegrationTests(TestCase):
+--------------------------------------------------------------------------------
+3296 |
+3297 +
+3298 | @unittest.skipUnless(
+--------------------------------------------------------------------------------
+3311 |         from django.conf import settings
+3312 +
+3313 |         self.base_dir = Path(settings.BASE_DIR)
+--------------------------------------------------------------------------------
+3389 |         self.assertIn("forward_to = [loki.process.pipeline.receiver]", alloy)
+     -         self.assertIn('selector = "{service=~\\\"web|cron\\\"}"', alloy)
+3390 +         self.assertIn('selector = "{service=~\\"web|cron\\"}"', alloy)
+3391 |         self.assertIn("forward_to = [loki.write.local_loki.receiver]", alloy)
+3392 |         self.assertIn('url = "http://loki:3100/loki/api/v1/push"', alloy)
+3393 |
+3394 +
+3395 | class DataRetentionAndIPAnonymizationTests(TestCase):
+--------------------------------------------------------------------------------
+3589 |
+3590 +
+3591 | # Where the incident-response runbook lives.
+3592 | # The docs/ folder is kept on the developer's machine and is not committed, so on GitHub (CI) the file is missing.
+3593 | INCIDENT_RUNBOOK_PATH = Path(__file__).resolve().parent.parent / "docs" / "INCIDENT_RESPONSE.md"
+3594 |
+3595 +
+3596 | # Skip (do not fail) these checks when the runbook is not in this copy of the project.
+--------------------------------------------------------------------------------
+3609 |         from django.conf import settings
+3610 +
+3611 |         self.base_dir = Path(settings.BASE_DIR)
+--------------------------------------------------------------------------------
+3649 |         self.assertNotIn("from kura.models import LoginAttempt", content)
+     -         self.assertIn("event=\"auth.login.failed\"", content)
+3650 +         self.assertIn('event="auth.login.failed"', content)
+3651 |         self.assertIn("login_identifier_hash", content)
+3652 |         self.assertIn("checksums alone do not establish who", content)
+3653 |         self.assertIn("sha256sum loki_logs.json pgaudit_trail.log", content)
+3654 |
+3655 +
+3656 | class SemesterValueMigrationTests(TestCase):
+--------------------------------------------------------------------------------
+3705 |
+3706 +
+3707 | class ClientIPBehindProxyTests(TestCase):
+--------------------------------------------------------------------------------
+3752 |
+3753 +
+3754 | class SecurityEventLogTests(TestCase):
+--------------------------------------------------------------------------------
+3858 |
+3859 +
+3860 | class ClientIPLockoutTests(TestCase):
+--------------------------------------------------------------------------------
+3898 |
+3899 +
+3900 | class SecretKeySettingTests(TestCase):
+--------------------------------------------------------------------------------
+3946 |
+3947 +
+3948 | class BreachCheckDirectTests(TestCase):
+--------------------------------------------------------------------------------
+4008 |
+4009 +
+4010 | class FakeTransitVault:
+--------------------------------------------------------------------------------
+4030 |
+4031 +
+4032 | @override_settings(VAULT_ENABLED=True)
+     -
+4033 | class GradeHistoryInsertOnlyTests(TestCase):
+--------------------------------------------------------------------------------
+4043 |         department = Department.objects.create(name="History", code="HIS", head_user=head)
+     -         course = Course.objects.create(department=department, code="HIS101", title="History", semester="1",
+     -                                        academic_year=2026)
+     -         CourseStaff.objects.create(
+     -             course=course, user=instructor, staff_role="lead_instructor", assigned_by=head
+4044 +         course = Course.objects.create(
+4045 +             department=department, code="HIS101", title="History", semester="1", academic_year=2026
+4046 |         )
+4047 +         CourseStaff.objects.create(course=course, user=instructor, staff_role="lead_instructor", assigned_by=head)
+4048 |         now = timezone.now()
+4049 |         assessment = Assessment.objects.create(
+     -             course=course, title="Exam", component_type=GradeComponentType.EXAM, max_score=10, max_attempts=1,
+     -             opens_at=now, due_date=now + timezone.timedelta(days=1), created_by=instructor,
+4050 +             course=course,
+4051 +             title="Exam",
+4052 +             component_type=GradeComponentType.EXAM,
+4053 +             max_score=10,
+4054 +             max_attempts=1,
+4055 +             opens_at=now,
+4056 +             due_date=now + timezone.timedelta(days=1),
+4057 +             created_by=instructor,
+4058 +         )
+4059 +         attempt = AssessmentAttempt.objects.create(
+4060 +             assessment=assessment, student=student, attempt_no=1, ip_address="127.0.0.1"
+4061 |         )
+     -         attempt = AssessmentAttempt.objects.create(assessment=assessment, student=student, attempt_no=1, ip_address="127.0.0.1")
+4062 |         self.grade = Grade.objects.create(assessment=assessment, student=student, attempt=attempt, score=7)
+     -         self.history = GradeHistory.objects.create(grade=self.grade, new_score=7, new_status="draft",
+     -                                                    changed_by=instructor)
+4063 +         self.history = GradeHistory.objects.create(
+4064 +             grade=self.grade, new_score=7, new_status="draft", changed_by=instructor
+4065 +         )
+4066 |         self.instructor = instructor
+--------------------------------------------------------------------------------
+4098 |
+4099 +
+4100 | @override_settings(VAULT_ENABLED=False)
+--------------------------------------------------------------------------------
+4174 |
+4175 +
+4176 | @override_settings(VAULT_ENABLED=False)
+--------------------------------------------------------------------------------
+4243 |
+     -         with patch("kura.views.encrypt_mfa_secret", side_effect=fake_encrypt), patch(
+     -             "kura.views.decrypt_mfa_secret", side_effect=lambda ciphertext: seeds_given_to_vault[0]
+4244 +         with (
+4245 +             patch("kura.views.encrypt_mfa_secret", side_effect=fake_encrypt),
+4246 +             patch("kura.views.decrypt_mfa_secret", side_effect=lambda ciphertext: seeds_given_to_vault[0]),
+4247 |         ):
+--------------------------------------------------------------------------------
+4342 |
+4343 +
+4344 | class VaultDatabaseLoginTests(TestCase):
+--------------------------------------------------------------------------------
+4435 |             result = subprocess.run(
+     -                 [sys.executable, "-c", "from django.conf import settings; print(settings.DATABASES['default']['ENGINE'])"],
+4436 +                 [
+4437 +                     sys.executable,
+4438 +                     "-c",
+4439 +                     "from django.conf import settings; print(settings.DATABASES['default']['ENGINE'])",
+4440 +                 ],
+4441 |                 cwd=settings.BASE_DIR,
+--------------------------------------------------------------------------------
+4448 |
+4449 +
+4450 | def fake_clamav_reply(reply):
+--------------------------------------------------------------------------------
+4457 |
+4458 +
+4459 | class ClamAVQuarantineTests(TransactionTestCase):
+--------------------------------------------------------------------------------
+4598 |
+4599 +
+4600 | @override_settings(SITE_URL="https://kura.example.com")
+     -
+4601 | class PasskeyAddedAuditTests(TestCase):
+--------------------------------------------------------------------------------
+4632 |
+4633 +
+4634 | class PasskeyOnlyMfaUrlsTests(TestCase):
+--------------------------------------------------------------------------------
+4692 |
+4693 +
+4694 | class WriteAppMetricsTests(TestCase):
+--------------------------------------------------------------------------------
+4713 |
+4714 +
+4715 | class AssessmentVisibilityRulesTests(TestCase):
+--------------------------------------------------------------------------------
+4789 |
+4790 +
+4791 | class MfaSetupReauthTests(TestCase):
+--------------------------------------------------------------------------------
+4806 |         self.static_device = StaticDevice.objects.create(user=self.user, name="recovery", confirmed=True)
+     -         self.initial_token = StaticToken.objects.create(
+     -             device=self.static_device, token=hash_recovery_code("OLDCODE1")
+     -         )
+4807 +         self.initial_token = StaticToken.objects.create(device=self.static_device, token=hash_recovery_code("OLDCODE1"))
+4808 |
+--------------------------------------------------------------------------------
+4865 |
+4866 +
+4867 | class RowLevelSecurityFailClosedTests(TestCase):
+--------------------------------------------------------------------------------
+4932 |
+4933 +
+4934 | class SessionInvalidLoggingTests(TestCase):
+--------------------------------------------------------------------------------
+4969 |         self.assertRedirects(response, reverse("kura:login"))
+     -         self.assertTrue(any('event="session.invalid"' in line and 'reason="deactivated"' in line for line in captured.output))
+4970 +         self.assertTrue(
+4971 +             any('event="session.invalid"' in line and 'reason="deactivated"' in line for line in captured.output)
+4972 +         )
+4973 |         self.assertTrue(any(f'actor_user_id="{self.user.id}"' in line for line in captured.output))
+--------------------------------------------------------------------------------
+4982 |         self.assertRedirects(response, reverse("kura:login"))
+     -         self.assertTrue(any('event="session.invalid"' in line and 'reason="locked"' in line for line in captured.output))
+4983 +         self.assertTrue(
+4984 +             any('event="session.invalid"' in line and 'reason="locked"' in line for line in captured.output)
+4985 +         )
+4986 |         self.assertTrue(any(f'actor_user_id="{self.user.id}"' in line for line in captured.output))
+--------------------------------------------------------------------------------
+4995 |         self.assertRedirects(response, reverse("kura:login"))
+     -         self.assertTrue(any('event="session.invalid"' in line and 'reason="revoked"' in line for line in captured.output))
+4996 +         self.assertTrue(
+4997 +             any('event="session.invalid"' in line and 'reason="revoked"' in line for line in captured.output)
+4998 +         )
+4999 |         self.assertTrue(any(f'actor_user_id="{self.user.id}"' in line for line in captured.output))
+--------------------------------------------------------------------------------
+5008 |         self.assertRedirects(response, reverse("kura:login"))
+     -         self.assertTrue(any('event="session.invalid"' in line and 'reason="expired"' in line for line in captured.output))
+5009 +         self.assertTrue(
+5010 +             any('event="session.invalid"' in line and 'reason="expired"' in line for line in captured.output)
+5011 +         )
+5012 |         self.assertTrue(any(f'actor_user_id="{self.user.id}"' in line for line in captured.output))
+5013 |
+5014 +
+5015 | class PasswordChangeNotificationTests(TestCase):
+--------------------------------------------------------------------------------
+5100 |
+5101 +
+5102 | class GradeFinalizeInstructorOnlyTests(TestCase):
+--------------------------------------------------------------------------------
+5181 |
+5182 +
+5183 | class UserRolesInputValidationTests(TestCase):
+--------------------------------------------------------------------------------
+5218 |
+5219 +
+5220 | class DownloadFilenameHeaderTests(TestCase):
+--------------------------------------------------------------------------------
+5240 |     def test_quote_and_parameter_text_stays_inside_the_filename(self):
+     -         stored_file = self.make_stored_file('a"; filename*=UTF-8\'\'evil.html')
+5241 +         stored_file = self.make_stored_file("a\"; filename*=UTF-8''evil.html")
+5242 |
+--------------------------------------------------------------------------------
+5266 |
+5267 +
+5268 | class PasswordReuseTests(TestCase):
+--------------------------------------------------------------------------------
+5323 |
+5324 +
+5325 | class OldPasswordThrottleTests(TestCase):
+--------------------------------------------------------------------------------
+5385 |
+5386 +
+5387 | class UploadExtensionMatchTests(TestCase):
+--------------------------------------------------------------------------------
+5418 |
+5419 +
+5420 | class FreeTextLengthLimitTests(TestCase):
+--------------------------------------------------------------------------------
+5488 |
+5489 +
+5490 | class AdminSettingsAuditLogTests(TestCase):
+--------------------------------------------------------------------------------
+5516 |
+5517 +
+5518 | class InvalidInputLoggingTests(TestCase):
+--------------------------------------------------------------------------------
+5544 |
+5545 +
+5546 | class PasskeyLoginCallbackTests(TestCase):
+--------------------------------------------------------------------------------
+5598 |
+5599 +
+5600 | class FreshSecondFactorTests(TestCase):
+--------------------------------------------------------------------------------
+5667 |         StaticToken.objects.create(device=device, token=hash_recovery_code("abcd1234"))
+     -         response = self.client.post(
+     -             reverse("kura:mfa_reauth"), {"code": "abcd1234", "next": "https://evil.example/"}
+     -         )
+5668 +         response = self.client.post(reverse("kura:mfa_reauth"), {"code": "abcd1234", "next": "https://evil.example/"})
+5669 |         self.assertRedirects(response, reverse("kura:home"), fetch_redirect_response=False)
+--------------------------------------------------------------------------------
+5679 |
+5680 +
+5681 | class OwnSessionsTests(TestCase):
+--------------------------------------------------------------------------------
+5732 |         self._login_student_with_current()
+     -         response = self.client.post(
+     -             reverse("kura:user_session_revoke", args=[self.other_session.id])
+     -         )
+5733 +         response = self.client.post(reverse("kura:user_session_revoke", args=[self.other_session.id]))
+5734 |         self.assertEqual(response.status_code, 404)
+--------------------------------------------------------------------------------
+5739 |         self._login_student_with_current()
+     -         response = self.client.get(
+     -             reverse("kura:user_session_revoke", args=[self.own_other.id])
+     -         )
+5740 +         response = self.client.get(reverse("kura:user_session_revoke", args=[self.own_other.id]))
+5741 |         self.assertEqual(response.status_code, 405)
+--------------------------------------------------------------------------------
+5747 |         with self.assertLogs("kura.security", level="INFO") as logs:
+     -             response = self.client.post(
+     -                 reverse("kura:user_session_revoke", args=[self.own_other.id])
+     -             )
+5748 +             response = self.client.post(reverse("kura:user_session_revoke", args=[self.own_other.id]))
+5749 |         self.assertRedirects(response, reverse("kura:user_sessions"))
+--------------------------------------------------------------------------------
+5756 |         self._login_student_with_current()
+     -         response = self.client.post(
+     -             reverse("kura:user_session_revoke", args=[self.own_current.id])
+     -         )
+5757 +         response = self.client.post(reverse("kura:user_session_revoke", args=[self.own_current.id]))
+5758 |         self.assertRedirects(response, reverse("kura:login"))
+--------------------------------------------------------------------------------
+5766 |
+5767 +
+5768 | class AbsoluteSessionLimitTests(TestCase):
+--------------------------------------------------------------------------------
+5811 |         self.assertRedirects(response, reverse("kura:login"))
+     -         self.assertTrue(
+     -             any('event="session.invalid"' in line and 'reason="expired"' in line for line in logs.output)
+     -         )
+5812 +         self.assertTrue(any('event="session.invalid"' in line and 'reason="expired"' in line for line in logs.output))
+5813 |         # Subsequent request remains logged out.
+--------------------------------------------------------------------------------
+5818 |
+5819 +
+5820 | class SharedRateLimitCacheTests(TestCase):
+--------------------------------------------------------------------------------
+5842 |
+5843 +
+5844 | class PasswordHistoryTests(TestCase):
+--------------------------------------------------------------------------------
+5908 |             self.assertEqual(reset_resp.status_code, 400)
+     -             self.assertIn("Choose a password you have not used recently.", reset_resp.context["form"].errors["new_password"])
+5909 +             self.assertIn(
+5910 +                 "Choose a password you have not used recently.", reset_resp.context["form"].errors["new_password"]
+5911 +             )
+5912 |
+--------------------------------------------------------------------------------
+5922 |
+5923 +
+5924 | class DisableInactiveAccountsTests(TestCase):
+--------------------------------------------------------------------------------
+5959 |         self.old_never_logged_in = make_user("Student", mfa_enabled=False)
+     -         self.User.objects.filter(id=self.old_never_logged_in.id).update(
+     -             created_at=now - timezone.timedelta(days=120)
+     -         )
+5960 +         self.User.objects.filter(id=self.old_never_logged_in.id).update(created_at=now - timezone.timedelta(days=120))
+5961 |
+--------------------------------------------------------------------------------
+5998 |
+5999 +
+6000 | def make_released_grade_course():
+--------------------------------------------------------------------------------
+6009 |     department = Department.objects.create(name="Psychology", code="PSYC", head_user=head)
+     -     StudentProfile.objects.create(
+     -         user=student, department=department, current_level="level_4", matriculation_year=2026
+     -     )
+6010 +     StudentProfile.objects.create(user=student, department=department, current_level="level_4", matriculation_year=2026)
+6011 |     course = Course.objects.create(
+--------------------------------------------------------------------------------
+6052 |
+6053 +
+6054 | class GradeFeedbackTests(TestCase):
+--------------------------------------------------------------------------------
+6106 |
+6107 +
+6108 | class SecurityPolicyPageTests(TestCase):
+--------------------------------------------------------------------------------
+6166 |
+6167 +
+6168 | class WorkItem1LoggingTests(TestCase):
+--------------------------------------------------------------------------------
+6238 |
+6239 +
+6240 | class WorkItem3SessionTests(TestCase):
+--------------------------------------------------------------------------------
+6302 |         self.assertIsNotNone(other_session.revoked_at)
+     -         self.assertTrue(any('event="session.revoked"' in line and 'by="password_change"' in line for line in captured.output))
+6303 +         self.assertTrue(
+6304 +             any('event="session.revoked"' in line and 'by="password_change"' in line for line in captured.output)
+6305 +         )
+6306 |
+--------------------------------------------------------------------------------
+6312 |         self.assertRedirects(resp, reverse("kura:login"))
+     -         self.assertTrue(any('event="session.invalid"' in line and 'reason="untracked"' in line for line in captured.output))
+6313 +         self.assertTrue(
+6314 +             any('event="session.invalid"' in line and 'reason="untracked"' in line for line in captured.output)
+6315 +         )
+6316 |
+--------------------------------------------------------------------------------
+6356 |
+6357 +
+6358 | class WorkItem4bKeyedHashTests(TestCase):
+6359 |     """Tests for Work Item 4b: keyed HMAC-SHA256 digests for attendance passcodes and proctor codes."""
+6360 |
+6361 +
+6362 | class WorkItem5FileEncryptionTests(TestCase):
+--------------------------------------------------------------------------------
+6437 |         with patch("kura.views.get_vault_client", return_value=mock_client):
+     -             sf1 = validate_and_save_upload(SimpleUploadedFile("a.pdf", payload, content_type="application/pdf"), self.user)
+     -             sf2 = validate_and_save_upload(SimpleUploadedFile("b.pdf", payload, content_type="application/pdf"), self.user)
+6438 +             sf1 = validate_and_save_upload(
+6439 +                 SimpleUploadedFile("a.pdf", payload, content_type="application/pdf"), self.user
+6440 +             )
+6441 +             sf2 = validate_and_save_upload(
+6442 +                 SimpleUploadedFile("b.pdf", payload, content_type="application/pdf"), self.user
+6443 +             )
+6444 |
+--------------------------------------------------------------------------------
+6476 |         with override_settings(VAULT_ENABLED=False):
+     -             sf = validate_and_save_upload(SimpleUploadedFile("legacy.pdf", payload, content_type="application/pdf"), self.user)
+6477 +             sf = validate_and_save_upload(
+6478 +                 SimpleUploadedFile("legacy.pdf", payload, content_type="application/pdf"), self.user
+6479 +             )
+6480 |         fc = FileContent.objects.get(file=sf)
+--------------------------------------------------------------------------------
+6524 |
+6525 +
+6526 | class WorkItem6EmailRetentionTests(TestCase):
+--------------------------------------------------------------------------------
+6585 |
+6586 +
+6587 | class AuditGroup5RetentionAndLokiTests(TestCase):
+--------------------------------------------------------------------------------
+6608 |             self.assertTrue(
+     -                 any('event="retention.job_failed"' in line and 'command="purge_retention"' in line for line in cap_purge.output)
+6609 +                 any(
+6610 +                     'event="retention.job_failed"' in line and 'command="purge_retention"' in line
+6611 +                     for line in cap_purge.output
+6612 +                 )
+6613 |             )
+--------------------------------------------------------------------------------
+6619 |             self.assertTrue(
+     -                 any('event="retention.job_failed"' in line and 'command="anonymize_ips"' in line for line in cap_anon.output)
+6620 +                 any(
+6621 +                     'event="retention.job_failed"' in line and 'command="anonymize_ips"' in line
+6622 +                     for line in cap_anon.output
+6623 +                 )
+6624 |             )
+6625 |
+6626 +
+6627 | class AuditGroup6PolicyAndGdprTests(TestCase):
+--------------------------------------------------------------------------------
+6690 |
+6691 +
+6692 | class DjangoSecurityBaselineTests(TestCase):
+--------------------------------------------------------------------------------
+6710 |         self.course = Course.objects.create(
+     -             department=self.dept, code="BASE101", title="Baseline course", semester="1",
+     -             academic_year=2026, is_published=True, published_by=self.head, published_at=timezone.now(),
+6711 +             department=self.dept,
+6712 +             code="BASE101",
+6713 +             title="Baseline course",
+6714 +             semester="1",
+6715 +             academic_year=2026,
+6716 +             is_published=True,
+6717 +             published_by=self.head,
+6718 +             published_at=timezone.now(),
+6719 |         )
+--------------------------------------------------------------------------------
+6724 |         self.assessment = Assessment.objects.create(
+     -             course=self.course, title="Baseline exam", component_type=GradeComponentType.EXAM,
+     -             max_score=Decimal("100.00"), max_attempts=1, opens_at=timezone.now(),
+6725 +             course=self.course,
+6726 +             title="Baseline exam",
+6727 +             component_type=GradeComponentType.EXAM,
+6728 +             max_score=Decimal("100.00"),
+6729 +             max_attempts=1,
+6730 +             opens_at=timezone.now(),
+6731 |             due_date=timezone.now() + timezone.timedelta(hours=1),
+6732 |             created_by=self.instructor,
+6733 |         )
+6734 |         self.attempt = AssessmentAttempt.objects.create(
+     -             assessment=self.assessment, student=self.student, attempt_no=1,
+     -             status=AttemptStatus.FULLY_GRADED, ip_address="127.0.0.1",
+6735 +             assessment=self.assessment,
+6736 +             student=self.student,
+6737 +             attempt_no=1,
+6738 +             status=AttemptStatus.FULLY_GRADED,
+6739 +             ip_address="127.0.0.1",
+6740 |         )
+--------------------------------------------------------------------------------
+6808 |         grade = Grade.objects.create(
+     -             assessment=self.assessment, student=self.student, attempt=self.attempt,
+     -             score=Decimal("80.00"), status=GradeStatus.FINALIZED,
+6809 +             assessment=self.assessment,
+6810 +             student=self.student,
+6811 +             attempt=self.attempt,
+6812 +             score=Decimal("80.00"),
+6813 +             status=GradeStatus.FINALIZED,
+6814 |         )
+--------------------------------------------------------------------------------
+6837 |         grade = Grade.objects.create(
+     -             assessment=self.assessment, student=self.student, attempt=self.attempt,
+     -             score=Decimal("75.00"), status=GradeStatus.RELEASED,
+6838 +             assessment=self.assessment,
+6839 +             student=self.student,
+6840 +             attempt=self.attempt,
+6841 +             score=Decimal("75.00"),
+6842 +             status=GradeStatus.RELEASED,
+6843 |         )
+6844 |         change_request = GradeChangeRequest.objects.create(
+     -             grade=grade, requested_by=self.instructor, current_score=Decimal("75.00"),
+     -             proposed_score=Decimal("85.00"), reason="Marking error on question 2.",
+6845 +             grade=grade,
+6846 +             requested_by=self.instructor,
+6847 +             current_score=Decimal("75.00"),
+6848 +             proposed_score=Decimal("85.00"),
+6849 +             reason="Marking error on question 2.",
+6850 |             status=ChangeRequestStatus.PENDING,
+--------------------------------------------------------------------------------
+6898 |         grade = Grade.objects.create(
+     -             assessment=self.assessment, student=self.student, attempt=self.attempt,
+     -             score=Decimal("75.00"), status=GradeStatus.RELEASED,
+6899 +             assessment=self.assessment,
+6900 +             student=self.student,
+6901 +             attempt=self.attempt,
+6902 +             score=Decimal("75.00"),
+6903 +             status=GradeStatus.RELEASED,
+6904 |         )
+6905 |         change_request = GradeChangeRequest.objects.create(
+     -             grade=grade, requested_by=self.instructor, current_score=Decimal("75.00"),
+     -             proposed_score=Decimal("85.00"), reason="Marking error on question 2.",
+6906 +             grade=grade,
+6907 +             requested_by=self.instructor,
+6908 +             current_score=Decimal("75.00"),
+6909 +             proposed_score=Decimal("85.00"),
+6910 +             reason="Marking error on question 2.",
+6911 |             status=ChangeRequestStatus.PENDING,
+--------------------------------------------------------------------------------
+6957 |         cls.rsa_priv_pem = cls.rsa_private.private_bytes(
+     -             serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+6958 +             serialization.Encoding.PEM,
+6959 +             serialization.PrivateFormat.PKCS8,
+6960 |             serialization.NoEncryption(),
+--------------------------------------------------------------------------------
+6978 |         )
+     -         payload = jwt.decode(
+     -             token, self.rsa_pem, algorithms=["RS256"], audience="kura", issuer="kura"
+     -         )
+6979 +         payload = jwt.decode(token, self.rsa_pem, algorithms=["RS256"], audience="kura", issuer="kura")
+6980 |         self.assertEqual(payload["sub"], "user-1")
+--------------------------------------------------------------------------------
+6989 |             self.ec_private.private_bytes(
+     -                 serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+6990 +                 serialization.Encoding.PEM,
+6991 +                 serialization.PrivateFormat.PKCS8,
+6992 |                 serialization.NoEncryption(),
+--------------------------------------------------------------------------------
+7030 |         token = (
+     -             base64.urlsafe_b64encode(header).rstrip(b"=").decode() + "."
+7031 +             base64.urlsafe_b64encode(header).rstrip(b"=").decode()
+7032 +             + "."
+7033 |             + base64.urlsafe_b64encode(payload).rstrip(b"=").decode()
+--------------------------------------------------------------------------------
+7049 |         token = (
+     -             base64.urlsafe_b64encode(header).rstrip(b"=").decode() + "."
+7050 +             base64.urlsafe_b64encode(header).rstrip(b"=").decode()
+7051 +             + "."
+7052 |             + base64.urlsafe_b64encode(payload).rstrip(b"=").decode()
+--------------------------------------------------------------------------------
+7107 |         payload = jwt.decode(
+     -             token, self.rsa_pem, algorithms=["RS256"],
+7108 +             token,
+7109 +             self.rsa_pem,
+7110 +             algorithms=["RS256"],
+7111 |             options={"verify_exp": False},
+7112 |         )
+7113 |         self.assertEqual(payload["sub"], "user-9")
+     -
+     |
+
+unformatted: File would be reformatted
+   --> kura/tests_security_fixtures.py:65:20
+    |
+64  |     # CLS-01: Public & Pre-MFA Auth (9 routes)
+    -     "kura:login": {"cls": "CLS-01", "methods": ("GET", "POST"), "public": True, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:mfa_verify": {"cls": "CLS-01", "methods": ("GET", "POST"), "public": True, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:password_reset_request": {"cls": "CLS-01", "methods": ("GET", "POST"), "public": True, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:password_reset_confirm": {"cls": "CLS-01", "methods": ("GET", "POST"), "public": True, "csrf_exempt": False, "fresh_mfa": False, "kw": "reset_token"},
+    -     "kura:privacy_notice": {"cls": "CLS-01", "methods": ("GET",), "public": True, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "fido2_auth": {"cls": "CLS-01", "methods": ("GET",), "public": True, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "fido2_begin_auth": {"cls": "CLS-01", "methods": ("GET",), "public": True, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "fido2_complete_auth": {"cls": "CLS-01", "methods": ("POST",), "public": True, "csrf_exempt": True, "fresh_mfa": False, "kw": None},
+    -     "mfa_reset_cookie": {"cls": "CLS-01", "methods": ("GET",), "public": True, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -
+65  +     "kura:login": {
+66  +         "cls": "CLS-01",
+67  +         "methods": ("GET", "POST"),
+68  +         "public": True,
+69  +         "csrf_exempt": False,
+70  +         "fresh_mfa": False,
+71  +         "kw": None,
+72  +     },
+73  +     "kura:mfa_verify": {
+74  +         "cls": "CLS-01",
+75  +         "methods": ("GET", "POST"),
+76  +         "public": True,
+77  +         "csrf_exempt": False,
+78  +         "fresh_mfa": False,
+79  +         "kw": None,
+80  +     },
+81  +     "kura:password_reset_request": {
+82  +         "cls": "CLS-01",
+83  +         "methods": ("GET", "POST"),
+84  +         "public": True,
+85  +         "csrf_exempt": False,
+86  +         "fresh_mfa": False,
+87  +         "kw": None,
+88  +     },
+89  +     "kura:password_reset_confirm": {
+90  +         "cls": "CLS-01",
+91  +         "methods": ("GET", "POST"),
+92  +         "public": True,
+93  +         "csrf_exempt": False,
+94  +         "fresh_mfa": False,
+95  +         "kw": "reset_token",
+96  +     },
+97  +     "kura:privacy_notice": {
+98  +         "cls": "CLS-01",
+99  +         "methods": ("GET",),
+100 +         "public": True,
+101 +         "csrf_exempt": False,
+102 +         "fresh_mfa": False,
+103 +         "kw": None,
+104 +     },
+105 +     "fido2_auth": {
+106 +         "cls": "CLS-01",
+107 +         "methods": ("GET",),
+108 +         "public": True,
+109 +         "csrf_exempt": False,
+110 +         "fresh_mfa": False,
+111 +         "kw": None,
+112 +     },
+113 +     "fido2_begin_auth": {
+114 +         "cls": "CLS-01",
+115 +         "methods": ("GET",),
+116 +         "public": True,
+117 +         "csrf_exempt": False,
+118 +         "fresh_mfa": False,
+119 +         "kw": None,
+120 +     },
+121 +     "fido2_complete_auth": {
+122 +         "cls": "CLS-01",
+123 +         "methods": ("POST",),
+124 +         "public": True,
+125 +         "csrf_exempt": True,
+126 +         "fresh_mfa": False,
+127 +         "kw": None,
+128 +     },
+129 +     "mfa_reset_cookie": {
+130 +         "cls": "CLS-01",
+131 +         "methods": ("GET",),
+132 +         "public": True,
+133 +         "csrf_exempt": False,
+134 +         "fresh_mfa": False,
+135 +         "kw": None,
+136 +     },
+137 |     # CLS-02: Authenticated Self-Only & Onboarding (18 routes)
+    -     "kura:home": {"cls": "CLS-02", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:logout": {"cls": "CLS-02", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:password_change": {"cls": "CLS-02", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:mfa_setup": {"cls": "CLS-02", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": True, "kw": None},
+    -     "kura:mfa_setup_complete": {"cls": "CLS-02", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:mfa_reauth": {"cls": "CLS-02", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:passkey_manage": {"cls": "CLS-02", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": True, "kw": None},
+    -     "kura:passkey_delete": {"cls": "CLS-02", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": True, "kw": "passkey"},
+    -     "start_fido2": {"cls": "CLS-02", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "fido2_begin_reg": {"cls": "CLS-02", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "fido2_complete_reg": {"cls": "CLS-02", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": True, "kw": None},
+    -     "kura:privacy_dashboard": {"cls": "CLS-02", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:privacy_export": {"cls": "CLS-02", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:privacy_restrict": {"cls": "CLS-02", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:privacy_erasure": {"cls": "CLS-02", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:user_sessions": {"cls": "CLS-02", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:user_session_revoke": {"cls": "CLS-02", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "user_session"},
+    -     "kura:attendance_history": {"cls": "CLS-02", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -
+    -     # CLS-03: Admin-Only (14 routes)
+    -     "kura:staff_list": {"cls": "CLS-03", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:staff_create": {"cls": "CLS-03", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:staff_settings": {"cls": "CLS-03", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:admin_users": {"cls": "CLS-03", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:user_deactivate": {"cls": "CLS-03", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": True, "kw": "target_user"},
+    -     "kura:user_lock_toggle": {"cls": "CLS-03", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "target_user"},
+    -     "kura:user_roles": {"cls": "CLS-03", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": True, "kw": "target_user"},
+    -     "kura:admin_sessions": {"cls": "CLS-03", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:admin_sessions_revoke": {"cls": "CLS-03", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:security_policy": {"cls": "CLS-03", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": True, "kw": None},
+    -     "kura:quarantine_list": {"cls": "CLS-03", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:quarantine_delete": {"cls": "CLS-03", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "quarantined_file"},
+    -     "kura:admin_course_create": {"cls": "CLS-03", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:admin_course_edit": {"cls": "CLS-03", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "course_a1"},
+    -
+    -     # CLS-04: Registrar-Only (6 routes)
+    -     "kura:student_create": {"cls": "CLS-04", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:student_list": {"cls": "CLS-04", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:student_profile": {"cls": "CLS-04", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "student_1"},
+    -     "kura:enrollment_list": {"cls": "CLS-04", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:enrollment_create": {"cls": "CLS-04", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:enrollment_drop": {"cls": "CLS-04", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "enrollment_a1"},
+    -
+    -     # CLS-05: Department Head & Course Management (11 routes)
+    -     "kura:course_list": {"cls": "CLS-05", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:course_create": {"cls": "CLS-05", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:course_detail": {"cls": "CLS-05", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "course_a1"},
+    -     "kura:course_publish_toggle": {"cls": "CLS-05", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "course_a1"},
+    -     "kura:course_staff_assign": {"cls": "CLS-05", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "course_a1"},
+    -     "kura:course_ta_assign": {"cls": "CLS-05", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "course_a1"},
+    -     "kura:schedule_list": {"cls": "CLS-05", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:schedule_create": {"cls": "CLS-05", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "course_a1"},
+    -     "kura:schedule_edit": {"cls": "CLS-05", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "schedule_a1"},
+    -     "kura:schedule_delete": {"cls": "CLS-05", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "schedule_a1"},
+    -     "kura:department_reports": {"cls": "CLS-05", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "dept_a"},
+    -
+    -     # CLS-06: Course Files & Attendance (9 routes)
+    -     "kura:course_file_upload": {"cls": "CLS-06", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "course_a1"},
+    -     "kura:course_file_visibility_toggle": {"cls": "CLS-06", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "course_file_visible"},
+    -     "kura:course_file_delete": {"cls": "CLS-06", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "course_file_visible"},
+    -     "kura:file_download": {"cls": "CLS-06", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "course_file_download"},
+    -     "kura:attendance_session_start": {"cls": "CLS-06", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "course_a1"},
+    -     "kura:attendance_session_detail": {"cls": "CLS-06", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "attendance_session"},
+    -     "kura:attendance_session_close": {"cls": "CLS-06", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "attendance_session"},
+    -     "kura:student_checkin": {"cls": "CLS-06", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "attendance_session"},
+    -     "kura:attendance_manual_record": {"cls": "CLS-06", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "attendance_session"},
+    -
+138 +     "kura:home": {
+139 +         "cls": "CLS-02",
+140 +         "methods": ("GET",),
+141 +         "public": False,
+142 +         "csrf_exempt": False,
+143 +         "fresh_mfa": False,
+144 +         "kw": None,
+145 +     },
+146 +     "kura:logout": {
+147 +         "cls": "CLS-02",
+148 +         "methods": ("POST",),
+149 +         "public": False,
+150 +         "csrf_exempt": False,
+151 +         "fresh_mfa": False,
+152 +         "kw": None,
+153 +     },
+154 +     "kura:password_change": {
+155 +         "cls": "CLS-02",
+156 +         "methods": ("GET", "POST"),
+157 +         "public": False,
+158 +         "csrf_exempt": False,
+159 +         "fresh_mfa": False,
+160 +         "kw": None,
+161 +     },
+162 +     "kura:mfa_setup": {
+163 +         "cls": "CLS-02",
+164 +         "methods": ("GET", "POST"),
+165 +         "public": False,
+166 +         "csrf_exempt": False,
+167 +         "fresh_mfa": True,
+168 +         "kw": None,
+169 +     },
+170 +     "kura:mfa_setup_complete": {
+171 +         "cls": "CLS-02",
+172 +         "methods": ("GET",),
+173 +         "public": False,
+174 +         "csrf_exempt": False,
+175 +         "fresh_mfa": False,
+176 +         "kw": None,
+177 +     },
+178 +     "kura:mfa_reauth": {
+179 +         "cls": "CLS-02",
+180 +         "methods": ("GET", "POST"),
+181 +         "public": False,
+182 +         "csrf_exempt": False,
+183 +         "fresh_mfa": False,
+184 +         "kw": None,
+185 +     },
+186 +     "kura:passkey_manage": {
+187 +         "cls": "CLS-02",
+188 +         "methods": ("GET",),
+189 +         "public": False,
+190 +         "csrf_exempt": False,
+191 +         "fresh_mfa": True,
+192 +         "kw": None,
+193 +     },
+194 +     "kura:passkey_delete": {
+195 +         "cls": "CLS-02",
+196 +         "methods": ("POST",),
+197 +         "public": False,
+198 +         "csrf_exempt": False,
+199 +         "fresh_mfa": True,
+200 +         "kw": "passkey",
+201 +     },
+202 +     "start_fido2": {
+203 +         "cls": "CLS-02",
+204 +         "methods": ("GET",),
+205 +         "public": False,
+206 +         "csrf_exempt": False,
+207 +         "fresh_mfa": False,
+208 +         "kw": None,
+209 +     },
+210 +     "fido2_begin_reg": {
+211 +         "cls": "CLS-02",
+212 +         "methods": ("GET",),
+213 +         "public": False,
+214 +         "csrf_exempt": False,
+215 +         "fresh_mfa": False,
+216 +         "kw": None,
+217 +     },
+218 +     "fido2_complete_reg": {
+219 +         "cls": "CLS-02",
+220 +         "methods": ("POST",),
+221 +         "public": False,
+222 +         "csrf_exempt": False,
+223 +         "fresh_mfa": True,
+224 +         "kw": None,
+225 +     },
+226 +     "kura:privacy_dashboard": {
+227 +         "cls": "CLS-02",
+228 +         "methods": ("GET",),
+229 +         "public": False,
+230 +         "csrf_exempt": False,
+231 +         "fresh_mfa": False,
+232 +         "kw": None,
+233 +     },
+234 +     "kura:privacy_export": {
+235 +         "cls": "CLS-02",
+236 +         "methods": ("GET",),
+237 +         "public": False,
+238 +         "csrf_exempt": False,
+239 +         "fresh_mfa": False,
+240 +         "kw": None,
+241 +     },
+242 +     "kura:privacy_restrict": {
+243 +         "cls": "CLS-02",
+244 +         "methods": ("POST",),
+245 +         "public": False,
+246 +         "csrf_exempt": False,
+247 +         "fresh_mfa": False,
+248 +         "kw": None,
+249 +     },
+250 +     "kura:privacy_erasure": {
+251 +         "cls": "CLS-02",
+252 +         "methods": ("POST",),
+253 +         "public": False,
+254 +         "csrf_exempt": False,
+255 +         "fresh_mfa": False,
+256 +         "kw": None,
+257 +     },
+258 +     "kura:user_sessions": {
+259 +         "cls": "CLS-02",
+260 +         "methods": ("GET",),
+261 +         "public": False,
+262 +         "csrf_exempt": False,
+263 +         "fresh_mfa": False,
+264 +         "kw": None,
+265 +     },
+266 +     "kura:user_session_revoke": {
+267 +         "cls": "CLS-02",
+268 +         "methods": ("POST",),
+269 +         "public": False,
+270 +         "csrf_exempt": False,
+271 +         "fresh_mfa": False,
+272 +         "kw": "user_session",
+273 +     },
+274 +     "kura:attendance_history": {
+275 +         "cls": "CLS-02",
+276 +         "methods": ("GET",),
+277 +         "public": False,
+278 +         "csrf_exempt": False,
+279 +         "fresh_mfa": False,
+280 +         "kw": None,
+281 +     },
+282 +     # CLS-03: Admin-Only (14 routes)
+283 +     "kura:staff_list": {
+284 +         "cls": "CLS-03",
+285 +         "methods": ("GET",),
+286 +         "public": False,
+287 +         "csrf_exempt": False,
+288 +         "fresh_mfa": False,
+289 +         "kw": None,
+290 +     },
+291 +     "kura:staff_create": {
+292 +         "cls": "CLS-03",
+293 +         "methods": ("GET", "POST"),
+294 +         "public": False,
+295 +         "csrf_exempt": False,
+296 +         "fresh_mfa": False,
+297 +         "kw": None,
+298 +     },
+299 +     "kura:staff_settings": {
+300 +         "cls": "CLS-03",
+301 +         "methods": ("GET", "POST"),
+302 +         "public": False,
+303 +         "csrf_exempt": False,
+304 +         "fresh_mfa": False,
+305 +         "kw": None,
+306 +     },
+307 +     "kura:admin_users": {
+308 +         "cls": "CLS-03",
+309 +         "methods": ("GET",),
+310 +         "public": False,
+311 +         "csrf_exempt": False,
+312 +         "fresh_mfa": False,
+313 +         "kw": None,
+314 +     },
+315 +     "kura:user_deactivate": {
+316 +         "cls": "CLS-03",
+317 +         "methods": ("POST",),
+318 +         "public": False,
+319 +         "csrf_exempt": False,
+320 +         "fresh_mfa": True,
+321 +         "kw": "target_user",
+322 +     },
+323 +     "kura:user_lock_toggle": {
+324 +         "cls": "CLS-03",
+325 +         "methods": ("POST",),
+326 +         "public": False,
+327 +         "csrf_exempt": False,
+328 +         "fresh_mfa": False,
+329 +         "kw": "target_user",
+330 +     },
+331 +     "kura:user_roles": {
+332 +         "cls": "CLS-03",
+333 +         "methods": ("GET", "POST"),
+334 +         "public": False,
+335 +         "csrf_exempt": False,
+336 +         "fresh_mfa": True,
+337 +         "kw": "target_user",
+338 +     },
+339 +     "kura:admin_sessions": {
+340 +         "cls": "CLS-03",
+341 +         "methods": ("GET",),
+342 +         "public": False,
+343 +         "csrf_exempt": False,
+344 +         "fresh_mfa": False,
+345 +         "kw": None,
+346 +     },
+347 +     "kura:admin_sessions_revoke": {
+348 +         "cls": "CLS-03",
+349 +         "methods": ("POST",),
+350 +         "public": False,
+351 +         "csrf_exempt": False,
+352 +         "fresh_mfa": False,
+353 +         "kw": None,
+354 +     },
+355 +     "kura:security_policy": {
+356 +         "cls": "CLS-03",
+357 +         "methods": ("GET", "POST"),
+358 +         "public": False,
+359 +         "csrf_exempt": False,
+360 +         "fresh_mfa": True,
+361 +         "kw": None,
+362 +     },
+363 +     "kura:quarantine_list": {
+364 +         "cls": "CLS-03",
+365 +         "methods": ("GET",),
+366 +         "public": False,
+367 +         "csrf_exempt": False,
+368 +         "fresh_mfa": False,
+369 +         "kw": None,
+370 +     },
+371 +     "kura:quarantine_delete": {
+372 +         "cls": "CLS-03",
+373 +         "methods": ("POST",),
+374 +         "public": False,
+375 +         "csrf_exempt": False,
+376 +         "fresh_mfa": False,
+377 +         "kw": "quarantined_file",
+378 +     },
+379 +     "kura:admin_course_create": {
+380 +         "cls": "CLS-03",
+381 +         "methods": ("GET", "POST"),
+382 +         "public": False,
+383 +         "csrf_exempt": False,
+384 +         "fresh_mfa": False,
+385 +         "kw": None,
+386 +     },
+387 +     "kura:admin_course_edit": {
+388 +         "cls": "CLS-03",
+389 +         "methods": ("GET", "POST"),
+390 +         "public": False,
+391 +         "csrf_exempt": False,
+392 +         "fresh_mfa": False,
+393 +         "kw": "course_a1",
+394 +     },
+395 +     # CLS-04: Registrar-Only (6 routes)
+396 +     "kura:student_create": {
+397 +         "cls": "CLS-04",
+398 +         "methods": ("GET", "POST"),
+399 +         "public": False,
+400 +         "csrf_exempt": False,
+401 +         "fresh_mfa": False,
+402 +         "kw": None,
+403 +     },
+404 +     "kura:student_list": {
+405 +         "cls": "CLS-04",
+406 +         "methods": ("GET",),
+407 +         "public": False,
+408 +         "csrf_exempt": False,
+409 +         "fresh_mfa": False,
+410 +         "kw": None,
+411 +     },
+412 +     "kura:student_profile": {
+413 +         "cls": "CLS-04",
+414 +         "methods": ("GET",),
+415 +         "public": False,
+416 +         "csrf_exempt": False,
+417 +         "fresh_mfa": False,
+418 +         "kw": "student_1",
+419 +     },
+420 +     "kura:enrollment_list": {
+421 +         "cls": "CLS-04",
+422 +         "methods": ("GET",),
+423 +         "public": False,
+424 +         "csrf_exempt": False,
+425 +         "fresh_mfa": False,
+426 +         "kw": None,
+427 +     },
+428 +     "kura:enrollment_create": {
+429 +         "cls": "CLS-04",
+430 +         "methods": ("GET", "POST"),
+431 +         "public": False,
+432 +         "csrf_exempt": False,
+433 +         "fresh_mfa": False,
+434 +         "kw": None,
+435 +     },
+436 +     "kura:enrollment_drop": {
+437 +         "cls": "CLS-04",
+438 +         "methods": ("POST",),
+439 +         "public": False,
+440 +         "csrf_exempt": False,
+441 +         "fresh_mfa": False,
+442 +         "kw": "enrollment_a1",
+443 +     },
+444 +     # CLS-05: Department Head & Course Management (11 routes)
+445 +     "kura:course_list": {
+446 +         "cls": "CLS-05",
+447 +         "methods": ("GET",),
+448 +         "public": False,
+449 +         "csrf_exempt": False,
+450 +         "fresh_mfa": False,
+451 +         "kw": None,
+452 +     },
+453 +     "kura:course_create": {
+454 +         "cls": "CLS-05",
+455 +         "methods": ("GET", "POST"),
+456 +         "public": False,
+457 +         "csrf_exempt": False,
+458 +         "fresh_mfa": False,
+459 +         "kw": None,
+460 +     },
+461 +     "kura:course_detail": {
+462 +         "cls": "CLS-05",
+463 +         "methods": ("GET",),
+464 +         "public": False,
+465 +         "csrf_exempt": False,
+466 +         "fresh_mfa": False,
+467 +         "kw": "course_a1",
+468 +     },
+469 +     "kura:course_publish_toggle": {
+470 +         "cls": "CLS-05",
+471 +         "methods": ("POST",),
+472 +         "public": False,
+473 +         "csrf_exempt": False,
+474 +         "fresh_mfa": False,
+475 +         "kw": "course_a1",
+476 +     },
+477 +     "kura:course_staff_assign": {
+478 +         "cls": "CLS-05",
+479 +         "methods": ("GET", "POST"),
+480 +         "public": False,
+481 +         "csrf_exempt": False,
+482 +         "fresh_mfa": False,
+483 +         "kw": "course_a1",
+484 +     },
+485 +     "kura:course_ta_assign": {
+486 +         "cls": "CLS-05",
+487 +         "methods": ("GET", "POST"),
+488 +         "public": False,
+489 +         "csrf_exempt": False,
+490 +         "fresh_mfa": False,
+491 +         "kw": "course_a1",
+492 +     },
+493 +     "kura:schedule_list": {
+494 +         "cls": "CLS-05",
+495 +         "methods": ("GET",),
+496 +         "public": False,
+497 +         "csrf_exempt": False,
+498 +         "fresh_mfa": False,
+499 +         "kw": None,
+500 +     },
+501 +     "kura:schedule_create": {
+502 +         "cls": "CLS-05",
+503 +         "methods": ("GET", "POST"),
+504 +         "public": False,
+505 +         "csrf_exempt": False,
+506 +         "fresh_mfa": False,
+507 +         "kw": "course_a1",
+508 +     },
+509 +     "kura:schedule_edit": {
+510 +         "cls": "CLS-05",
+511 +         "methods": ("GET", "POST"),
+512 +         "public": False,
+513 +         "csrf_exempt": False,
+514 +         "fresh_mfa": False,
+515 +         "kw": "schedule_a1",
+516 +     },
+517 +     "kura:schedule_delete": {
+518 +         "cls": "CLS-05",
+519 +         "methods": ("POST",),
+520 +         "public": False,
+521 +         "csrf_exempt": False,
+522 +         "fresh_mfa": False,
+523 +         "kw": "schedule_a1",
+524 +     },
+525 +     "kura:department_reports": {
+526 +         "cls": "CLS-05",
+527 +         "methods": ("GET",),
+528 +         "public": False,
+529 +         "csrf_exempt": False,
+530 +         "fresh_mfa": False,
+531 +         "kw": "dept_a",
+532 +     },
+533 +     # CLS-06: Course Files & Attendance (9 routes)
+534 +     "kura:course_file_upload": {
+535 +         "cls": "CLS-06",
+536 +         "methods": ("POST",),
+537 +         "public": False,
+538 +         "csrf_exempt": False,
+539 +         "fresh_mfa": False,
+540 +         "kw": "course_a1",
+541 +     },
+542 +     "kura:course_file_visibility_toggle": {
+543 +         "cls": "CLS-06",
+544 +         "methods": ("POST",),
+545 +         "public": False,
+546 +         "csrf_exempt": False,
+547 +         "fresh_mfa": False,
+548 +         "kw": "course_file_visible",
+549 +     },
+550 +     "kura:course_file_delete": {
+551 +         "cls": "CLS-06",
+552 +         "methods": ("POST",),
+553 +         "public": False,
+554 +         "csrf_exempt": False,
+555 +         "fresh_mfa": False,
+556 +         "kw": "course_file_visible",
+557 +     },
+558 +     "kura:file_download": {
+559 +         "cls": "CLS-06",
+560 +         "methods": ("GET",),
+561 +         "public": False,
+562 +         "csrf_exempt": False,
+563 +         "fresh_mfa": False,
+564 +         "kw": "course_file_download",
+565 +     },
+566 +     "kura:attendance_session_start": {
+567 +         "cls": "CLS-06",
+568 +         "methods": ("GET", "POST"),
+569 +         "public": False,
+570 +         "csrf_exempt": False,
+571 +         "fresh_mfa": False,
+572 +         "kw": "course_a1",
+573 +     },
+574 +     "kura:attendance_session_detail": {
+575 +         "cls": "CLS-06",
+576 +         "methods": ("GET",),
+577 +         "public": False,
+578 +         "csrf_exempt": False,
+579 +         "fresh_mfa": False,
+580 +         "kw": "attendance_session",
+581 +     },
+582 +     "kura:attendance_session_close": {
+583 +         "cls": "CLS-06",
+584 +         "methods": ("POST",),
+585 +         "public": False,
+586 +         "csrf_exempt": False,
+587 +         "fresh_mfa": False,
+588 +         "kw": "attendance_session",
+589 +     },
+590 +     "kura:student_checkin": {
+591 +         "cls": "CLS-06",
+592 +         "methods": ("GET", "POST"),
+593 +         "public": False,
+594 +         "csrf_exempt": False,
+595 +         "fresh_mfa": False,
+596 +         "kw": "attendance_session",
+597 +     },
+598 +     "kura:attendance_manual_record": {
+599 +         "cls": "CLS-06",
+600 +         "methods": ("POST",),
+601 +         "public": False,
+602 +         "csrf_exempt": False,
+603 +         "fresh_mfa": False,
+604 +         "kw": "attendance_session",
+605 +     },
+606 |     # CLS-07: Assessments & Student Attempts (13 routes)
+    -     "kura:assessment_create": {"cls": "CLS-07", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "course_a1"},
+    -     "kura:assessment_edit": {"cls": "CLS-07", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "assessment_a1"},
+    -     "kura:assessment_delete": {"cls": "CLS-07", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "assessment_a1"},
+    -     "kura:assessment_detail": {"cls": "CLS-07", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "assessment_a1"},
+    -     "kura:assessment_file_upload": {"cls": "CLS-07", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "assessment_a1"},
+    -     "kura:assessment_file_download": {"cls": "CLS-07", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "assessment_file_download"},
+    -     "kura:assessment_attempt_start": {"cls": "CLS-07", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "assessment_a1"},
+    -     "kura:assessment_take": {"cls": "CLS-07", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "attempt_in_progress"},
+    -     "kura:assessment_attempt_file_upload": {"cls": "CLS-07", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "attempt_in_progress"},
+    -     "kura:assessment_attempt_file_delete": {"cls": "CLS-07", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "attempt_file_download"},
+    -     "kura:assessment_submit": {"cls": "CLS-07", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "attempt_in_progress"},
+    -     "kura:attempt_detail": {"cls": "CLS-07", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "attempt_submitted"},
+    -     "kura:attempt_file_download": {"cls": "CLS-07", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "attempt_file_download"},
+    -
+607 +     "kura:assessment_create": {
+608 +         "cls": "CLS-07",
+609 +         "methods": ("GET", "POST"),
+610 +         "public": False,
+611 +         "csrf_exempt": False,
+612 +         "fresh_mfa": False,
+613 +         "kw": "course_a1",
+614 +     },
+615 +     "kura:assessment_edit": {
+616 +         "cls": "CLS-07",
+617 +         "methods": ("GET", "POST"),
+618 +         "public": False,
+619 +         "csrf_exempt": False,
+620 +         "fresh_mfa": False,
+621 +         "kw": "assessment_a1",
+622 +     },
+623 +     "kura:assessment_delete": {
+624 +         "cls": "CLS-07",
+625 +         "methods": ("POST",),
+626 +         "public": False,
+627 +         "csrf_exempt": False,
+628 +         "fresh_mfa": False,
+629 +         "kw": "assessment_a1",
+630 +     },
+631 +     "kura:assessment_detail": {
+632 +         "cls": "CLS-07",
+633 +         "methods": ("GET",),
+634 +         "public": False,
+635 +         "csrf_exempt": False,
+636 +         "fresh_mfa": False,
+637 +         "kw": "assessment_a1",
+638 +     },
+639 +     "kura:assessment_file_upload": {
+640 +         "cls": "CLS-07",
+641 +         "methods": ("POST",),
+642 +         "public": False,
+643 +         "csrf_exempt": False,
+644 +         "fresh_mfa": False,
+645 +         "kw": "assessment_a1",
+646 +     },
+647 +     "kura:assessment_file_download": {
+648 +         "cls": "CLS-07",
+649 +         "methods": ("GET",),
+650 +         "public": False,
+651 +         "csrf_exempt": False,
+652 +         "fresh_mfa": False,
+653 +         "kw": "assessment_file_download",
+654 +     },
+655 +     "kura:assessment_attempt_start": {
+656 +         "cls": "CLS-07",
+657 +         "methods": ("POST",),
+658 +         "public": False,
+659 +         "csrf_exempt": False,
+660 +         "fresh_mfa": False,
+661 +         "kw": "assessment_a1",
+662 +     },
+663 +     "kura:assessment_take": {
+664 +         "cls": "CLS-07",
+665 +         "methods": ("GET",),
+666 +         "public": False,
+667 +         "csrf_exempt": False,
+668 +         "fresh_mfa": False,
+669 +         "kw": "attempt_in_progress",
+670 +     },
+671 +     "kura:assessment_attempt_file_upload": {
+672 +         "cls": "CLS-07",
+673 +         "methods": ("POST",),
+674 +         "public": False,
+675 +         "csrf_exempt": False,
+676 +         "fresh_mfa": False,
+677 +         "kw": "attempt_in_progress",
+678 +     },
+679 +     "kura:assessment_attempt_file_delete": {
+680 +         "cls": "CLS-07",
+681 +         "methods": ("POST",),
+682 +         "public": False,
+683 +         "csrf_exempt": False,
+684 +         "fresh_mfa": False,
+685 +         "kw": "attempt_file_download",
+686 +     },
+687 +     "kura:assessment_submit": {
+688 +         "cls": "CLS-07",
+689 +         "methods": ("POST",),
+690 +         "public": False,
+691 +         "csrf_exempt": False,
+692 +         "fresh_mfa": False,
+693 +         "kw": "attempt_in_progress",
+694 +     },
+695 +     "kura:attempt_detail": {
+696 +         "cls": "CLS-07",
+697 +         "methods": ("GET",),
+698 +         "public": False,
+699 +         "csrf_exempt": False,
+700 +         "fresh_mfa": False,
+701 +         "kw": "attempt_submitted",
+702 +     },
+703 +     "kura:attempt_file_download": {
+704 +         "cls": "CLS-07",
+705 +         "methods": ("GET",),
+706 +         "public": False,
+707 +         "csrf_exempt": False,
+708 +         "fresh_mfa": False,
+709 +         "kw": "attempt_file_download",
+710 +     },
+711 |     # CLS-08: Grades, Results & Transcript (10 routes)
+    -     "kura:course_grades": {"cls": "CLS-08", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "course_a1"},
+    -     "kura:grade_entry": {"cls": "CLS-08", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "attempt_submitted"},
+    -     "kura:grade_finalize": {"cls": "CLS-08", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "grade_draft"},
+    -     "kura:grade_release": {"cls": "CLS-08", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "grade_finalized"},
+    -     "kura:student_grades": {"cls": "CLS-08", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    -     "kura:grade_change_request_create": {"cls": "CLS-08", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "grade_released"},
+    -     "kura:grade_change_request_review": {"cls": "CLS-08", "methods": ("GET", "POST"), "public": False, "csrf_exempt": False, "fresh_mfa": True, "kw": "change_request_pending"},
+    -     "kura:course_result_calculate": {"cls": "CLS-08", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": "course_a1"},
+    -     "kura:course_result_release": {"cls": "CLS-08", "methods": ("POST",), "public": False, "csrf_exempt": False, "fresh_mfa": True, "kw": "course_a1"},
+    -     "kura:student_transcript": {"cls": "CLS-08", "methods": ("GET",), "public": False, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+712 +     "kura:course_grades": {
+713 +         "cls": "CLS-08",
+714 +         "methods": ("GET",),
+715 +         "public": False,
+716 +         "csrf_exempt": False,
+717 +         "fresh_mfa": False,
+718 +         "kw": "course_a1",
+719 +     },
+720 +     "kura:grade_entry": {
+721 +         "cls": "CLS-08",
+722 +         "methods": ("GET", "POST"),
+723 +         "public": False,
+724 +         "csrf_exempt": False,
+725 +         "fresh_mfa": False,
+726 +         "kw": "attempt_submitted",
+727 +     },
+728 +     "kura:grade_finalize": {
+729 +         "cls": "CLS-08",
+730 +         "methods": ("POST",),
+731 +         "public": False,
+732 +         "csrf_exempt": False,
+733 +         "fresh_mfa": False,
+734 +         "kw": "grade_draft",
+735 +     },
+736 +     "kura:grade_release": {
+737 +         "cls": "CLS-08",
+738 +         "methods": ("GET", "POST"),
+739 +         "public": False,
+740 +         "csrf_exempt": False,
+741 +         "fresh_mfa": False,
+742 +         "kw": "grade_finalized",
+743 +     },
+744 +     "kura:student_grades": {
+745 +         "cls": "CLS-08",
+746 +         "methods": ("GET",),
+747 +         "public": False,
+748 +         "csrf_exempt": False,
+749 +         "fresh_mfa": False,
+750 +         "kw": None,
+751 +     },
+752 +     "kura:grade_change_request_create": {
+753 +         "cls": "CLS-08",
+754 +         "methods": ("GET", "POST"),
+755 +         "public": False,
+756 +         "csrf_exempt": False,
+757 +         "fresh_mfa": False,
+758 +         "kw": "grade_released",
+759 +     },
+760 +     "kura:grade_change_request_review": {
+761 +         "cls": "CLS-08",
+762 +         "methods": ("GET", "POST"),
+763 +         "public": False,
+764 +         "csrf_exempt": False,
+765 +         "fresh_mfa": True,
+766 +         "kw": "change_request_pending",
+767 +     },
+768 +     "kura:course_result_calculate": {
+769 +         "cls": "CLS-08",
+770 +         "methods": ("POST",),
+771 +         "public": False,
+772 +         "csrf_exempt": False,
+773 +         "fresh_mfa": False,
+774 +         "kw": "course_a1",
+775 +     },
+776 +     "kura:course_result_release": {
+777 +         "cls": "CLS-08",
+778 +         "methods": ("POST",),
+779 +         "public": False,
+780 +         "csrf_exempt": False,
+781 +         "fresh_mfa": True,
+782 +         "kw": "course_a1",
+783 +     },
+784 +     "kura:student_transcript": {
+785 +         "cls": "CLS-08",
+786 +         "methods": ("GET",),
+787 +         "public": False,
+788 +         "csrf_exempt": False,
+789 +         "fresh_mfa": False,
+790 +         "kw": None,
+791 +     },
+792 | }
+    |
+
+unformatted: File would be reformatted
+   --> kura/tests_security_leads_part1.py:291:27
+    |
+290 |         accepted_in_burst = 0
+    -         with patch.object(type(ratelimit_cache), "get", side_effect=lambda k, default=0: stale_snapshot.get(k, default)):
+291 +         with patch.object(
+292 +             type(ratelimit_cache), "get", side_effect=lambda k, default=0: stale_snapshot.get(k, default)
+293 +         ):
+294 |             for _ in range(10):
+--------------------------------------------------------------------------------
+641 |         from mfa import views as mfa_views
+642 +
+643 |         req = auth_client.get(reverse("mfa_reset_cookie")).wsgi_request
+--------------------------------------------------------------------------------
+766 |         accepted_in_burst = 0
+    -         with patch.object(type(ratelimit_cache), "get", side_effect=lambda k, default=0: stale_snapshot.get(k, default)):
+767 +         with patch.object(
+768 +             type(ratelimit_cache), "get", side_effect=lambda k, default=0: stale_snapshot.get(k, default)
+769 +         ):
+770 |             for _ in range(10):
+--------------------------------------------------------------------------------
+807 |         csv_text = ok_resp.content.decode("utf-8")
+    -         for prefix in ("'=CMD|' /C calc'!A0_Title", "'+1+1_Title", "'-1+1_Title", "'@SUM(1,1)_Title", "'\t=1+1_Title", "'\r=1+1_Title"):
+808 +         for prefix in (
+809 +             "'=CMD|' /C calc'!A0_Title",
+810 +             "'+1+1_Title",
+811 +             "'-1+1_Title",
+812 +             "'@SUM(1,1)_Title",
+813 +             "'\t=1+1_Title",
+814 +             "'\r=1+1_Title",
+815 +         ):
+816 |             self.assertIn(prefix, csv_text)
+    |
+
+unformatted: File would be reformatted
+   --> kura/tests_security_leads_part2.py:304:26
+    |
+303 |         """
+    -         template_text = (
+    -             BASE_DIR / "kura" / "templates" / "kura" / "attendance" / "session_detail.html"
+    -         ).read_text(encoding="utf-8")
+304 +         template_text = (BASE_DIR / "kura" / "templates" / "kura" / "attendance" / "session_detail.html").read_text(
+305 +             encoding="utf-8"
+306 +         )
+307 |         self.assertIn('{% if is_live %}<meta http-equiv="refresh" content="15">{% endif %}', template_text)
+--------------------------------------------------------------------------------
+385 |             req_get.user = actor
+    -             with patch("kura.views.can_access_learning_records", return_value=True), patch(
+    -                 "kura.views.is_admin_course_manager", return_value=False
+386 +             with (
+387 +                 patch("kura.views.can_access_learning_records", return_value=True),
+388 +                 patch("kura.views.is_admin_course_manager", return_value=False),
+389 |             ):
+--------------------------------------------------------------------------------
+394 |             req_post.user = actor
+    -             with patch("kura.views.can_access_learning_records", return_value=False), self.assertRaises(
+    -                 PermissionDenied
+395 +             with (
+396 +                 patch("kura.views.can_access_learning_records", return_value=False),
+397 +                 self.assertRaises(PermissionDenied),
+398 |             ):
+--------------------------------------------------------------------------------
+542 |         pg_hba = (BASE_DIR / "docker" / "postgres" / "pg_hba.conf").read_text(encoding="utf-8")
+    -         self.assertIn("hostssl kura           kura_migrator   all                     cert clientcert=verify-full", pg_hba)
+543 +         self.assertIn(
+544 +             "hostssl kura           kura_migrator   all                     cert clientcert=verify-full", pg_hba
+545 +         )
+546 |
+--------------------------------------------------------------------------------
+610 |
+    -         _, auth_client, _ = self._make_user_and_client("lead14_pg@kura.edu", "Student", must_change_password=False, fresh_mfa=True)
+611 +         _, auth_client, _ = self._make_user_and_client(
+612 +             "lead14_pg@kura.edu", "Student", must_change_password=False, fresh_mfa=True
+613 +         )
+614 |         self.assertEqual(auth_client.get(reverse("kura:home")).status_code, 200)
+--------------------------------------------------------------------------------
+662 |         self.assertEqual(
+    -             ok_resp.status_code, 200,
+663 +             ok_resp.status_code,
+664 +             200,
+665 |             f"unexpected redirect to {ok_resp.get('Location')} status={ok_resp.status_code}",
+    |
+
+unformatted: File would be reformatted
+   --> kura/tests_security_routes.py:103:32
+    |
+102 |         discovered = dict(_walk_named_routes(get_resolver().url_patterns))
+    -         exempt_routes = sorted(
+    -             route_name for route_name, cb in discovered.items() if getattr(cb, "csrf_exempt", False)
+    -         )
+103 +         exempt_routes = sorted(route_name for route_name, cb in discovered.items() if getattr(cb, "csrf_exempt", False))
+104 |         self.assertEqual(exempt_routes, ["fido2_complete_auth"])
+--------------------------------------------------------------------------------
+185 |         req_reg.user = actor
+    -         with patch("kura.views.has_role", side_effect=lambda u, r: r == "Registrar"), patch(
+    -             "kura.permissions.has_role", side_effect=lambda u, r: r == "Registrar"
+    -         ), self.assertRaises(PermissionDenied):
+186 +         with (
+187 +             patch("kura.views.has_role", side_effect=lambda u, r: r == "Registrar"),
+188 +             patch("kura.permissions.has_role", side_effect=lambda u, r: r == "Registrar"),
+189 +             self.assertRaises(PermissionDenied),
+190 +         ):
+191 |             course_list_view(req_reg)
+--------------------------------------------------------------------------------
+287 |             self.assertEqual(
+    -                 assessment_file_download_view(req_dl, assessment_id=fake_assess_open.id, file_id=fake_file.id).status_code,
+288 +                 assessment_file_download_view(
+289 +                     req_dl, assessment_id=fake_assess_open.id, file_id=fake_file.id
+290 +                 ).status_code,
+291 |                 200,
+--------------------------------------------------------------------------------
+344 |             mock_gcr_mgr.filter.return_value.exists.return_value = False
+    -             self.assertEqual(grade_change_request_create_view(req_gcr_create, grade_id=fake_grade_rel.id).status_code, 200)
+345 +             self.assertEqual(
+346 +                 grade_change_request_create_view(req_gcr_create, grade_id=fake_grade_rel.id).status_code, 200
+347 +             )
+348 |
+--------------------------------------------------------------------------------
+554 |         }
+    -         self.clients["pre_mfa_user"], _ = create_authenticated_client(
+    -             self.fx["users"]["pre_mfa_user"], fresh_mfa=False
+    -         )
+555 +         self.clients["pre_mfa_user"], _ = create_authenticated_client(self.fx["users"]["pre_mfa_user"], fresh_mfa=False)
+556 |         self.anon_client = Client()
+--------------------------------------------------------------------------------
+618 |         self.assertEqual(self.clients["registrar"].get(self._resolve_url("kura:admin_users", None)).status_code, 403)
+    -         self.assertEqual(self.clients["student_1"].get(self._resolve_url("kura:security_policy", None)).status_code, 403)
+619 +         self.assertEqual(
+620 +             self.clients["student_1"].get(self._resolve_url("kura:security_policy", None)).status_code, 403
+621 +         )
+622 |
+623 |         # CLS-04 Registrar vs non-Registrar
+624 |         self.assertEqual(self.clients["registrar"].get(self._resolve_url("kura:student_list", None)).status_code, 200)
+625 |         self.assertEqual(self.clients["admin"].get(self._resolve_url("kura:student_list", None)).status_code, 403)
+    -         self.assertEqual(self.clients["instructor_a"].get(self._resolve_url("kura:student_list", None)).status_code, 403)
+626 +         self.assertEqual(
+627 +             self.clients["instructor_a"].get(self._resolve_url("kura:student_list", None)).status_code, 403
+628 +         )
+629 |
+630 |         # CLS-05 Dept head cross-department denial + course_detail Admin vs Registrar
+    -         self.assertEqual(self.clients["head_a"].get(self._resolve_url("kura:department_reports", "dept_a")).status_code, 200)
+    -         self.assertEqual(self.clients["head_b"].get(self._resolve_url("kura:department_reports", "dept_a")).status_code, 403)
+    -         self.assertEqual(self.clients["admin"].get(self._resolve_url("kura:course_detail", "course_a1")).status_code, 200)
+    -         self.assertEqual(self.clients["admin"].get(self._resolve_url("kura:course_detail", "course_a1") + "?tab=grades").status_code, 403)
+    -         self.assertEqual(self.clients["registrar"].get(self._resolve_url("kura:course_detail", "course_a1")).status_code, 403)
+631 +         self.assertEqual(
+632 +             self.clients["head_a"].get(self._resolve_url("kura:department_reports", "dept_a")).status_code, 200
+633 +         )
+634 +         self.assertEqual(
+635 +             self.clients["head_b"].get(self._resolve_url("kura:department_reports", "dept_a")).status_code, 403
+636 +         )
+637 +         self.assertEqual(
+638 +             self.clients["admin"].get(self._resolve_url("kura:course_detail", "course_a1")).status_code, 200
+639 +         )
+640 +         self.assertEqual(
+641 +             self.clients["admin"].get(self._resolve_url("kura:course_detail", "course_a1") + "?tab=grades").status_code,
+642 +             403,
+643 +         )
+644 +         self.assertEqual(
+645 +             self.clients["registrar"].get(self._resolve_url("kura:course_detail", "course_a1")).status_code, 403
+646 +         )
+647 |
+648 |         # CLS-06 Attendance session start excludes Dept Head
+    -         self.assertEqual(self.clients["instructor_a"].get(self._resolve_url("kura:attendance_session_start", "course_a1")).status_code, 200)
+    -         self.assertEqual(self.clients["head_a"].get(self._resolve_url("kura:attendance_session_start", "course_a1")).status_code, 403)
+649 +         self.assertEqual(
+650 +             self.clients["instructor_a"]
+651 +             .get(self._resolve_url("kura:attendance_session_start", "course_a1"))
+652 +             .status_code,
+653 +             200,
+654 +         )
+655 +         self.assertEqual(
+656 +             self.clients["head_a"].get(self._resolve_url("kura:attendance_session_start", "course_a1")).status_code, 403
+657 +         )
+658 |
+659 |         # CLS-07 Assessment take & attempt detail IDOR
+    -         self.assertEqual(self.clients["student_1"].get(self._resolve_url("kura:assessment_take", "attempt_in_progress")).status_code, 200)
+    -         self.assertEqual(self.clients["student_2"].get(self._resolve_url("kura:assessment_take", "attempt_in_progress")).status_code, 404)
+    -         self.assertEqual(self.clients["instructor_a"].get(self._resolve_url("kura:assessment_take", "attempt_in_progress")).status_code, 404)
+    -         self.assertEqual(self.clients["head_a"].get(self._resolve_url("kura:attempt_detail", "attempt_submitted")).status_code, 200)
+    -         self.assertEqual(self.clients["student_2"].get(self._resolve_url("kura:attempt_detail", "attempt_submitted")).status_code, 403)
+660 +         self.assertEqual(
+661 +             self.clients["student_1"].get(self._resolve_url("kura:assessment_take", "attempt_in_progress")).status_code,
+662 +             200,
+663 +         )
+664 +         self.assertEqual(
+665 +             self.clients["student_2"].get(self._resolve_url("kura:assessment_take", "attempt_in_progress")).status_code,
+666 +             404,
+667 +         )
+668 +         self.assertEqual(
+669 +             self.clients["instructor_a"]
+670 +             .get(self._resolve_url("kura:assessment_take", "attempt_in_progress"))
+671 +             .status_code,
+672 +             404,
+673 +         )
+674 +         self.assertEqual(
+675 +             self.clients["head_a"].get(self._resolve_url("kura:attempt_detail", "attempt_submitted")).status_code, 200
+676 +         )
+677 +         self.assertEqual(
+678 +             self.clients["student_2"].get(self._resolve_url("kura:attempt_detail", "attempt_submitted")).status_code,
+679 +             403,
+680 +         )
+681 |
+682 |         # CLS-08 Grades separation of duty & step-up
+    -         self.assertEqual(self.clients["admin"].get(self._resolve_url("kura:course_grades", "course_a1")).status_code, 403)
+    -         self.assertEqual(self.clients["registrar"].get(self._resolve_url("kura:course_grades", "course_a1")).status_code, 403)
+    -         self.assertEqual(self.clients["ta_a"].post(self._resolve_url("kura:grade_finalize", "grade_draft")).status_code, 403)
+683 |         self.assertEqual(
+    -             self.clients["instructor_a_norelease"].post(self._resolve_url("kura:course_result_release", "course_a1")).status_code,
+684 +             self.clients["admin"].get(self._resolve_url("kura:course_grades", "course_a1")).status_code, 403
+685 +         )
+686 +         self.assertEqual(
+687 +             self.clients["registrar"].get(self._resolve_url("kura:course_grades", "course_a1")).status_code, 403
+688 +         )
+689 +         self.assertEqual(
+690 +             self.clients["ta_a"].post(self._resolve_url("kura:grade_finalize", "grade_draft")).status_code, 403
+691 +         )
+692 +         self.assertEqual(
+693 +             self.clients["instructor_a_norelease"]
+694 +             .post(self._resolve_url("kura:course_result_release", "course_a1"))
+695 +             .status_code,
+696 |             403,
+    |
+
+unformatted: File would be reformatted
+    --> kura/views.py:165:21
+     |
+164  |     # SHA-1 is the lookup format required by the breach service, not a password hash for storage.
+     -     password_hash = hashlib.sha1(password.encode("utf-8"), usedforsecurity=False).hexdigest().upper()  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1
+165  +     password_hash = (
+166  +         hashlib.sha1(password.encode("utf-8"), usedforsecurity=False).hexdigest().upper()
+167  +     )  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1
+168  |     request = urllib.request.Request(
+--------------------------------------------------------------------------------
+188  |         # Preserve the existing fail-open behavior without logging a password or hash.
+     -         log_security_event(None, "auth.breach_check.unavailable", {"error_type": type(error).__name__}, level=logging.WARNING)
+189  +         log_security_event(
+190  +             None, "auth.breach_check.unavailable", {"error_type": type(error).__name__}, level=logging.WARNING
+191  +         )
+192  |
+--------------------------------------------------------------------------------
+219  |     if not ciphertext.startswith("vault:"):
+     -         log_security_event(None, "vault.error", {"operation": "decrypt_mfa_secret_invalid_ciphertext"}, level=logging.ERROR)
+220  +         log_security_event(
+221  +             None, "vault.error", {"operation": "decrypt_mfa_secret_invalid_ciphertext"}, level=logging.ERROR
+222  +         )
+223  |         raise ValidationError("MFA secret is not encrypted.")
+224  |     try:
+225  |         client = get_vault_client()
+226  |         response = client.secrets.transit.decrypt_data(
+     -             name=settings.VAULT_TRANSIT_KEY, mount_point=settings.VAULT_TRANSIT_MOUNT, ciphertext=ciphertext,
+227  +             name=settings.VAULT_TRANSIT_KEY,
+228  +             mount_point=settings.VAULT_TRANSIT_MOUNT,
+229  +             ciphertext=ciphertext,
+230  |         )
+--------------------------------------------------------------------------------
+266  |             return bytes(file_content.content)
+     -         log_security_event(None, "file.decrypt_failed", {"file_id": file_content.file_id, "reason": "vault_disabled"}, level=logging.ERROR)
+267  +         log_security_event(
+268  +             None,
+269  +             "file.decrypt_failed",
+270  +             {"file_id": file_content.file_id, "reason": "vault_disabled"},
+271  +             level=logging.ERROR,
+272  +         )
+273  |         raise ValidationError("Encrypted files cannot be read while Vault is disabled.")
+274  |     if version == 0:
+275  |         if getattr(settings, "ALLOW_LEGACY_UNENCRYPTED_FILE_READS", False):
+276  |             return bytes(file_content.content)
+     -         log_security_event(None, "file.decrypt_failed", {"file_id": file_content.file_id, "reason": "unencrypted_legacy_file"}, level=logging.ERROR)
+277  +         log_security_event(
+278  +             None,
+279  +             "file.decrypt_failed",
+280  +             {"file_id": file_content.file_id, "reason": "unencrypted_legacy_file"},
+281  +             level=logging.ERROR,
+282  +         )
+283  |         raise ValidationError("File decryption failed.")
+284  |     if version != 1:
+     -         log_security_event(None, "file.decrypt_failed", {"file_id": file_content.file_id, "reason": "unsupported_version"}, level=logging.ERROR)
+285  +         log_security_event(
+286  +             None,
+287  +             "file.decrypt_failed",
+288  +             {"file_id": file_content.file_id, "reason": "unsupported_version"},
+289  +             level=logging.ERROR,
+290  +         )
+291  |         raise ValidationError("File decryption failed.")
+--------------------------------------------------------------------------------
+295  |     if not wrapped_key.startswith("vault:") or len(nonce) != 12:
+     -         log_security_event(None, "file.decrypt_failed", {"file_id": file_content.file_id, "reason": "invalid_envelope"}, level=logging.ERROR)
+296  +         log_security_event(
+297  +             None,
+298  +             "file.decrypt_failed",
+299  +             {"file_id": file_content.file_id, "reason": "invalid_envelope"},
+300  +             level=logging.ERROR,
+301  +         )
+302  |         raise ValidationError("File decryption failed.")
+303  |     try:
+304  |         client = get_vault_client()
+305  |         response = client.secrets.transit.decrypt_data(
+     -             name=settings.VAULT_FILES_KEY, mount_point=settings.VAULT_TRANSIT_MOUNT, ciphertext=wrapped_key,
+306  +             name=settings.VAULT_FILES_KEY,
+307  +             mount_point=settings.VAULT_TRANSIT_MOUNT,
+308  +             ciphertext=wrapped_key,
+309  |         )
+310  |         data_key = base64.b64decode(response["data"]["plaintext"].encode("utf-8"))
+311  |     except Exception as error:
+     -         log_security_event(None, "file.decrypt_failed", {"file_id": file_content.file_id, "reason": "vault_unwrap_failed"}, level=logging.ERROR)
+312  +         log_security_event(
+313  +             None,
+314  +             "file.decrypt_failed",
+315  +             {"file_id": file_content.file_id, "reason": "vault_unwrap_failed"},
+316  +             level=logging.ERROR,
+317  +         )
+318  |         raise ValidationError("File decryption failed.") from error
+319  |     try:
+320  |         return AESGCM(data_key).decrypt(nonce, bytes(file_content.content), str(file_content.file_id).encode("utf-8"))
+321  |     except (InvalidTag, ValueError, TypeError) as error:
+     -         log_security_event(None, "file.decrypt_failed", {"file_id": file_content.file_id, "reason": "gcm_auth_failed"}, level=logging.ERROR)
+322  +         log_security_event(
+323  +             None,
+324  +             "file.decrypt_failed",
+325  +             {"file_id": file_content.file_id, "reason": "gcm_auth_failed"},
+326  +             level=logging.ERROR,
+327  +         )
+328  |         raise ValidationError("File decryption failed.") from error
+--------------------------------------------------------------------------------
+517  |             # Scanner failures also reject the upload, but are not malware quarantines.
+     -             log_security_event(request, "file.upload_rejected", {"reason": "scanner_unavailable"}, level=logging.WARNING)
+518  +             log_security_event(
+519  +                 request, "file.upload_rejected", {"reason": "scanner_unavailable"}, level=logging.WARNING
+520  +             )
+521  |             raise
+--------------------------------------------------------------------------------
+647  |         {"title": "Staff", "description": "Create and manage staff accounts.", "url": "/admin/staff/"},
+     -         {"title": "Users", "description": "Lock, unlock, deactivate, or update roles for any account.", "url": "/admin/users/"},
+648  +         {
+649  +             "title": "Users",
+650  +             "description": "Lock, unlock, deactivate, or update roles for any account.",
+651  +             "url": "/admin/users/",
+652  +         },
+653  |         {"title": "Courses", "description": "Browse and manage university courses.", "url": "/courses/"},
+--------------------------------------------------------------------------------
+784  |
+785  +
+786  | def queue_email(event_key, to_email, subject, body):
+--------------------------------------------------------------------------------
+931  |         age = timezone.now().timestamp() - float(started_at)
+     -     except (ValueError, TypeError):
+932  +     except ValueError, TypeError:
+933  |         return False
+--------------------------------------------------------------------------------
+1227 |     next_url = request.POST.get("next") or request.GET.get("next") or ""
+     -     if not url_has_allowed_host_and_scheme(next_url, allowed_hosts={request.get_host()}, require_https=request.is_secure()):
+1228 +     if not url_has_allowed_host_and_scheme(
+1229 +         next_url, allowed_hosts={request.get_host()}, require_https=request.is_secure()
+1230 +     ):
+1231 |         next_url = reverse("kura:home")
+--------------------------------------------------------------------------------
+1278 |         body = json.loads(response.content)
+     -     except (ValueError, TypeError):
+1279 +     except ValueError, TypeError:
+1280 |         return JsonResponse({"status": "ERR", "message": generic_error_message}, status=500)
+--------------------------------------------------------------------------------
+1314 |             body = json.loads(normalized.content)
+     -         except (ValueError, TypeError):
+1315 +         except ValueError, TypeError:
+1316 |             body = {}
+--------------------------------------------------------------------------------
+3103 |         log_invalid_form(request, submitted_form)
+     -     return render(request, "kura/accounts/staff_settings.html", {
+     -         "department_form": department_form,
+     -         "department_head_form": department_head_form,
+     -         "building_form": building_form,
+     -         "room_form": room_form,
+     -         "departments": Department.objects.select_related("head_user").order_by("name"),
+     -         "buildings": Building.objects.order_by("name"),
+     -         "rooms": Room.objects.select_related("building").order_by("building__name", "name"),
+     -     }, status=400 if request.method == "POST" else 200)
+3104 +     return render(
+3105 +         request,
+3106 +         "kura/accounts/staff_settings.html",
+3107 +         {
+3108 +             "department_form": department_form,
+3109 +             "department_head_form": department_head_form,
+3110 +             "building_form": building_form,
+3111 +             "room_form": room_form,
+3112 +             "departments": Department.objects.select_related("head_user").order_by("name"),
+3113 +             "buildings": Building.objects.order_by("name"),
+3114 +             "rooms": Room.objects.select_related("building").order_by("building__name", "name"),
+3115 +         },
+3116 +         status=400 if request.method == "POST" else 200,
+3117 +     )
+3118 |
+--------------------------------------------------------------------------------
+3817 |         staff_assignments = CourseStaff.objects.filter(course=course).select_related("user")
+     -         course_schedules = Schedule.objects.filter(course=course).select_related("instructor").order_by("day", "start_time")
+3818 +         course_schedules = (
+3819 +             Schedule.objects.filter(course=course).select_related("instructor").order_by("day", "start_time")
+3820 +         )
+3821 |         enrolled_count = Enrollment.objects.filter(course=course, status=EnrollmentStatus.ACTIVE).count()
+--------------------------------------------------------------------------------
+4947 |         return HttpResponseNotAllowed(["POST"])
+     -     assessment = get_object_or_404(
+     -         Assessment.objects.select_related("course__department"), id=assessment_id
+     -     )
+4948 +     assessment = get_object_or_404(Assessment.objects.select_related("course__department"), id=assessment_id)
+4949 |     course = assessment.course
+--------------------------------------------------------------------------------
+5283 |             with transaction.atomic():
+     -                 attempt = AssessmentAttempt.objects.select_for_update().select_related("assessment").get(
+     -                     id=attempt.id, student=request.user
+5284 +                 attempt = (
+5285 +                     AssessmentAttempt.objects.select_for_update()
+5286 +                     .select_related("assessment")
+5287 +                     .get(id=attempt.id, student=request.user)
+5288 |                 )
+--------------------------------------------------------------------------------
+5389 |         for attempt_file in AttemptFile.objects.filter(attempt=attempt).select_related("file"):
+     -             receipt_lines.append(f"File: {attempt_file.file.original_filename}  SHA-256: {attempt_file.file.sha256_hash}")
+5390 +             receipt_lines.append(
+5391 +                 f"File: {attempt_file.file.original_filename}  SHA-256: {attempt_file.file.sha256_hash}"
+5392 +             )
+5393 |         receipt_lines += ["", "Keep this email as your receipt. This is an automatic message from Kura."]
+--------------------------------------------------------------------------------
+5792 |         with transaction.atomic():
+     -             grade = Grade.objects.select_for_update().select_related(
+     -                 "assessment__course__department", "student"
+     -             ).get(id=grade.id)
+5793 +             grade = (
+5794 +                 Grade.objects.select_for_update()
+5795 +                 .select_related("assessment__course__department", "student")
+5796 +                 .get(id=grade.id)
+5797 +             )
+5798 |             if grade.status != GradeStatus.FINALIZED:
+--------------------------------------------------------------------------------
+5965 |     change_request = get_object_or_404(
+     -         GradeChangeRequest.objects.select_related(
+     -             "grade__assessment__course__department", "requested_by"
+     -         ),
+5966 +         GradeChangeRequest.objects.select_related("grade__assessment__course__department", "requested_by"),
+5967 |         id=request_id,
+--------------------------------------------------------------------------------
+6038 |                 # Keep any existing CourseResult (including RELEASED) in sync with the approved grade change (M2).
+     -                 course_result = CourseResult.objects.select_for_update().filter(
+     -                     course=course, student_id=grade.student_id
+     -                 ).first()
+6039 +                 course_result = (
+6040 +                     CourseResult.objects.select_for_update().filter(course=course, student_id=grade.student_id).first()
+6041 +                 )
+6042 |                 if course_result is not None:
+--------------------------------------------------------------------------------
+6184 |         now = timezone.now()
+     -         released_count = CourseResult.objects.filter(course=course).exclude(status=GradeStatus.RELEASED).update(
+     -             status=GradeStatus.RELEASED,
+     -             finalized_by=request.user,
+     -             finalized_at=now,
+     -             released_at=now,
+6185 +         released_count = (
+6186 +             CourseResult.objects.filter(course=course)
+6187 +             .exclude(status=GradeStatus.RELEASED)
+6188 +             .update(
+6189 +                 status=GradeStatus.RELEASED,
+6190 +                 finalized_by=request.user,
+6191 +                 finalized_at=now,
+6192 +                 released_at=now,
+6193 +             )
+6194 |         )
+     |
+
+unformatted: File would be reformatted
+  --> manage.py:3:1
+   |
+2  | """Django's command-line utility for administrative tasks."""
+3  +
+4  | import os
+--------------------------------------------------------------------------------
+9  |     """Run administrative tasks."""
+   -     os.environ.setdefault('DJANGO_SETTINGS_MODULE', 'config.settings')
+10 +     os.environ.setdefault("DJANGO_SETTINGS_MODULE", "config.settings")
+11 |     try:
+--------------------------------------------------------------------------------
+21 |
+   - if __name__ == '__main__':
+22 + if __name__ == "__main__":
+23 |     main()
+   |
+
+21 files would be reformatted, 20 files already formatted

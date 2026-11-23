@@ -163,10 +163,8 @@ services:
       GUNICORN_WORKERS: "5"
       DATABASE_NAME: kura
       # Django logs in as temporary users from Vault (15 minutes each, members of the least-privilege role kura_app), not a fixed account.
-      # See kura/base.py.
-      # NOTE: Vault dynamic DB usernames use v-approle-* prefix but pg_hba.conf expects kura_dyn_*.
-      # Use kura-admin credentials directly until the Vault username template is aligned.
-      VAULT_DATABASE_CREDENTIALS: "False"
+      # See kura/base.py. Vault username template (kura_dyn_*) aligns with pg_hba.conf.
+      VAULT_DATABASE_CREDENTIALS: "True"
       DATABASE_HOST: db
       DATABASE_PORT: "5432"
       # KURA_PUBLIC_HOSTNAME is the public host name visitors type, which points at the VM's address.

@@ -1,0 +1,16 @@
+[*] [1/3] Restoring backup (latest) into kura_restore_drill_20261123124201 (no network)...
+[*] [2/3] Starting the restored copy and replaying WAL...
+[*] [3/3] Comparing row counts (live -> restored):
+  users                 0 -> 0
+  courses               0 -> 0
+  enrollments           0 -> 0
+  assessments           0 -> 0
+  grades                0 -> 0
+  outgoing_emails       0 -> 0
+Restore + recovery completed in 28 seconds for this database size.
+PASS: restored database accepts queries and all compared row counts match.
+
+The restored copy is still running for inspection:
+  docker exec -it kura-restore-drill psql -h /var/run/postgresql -U kura-admin -d kura
+Remove it when done:
+  docker rm -f kura-restore-drill && docker volume rm kura_restore_drill_20261123124201

@@ -1,0 +1,328 @@
+               
+               
+┌─────────────┐
+│ Scan Status │
+└─────────────┘
+  Scanning 216 files tracked by git with 1074 Code rules:
+                                                                                                                        
+  Language      Rules   Files          Origin      Rules                                                                
+ ─────────────────────────────        ───────────────────                                                               
+  <multilang>      72     148          Community    1074                                                                
+  python          243      71                                                                                           
+  html              1      64                                                                                           
+  yaml             36      23                                                                                           
+  bash              4       7                                                                                           
+  json              4       4                                                                                           
+  terraform       101       3                                                                                           
+  js              153       2                                                                                           
+  dockerfile        6       1                                                                                           
+                                                                                                                        
+                
+                
+┌──────────────┐
+│ Scan Summary │
+└──────────────┘
+✅ Scan completed successfully.
+ • Findings: 28 (28 blocking)
+ • Rules run: 615
+ • Targets scanned: 216
+ • Parsed lines: ~98.9%
+ • Scan skipped: 
+   ◦ Files larger than  files 1.0 MB: 1
+   ◦ Files matching .semgrepignore patterns: 1
+ • Scan was limited to files tracked by git
+ • For a detailed list of skipped files and lines, run semgrep with the --verbose flag
+Ran 615 rules on 216 files: 28 findings.
+
+📢 Too many findings? Try Semgrep Pro for more powerful queries and less noise.
+   See https://sg.run/false-positives.
+                    
+                    
+┌──────────────────┐
+│ 28 Code Findings │
+└──────────────────┘
+                                  
+    .github/workflows/security.yml
+    ❯❱ yaml.github-actions.security.github-actions-mutable-action-tag.github-actions-mutable-action-tag
+          ❰❰ Blocking ❱❱
+          GitHub Actions step uses a mutable tag or branch reference. Tags and branch names can be silently   
+          repointed by the action owner, enabling supply-chain attacks — as seen in the trivy-action and kics-
+          github-action compromises. Pin the reference to a full 40-character commit SHA instead, e.g. `uses: 
+          actions/checkout@8ade135a41bc03ea155e62e844d188df1ea18608`.                                         
+          Details: https://sg.run/2LgAL                                                                       
+                                                                                                              
+           16┆ - uses: actions/checkout@v4
+            ⋮┆----------------------------------------
+           21┆ uses: aquasecurity/trivy-action@master
+            ⋮┆----------------------------------------
+           34┆ - uses: actions/checkout@v4
+            ⋮┆----------------------------------------
+           40┆ uses: zaproxy/action-baseline@v0.12.0
+            ⋮┆----------------------------------------
+           52┆ - uses: actions/checkout@v4
+            ⋮┆----------------------------------------
+           58┆ uses: projectdiscovery/nuclei-action@v1
+            ⋮┆----------------------------------------
+           70┆ - uses: actions/checkout@v4
+            ⋮┆----------------------------------------
+           83┆ - uses: actions/checkout@v4
+                                 
+    docker/nginx/conf.d/kura.conf
+    ❯❱ generic.nginx.security.missing-internal.missing-internal
+          ❰❰ Blocking ❱❱
+          This location block contains a 'proxy_pass' directive but does not contain the 'internal' directive.
+          The 'internal' directive restricts access to this location to internal requests. Without 'internal',
+          an attacker could use your server for server-side request forgeries (SSRF). Include the 'internal'  
+          directive in this block to limit exposure.                                                          
+          Details: https://sg.run/Q5px                                                                        
+                                                                                                              
+          111┆ proxy_pass $kura_upstream;
+            ⋮┆----------------------------------------
+          129┆ proxy_pass $kura_upstream;
+                    
+    kura/backends.py
+    ❯❱ python.django.security.audit.unvalidated-password.unvalidated-password
+          ❰❰ Blocking ❱❱
+          The password on 'User()' is being set without validating the password. Call                         
+          django.contrib.auth.password_validation.validate_password() with validation functions before setting
+          the password. See https://docs.djangoproject.com/en/3.0/topics/auth/passwords/ for more information.
+          Details: https://sg.run/OPBL                                                                        
+                                                                                                              
+           ▶▶┆ Autofix ▶ if django.contrib.auth.password_validation.validate_password(password, user=User()):
+              User().set_password(password)                                                                  
+           28┆ User().set_password(password)
+                                              
+    kura/management/commands/seed_demo_data.py
+    ❯❱ python.django.security.audit.unvalidated-password.unvalidated-password
+          ❰❰ Blocking ❱❱
+          The password on 'user' is being set without validating the password. Call                           
+          django.contrib.auth.password_validation.validate_password() with validation functions before setting
+          the password. See https://docs.djangoproject.com/en/3.0/topics/auth/passwords/ for more information.
+          Details: https://sg.run/OPBL                                                                        
+                                                                                                              
+           ▶▶┆ Autofix ▶ if django.contrib.auth.password_validation.validate_password(password, user=user):
+              user.set_password(password)                                                                  
+           79┆ user.set_password(password)
+                  
+    kura/models.py
+    ❯❱ python.django.security.audit.unvalidated-password.unvalidated-password
+          ❰❰ Blocking ❱❱
+          The password on 'user' is being set without validating the password. Call                           
+          django.contrib.auth.password_validation.validate_password() with validation functions before setting
+          the password. See https://docs.djangoproject.com/en/3.0/topics/auth/passwords/ for more information.
+          Details: https://sg.run/OPBL                                                                        
+                                                                                                              
+           ▶▶┆ Autofix ▶ if django.contrib.auth.password_validation.validate_password(password, user=user):
+              user.set_password(password)                                                                  
+          262┆ user.set_password(password)
+                                                     
+    kura/templates/kura/accounts/security_policy.html
+    ❯❱ python.django.security.django-no-csrf-token.django-no-csrf-token
+          ❰❰ Blocking ❱❱
+          Manually-created forms in django templates should specify a csrf_token to prevent CSRF attacks.
+          Details: https://sg.run/N0Bp                                                                   
+                                                                                                         
+           27┆ <form method="post" action="{% url 'kura:security_policy' %}" class="k-grid gap-3">
+           28┆     {% csrf_token %}
+           29┆     {% include "kura/_form_errors.html" %}
+           30┆     {% include "kura/_field.html" with field=form.min_password_length %}
+           31┆     {% include "kura/_field.html" with field=form.password_history_count %}
+           32┆     {% include "kura/_field.html" with field=form.axes_failure_limit %}
+           33┆     {% include "kura/_field.html" with field=form.axes_cooloff_hours %}
+           34┆     {% include "kura/_field.html" with field=form.session_idle_minutes %}
+           35┆     {% include "kura/_field.html" with field=form.session_absolute_hours %}
+           36┆     <div class="pt-2 d-flex justify-content-end">
+             [hid 3 additional lines, adjust with --max-lines-per-finding] 
+                                                          
+    kura/templates/kura/assessments/assessment_create.html
+    ❯❱ python.django.security.django-no-csrf-token.django-no-csrf-token
+          ❰❰ Blocking ❱❱
+          Manually-created forms in django templates should specify a csrf_token to prevent CSRF attacks.
+          Details: https://sg.run/N0Bp                                                                   
+                                                                                                         
+           30┆ <form method="post" class="card card-body vstack gap-3">
+           31┆     {% csrf_token %}
+           32┆     {% include "kura/_form_errors.html" %}
+           33┆     {% include "kura/_field.html" with field=form.title %}
+           34┆     {% include "kura/_field.html" with field=form.description %}
+           35┆     {% include "kura/_field.html" with field=form.component_type %}
+           36┆     <div class="row g-3">
+           37┆         <div class="col-sm-6">{% include "kura/_field.html" with field=form.max_score
+               %}</div>                                                                             
+           38┆         <div class="col-sm-6">{% include "kura/_field.html" with field=form.max_attempts
+               %}</div>                                                                                
+           39┆         <div class="col-sm-6">{% include "kura/_field.html" with field=form.opens_at
+               %}</div>                                                                            
+             [hid 7 additional lines, adjust with --max-lines-per-finding] 
+                                               
+    kura/templates/kura/attendance/checkin.html
+    ❯❱ python.django.security.django-no-csrf-token.django-no-csrf-token
+          ❰❰ Blocking ❱❱
+          Manually-created forms in django templates should specify a csrf_token to prevent CSRF attacks.
+          Details: https://sg.run/N0Bp                                                                   
+                                                                                                         
+           27┆ <form method="post" class="vstack gap-3">
+           28┆     {% csrf_token %}
+           29┆     {% include "kura/_form_errors.html" %}
+           30┆     {% include "kura/_field.html" with field=form.passcode %}
+           31┆
+           32┆     <div class="pt-2">
+           33┆         <button type="submit" class="btn btn-primary w-100">Check in</button>
+           34┆     </div>
+           35┆
+           36┆     <div class="text-center">
+             [hid 3 additional lines, adjust with --max-lines-per-finding] 
+                                                      
+    kura/templates/kura/courses/admin_course_form.html
+    ❯❱ python.django.security.django-no-csrf-token.django-no-csrf-token
+          ❰❰ Blocking ❱❱
+          Manually-created forms in django templates should specify a csrf_token to prevent CSRF attacks.
+          Details: https://sg.run/N0Bp                                                                   
+                                                                                                         
+           24┆ <form method="post" class="vstack gap-3">
+           25┆     {% csrf_token %}
+           26┆     {% include "kura/_form_errors.html" %}
+           27┆
+           28┆     {% for field in form %}
+           29┆     {% include "kura/_field.html" with field=field %}
+           30┆     {% endfor %}
+           31┆
+           32┆     <div class="pt-3 border-top d-flex flex-column-reverse flex-sm-row justify-content-sm-
+               end gap-2">                                                                               
+           33┆         <a href="{% url 'kura:course_list' %}" class="btn btn-link text-decoration-
+               none">Cancel</a>                                                                   
+             [hid 3 additional lines, adjust with --max-lines-per-finding] 
+                                                 
+    kura/templates/kura/courses/staff_assign.html
+    ❯❱ python.django.security.django-no-csrf-token.django-no-csrf-token
+          ❰❰ Blocking ❱❱
+          Manually-created forms in django templates should specify a csrf_token to prevent CSRF attacks.
+          Details: https://sg.run/N0Bp                                                                   
+                                                                                                         
+           27┆ <form method="post" class="vstack gap-3">
+           28┆     {% csrf_token %}
+           29┆     {% include "kura/_form_errors.html" %}
+           30┆
+           31┆     {% include "kura/_field.html" with field=form.user %}
+           32┆     {% include "kura/_field.html" with field=form.staff_role %}
+           33┆     {% include "kura/_field.html" with field=form.can_release_grades %}
+           34┆
+           35┆     <div class="pt-3 border-top d-flex flex-column-reverse flex-sm-row justify-content-sm-
+               end gap-2">                                                                               
+           36┆         <a href="{% url 'kura:course_detail' course.id %}" class="btn btn-link text-
+               decoration-none">Cancel</a>                                                         
+             [hid 3 additional lines, adjust with --max-lines-per-finding] 
+                 
+    kura/tests.py
+    ❯❱ python.lang.security.audit.hardcoded-password-default-argument.hardcoded-password-default-argument
+          ❰❰ Blocking ❱❱
+          Hardcoded password is used as a default argument to 'make_user'. This could be dangerous if a real
+          password is not supplied.                                                                         
+          Details: https://sg.run/Lw9r                                                                      
+                                                                                                            
+          182┆ def make_user(role_name, email=None, password="ValidPassword123!", **extra_fields):
+          183┆     """Test helper function to create a user and assign them a specific system role."""
+          184┆     # Generate unique test email if one was not provided.
+          185┆     if not email:
+          186┆         email = f"{role_name.lower().replace(' ', '_')}_{secrets.token_hex(4)}@example.com"
+          187┆
+          188┆     extra_fields.setdefault("is_active", True)
+          189┆     extra_fields.setdefault("must_change_password", False)
+          190┆     extra_fields.setdefault("mfa_enabled", True)
+          191┆
+             [hid 11 additional lines, adjust with --max-lines-per-finding] 
+   
+    ❯❱ python.django.security.audit.unvalidated-password.unvalidated-password
+          ❰❰ Blocking ❱❱
+          The password on 'demo_user' is being set without validating the password. Call                      
+          django.contrib.auth.password_validation.validate_password() with validation functions before setting
+          the password. See https://docs.djangoproject.com/en/3.0/topics/auth/passwords/ for more information.
+          Details: https://sg.run/OPBL                                                                        
+                                                                                                              
+           ▶▶┆ Autofix ▶ if django.contrib.auth.password_validation.validate_password("ChosenDemoPassword987!",
+              user=demo_user): demo_user.set_password("ChosenDemoPassword987!")                                
+          685┆ demo_user.set_password("ChosenDemoPassword987!")
+                                      
+    kura/tests_security_leads_part1.py
+    ❯❱ python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1
+          ❰❰ Blocking ❱❱
+          Detected SHA1 hash algorithm which is considered insecure. SHA1 is not collision resistant and is
+          therefore not suitable as a cryptographic signature. Use SHA256 or SHA3 instead.                 
+          Details: https://sg.run/ydYx                                                                     
+                                                                                                           
+           ▶▶┆ Autofix ▶ hashlib.sha256(b"Password123!@#", usedforsecurity=False)
+          389┆ sha1_hex = hashlib.sha1(b"Password123!@#", usedforsecurity=False).hexdigest().upper()
+                                 
+    kura/tests_security_routes.py
+    ❯❱ python.lang.security.audit.non-literal-import.non-literal-import
+          ❰❰ Blocking ❱❱
+          Untrusted user input in `importlib.import_module()` function allows an attacker to load arbitrary
+          code. Avoid dynamic values in `importlib.import_module()` or use a whitelist to prevent running  
+          untrusted code.                                                                                  
+          Details: https://sg.run/y6Jk                                                                     
+                                                                                                           
+          135┆ view_fn = getattr(import_module(mod_name), fn_name)
+            ⋮┆----------------------------------------
+          155┆ view_fn = getattr(import_module(mod_name), fn_name)
+                         
+    kura/vault_secrets.py
+    ❯❱ python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
+          ❰❰ Blocking ❱❱
+          Detected a python logger call with a potential hardcoded secret "Vault unavailable for gmail app 
+          password: %s" being logged. This may lead to secret credentials being exposed. Make sure that the
+          logger is not logging  sensitive information.                                                    
+          Details: https://sg.run/ydNx                                                                     
+                                                                                                           
+           70┆ logger.warning("Vault unavailable for gmail app password: %s", type(error).__name__)
+                 
+    kura/views.py
+    ❯❱ python.django.security.audit.xss.direct-use-of-httpresponse.direct-use-of-httpresponse
+          ❰❰ Blocking ❱❱
+          Detected data rendered directly to the end user via 'HttpResponse' or a similar object. This
+          bypasses Django's built-in cross-site scripting (XSS) defenses and could result in an XSS   
+          vulnerability. Use Django's template engine to safely render HTML.                          
+          Details: https://sg.run/EknN                                                                
+                                                                                                      
+          737┆ return HttpResponse(html_body, status=500)
+   
+    ❯❱ python.django.security.audit.csrf-exempt.no-csrf-exempt
+          ❰❰ Blocking ❱❱
+          Detected usage of @csrf_exempt, which indicates that there is no CSRF token set for this route. This
+          could lead to an attacker manipulating the user's account and exfiltration of private data. Instead,
+          create a function without this decorator.                                                           
+          Details: https://sg.run/rd5e                                                                        
+                                                                                                              
+          1277┆ @login_not_required
+          1278┆ @csrf_exempt
+          1279┆ def passkey_auth_complete_view(request):
+          1280┆     """Complete FIDO2 / WebAuthn passkey authentication through django-mfa2.
+          1281┆     Who can use it: Users completing step 2 passkey login.
+          1282┆     Security: Kept csrf_exempt to match django-mfa2's JS; normalizes None/ERR
+          1283┆     responses to 400 or 500 JSON without exposing exception text.
+          1284┆     """
+          1285┆     from mfa import FIDO2
+          1286┆
+             [hid 2 additional lines, adjust with --max-lines-per-finding] 
+   
+    ❯❱ python.django.security.audit.unvalidated-password.unvalidated-password
+          ❰❰ Blocking ❱❱
+          The password on 'request.user' is being set without validating the password. Call                   
+          django.contrib.auth.password_validation.validate_password() with validation functions before setting
+          the password. See https://docs.djangoproject.com/en/3.0/topics/auth/passwords/ for more information.
+          Details: https://sg.run/OPBL                                                                        
+                                                                                                              
+           ▶▶┆ Autofix ▶ if django.contrib.auth.password_validation.validate_password(new_password, user=request.user):
+              request.user.set_password(new_password)                                                                  
+          1864┆ request.user.set_password(new_password)
+            ⋮┆----------------------------------------
+    ❯❱ python.django.security.audit.unvalidated-password.unvalidated-password
+          ❰❰ Blocking ❱❱
+          The password on 'user' is being set without validating the password. Call                           
+          django.contrib.auth.password_validation.validate_password() with validation functions before setting
+          the password. See https://docs.djangoproject.com/en/3.0/topics/auth/passwords/ for more information.
+          Details: https://sg.run/OPBL                                                                        
+                                                                                                              
+           ▶▶┆ Autofix ▶ if django.contrib.auth.password_validation.validate_password(new_password, user=user):
+              user.set_password(new_password)                                                                  
+          2101┆ user.set_password(new_password)
+
