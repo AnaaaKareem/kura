@@ -14,6 +14,7 @@ from importlib import import_module
 from pathlib import Path
 from decimal import Decimal
 from io import BytesIO, StringIO
+from cryptography.hazmat.primitives import serialization
 from django.contrib.auth import get_user_model
 from django.apps import apps as django_apps
 from django.conf import settings
@@ -6523,4 +6524,176 @@ class DjangoSecurityBaselineTests(TestCase):
         login_with_session(self.client, outsider)
         self.assertEqual(self.client.get(reverse("kura:course_detail", args=[self.course.id])).status_code, 403)
         self.assertEqual(self.client.get(reverse("kura:course_grades", args=[self.course.id])).status_code, 403)
+
+
+class JWTShimTests(TestCase):
+    """
+    Tests for the kura/__init__.py python-jose monkeypatch using cryptography.
+    Covers RS256/ES256 valid tokens, tampered signatures, disallowed algorithms,
+    wrong aud/iss, and expired tokens.
+    """
+
+    @classmethod
+    def setUpTestData(cls):
+        from cryptography.hazmat.primitives.asymmetric import rsa, ec
+        from cryptography.hazmat.primitives import serialization
+
+        cls.rsa_private = rsa.generate_private_key(public_exponent=65537, key_size=2048)
+        cls.rsa_public = cls.rsa_private.public_key()
+        cls.rsa_pem = cls.rsa_public.public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+        cls.rsa_priv_pem = cls.rsa_private.private_bytes(
+            serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+            serialization.NoEncryption(),
+        )
+
+        cls.ec_private = ec.generate_private_key(ec.SECP256R1())
+        cls.ec_public = cls.ec_private.public_key()
+        cls.ec_pem = cls.ec_public.public_bytes(
+            serialization.Encoding.PEM, serialization.PublicFormat.SubjectPublicKeyInfo
+        )
+
+    def test_valid_rs256_token_decodes(self):
+        import time
+        from jose import jwt
+
+        now = int(time.time())
+        token = jwt.encode(
+            {"sub": "user-1", "iat": now, "exp": now + 3600, "aud": "kura", "iss": "kura"},
+            self.rsa_priv_pem,
+            algorithm="RS256",
+        )
+        payload = jwt.decode(
+            token, self.rsa_pem, algorithms=["RS256"], audience="kura", issuer="kura"
+        )
+        self.assertEqual(payload["sub"], "user-1")
+
+    def test_valid_es256_token_decodes(self):
+        import time
+        from jose import jwt
+
+        now = int(time.time())
+        token = jwt.encode(
+            {"sub": "user-2", "iat": now, "exp": now + 3600},
+            self.ec_private.private_bytes(
+                serialization.Encoding.PEM, serialization.PrivateFormat.PKCS8,
+                serialization.NoEncryption(),
+            ),
+            algorithm="ES256",
+        )
+        payload = jwt.decode(token, self.ec_pem, algorithms=["ES256"])
+        self.assertEqual(payload["sub"], "user-2")
+
+    def test_tampered_rs256_signature_rejected(self):
+        import time
+        import base64
+        from jose import jwt
+
+        now = int(time.time())
+        token = jwt.encode(
+            {"sub": "user-3", "iat": now, "exp": now + 3600},
+            self.rsa_priv_pem,
+            algorithm="RS256",
+        )
+        # Flip a byte in the signature.
+        parts = token.split(".")
+        sig = base64.urlsafe_b64decode(parts[2] + "==")
+        sig = bytearray(sig)
+        sig[0] ^= 0xFF
+        tampered_sig = base64.urlsafe_b64encode(bytes(sig)).rstrip(b"=").decode()
+        tampered = f"{parts[0]}.{parts[1]}.{tampered_sig}"
+        with self.assertRaises(ValueError):
+            jwt.decode(tampered, self.rsa_pem, algorithms=["RS256"])
+
+    def test_alg_none_rejected(self):
+        import time
+        import base64
+        import json as _json
+
+        from jose import jwt
+
+        now = int(time.time())
+        header = _json.dumps({"alg": "none", "typ": "JWT"}).encode()
+        payload = _json.dumps({"sub": "user-4", "iat": now, "exp": now + 3600}).encode()
+        token = (
+            base64.urlsafe_b64encode(header).rstrip(b"=").decode() + "."
+            + base64.urlsafe_b64encode(payload).rstrip(b"=").decode()
+            + "."
+        )
+        with self.assertRaises(ValueError):
+            jwt.decode(token, self.rsa_pem, algorithms=["RS256"])
+
+    def test_alg_hs256_rejected(self):
+        import time
+        import base64
+        import json as _json
+
+        from jose import jwt
+
+        now = int(time.time())
+        header = _json.dumps({"alg": "HS256", "typ": "JWT"}).encode()
+        payload = _json.dumps({"sub": "user-5", "iat": now, "exp": now + 3600}).encode()
+        token = (
+            base64.urlsafe_b64encode(header).rstrip(b"=").decode() + "."
+            + base64.urlsafe_b64encode(payload).rstrip(b"=").decode()
+            + ".fakesig"
+        )
+        with self.assertRaises(ValueError):
+            jwt.decode(token, self.rsa_pem, algorithms=["RS256"])
+
+    def test_wrong_audience_rejected(self):
+        import time
+        from jose import jwt
+
+        now = int(time.time())
+        token = jwt.encode(
+            {"sub": "user-6", "iat": now, "exp": now + 3600, "aud": "other"},
+            self.rsa_priv_pem,
+            algorithm="RS256",
+        )
+        with self.assertRaises(ValueError):
+            jwt.decode(token, self.rsa_pem, algorithms=["RS256"], audience="kura")
+
+    def test_wrong_issuer_rejected(self):
+        import time
+        from jose import jwt
+
+        now = int(time.time())
+        token = jwt.encode(
+            {"sub": "user-7", "iat": now, "exp": now + 3600, "iss": "other"},
+            self.rsa_priv_pem,
+            algorithm="RS256",
+        )
+        with self.assertRaises(ValueError):
+            jwt.decode(token, self.rsa_pem, algorithms=["RS256"], issuer="kura")
+
+    def test_expired_token_rejected(self):
+        import time
+        from jose import jwt
+
+        now = int(time.time())
+        token = jwt.encode(
+            {"sub": "user-8", "iat": now - 7200, "exp": now - 3600},
+            self.rsa_priv_pem,
+            algorithm="RS256",
+        )
+        with self.assertRaises(ValueError):
+            jwt.decode(token, self.rsa_pem, algorithms=["RS256"])
+
+    def test_exp_skip_when_verify_exp_false(self):
+        import time
+        from jose import jwt
+
+        now = int(time.time())
+        token = jwt.encode(
+            {"sub": "user-9", "iat": now - 7200, "exp": now - 3600},
+            self.rsa_priv_pem,
+            algorithm="RS256",
+        )
+        payload = jwt.decode(
+            token, self.rsa_pem, algorithms=["RS256"],
+            options={"verify_exp": False},
+        )
+        self.assertEqual(payload["sub"], "user-9")
 
