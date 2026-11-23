@@ -225,7 +225,7 @@ Run: `python manage.py test kura.tests kura.tests_security_leads_part1 kura.test
 
 ### Summary of Fixes Applied
 
-1. **Redacted leaked credential substring** in line 216 (was `rhhx eops amkf nkjv`, now `[REDACTED_SECRET]`).
+1. **Redacted leaked credential substring** in line 216 (was `<Gmail app password>`, now `[REDACTED_SECRET]`).
 2. **Fixed lint issue** in `kura/__init__.py`: removed unused `field_size` assignments in `_raw_rs_to_der()` (ruff F841).
 3. **Fixed Vault dynamic DB credentials**: `docker-compose.yml` now has `VAULT_DATABASE_CREDENTIALS: "True"` for `kura-web`. The Vault username template (`kura_dyn_{{random 20 | lowercase}}` in `kura.sh` line 520) already matches `pg_hba.conf` (`/^kura_dyn_`). Web service restarted, health check passes, `https://localhost/login/` returns HTTP 200.
 4. **Rebuilt `kura-web:latest`** with `--network=host` (Dockerfile builder stage apt DNS issue worked around). All 367 tests pass in container (24 skipped = infra tests needing full repo) and 367 tests pass in container with full repo mount (6 skipped, 1 fail + 1 error = backup encryption key not mounted as Docker secret).
