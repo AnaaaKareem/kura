@@ -15,6 +15,25 @@ import secrets
 from django.conf import settings
 from django.utils.crypto import salted_hmac
 
+
+class RedactSecretsFilter(logging.Filter):
+    """Redact password-reset tokens and other secrets from django.request log records."""
+
+    _PATTERNS = [
+        re.compile(r"(/password/reset/)([^/]+)(/)"),
+        re.compile(r"(token=)([^&\s]+)"),
+        re.compile(r"(uid=)([^&\s]+)"),
+        re.compile(r"(code=)([^&\s]+)"),
+    ]
+
+    def filter(self, record):
+        msg = record.getMessage()
+        for pat in self._PATTERNS:
+            msg = pat.sub(r"\1<redacted>\3" if pat.groups == 3 else r"\1<redacted>", msg)
+        record.msg = msg
+        record.args = ()
+        return True
+
 security_logger = logging.getLogger("kura.security")
 
 # Exact detail keys that must never appear in plaintext inside log lines.

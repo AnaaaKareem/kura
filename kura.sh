@@ -1411,11 +1411,11 @@ cmd_egress_refresh() {
 # - the backup repository volume is mounted READ-ONLY At the end it prints row counts from the live and the restored database and how long the restore took (the "RTO").
 # Remove the drill volume afterwards with the command it prints.
 cmd_restore_drill() {
-    need_root restore-drill
     TARGET_TIME=${1:-latest}
     if planned "restore backup ($TARGET_TIME) into a new throwaway volume and compare row counts"; then
         return 0
     fi
+    docker info > /dev/null 2>&1 || die "Cannot talk to Docker. Run as a user in the docker group or with: sudo ./kura.sh restore-drill"
     IMAGE=$(docker compose config --images db | head -1)
     DRILL_VOLUME="kura_restore_drill_$(date +%Y%m%d%H%M%S)"
     DRILL_CONTAINER="kura-restore-drill"
@@ -1440,14 +1440,14 @@ cmd_restore_drill() {
         set -- --type=time "--target=$TARGET_TIME" --target-action=promote
     fi
     say "[1/3] Restoring backup ($TARGET_TIME) into $DRILL_VOLUME (no network)..."
-    docker run --rm --network none --read-only --tmpfs /tmp --tmpfs /var/run/postgresql --tmpfs /var/log/pgbackrest \
+    docker run --rm --network none --read-only --tmpfs /tmp:mode=1777 --tmpfs /var/run/postgresql:mode=1777 --tmpfs /var/log/pgbackrest:mode=1777 \
         -v "$DRILL_VOLUME":/restore \
         -v kura_postgres_backups:/var/lib/pgbackrest:ro \
         -v "$PWD/docker/postgres/pgbackrest.conf":/etc/pgbackrest/pgbackrest.conf:ro \
         -v "$PWD/docker/postgres/pgbackrest-wrapper.sh":/usr/local/bin/pgbackrest:ro \
         -v "$PWD/secrets/backup_encryption_key.txt":/run/secrets/backup_encryption_key:ro \
         --entrypoint /usr/local/bin/pgbackrest "$IMAGE" \
-        --stanza=kura --pg1-path=/restore --lock-path=/tmp "$@" restore > /dev/null
+        --stanza=kura --repo=1 --pg1-path=/restore --lock-path=/tmp "$@" restore > /dev/null
 
     # Use the key-loading wrapper for WAL recovery; pgBackRest otherwise writes /usr/bin/pgbackrest into the restored config.
     # Send startup errors to Docker logs instead of hiding them inside the restored data folder.

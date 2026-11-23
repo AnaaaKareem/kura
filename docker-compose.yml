@@ -183,7 +183,7 @@ services:
       EMAIL_PORT: "587"
       EMAIL_USE_TLS: "True"
       EMAIL_HOST_USER: "${KURA_GMAIL_ADDRESS:-kuralmsedu@gmail.com}"
-      DEFAULT_FROM_EMAIL: "Kura <${KURA_GMAIL_ADDRESS}>"
+      DEFAULT_FROM_EMAIL: "Kura <${KURA_GMAIL_ADDRESS:-kuralmsedu@gmail.com}>"
       # Breached-password check: HaveIBeenPwned directly over HTTPS, restricted by the host egress allowlist.
       # See config/settings.py.
       # Links in emails always point here (never at the Host header a visitor sent).

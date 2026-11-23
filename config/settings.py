@@ -383,6 +383,11 @@ LOGGING = {
             "datefmt": "%Y-%m-%dT%H:%M:%S%z",
         },
     },
+    "filters": {
+        "redact_secrets": {
+            "()": "kura.logging_utils.RedactSecretsFilter",
+        },
+    },
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
@@ -399,7 +404,7 @@ LOGGING = {
             "level": "INFO",
             "propagate": False,
         },
-        "django.request": {"handlers": ["console"], "level": "WARNING", "propagate": False},
+        "django.request": {"handlers": ["console"], "level": "INFO", "propagate": False, "filters": ["redact_secrets"]},
         "django.security": {"handlers": ["console"], "level": "WARNING", "propagate": False},
         "axes": {"handlers": ["console"], "level": "WARNING", "propagate": False},
     },

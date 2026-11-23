@@ -2302,6 +2302,41 @@ class SecurityLoggingTests(TestCase):
             self.client.post(reverse("kura:logout"))
             self.assertTrue(any('event="auth.logout"' in record.getMessage() for record in log_capture.records))
 
+    def test_password_reset_url_redacted_in_django_request_logs(self):
+        # R14/R16: django.request logger must not emit raw password-reset tokens or UIDs.
+        import logging
+        from kura.logging_utils import RedactSecretsFilter
+
+        filter_obj = RedactSecretsFilter()
+        record = logging.LogRecord(
+            name="django.request",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg='GET /password/reset/abc123def456/ HTTP/1.1" 200',
+            args=(),
+            exc_info=None,
+        )
+        filter_obj.filter(record)
+        self.assertIn("<redacted>", record.getMessage())
+        self.assertNotIn("abc123def456", record.getMessage())
+
+        # Also test token= and uid= query parameters
+        record2 = logging.LogRecord(
+            name="django.request",
+            level=logging.INFO,
+            pathname="",
+            lineno=0,
+            msg='GET /password/reset/confirm/?token=xyz789&uid=123 HTTP/1.1" 200',
+            args=(),
+            exc_info=None,
+        )
+        filter_obj.filter(record2)
+        self.assertIn("token=<redacted>", record2.getMessage())
+        self.assertIn("uid=<redacted>", record2.getMessage())
+        self.assertNotIn("xyz789", record2.getMessage())
+        self.assertNotIn("123", record2.getMessage())
+
 class RateLimitingTests(TestCase):
     """
     Tests Rate limiting burst requests on sensitive endpoints.
