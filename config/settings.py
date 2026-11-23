@@ -370,6 +370,8 @@ CONTENT_SECURITY_POLICY = {
         "connect-src": ("'self'",),
         "frame-ancestors": ("'none'",),
         "form-action": ("'self'",),
+        "base-uri": ("'self'",),
+        "object-src": ("'none'",),
     }
 }
 

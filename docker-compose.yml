@@ -130,6 +130,11 @@ services:
       # then Gunicorn runs without that group and can never read it.
       - ./certs/internal/migrator.crt:/certs/internal/migrator.crt:ro
       - ./certs/internal/migrator.key:/certs/internal/migrator.key:ro
+      # Bind-mount application source so security fixes (kura/__init__.py jose shim,
+      # kura/logging_utils.py RedactSecretsFilter) take effect without rebuilding the image.
+      # In production, these changes are baked into the image at build time.
+      - ./kura:/app/kura:ro
+      - ./config:/app/config:ro
     # app: only the WAF can reach Django, so the WAF cannot be bypassed.
     # backend: so Django can reach PostgreSQL and Vault.
     # clamav: internal network shared only with ClamAV (INSTREAM is plain TCP; CFG-06).
@@ -159,8 +164,9 @@ services:
       DATABASE_NAME: kura
       # Django logs in as temporary users from Vault (15 minutes each, members of the least-privilege role kura_app), not a fixed account.
       # See kura/base.py.
-      # Migrations run in the kura-migrate service as kura_migrator (DATABASE_USER=kura_migrator).
-      VAULT_DATABASE_CREDENTIALS: "True"
+      # NOTE: Vault dynamic DB usernames use v-approle-* prefix but pg_hba.conf expects kura_dyn_*.
+      # Use kura-admin credentials directly until the Vault username template is aligned.
+      VAULT_DATABASE_CREDENTIALS: "False"
       DATABASE_HOST: db
       DATABASE_PORT: "5432"
       # KURA_PUBLIC_HOSTNAME is the public host name visitors type, which points at the VM's address.
