@@ -252,7 +252,7 @@ Raw output appended to `docs/evidence/trivy-fs.txt` (timestamped block).
 
 | Target | Critical | High | Medium | Low | Notes |
 |--------|----------|------|--------|-----|-------|
-| OS (Debian 13.8) | 1 | 96 | 98 | 94 | Base image packages (util-linux, openssl, ncurses, tar, etc.) — not app code |
+| OS (Debian 13.8) | 0 | 40 | 82 | 94 | Base image packages (util-linux, openssl, ncurses, tar, etc.; 14 Unknown, 230 total) — not app code |
 | Python packages (final runtime) | 1 | 6 | 2 | 1 | ecdsa, python-jose (mitigated); urllib3 2.8.0 (fixed); msgpack/setuptools only in builder layers |
 
 **Python package details (final runtime image only):**
@@ -267,7 +267,7 @@ Raw output appended to `docs/evidence/trivy-fs.txt` (timestamped block).
 |--------|---------------------|-----------------|
 | django-axes version | 9.0.0 | **9.1.0** |
 | Python vulns reported | 10 | 10 (same packages; urllib3 fixed to 2.8.0 in final image) |
-| OS vulns | 302 | ~300 (Debian 13.8 base) |
+| OS vulns | 302 (96 High) | **230 (40 High, 0 Critical)** |
 
 ### Semgrep SAST — Verified
 
@@ -391,3 +391,32 @@ Raw rules and config verification saved to `docs/evidence/loki-alerts.txt`.
 | Coursework spec .md | **Not in repo** (only `docs/Kura Secure Learning Management System/kuras_secure_architecture.png` exists) |
 
 Only `docs/SECURITY_TRIVY_FINDINGS.md` is tracked in git.
+
+
+---
+
+## Follow-up Verification — 2026-11-23 15:02
+
+### 1. Trivy OS CVE Transcription Correction
+- Corrected the `2026-11-23 13:45` section (lines 255 & 270) to match raw scanner output in `docs/evidence/trivy-image-post-rebuild.txt` (line 113: `Total: 230 (UNKNOWN: 14, LOW: 94, MEDIUM: 82, HIGH: 40, CRITICAL: 0)`):
+  - `OS (Debian 13.8)`: **0 Critical, 40 High, 82 Medium, 94 Low** (14 Unknown, **230 total**).
+  - Before vs After Rebuild `OS vulns`: `302 (96 High)` → **`230 (40 High, 0 Critical)`**.
+
+### 2. Django Test Suite Evidence Saved (`docs/evidence/django-tests.txt`)
+- Re-ran the full 4-module test suite (`kura.tests`, `kura.tests_security_leads_part1`, `kura.tests_security_leads_part2`, `kura.tests_security_routes`) in both container configurations against PostgreSQL 17 and saved complete raw outputs with commands and timestamps to `docs/evidence/django-tests.txt` (`384K`).
+
+| Environment | Total | Passed | Failed | Errors | Skipped | Result |
+|-------------|-------|--------|--------|--------|---------|--------|
+| Container (bind-mount `kura/` & `config/`) | 367 | 343 | 0 | 0 | 24 | `OK (skipped=24)` |
+| Container (full repo mount) | 367 | 359 | 1 | 1 | 6 | `FAILED (failures=1, errors=1, skipped=6)` |
+
+- The 1 failure (`test_backup_encryption_key_validity_and_entropy`) and 1 error (`test_verify_backup_config_management_command`) in the full-repo-mount run are expected because `secrets/backup_encryption_key.txt` is not mounted as a Docker secret in the ephemeral test container. (Note: `367 - 1 - 1 - 6 = 359` passed; the earlier `13:45` table had a +1 arithmetic typo listing 360.)
+
+### 3. `kura-loki` Crash-Loop Root Cause, Fix & Live Verification
+- **Root cause:** `docker logs kura-loki` reported `mkdir /var/loki/chunks: permission denied`. The named Docker volume `kura_loki_data` (`/var/loki`) was owned by `0:0` (`root:root`), while `grafana/loki:3.7.9` runs as non-root UID `10001`.
+- **Minimal fix applied:** Updated `kura_loki_data` volume root ownership to `10001:10001` (matching `kura.sh` `fix_volume_owner loki /var/loki 10001:10001`) and restarted `kura-loki`. No changes to `docker/loki/loki.yml` or `docker-compose.yml` were required.
+- **Verification:**
+  - All 13 services in `docker compose ps` are running: all 12 services with Docker healthchecks are `Up (healthy)` (including `kura-web`), and `kura-loki` is `Up` with `GET http://loki:3100/ready` returning `ready` (Loki's image has no shell/wget/curl and is health-probed externally by Alloy per `docker-compose.yml`).
+  - `docker logs kura-loki` confirms clean startup (`msg="Loki started"`), ruler active (`msg="ruler up and running"`), rule file loaded (`msg="updating rule file" file=/tmp/loki/rules-scratch/fake/kura-alerts.yml`), and alerting rules actively evaluating.
+  - Security invariant verified: `ruler.enable_api: false` remains intact in `docker/loki/loki.yml` (line 64) and live `GET http://loki:3100/loki/api/v1/rules` returns `HTTP/1.1 404 Not Found`.
+  - Follow-up timestamped evidence blocks appended to `docs/evidence/ports.txt` and `docs/evidence/loki-alerts.txt`.

@@ -265,3 +265,54 @@ ruler:
 wget: bad address 'loki:3100'
 OCI runtime exec failed: exec failed: unable to start container process: exec: "wget": executable file not found in $PATH
 OCI runtime exec failed: exec failed: unable to start container process: exec: "python3": executable file not found in $PATH
+
+===== FOLLOW-UP RUN 2026-11-23 15:00 =====
+# docker compose ps loki
+NAME        IMAGE                                                                                        COMMAND                  SERVICE   CREATED       STATUS         PORTS
+kura-loki   grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28   "/usr/bin/loki -conf…"   loki      2 hours ago   Up 2 minutes   3100/tcp
+
+# Loki readiness probe (from kura-grafana on observability network; Loki image has no shell/wget/curl so Alloy probes /ready externally)
+GET http://loki:3100/ready -> ready
+
+# Verify ruler.enable_api: false in docker/loki/loki.yml and live HTTP 404 on /loki/api/v1/rules
+64:  enable_api: false
+Connecting to loki:3100 (172.23.0.5:3100)
+  HTTP/1.1 404 Not Found
+wget: server returned error: HTTP/1.1 404 Not Found
+
+# Relevant docker logs kura-loki lines (startup, ruler rule-group load, and rule evaluations)
+level=info ts=2026-11-23T12:58:19.826331545Z caller=main.go:146 msg="Starting Loki" version="(version=3.7.9, branch=release-3.7.x, revision=d3b4a2f7)"
+level=info ts=2026-11-23T12:58:19.826380703Z caller=main.go:147 msg="Loading configuration file" filename=/etc/loki/loki.yml
+level=info ts=2026-11-23T12:58:19.836776084Z caller=mapper.go:47 msg="cleaning up mapped rules directory" path=/tmp/loki/rules-scratch
+level=info ts=2026-11-23T12:58:19.896178171Z caller=module_service.go:82 msg=starting module=ruler
+level=info ts=2026-11-23T12:58:19.89621653Z caller=ruler.go:536 msg="ruler up and running"
+level=info ts=2026-11-23T12:58:19.944950206Z caller=mapper.go:163 msg="updating rule file" file=/tmp/loki/rules-scratch/fake/kura-alerts.yml
+level=info ts=2026-11-23T12:58:20.293853853Z caller=loki.go:615 msg="Loki started" startup_time=642.316977ms
+level=info ts=2026-11-23T12:59:01.122083505Z caller=compat.go:68 user=fake rule_name=BruteForceLogin rule_type=alerting query="(sum(count_over_time({service=\"web\"} | logfmt | event=\"auth.login.failed\"[5m])) > 20)" query_hash=2118638389 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.129461975Z caller=compat.go:68 user=fake rule_name=SingleIpBruteForce rule_type=alerting query="(sum by (ip)(count_over_time({service=\"web\"} | logfmt | event=\"auth.login.failed\"[5m])) > 10)" query_hash=2773330845 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.131145107Z caller=compat.go:68 user=fake rule_name=MfaFailuresSpike rule_type=alerting query="(sum(count_over_time({service=\"web\"} | logfmt | event=\"auth.mfa.failed\"[10m])) > 10)" query_hash=476080093 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.13205145Z caller=compat.go:68 user=fake rule_name=AdminRoleChanged rule_type=alerting query="(count_over_time({service=\"web\"} | logfmt | event=\"admin.role.changed\"[5m]) >= 1)" query_hash=1914680392 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.132745443Z caller=compat.go:68 user=fake rule_name=MalwareUploaded rule_type=alerting query="(count_over_time({service=\"web\"} | logfmt | event=\"file.quarantined\"[5m]) >= 1)" query_hash=1783329027 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.133449567Z caller=compat.go:68 user=fake rule_name=AccessDeniedSpike rule_type=alerting query="(sum by (ip)(count_over_time({service=\"web\"} | logfmt | event=\"access.denied\"[5m])) > 30)" query_hash=2687859624 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.134276813Z caller=compat.go:68 user=fake rule_name=CsrfFailures rule_type=alerting query="(sum(count_over_time({service=\"web\"} | logfmt | event=\"access.csrf_failed\"[10m])) > 10)" query_hash=3219743940 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.135047052Z caller=compat.go:68 user=fake rule_name=GradeReleaseMfaFailed rule_type=alerting query="(count_over_time({service=\"web\"} | logfmt | event=\"grade.release_mfa_failed\"[5m]) >= 1)" query_hash=4131982382 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.135664927Z caller=compat.go:68 user=fake rule_name=WafBlockSpike rule_type=alerting query="(sum(count_over_time({service=\"waf\"} | json | transaction_response_status=\"403\"[5m])) > 50)" query_hash=1110792137 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.136426494Z caller=compat.go:68 user=fake rule_name=VaultErrors rule_type=alerting query="(sum(count_over_time({service=\"vault\"} | json | error!=\"\"[5m])) >= 1)" query_hash=3435674079 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.137196541Z caller=compat.go:68 user=fake rule_name=DbAuthFailures rule_type=alerting query="(count_over_time({service=\"db\"} |= \"password authentication failed\"[5m]) > 5)" query_hash=41869375 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.138039638Z caller=compat.go:68 user=fake rule_name=RelayBounces rule_type=alerting query="(count_over_time({service=\"relay\"} |= \"status=bounced\"[10m]) >= 1)" query_hash=127932236 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.138669417Z caller=compat.go:68 user=fake rule_name=ClamAvUnavailable rule_type=alerting query="(count_over_time({service=\"clamav\"} | logfmt | event=\"clamav.unavailable\"[5m]) >= 1)" query_hash=270933977 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.139393962Z caller=compat.go:68 user=fake rule_name=BreachCheckUnavailable rule_type=alerting query="(sum(count_over_time({service=\"web\"} | logfmt | event=\"auth.breach_check.unavailable\"[15m])) >= 1)" query_hash=3966743692 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.13999389Z caller=compat.go:68 user=fake rule_name=ServerError rule_type=alerting query="(sum(count_over_time({service=\"web\"} | logfmt | event=\"server.error\"[5m])) >= 1)" query_hash=2884834012 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.140660639Z caller=compat.go:68 user=fake rule_name=FileDecryptFailed rule_type=alerting query="(sum(count_over_time({service=\"web\"} | logfmt | event=\"file.decrypt_failed\"[5m])) >= 1)" query_hash=2801481208 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.141204251Z caller=compat.go:68 user=fake rule_name=FileIntegrityFailed rule_type=alerting query="(sum(count_over_time({service=\"web\"} | logfmt | event=\"file.integrity_failed\"[5m])) >= 1)" query_hash=2184650858 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.141890345Z caller=compat.go:68 user=fake rule_name=WebVaultError rule_type=alerting query="(sum(count_over_time({service=~\"web|cron\"} | logfmt | event=\"vault.error\"[5m])) >= 1)" query_hash=3656876825 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.142554456Z caller=compat.go:68 user=fake rule_name=RlsContextFailed rule_type=alerting query="(sum(count_over_time({service=\"web\"} | logfmt | event=\"rls.context_failed\"[5m])) >= 1)" query_hash=1970383629 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.143548968Z caller=compat.go:68 user=fake rule_name=RepeatedLoginFailedAccount rule_type=alerting query="(sum by (login_identifier_hash)(count_over_time({service=\"web\"} | logfmt | event=\"auth.login.failed\" | login_identifier_hash!=\"\"[5m])) > 5)" query_hash=4220650664 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.144534534Z caller=compat.go:68 user=fake rule_name=AccessNotFoundBurst rule_type=alerting query="(sum by (actor_user_id)(count_over_time({service=\"web\"} | logfmt | event=\"access.not_found\" | actor_user_id!=\"anonymous\"[5m])) > 20)" query_hash=3036207420 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.145499171Z caller=compat.go:68 user=fake rule_name=AuditDiscrepancy rule_type=alerting query="(sum(count_over_time({service=\"db\"} |~ \"AUDIT:.*(DROP|TRUNCATE|ALTER TABLE|ALTER ROLE|CREATE ROLE|DELETE FROM (grade_history|grades|course_results))\"[5m])) >= 1)" query_hash=3252386996 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.146943854Z caller=compat.go:68 user=fake rule_name=SshLoginSucceeded rule_type=alerting query="(sum by (user,ip)(count_over_time({service=\"auth\"} |~ \"sshd(-session)?\\\\[[0-9]+\\\\]: Accepted \" | regexp \"Accepted \\\\S+ for (?P<user>\\\\S+) from (?P<ip>[0-9a-fA-F.:]+)\"[5m])) >= 1)" query_hash=3131888644 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.147780177Z caller=compat.go:68 user=fake rule_name=SshLoginFailureBurst rule_type=alerting query="(sum by (ip)(count_over_time({service=\"auth\"} |~ \"sshd(-session)?\\\\[[0-9]+\\\\]: (Failed \\\\S+ for|Invalid user|Connection closed by authenticating user|Disconnected from authenticating user)\" | regexp \"from (?:invalid user \\\\S+ |authenticating user \\\\S+ )?(?P<ip>[0-9a-fA-F.:]+)\"[10m])) > 5)" query_hash=903615551 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.150683943Z caller=compat.go:68 user=fake rule_name=GrafanaAdminLogin rule_type=alerting query="(sum(count_over_time({service=\"grafana\"} |= \"msg=\\\"Request Completed\\\"\" |= \" uname=admin \"[5m])) >= 1)" query_hash=3838875949 msg="evaluating rule"
+level=info ts=2026-11-23T12:59:01.151431993Z caller=compat.go:68 user=fake rule_name=GrafanaLoginFailureBurst rule_type=alerting query="(sum(count_over_time({service=\"grafana\"} |= \"msg=\\\"Request Completed\\\"\" |= \"path=/login\" |= \"status=401\"[5m])) > 5)" query_hash=1785068321 msg="evaluating rule"
+level=info ts=2026-11-23T13:00:01.122185218Z caller=compat.go:68 user=fake rule_name=BruteForceLogin rule_type=alerting query="(sum(count_over_time({service=\"web\"} | logfmt | event=\"auth.login.failed\"[5m])) > 20)" query_hash=2118638389 msg="evaluating rule"
+level=info ts=2026-11-23T13:00:01.125955974Z caller=compat.go:68 user=fake rule_name=SingleIpBruteForce rule_type=alerting query="(sum by (ip)(count_over_time({service=\"web\"} | logfmt | event=\"auth.login.failed\"[5m])) > 10)" query_hash=2773330845 msg="evaluating rule"
