@@ -1,0 +1,46 @@
+=== G04 before-fix reproduction against https://localhost ===
+1_no_csrf_login: 403
+2_no_csrf_reset: 403
+fetched_csrf_len=64
+3_valid_csrf_login_sealed_vault: 403
+4_bad_host: 400
+=== recent web error logs ===
+kura-web  | time=2026-11-25T18:16:32+0200 level=WARNING logger=kura.security event="access.csrf_failed" ip="172.28.10.128" actor_user_id="anonymous" request_id="753b54e6e3f51a623aa0f7c29d12486e" path="/password/reset/" method="POST" reason="Referer checking failed - no Referer."
+kura-web  | time=2026-11-25T18:16:32+0200 level=WARNING logger=django.security.csrf Forbidden (Referer checking failed - no Referer.): /password/reset/
+kura-web  | time=2026-11-25T18:16:32+0200 level=WARNING logger=kura.security event="access.csrf_failed" ip="172.28.10.128" actor_user_id="anonymous" request_id="08157d3195ec101d60d50b20baf882d3" path="/login/" method="POST" reason="Referer checking failed - no Referer."
+kura-web  | time=2026-11-25T18:16:32+0200 level=WARNING logger=django.security.csrf Forbidden (Referer checking failed - no Referer.): /login/
+kura-web  | time=2026-11-25T18:16:32+0200 level=ERROR logger=django.security.DisallowedHost Invalid HTTP_HOST header: 'evil.example'. You may need to add 'evil.example' to ALLOWED_HOSTS.
+kura-web  | Traceback (most recent call last):
+kura-web  |   File "/usr/local/lib/python3.14/site-packages/django/core/handlers/exception.py", line 56, in inner
+kura-web  |     response = get_response(request)
+kura-web  |   File "/usr/local/lib/python3.14/site-packages/django/utils/deprecation.py", line 441, in __call__
+kura-web  |     response = self.process_request(request)
+kura-web  |   File "/usr/local/lib/python3.14/site-packages/django/middleware/common.py", line 48, in process_request
+kura-web  |     host = request.get_host()
+kura-web  |   File "/usr/local/lib/python3.14/site-packages/django/http/request.py", line 210, in get_host
+kura-web  |     raise DisallowedHost(msg)
+kura-web  | django.core.exceptions.DisallowedHost: Invalid HTTP_HOST header: 'evil.example'. You may need to add 'evil.example' to ALLOWED_HOSTS.
+=== G04 before-fix reproduction WITH Referer/Origin (passing CSRF) ===
+valid_csrf_login_with_referer: 500
+valid_csrf_reset_with_referer: 500
+=== web logs showing OperationalError -> 500 ===
+kura-web  |   File "/usr/local/lib/python3.14/site-packages/django/utils/asyncio.py", line 26, in inner
+kura-web  |     return func(*args, **kwargs)
+kura-web  |   File "/usr/local/lib/python3.14/site-packages/django/db/backends/base/base.py", line 320, in cursor
+kura-web  |     return self._cursor()
+kura-web  |            ~~~~~~~~~~~~^^
+kura-web  |   File "/usr/local/lib/python3.14/site-packages/django/db/backends/base/base.py", line 296, in _cursor
+kura-web  |     self.ensure_connection()
+kura-web  |     ~~~~~~~~~~~~~~~~~~~~~~^^
+kura-web  |   File "/usr/local/lib/python3.14/site-packages/django/utils/asyncio.py", line 26, in inner
+kura-web  |     return func(*args, **kwargs)
+kura-web  |   File "/usr/local/lib/python3.14/site-packages/django/db/backends/base/base.py", line 279, in ensure_connection
+kura-web  |     self.connect()
+kura-web  |     ~~~~~~~~~~~~^^
+kura-web  |   File "/usr/local/lib/python3.14/site-packages/django/utils/asyncio.py", line 26, in inner
+kura-web  |     return func(*args, **kwargs)
+kura-web  |   File "/usr/local/lib/python3.14/site-packages/django/db/backends/base/base.py", line 255, in connect
+kura-web  |     conn_params = self.get_connection_params()
+kura-web  |   File "/app/kura/base.py", line 73, in get_connection_params
+kura-web  |     raise OperationalError("Could not get a database login from Vault.") from error
+kura-web  | django.db.utils.OperationalError: Could not get a database login from Vault.

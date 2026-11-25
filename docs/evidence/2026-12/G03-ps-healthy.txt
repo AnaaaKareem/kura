@@ -1,0 +1,25 @@
+=== docker compose ps ===
+NAME                    IMAGE                                                                                                                       COMMAND                  SERVICE            CREATED         STATUS                     PORTS
+kura-alertmanager       prom/alertmanager:v0.34.2@sha256:39d8bb3966c694a124428a3a88fbcffd40bd069129ecd47c059f8a3f17c55f3b                           "/bin/alertmanager -…"   alertmanager       5 minutes ago   Up 5 minutes (healthy)     9093/tcp
+kura-alloy              grafana/alloy:v1.21.3@sha256:8ab871206bd2d8f89277f53abffee5f452a293980788d52f85fa183a87a505a4                               "/bin/alloy run --se…"   alloy              5 minutes ago   Up 48 seconds (healthy)    
+kura-clamav             clamav/clamav-debian:1.5.4@sha256:c21aa18cc0a358678255a3dfb343a4555b58f71b97d7b869df8fdf7ea0a5b4b1                          "/init-unprivileged"     clamav             5 minutes ago   Up 5 minutes (healthy)     3310/tcp, 7357/tcp
+kura-crowdsec           crowdsecurity/crowdsec:v1.8.2@sha256:65b74942f7e7ed5c60fde4ac15fc4ba715904c398c8b16dd451f4907d90347d4                       "/bin/bash /docker_s…"   crowdsec           5 minutes ago   Up 4 minutes (healthy)     127.0.0.1:8085->8080/tcp
+kura-db                 ghcr.io/pgedge/pgedge-postgres:17-spock5-standard@sha256:6d2fb528a11a059d07247e38b38e601a3795d1ab2bfd78ad945f9e77227c0a15   "/usr/local/bin/kura…"   db                 5 minutes ago   Up 5 minutes (healthy)     5432/tcp
+kura-docker-api-proxy   lscr.io/linuxserver/socket-proxy:3.4.7@sha256:4e5e59efd3338205561c54262581992036e5a36ccca97d487b1d4ec41f9adc58              "/docker-entrypoint.…"   docker-api-proxy   5 minutes ago   Up 5 minutes (healthy)     
+kura-grafana            grafana/grafana:13.3.0@sha256:488984b716c0862639f91a698adbe2862677a5a07bad42da5f03f3030883b205                              "/run.sh"                grafana            5 minutes ago   Up 5 minutes (healthy)     127.0.0.1:3000->3000/tcp
+kura-loki               grafana/loki:3.7.9@sha256:0db216b630ae1f348a1584c67f3cead8b4c1fc839169a39501db664744158e28                                  "/usr/bin/loki -conf…"   loki               5 minutes ago   Up 51 seconds              3100/tcp
+kura-migrate            kura-web:latest                                                                                                             "python manage.py mi…"   kura-migrate       5 minutes ago   Exited (0) 4 minutes ago   
+kura-nginx              kura-nginx:latest                                                                                                           "/docker-entrypoint.…"   nginx              5 minutes ago   Up 4 minutes (healthy)     0.0.0.0:80->80/tcp, [::]:80->80/tcp, 0.0.0.0:443->443/tcp, [::]:443->443/tcp
+kura-prometheus         prom/prometheus:v3.15.1@sha256:fa3302279710be2f21a8301ec17a8b4f2301fd829bd113839b3b6b02b6f191a2                             "/bin/prometheus --c…"   prometheus         5 minutes ago   Up 51 seconds (healthy)    9090/tcp
+kura-vault              hashicorp/vault:2.2.1@sha256:962a92876e168d68eaaa24b0b8b49bbce1cb63024060a67bba95cd158a366fc2                               "docker-entrypoint.s…"   vault              5 minutes ago   Up 5 minutes (healthy)     8200/tcp
+kura-waf                ghcr.io/coreruleset/coraza-crs:nginx@sha256:0089154673011788070e7b7591b62dd8e7a6686d4e6ba75ad92947b97d54799a                "nginx -c /etc/coraz…"   waf                5 minutes ago   Up 4 minutes (healthy)     8080/tcp, 8443/tcp
+kura-web                kura-web:latest                                                                                                             "gunicorn -c gunicor…"   web                5 minutes ago   Up 50 seconds (healthy)    8000/tcp
+=== Loki ready check via alloy/prom ===
+wget: server returned error: HTTP/1.1 503 Service Unavailable
+=== Prometheus LokiDown / SecurityLogsStopped rules loaded ===
+['KuraSiteDown', 'VaultSealed', 'ServiceDown', 'PostgresDown', 'LokiDown', 'SecurityLogsStopped', 'OffsiteBackupStale', 'BackupStale', 'OutboxStuck', 'EmailFailures', 'PublicCertExpiring', 'InternalCertExpiring', 'CertRenewalFailing', 'DiskAlmostFull', 'HighMemory', 'TooManyDbConnections', 'CrowdSecBanSpike', 'MetricsJobStale']
+=== Loki ready check ===
+ready
+
+=== Prometheus up{job=loki} ===
+{"status":"success","data":{"resultType":"vector","result":[{"metric":{"__name__":"up","instance":"loki:3100","job":"loki"},"value":[1795623659.289,"1"]}]}}

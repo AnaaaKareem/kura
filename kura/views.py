@@ -31,7 +31,7 @@ from django.core.paginator import Paginator
 from django.db import IntegrityError, transaction
 from django.db.models import Avg, Count, Q, Value
 from django.db.models.functions import Concat
-from django.http import Http404, HttpResponse, HttpResponseNotAllowed, JsonResponse
+from django.http import Http404, HttpResponse, HttpResponseNotAllowed, JsonResponse, UnreadablePostError
 from django.shortcuts import get_object_or_404, redirect, render
 from django.template import loader
 from django.urls import reverse
@@ -930,6 +930,18 @@ def create_user_session(request, user, method="password"):
     return user_session
 
 
+def _safe_post_data(request):
+    """Read request.POST safely so malformed encoding or unreadable bodies return HTTP 400.
+
+    Who can use it: Public POST views before form instantiation.
+    Security: Prevents malformed client byte sequences from causing unhandled 500 errors (G04).
+    """
+    try:
+        return request.POST
+    except (UnreadablePostError, UnicodeDecodeError, ValueError):
+        return None
+
+
 @login_not_required
 @never_cache
 def login_view(request):
@@ -942,7 +954,15 @@ def login_view(request):
     if request.user.is_authenticated:
         return redirect("kura:home")
 
-    form = LoginForm(request.POST or None)
+    if request.method == "POST":
+        post_data = _safe_post_data(request)
+        if post_data is None:
+            log_security_event(request, "input.invalid", {"form": "LoginForm", "fields": ["__all__"]}, logging.WARNING)
+            messages.error(request, "Invalid email or password.")
+            return render(request, "kura/accounts/login.html", {"form": LoginForm()}, status=400)
+        form = LoginForm(post_data)
+    else:
+        form = LoginForm()
 
     if request.method == "POST":
         if form.is_valid():
@@ -1964,7 +1984,24 @@ def password_reset_request_view(request):
     cannot be used to find out which accounts exist. Accounts with MFA must also
     give a second-factor code on the confirm page (AUTH-03).
     """
-    form = PasswordResetRequestForm(request.POST or None)
+    if request.method == "POST":
+        post_data = _safe_post_data(request)
+        if post_data is None:
+            log_security_event(
+                request,
+                "input.invalid",
+                {"form": "PasswordResetRequestForm", "fields": ["__all__"]},
+                logging.WARNING,
+            )
+            return render(
+                request,
+                "kura/accounts/password_reset_request.html",
+                {"form": PasswordResetRequestForm()},
+                status=400,
+            )
+        form = PasswordResetRequestForm(post_data)
+    else:
+        form = PasswordResetRequestForm()
 
     if request.method == "POST" and form.is_valid():
         email = form.cleaned_data["email"].strip().lower()

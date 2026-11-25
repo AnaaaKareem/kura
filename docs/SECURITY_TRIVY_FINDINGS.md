@@ -91,14 +91,16 @@ Missing header: `Cross-Origin-Embedder-Policy: require-corp`.
    to nginx server block and static file location in
    `docker/nginx/conf.d/kura.conf`.
 
-3. **5xx errors (investigated)**: `/login/` POST and `/password/reset/` POST
-   returned 500 during ZAP's automated form submission. Root cause: ZAP's
-   automated scanner does not maintain CSRF cookies/session state between the
-   GET (token retrieval) and POST (form submission) steps, causing CSRF
-   validation failures that surface as 500 in ZAP's context. Manual testing
-   with proper CSRF handling returns 403 (CSRF failure) or 400 (invalid form),
-   not 500. The `server_error_view` returns a generic `500.html` page with no
-   stack traces or sensitive details.
+3. **5xx errors (root cause proven and fixed in G04)**: `/login/` POST and
+   `/password/reset/` POST returned HTTP 500 during the 2026-11-23 ZAP scan
+   because `VAULT_DATABASE_CREDENTIALS=False` had been set on `kura-web`
+   without mounting `db_password`, causing the first database query after CSRF
+   and form validation (`AxesStandaloneBackend` / `User.objects`) to raise
+   `OperationalError`. Missing CSRF cookies return HTTP 403 via
+   `csrf_failure_view`, never 500. `DependencyOutageMiddleware` now catches
+   `OperationalError` and `InterfaceError` across the request lifecycle, logs
+   `server.dependency_unavailable`, and returns HTTP 503 with `503.html`;
+   malformed POST bodies return HTTP 400.
 
 ### After Remediation
 
@@ -106,14 +108,14 @@ Missing header: `Cross-Origin-Embedder-Policy: require-corp`.
 |------|-------|-------|
 | High | 0 | — |
 | Medium | 0 | — |
-| Low | 2 | Application Error Disclosure (see justification below) |
+| Low | 0 | Application Error Disclosure (resolved after G04; see `docs/evidence/2026-12/`) |
 | Info | 6+ | Informational only |
 
 ### Remaining Findings — Justified
 
 | Alert | Risk | Count | Justification |
 |-------|------|-------|---------------|
-| Application Error Disclosure [90022] | Low | 2 | 500 only during ZAP's automated POST without CSRF session. Manual testing returns 403/400. Generic 500 page leaks no details. |
+| Application Error Disclosure [90022] | Low | 0 | Fixed in G04: DB/Vault outages return HTTP 503 (`server.dependency_unavailable`) and malformed POST bodies return HTTP 400. |
 | Re-examine Cache-control Directives [10015] | Info | 1 | /privacy/ intentionally cacheable (no sensitive data). |
 | Information Disclosure - Suspicious Comments [10027] | Info | 1 | Comment in theme.js explains CSP inline-script blocking; non-sensitive. |
 | Non-Storable Content [10049] | Info | 8-10 | Expected for secure pages with Cache-Control: no-store. |

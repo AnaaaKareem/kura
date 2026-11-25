@@ -1,0 +1,18 @@
+=== G04 after-fix verification against https://localhost ===
+1_no_csrf_login: 403
+2_no_csrf_reset: 403
+3_valid_csrf_login_sealed_vault: 503
+4_bad_utf8_login: 400
+5_valid_csrf_reset_sealed_vault: 503
+6_bad_host: 400
+=== recent web dependency logs ===
+kura-web  | Traceback (most recent call last):
+kura-web  |   File "/usr/local/lib/python3.14/site-packages/django/core/handlers/exception.py", line 56, in inner
+kura-web  |     response = get_response(request)
+kura-web  |   File "/usr/local/lib/python3.14/site-packages/django/utils/deprecation.py", line 441, in __call__
+kura-web  |     response = self.process_request(request)
+kura-web  |   File "/usr/local/lib/python3.14/site-packages/django/middleware/common.py", line 48, in process_request
+kura-web  |     host = request.get_host()
+kura-web  |   File "/usr/local/lib/python3.14/site-packages/django/http/request.py", line 210, in get_host
+kura-web  |     raise DisallowedHost(msg)
+kura-web  | django.core.exceptions.DisallowedHost: Invalid HTTP_HOST header: 'evil.example'. You may need to add 'evil.example' to ALLOWED_HOSTS.

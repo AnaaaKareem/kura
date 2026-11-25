@@ -251,3 +251,12 @@ groups:
         annotations:
           summary: "Many failed Grafana logins"
           description: "More than 5 Grafana logins failed within 5 minutes. Only admins with SSH access can reach Grafana; check who holds a tunnel."
+
+      # 27. No web logs received in Loki for 15 minutes (independent signal alongside Prometheus SecurityLogsStopped).
+      - alert: WebLogsAbsent
+        expr: absent_over_time({service="web"}[15m])
+        labels:
+          severity: critical
+        annotations:
+          summary: "No web container logs in Loki"
+          description: "Loki has not received any log lines from the web container in the last 15 minutes. Check Alloy log collection."

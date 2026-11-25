@@ -4,8 +4,10 @@ import logging
 from django.conf import settings
 from django.contrib import messages
 from django.contrib.auth import get_user_model, logout
+from django.db import DatabaseError, InterfaceError, OperationalError
 from django.http import HttpResponse
 from django.shortcuts import redirect
+from django.template import loader
 from django.urls import Resolver404, resolve, reverse
 from django.utils.crypto import constant_time_compare
 from django.utils import timezone
@@ -13,6 +15,43 @@ from .models import UserSession, get_security_policy
 from .views import get_client_ip, hash_session_token, log_security_event
 
 User = get_user_model()
+
+
+class DependencyOutageMiddleware:
+    """Return HTTP 503 when PostgreSQL or Vault cannot serve a request.
+
+    Who can use it: Middleware stack for all incoming HTTP requests.
+    Security: Prevents database or Vault connection outages from surfacing as
+    unhandled 500 errors and emits server.dependency_unavailable without leaking details.
+    """
+
+    def __init__(self, get_response):
+        self.get_response = get_response
+
+    def _unavailable_response(self, request, error):
+        log_security_event(
+            request,
+            "server.dependency_unavailable",
+            {"error_type": type(error).__name__},
+            level=logging.ERROR,
+            include_actor=False,
+        )
+        html_body = loader.get_template("503.html").render({})
+        response = HttpResponse(html_body, status=503)
+        response["Retry-After"] = "30"
+        return response
+
+    def __call__(self, request):
+        try:
+            return self.get_response(request)
+        except (OperationalError, InterfaceError) as error:
+            return self._unavailable_response(request, error)
+
+    def process_exception(self, request, exception):
+        # Catch dependency errors raised inside views before Django renders handler500.
+        if isinstance(exception, (OperationalError, InterfaceError)):
+            return self._unavailable_response(request, exception)
+        return None
 
 
 class SessionValidationMiddleware:
@@ -224,13 +263,24 @@ class RateLimitMiddleware:
 
             # Use the shared DatabaseCache so all Gunicorn workers enforce both per-user and per-IP counters (AUTH-08, P7).
             ratelimit_cache = caches["ratelimit"]
-            if any(ratelimit_cache.get(key, 0) >= limit for key in cache_keys):
-                log_security_event(request, "ratelimit.hit", {"bucket": bucket}, logging.WARNING)
-                response = HttpResponse("Rate limit exceeded. Please wait before retrying.", status=429)
-                response["Retry-After"] = str(window)
-                return response
-            for key in cache_keys:
-                ratelimit_cache.set(key, ratelimit_cache.get(key, 0) + 1, timeout=window)
+            try:
+                if any(ratelimit_cache.get(key, 0) >= limit for key in cache_keys):
+                    log_security_event(request, "ratelimit.hit", {"bucket": bucket}, logging.WARNING)
+                    response = HttpResponse("Rate limit exceeded. Please wait before retrying.", status=429)
+                    response["Retry-After"] = str(window)
+                    return response
+                for key in cache_keys:
+                    ratelimit_cache.set(key, ratelimit_cache.get(key, 0) + 1, timeout=window)
+            except DatabaseError as error:
+                # Fail closed with 503 if the rate-limit backing store is unreachable.
+                log_security_event(
+                    request,
+                    "server.dependency_unavailable",
+                    {"error_type": type(error).__name__},
+                    level=logging.ERROR,
+                    include_actor=False,
+                )
+                return HttpResponse("Service unavailable.", status=503)
 
         return self.get_response(request)
 

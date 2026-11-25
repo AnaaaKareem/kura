@@ -47,6 +47,26 @@ groups:
           summary: "PostgreSQL is down"
           description: "The database stopped answering for more than 2 minutes. The whole site depends on it."
 
+      # Loki stopped answering scrapes or the Alloy /ready probe.
+      - alert: LokiDown
+        expr: up{job="loki"} == 0 or probe_success{job="loki_ready"} == 0
+        for: 2m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Loki log store is down"
+          description: "Loki has been unreachable for more than 2 minutes. LogQL security alerts cannot fire while Loki is down."
+
+      # No web security or access log lines reached Loki for 10 minutes.
+      - alert: SecurityLogsStopped
+        expr: sum(rate(loki_distributor_lines_received_total[10m])) == 0 or sum(rate(loki_write_sent_entries_total[10m])) == 0
+        for: 10m
+        labels:
+          severity: critical
+        annotations:
+          summary: "Security log ingestion stopped"
+          description: "Loki and Alloy have recorded zero ingested log lines for 10 minutes. Check Alloy, the Docker API proxy, and Loki."
+
   # Certificates: public site certificate, internal mTLS certificates, and the renewal job that keeps the internal ones fresh.
   - name: certificates
     rules:

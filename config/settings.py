@@ -102,6 +102,8 @@ MIDDLEWARE = [
     "django.middleware.security.SecurityMiddleware",
     # Content Security Policy header enforcement
     "csp.middleware.CSPMiddleware",
+    # Return HTTP 503 when PostgreSQL or Vault is unreachable instead of leaking an unhandled 500.
+    "kura.middleware.DependencyOutageMiddleware",
     "django.contrib.sessions.middleware.SessionMiddleware",
     "django.middleware.common.CommonMiddleware",
     "django.middleware.csrf.CsrfViewMiddleware",

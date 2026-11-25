@@ -365,6 +365,16 @@ prometheus.scrape "alloy" {
   forward_to = [prometheus.remote_write.local_prometheus.receiver]
 }
 
+// Scrape Loki's Prometheus metrics so Prometheus can alert if Loki stops answering or ingesting logs.
+prometheus.scrape "loki" {
+  targets = [
+    { "__address__" = "loki:3100" },
+  ]
+  metrics_path = "/metrics"
+  job_name     = "loki"
+  forward_to   = [prometheus.remote_write.local_prometheus.receiver]
+}
+
 // Scrape Vault telemetry over HTTPS and verify its certificate with Kura's CA.
 prometheus.scrape "vault" {
   targets      = [{ "__address__" = "vault:8200" }]
