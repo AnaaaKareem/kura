@@ -6,11 +6,16 @@ so views, management commands, and the database backend can share them without
 circular imports (LOG-04).
 """
 
+import hashlib
+import hmac
 import ipaddress
 import json
 import logging
+import os
 import re
 import secrets
+import threading
+from datetime import datetime, timezone
 
 from django.conf import settings
 from django.utils.crypto import salted_hmac
@@ -51,6 +56,10 @@ REDACTED_LOG_KEYS = frozenset(
         "session_key",
         "sessionid",
         "csrftoken",
+        "__Host-kura_session",
+        "__host-kura_session",
+        "__Host-kura_csrftoken",
+        "__host-kura_csrftoken",
         "encryption_key",
         "data_key",
         "wrapped_key",
@@ -145,9 +154,71 @@ def log_security_event(request, event, details, level=logging.INFO, include_acto
         value = json.dumps(raw_value)
         parts.append(key_name + "=" + value)
 
-    # Join first so untrusted values are never used as a logging format string.
-    line = " ".join(parts)
-    security_logger.log(level, line)
+    # Append tamper-evident per-worker sequence number and chained HMAC-SHA256 tag (G11)
+    # after event/ip/details so CrowdSec parsers anchored at event="..." ip="..." remain valid.
+    chained_line = _chain_security_line(" ".join(parts))
+    security_logger.log(level, chained_line)
+
+
+_CHAIN_LOCK = threading.Lock()
+_CHAIN_STATE = {"pid": None, "seq": 0, "prev_mac": ""}
+
+
+def _get_log_hmac_key_bytes():
+    """Return key bytes for HMAC-SHA256 log chaining, separate from session signing."""
+    raw_key = getattr(settings, "LOG_HMAC_KEY", "") or ""
+    if not raw_key:
+        raw_key = hmac.new(settings.SECRET_KEY.encode("utf-8"), b"kura-log-hmac-v1", hashlib.sha256).hexdigest()
+    return raw_key.encode("utf-8")
+
+
+def reset_log_chain_for_tests():
+    """Reset the per-process log chain state (used by G11 unit tests only)."""
+    with _CHAIN_LOCK:
+        _CHAIN_STATE["pid"] = None
+        _CHAIN_STATE["seq"] = 0
+        _CHAIN_STATE["prev_mac"] = ""
+
+
+def _init_chain_for_pid_locked(pid, key_bytes):
+    """Initialize log chain state and emit log.chain.start for the active process PID."""
+    boot_iso = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    seed_mac = hmac.new(key_bytes, f"start:{pid}:{boot_iso}".encode("utf-8"), hashlib.sha256).hexdigest()[:32]
+    start_without_mac = f'event="log.chain.start" boot={json.dumps(boot_iso)} worker={pid} seq=0'
+    start_mac = hmac.new(key_bytes, f"{seed_mac}|{start_without_mac}".encode("utf-8"), hashlib.sha256).hexdigest()[
+        :32
+    ]
+    security_logger.log(logging.INFO, f'{start_without_mac} mac="{start_mac}"')
+    _CHAIN_STATE["pid"] = pid
+    _CHAIN_STATE["seq"] = 1
+    _CHAIN_STATE["prev_mac"] = start_mac
+
+
+def ensure_log_chain_started():
+    """Emit log.chain.start once per worker process if not already initialized."""
+    key_bytes = _get_log_hmac_key_bytes()
+    pid = os.getpid()
+    with _CHAIN_LOCK:
+        if _CHAIN_STATE["pid"] != pid:
+            _init_chain_for_pid_locked(pid, key_bytes)
+
+
+def _chain_security_line(base_line):
+    """Attach worker PID, monotonic sequence number, and chained 32-hex HMAC to a logfmt line."""
+    key_bytes = _get_log_hmac_key_bytes()
+    pid = os.getpid()
+    with _CHAIN_LOCK:
+        if _CHAIN_STATE["pid"] != pid:
+            _init_chain_for_pid_locked(pid, key_bytes)
+
+        seq = _CHAIN_STATE["seq"]
+        line_without_mac = f"{base_line} worker={pid} seq={seq}"
+        mac = hmac.new(
+            key_bytes, f"{_CHAIN_STATE['prev_mac']}|{line_without_mac}".encode("utf-8"), hashlib.sha256
+        ).hexdigest()[:32]
+        _CHAIN_STATE["seq"] = seq + 1
+        _CHAIN_STATE["prev_mac"] = mac
+        return f'{line_without_mac} mac="{mac}"'
 
 
 def log_invalid_form(request, form):

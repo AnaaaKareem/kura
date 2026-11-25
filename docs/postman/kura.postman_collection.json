@@ -57,7 +57,7 @@
                   "    pm.expect(csp).to.include(\"frame-ancestors 'none'\");",
                   "});",
                   "",
-                  "const csrfCookie = pm.cookies.get('csrftoken');",
+                  "const csrfCookie = pm.cookies.get('__Host-kura_csrftoken') || pm.cookies.get('csrftoken');",
                   "if (csrfCookie) {",
                   "    pm.collectionVariables.set('csrftoken', csrfCookie);",
                   "}"

@@ -18,7 +18,7 @@ CERT_DIR="certs/internal"
 SECRETS_DIR="secrets"
 
 # Secrets Kura generates itself with a cryptographic random generator.
-GENERATED_SECRETS="db_password backup_encryption_key django_secret_key crowdsec_bouncer_key grafana_admin_password grafana_viewer_password"
+GENERATED_SECRETS="db_password backup_encryption_key django_secret_key log_hmac_key crowdsec_bouncer_key grafana_admin_password grafana_viewer_password"
 # Secrets that come from outside services or from Vault.
 # We cannot generate these, so setup creates an empty file and says where the value comes from.
 EXTERNAL_SECRETS="telegram_bot_token telegram_chat_id vault_role_id vault_secret_id"
@@ -87,7 +87,7 @@ is_running() {
 secret_owner() {
     case "$1" in
         db_password|backup_encryption_key) echo 26 ;;          # "postgres" in the pgEdge image
-        django_secret_key|vault_role_id|vault_secret_id) echo 10001 ;;  # "kura" in our Dockerfile
+        django_secret_key|log_hmac_key|vault_role_id|vault_secret_id) echo 10001 ;;  # "kura" in our Dockerfile
         grafana_admin_password) echo 472 ;;                    # "grafana" in the Grafana image
         telegram_bot_token|telegram_chat_id) echo 65534 ;;     # "nobody" in the Alertmanager image
         *) echo 0 ;;  # crowdsec_bouncer_key (read as root), host-only files
@@ -187,6 +187,8 @@ Operations
                      the host firewall egress allowlists (every-10-minutes cron)
   restore-drill [T]  Restore the backup (latest, or time T) into a throwaway database
                      and compare row counts with the live one; the live database is untouched
+  fim-baseline       Record SHA-256 baseline hashes of host security/compose configs (G17)
+  fim-check          Verify host security/compose configs against recorded SHA-256 baseline (G17)
   help               This list
 
 Destructive steps (ask for YES, or pass --force):
@@ -1607,6 +1609,81 @@ cmd_restore_drill() {
     echo "  docker rm -f $DRILL_CONTAINER && docker volume rm $DRILL_VOLUME"
 }
 
+# fim-baseline / fim-check
+
+# Compute deterministic SHA-256 digests over critical host, compose, WAF, and firewall configs (G17).
+fim_collect_hashes() {
+    FIM_ROOT="${KURA_FIM_ROOT:-$PWD}"
+    python3 -c '
+import hashlib, json, os, sys
+root = os.path.abspath(sys.argv[1])
+targets = []
+for rel in ("docker-compose.yml", "Dockerfile", "gunicorn.conf.py", "config/settings.py"):
+    p = os.path.join(root, rel)
+    if os.path.isfile(p):
+        targets.append((rel, p))
+docker_dir = os.path.join(root, "docker")
+if os.path.isdir(docker_dir):
+    for cur, _, files in sorted(os.walk(docker_dir)):
+        for fn in sorted(files):
+            fp = os.path.join(cur, fn)
+            targets.append((os.path.relpath(fp, root), fp))
+for host_abs in ("/etc/nftables.d/kura.nft", "/etc/ssh/sshd_config.d/kura-sshd.conf"):
+    if os.path.isfile(host_abs) and os.access(host_abs, os.R_OK):
+        targets.append((host_abs, host_abs))
+manifest = {}
+for key, fp in sorted(set(targets)):
+    h = hashlib.sha256()
+    with open(fp, "rb") as fh:
+        for chunk in iter(lambda: fh.read(65536), b""):
+            h.update(chunk)
+    manifest[key] = h.hexdigest()
+print(json.dumps(manifest, sort_keys=True, indent=2))
+' "$FIM_ROOT"
+}
+
+cmd_fim_baseline() {
+    BASELINE_FILE="${KURA_FIM_BASELINE:-/var/lib/kura/fim-baseline.json}"
+    if planned "write host file-integrity baseline to $BASELINE_FILE"; then
+        return 0
+    fi
+    mkdir -p "$(dirname "$BASELINE_FILE")"
+    (
+        umask 077
+        fim_collect_hashes > "$BASELINE_FILE"
+    )
+    chmod 600 "$BASELINE_FILE"
+    say "Wrote FIM baseline to $BASELINE_FILE"
+}
+
+cmd_fim_check() {
+    BASELINE_FILE="${KURA_FIM_BASELINE:-/var/lib/kura/fim-baseline.json}"
+    if planned "verify host files against $BASELINE_FILE"; then
+        return 0
+    fi
+    [ -f "$BASELINE_FILE" ] || die "FIM baseline not found at $BASELINE_FILE (run fim-baseline first)."
+    CURRENT_JSON=$(fim_collect_hashes)
+    python3 -c '
+import json, sys
+baseline = json.load(open(sys.argv[1], encoding="utf-8"))
+current = json.loads(sys.argv[2])
+changed = 0
+for path in sorted(set(baseline) | set(current)):
+    if path not in current:
+        print(f"event=\"fim.changed\" path={json.dumps(path)} reason=\"missing\"")
+        changed += 1
+    elif path not in baseline:
+        print(f"event=\"fim.changed\" path={json.dumps(path)} reason=\"added\"")
+        changed += 1
+    elif baseline[path] != current[path]:
+        print(f"event=\"fim.changed\" path={json.dumps(path)} reason=\"modified\"")
+        changed += 1
+if changed:
+    sys.exit(1)
+print("event=\"fim.ok\" checked=" + str(len(current)))
+' "$BASELINE_FILE" "$CURRENT_JSON"
+}
+
 # Command line
 
 # Options may appear anywhere; the first other word is the command and the rest are its arguments.
@@ -1647,5 +1724,7 @@ case "$COMMAND" in
     app-metrics) cmd_app_metrics ;;
     egress-refresh) cmd_egress_refresh ;;
     restore-drill) cmd_restore_drill "$ARGUMENT" ;;
+    fim-baseline) cmd_fim_baseline ;;
+    fim-check) cmd_fim_check ;;
     *) die "Unknown command: $COMMAND (see ./kura.sh help)" ;;
 esac

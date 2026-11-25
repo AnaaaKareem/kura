@@ -208,7 +208,7 @@ class SecurityGapG04ErrorHandlingTests(TestCase):
         self.assertTrue(any('event="server.dependency_unavailable"' in rec.getMessage() for rec in captured.records))
 
         with (
-            patch("kura.views.User.objects.filter", side_effect=OperationalError("db down")),
+            patch("kura.views.OutgoingEmail.objects.create", side_effect=OperationalError("db down")),
             self.assertLogs("kura.security", level="ERROR") as captured_reset,
         ):
             resp_reset = client.post(reverse("kura:password_reset_request"), {"email": "user@kura.edu"})
@@ -405,6 +405,171 @@ class SecurityGapG09DeceptionTests(TestCase):
         self.assertContains(resp_honey, "Invalid email or password.", status_code=400)
         self.assertContains(resp_unknown, "Invalid email or password.", status_code=400)
         self.assertTrue(any('event="security.honeytoken.used"' in r.getMessage() for r in captured.records))
+
+
+class SecurityGapG13TimingTests(TestCase):
+    """Verification tests for G13 constant-work password reset request handling."""
+
+    def test_g13_known_and_unknown_emails_execute_identical_query_count(self):
+        """Plan ID: G13 | Risk ID: R03
+        Verify POST /password/reset/ performs the exact same number of SQL queries for an
+        existing user and an unknown email, while send_queued_emails resolves only valid users
+        and deletes unknown lookup rows without marking FAILED.
+        """
+        from django.core.management import call_command
+        from io import StringIO
+        from kura.models import OutgoingEmail, OutgoingEmailStatus, PasswordResetToken
+        from kura.tests import make_user
+
+        known_user = make_user("Student", email="known-student@kura.edu")
+        client = Client()
+
+        # Warm the cache/security policy or middleware state so first-request lazy queries don't skew.
+        client.get(reverse("kura:password_reset_request"))
+
+        with self.assertNumQueries(1) as ctx_unknown:
+            resp_unknown = client.post(
+                reverse("kura:password_reset_request"),
+                {"email": "missing-person@kura.edu"},
+            )
+        self.assertEqual(resp_unknown.status_code, 302)
+
+        with self.assertNumQueries(len(ctx_unknown.captured_queries)):
+            resp_known = client.post(
+                reverse("kura:password_reset_request"),
+                {"email": known_user.email},
+            )
+        self.assertEqual(resp_known.status_code, 302)
+
+        self.assertEqual(PasswordResetToken.objects.filter(user=known_user).count(), 0)
+        call_command("send_queued_emails", stdout=StringIO())
+
+        self.assertEqual(PasswordResetToken.objects.filter(user=known_user).count(), 1)
+        self.assertFalse(OutgoingEmail.objects.filter(to_email="missing-person@kura.edu").exists())
+        self.assertFalse(OutgoingEmail.objects.filter(status=OutgoingEmailStatus.FAILED).exists())
+
+
+class SecurityGapG14HostCookieTests(TestCase):
+    """Verification tests for G14 __Host- session and CSRF cookie prefixes when DEBUG=False."""
+
+    @override_settings(
+        DEBUG=False,
+        SESSION_COOKIE_NAME="__Host-kura_session",
+        CSRF_COOKIE_NAME="__Host-kura_csrftoken",
+        SESSION_COOKIE_SECURE=True,
+        CSRF_COOKIE_SECURE=True,
+        SESSION_COOKIE_PATH="/",
+        CSRF_COOKIE_PATH="/",
+        SESSION_COOKIE_DOMAIN=None,
+        CSRF_COOKIE_DOMAIN=None,
+    )
+    def test_g14_host_prefix_cookies_set_secure_root_path_and_no_domain(self):
+        """Plan ID: G14 | Risk ID: R04
+        Verify GET/POST on login with production cookie settings sets __Host-kura_csrftoken
+        with Secure, Path=/, and empty Domain.
+        """
+        client = Client(enforce_csrf_checks=False)
+        resp = client.get(reverse("kura:login"))
+        self.assertEqual(resp.status_code, 200)
+        self.assertIn("__Host-kura_csrftoken", resp.cookies)
+        csrf_cookie = resp.cookies["__Host-kura_csrftoken"]
+        self.assertTrue(csrf_cookie["secure"])
+        self.assertEqual(csrf_cookie["path"], "/")
+        self.assertEqual(csrf_cookie["domain"], "")
+
+
+class SecurityGapG11LogChainTests(unittest.TestCase):
+    """Verification tests for G11 tamper-evident HMAC-SHA256 log chains."""
+
+    def test_g11_log_chain_verifies_and_detects_edit_and_deletion(self):
+        """Plan ID: G11 | Risk ID: R08, R14
+        Verify generated log chains pass verify_log_lines, a 1-character edit fails at that seq,
+        and a deleted middle line triggers a sequence gap failure.
+        """
+        from kura.logging_utils import log_security_event, reset_log_chain_for_tests
+        from kura.management.commands.verify_log_chain import verify_log_lines
+
+        reset_log_chain_for_tests()
+        with self.assertLogs("kura.security", level="INFO") as captured:
+            log_security_event(None, "chain.step_one", {"index": "1"})
+            log_security_event(None, "chain.step_two", {"index": "2"})
+            log_security_event(None, "chain.step_three", {"index": "3"})
+
+        lines = [rec.getMessage() for rec in captured.records]
+        self.assertEqual(verify_log_lines(lines), len(lines))
+
+        # 1-char edit inside step_two (seq=2) must fail HMAC check at seq=2.
+        edited = list(lines)
+        edited[2] = edited[2].replace('index="2"', 'index="9"')
+        with self.assertRaisesRegex(ValueError, "seq=2: tampered"):
+            verify_log_lines(edited)
+
+        # Deleting a middle line (seq=2) must fail with a sequence gap at seq=3.
+        deleted = [lines[0], lines[1], lines[3]]
+        with self.assertRaisesRegex(ValueError, "sequence gap detected.*expected seq=2, got seq=3"):
+            verify_log_lines(deleted)
+
+
+class SecurityGapG17FimTests(unittest.TestCase):
+    """Verification tests for G17 host file-integrity baseline and drift detection."""
+
+    @skipIf(not (BASE_DIR / "kura.sh").exists(), "kura.sh not available in container")
+    def test_g17_fim_baseline_and_drift_detection(self):
+        """Plan ID: G17 | Risk ID: R09
+        Verify ./kura.sh fim-baseline records deterministic hashes and ./kura.sh fim-check
+        exits 0 on clean files and non-zero with event="fim.changed" when modified.
+        """
+        import subprocess
+        import tempfile
+
+        with tempfile.TemporaryDirectory() as tmpdir:
+            root = Path(tmpdir) / "repo"
+            (root / "config").mkdir(parents=True)
+            (root / "docker" / "nginx").mkdir(parents=True)
+            (root / "docker-compose.yml").write_text("services: {}\n", encoding="utf-8")
+            (root / "Dockerfile").write_text("FROM python:3.14-slim\n", encoding="utf-8")
+            (root / "gunicorn.conf.py").write_text("workers = 5\n", encoding="utf-8")
+            (root / "config" / "settings.py").write_text("DEBUG = False\n", encoding="utf-8")
+            (root / "docker" / "nginx" / "kura.conf").write_text("server {}\n", encoding="utf-8")
+            baseline_file = Path(tmpdir) / "fim-baseline.json"
+
+            env = {
+                **os.environ,
+                "KURA_FIM_ROOT": str(root),
+                "KURA_FIM_BASELINE": str(baseline_file),
+            }
+            res_base = subprocess.run(
+                [str(BASE_DIR / "kura.sh"), "fim-baseline"],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(res_base.returncode, 0, res_base.stderr)
+            self.assertTrue(baseline_file.exists())
+
+            res_ok = subprocess.run(
+                [str(BASE_DIR / "kura.sh"), "fim-check"],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertEqual(res_ok.returncode, 0, res_ok.stderr)
+            self.assertIn('event="fim.ok"', res_ok.stdout)
+
+            # Mutate a monitored file and verify fim-check detects drift cleanly.
+            (root / "docker" / "nginx" / "kura.conf").write_text("server { listen 80; }\n", encoding="utf-8")
+            res_drift = subprocess.run(
+                [str(BASE_DIR / "kura.sh"), "fim-check"],
+                env=env,
+                capture_output=True,
+                text=True,
+                check=False,
+            )
+            self.assertNotEqual(res_drift.returncode, 0)
+            self.assertIn('event="fim.changed"', res_drift.stdout)
+
 
 
 

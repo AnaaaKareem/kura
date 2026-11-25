@@ -287,3 +287,12 @@ groups:
         annotations:
           summary: "Honeytoken account authentication attempt"
           description: "A login attempt targeted the reserved honeytoken account within the last 5 minutes."
+
+      # 31. Host or container configuration file failed SHA-256 baseline check (G17).
+      - alert: HostFileIntegrityChanged
+        expr: sum(count_over_time({service=~"cron|host|web"} | logfmt | event="fim.changed" [1h])) >= 1
+        labels:
+          severity: critical
+        annotations:
+          summary: "Host security configuration file changed"
+          description: "fim-check detected an unexpected SHA-256 modification, missing file, or added config file against the baseline manifest."

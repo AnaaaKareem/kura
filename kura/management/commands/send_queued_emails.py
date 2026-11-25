@@ -23,10 +23,13 @@ from django.conf import settings
 from django.core.mail import EmailMessage, get_connection
 from django.core.management.base import BaseCommand
 from django.db import transaction
+from django.urls import reverse
 from django.utils import timezone
 
 from kura.logging_utils import log_security_event
-from kura.models import OutgoingEmail, OutgoingEmailStatus
+from kura.models import OutgoingEmail, OutgoingEmailStatus, PasswordResetToken, User
+from kura.permissions import service_rls_context
+from kura.views import create_reset_token
 
 # How many times to try one email before giving up. The retry gaps double
 # (2**attempts minutes after creation), so the last try is about 34 hours
@@ -37,8 +40,65 @@ MAX_ATTEMPTS = 12
 class Command(BaseCommand):
     help = "Sends pending emails from the outbox through Gmail SMTP."
 
+    def _resolve_password_reset_lookups(self, now):
+        """Resolve deferred password-reset lookups outside the HTTP request path (G13).
+
+        Who can use it: send_queued_emails cron worker running under service_rls_context().
+        Security: Moves User lookups, 2-per-5-minute rate limits, and token creation out of
+        password_reset_request_view so response timing does not disclose valid accounts; deletes
+        unknown or throttled lookups instead of marking FAILED to avoid false EmailFailures alerts.
+        """
+        lookup_ids = list(
+            OutgoingEmail.objects.filter(status=OutgoingEmailStatus.PENDING_LOOKUP)
+            .order_by("created_at")
+            .values_list("id", flat=True)[:200]
+        )
+        for lookup_id in lookup_ids:
+            with transaction.atomic():
+                row = (
+                    OutgoingEmail.objects.select_for_update(skip_locked=True)
+                    .filter(id=lookup_id, status=OutgoingEmailStatus.PENDING_LOOKUP)
+                    .first()
+                )
+                if row is None:
+                    continue
+                if row.created_at < now - timezone.timedelta(minutes=30):
+                    row.delete()
+                    continue
+                user = User.objects.filter(email__iexact=row.to_email, is_active=True).first()
+                if user is None:
+                    row.delete()
+                    continue
+                recent_requests = PasswordResetToken.objects.filter(
+                    user=user, created_at__gte=now - timezone.timedelta(minutes=5)
+                ).count()
+                if recent_requests >= 2:
+                    log_security_event(
+                        None,
+                        "auth.password.reset_throttled",
+                        {"user_id": user.id},
+                        level=logging.WARNING,
+                    )
+                    row.delete()
+                    continue
+                raw_token, reset_token = create_reset_token(user)
+                reset_url = settings.SITE_URL.rstrip("/") + reverse(
+                    "kura:password_reset_confirm", kwargs={"token": raw_token}
+                )
+                row.event_key = f"password-reset:{reset_token.id}"
+                row.to_email = user.email
+                row.subject = "Kura Password Reset Request"
+                row.body = (
+                    f"Hello,\n\nPlease reset your password using this link:\n{reset_url}\n\n"
+                    "This link expires in 30 minutes. If you did not ask for this, ignore this email."
+                )
+                row.status = OutgoingEmailStatus.PENDING
+                row.save(update_fields=["event_key", "to_email", "subject", "body", "status"])
+
     def handle(self, *args, **options):
         now = timezone.now()
+        with service_rls_context():
+            self._resolve_password_reset_lookups(now)
 
         # 1. Give up on emails that are too old to be useful.
         expired_reset_ids = list(

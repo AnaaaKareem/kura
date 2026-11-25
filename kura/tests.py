@@ -732,9 +732,10 @@ class PasswordResetTests(TestCase):
         self.assertTrue(self.user.check_password("OriginalPassword123!"))
 
     def test_request_always_emails_a_link(self):
-        # AUTH-03: the request page no longer skips the email step; it only creates a token and sends the generic message.
+        # G13: request enqueues a deferred lookup so known/unknown responses execute equal work; cron resolves tokens.
         response = self.client.post(reverse("kura:password_reset_request"), {"email": self.user.email})
         self.assertRedirects(response, reverse("kura:login"))
+        call_command("send_queued_emails", stdout=StringIO())
         self.assertEqual(PasswordResetToken.objects.filter(user=self.user).count(), 1)
 
     def test_mfa_account_needs_code_on_confirm_page(self):

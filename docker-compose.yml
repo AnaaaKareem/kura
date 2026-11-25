@@ -159,6 +159,7 @@ services:
     # AppRole bootstrap credentials come from Docker secrets (mode 600, owner 10001), never from environment variables, so they do not appear in docker inspect or process listings.
     secrets:
       - django_secret_key
+      - log_hmac_key
       - vault_role_id
       - vault_secret_id
     environment:
@@ -998,6 +999,8 @@ secrets:
     file: ./secrets/backup_encryption_key.txt
   django_secret_key:
     file: ./secrets/django_secret_key.txt
+  log_hmac_key:
+    file: ./secrets/log_hmac_key.txt
   crowdsec_bouncer_key:
     file: ./secrets/crowdsec_bouncer_key.txt
   grafana_admin_password:

@@ -10,6 +10,8 @@ For the full list of settings and their values, see
 https://docs.djangoproject.com/en/6.1/ref/settings/
 """
 
+import hashlib
+import hmac
 import os
 from pathlib import Path
 
@@ -61,6 +63,13 @@ if not DEBUG:
             "SECRET_KEY is missing or too weak. Run ./kura.sh secrets "
             "or set a random SECRET_KEY of at least 50 characters."
         )
+
+# Separate HMAC key for tamper-evident security log chains (G11), derived with domain separation when no dedicated secret exists.
+LOG_HMAC_KEY = read_secret(
+    "log_hmac_key",
+    os.environ.get("LOG_HMAC_KEY")
+    or hmac.new(SECRET_KEY.encode("utf-8"), b"kura-log-hmac-v1", hashlib.sha256).hexdigest(),
+)
 
 ALLOWED_HOSTS = os.environ.get("ALLOWED_HOSTS", "localhost,127.0.0.1,testserver").split(",")
 
@@ -352,6 +361,13 @@ if not DEBUG:
     SECURE_HSTS_SECONDS = 31536000
     SECURE_HSTS_INCLUDE_SUBDOMAINS = True
     SECURE_HSTS_PRELOAD = True
+    # G14: __Host- prefix locks session and CSRF cookies to Secure, Path=/, and host-only scope.
+    SESSION_COOKIE_NAME = "__Host-kura_session"
+    CSRF_COOKIE_NAME = "__Host-kura_csrftoken"
+    SESSION_COOKIE_PATH = "/"
+    CSRF_COOKIE_PATH = "/"
+    SESSION_COOKIE_DOMAIN = None
+    CSRF_COOKIE_DOMAIN = None
     # On by default.
     # It may be turned off (SECURE_SSL_REDIRECT=False) only where nginx already redirects HTTP to HTTPS, as in docker-compose.yml, or for the plain-HTTP smoke test in CI.
     SECURE_SSL_REDIRECT = os.environ.get("SECURE_SSL_REDIRECT", "True").lower() == "true"

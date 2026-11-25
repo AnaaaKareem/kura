@@ -46,6 +46,9 @@ KURA_METRICS_DIR=/var/lib/kura-metrics
 # Every day at 04:45: verify all submission and grade cryptographic signatures (G05).
 45 4 * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh verify-signatures docker compose exec -T -u 10001:10001 web python manage.py verify_signatures >> /var/log/kura/verify-signatures.log 2>&1
 
+# Every hour: check critical host/compose/WAF configuration SHA-256 baseline for unexpected drift (G17).
+5 * * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh fim-check ./kura.sh fim-check >> /var/log/kura/fim-check.log 2>&1
+
 # Backups (pgBackRest, local encrypted repository repo1 and secondary repo2).
 # WAL is archived continuously by PostgreSQL itself.
 # Full backup every Sunday at 02:00; differential every other day at 02:00; secondary repo2 sync/backup daily at 03:00; consistency check every day at 06:00.

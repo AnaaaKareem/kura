@@ -40,3 +40,14 @@ if mtls_enabled:
     # Require client certificate verification (ssl.CERT_REQUIRED)
     cert_reqs = ssl.CERT_REQUIRED
     ssl_version = ssl.PROTOCOL_TLS_SERVER
+
+
+def post_fork(_server, _worker):
+    """Start a fresh per-worker HMAC security log chain immediately after Gunicorn forks."""
+    try:
+        from kura.logging_utils import ensure_log_chain_started
+
+        ensure_log_chain_started()
+    except Exception:
+        # Gunicorn master/worker startup falls back to lazy initialization on first event if needed.
+        pass

@@ -781,10 +781,11 @@ class FileContent(models.Model):
 
 class OutgoingEmailStatus(models.TextChoices):
     """
-    Where an email is in the outbox: waiting, sent, or given up on.
+    Where an email is in the outbox: waiting, pending lookup, sent, or given up on.
     """
 
     PENDING = "pending", "Pending"
+    PENDING_LOOKUP = "pending_lookup", "Pending lookup"
     SENT = "sent", "Sent"
     FAILED = "failed", "Failed"
 
@@ -805,7 +806,7 @@ class OutgoingEmail(models.Model):
     to_email = models.EmailField(max_length=255)
     subject = models.CharField(max_length=200)
     body = models.TextField()
-    status = models.CharField(max_length=10, choices=OutgoingEmailStatus.choices, default=OutgoingEmailStatus.PENDING)
+    status = models.CharField(max_length=20, choices=OutgoingEmailStatus.choices, default=OutgoingEmailStatus.PENDING)
     attempts = models.PositiveSmallIntegerField(default=0)
     last_error = models.CharField(max_length=255, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)

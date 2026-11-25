@@ -2147,39 +2147,20 @@ def password_reset_request_view(request):
 
     if request.method == "POST" and form.is_valid():
         email = form.cleaned_data["email"].strip().lower()
-        user = User.objects.filter(email=email, is_active=True).first()
-
-        # At most 2 reset emails per account every 5 minutes, so nobody can flood someone's inbox.
-        # Extra requests are ignored without telling the visitor.
-        recent_requests = 0
-        if user:
-            recent_requests = PasswordResetToken.objects.filter(
-                user=user, created_at__gte=timezone.now() - timezone.timedelta(minutes=5)
-            ).count()
-
-        # If the user exists, create a single-use token valid for 30 minutes.
-        queued = False
-        if user and recent_requests < 2:
-            raw_token, reset_token = create_reset_token(user)
-
-            # Put the email in the outbox instead of sending it here, so the page answers just as fast whether or not the account exists.
-            # The link uses the fixed SITE_URL, never the Host header the visitor sent.
-            reset_url = settings.SITE_URL + reverse("kura:password_reset_confirm", kwargs={"token": raw_token})
-            queued = queue_email(
-                f"password-reset:{reset_token.id}",
-                user.email,
-                "Kura Password Reset Request",
-                f"Hello,\n\nPlease reset your password using this link:\n{reset_url}\n\n"
-                "This link expires in 30 minutes. If you did not ask for this, ignore this email.",
-            )
-
-        # Record only the generic outcome; never include the reset token or address.
-        reason = "ok"
-        if not user:
-            reason = "unknown_email"
-        elif recent_requests >= 2:
-            reason = "rate_limited"
-        log_security_event(request, "auth.password.reset_requested", {"queued": queued, "reason": reason})
+        # G13: Always execute the exact same single outbox write during the HTTP request so
+        # known and unknown email addresses cannot be distinguished via response timing or query count.
+        OutgoingEmail.objects.create(
+            event_key=f"password-reset-lookup:{secrets.token_hex(16)}",
+            to_email=email,
+            subject="Kura Password Reset Request",
+            body="",
+            status="pending_lookup",
+        )
+        log_security_event(
+            request,
+            "auth.password.reset_requested",
+            {"queued": True, "reason": "pending_lookup"},
+        )
 
         messages.success(
             request, "If an account exists with that email address, password reset instructions have been sent."
