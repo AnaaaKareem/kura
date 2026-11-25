@@ -1,0 +1,31 @@
+Vault unavailable for gmail app password: OSError
+time=2026-11-25T19:30:43+0200 level=INFO logger=kura.security event="log.chain.start" boot="2026-11-25T17:30:43+00:00" worker=392463 seq=0 mac="2e6ff93448512781523dc5a373e31ecf"
+time=2026-11-25T19:30:43+0200 level=ERROR logger=kura.security event="clamav.unavailable" error_type="gaierror" worker=392463 seq=1 mac="e5c6f978ccd42f92e41e6b2d8ced3f10"
+time=2026-11-25T19:30:43+0200 level=ERROR logger=kura.security event="clamav.unavailable" error_type="gaierror" worker=392463 seq=2 mac="64982807d11b27a8e125be1b144d613e"
+time=2026-11-25T19:30:44+0200 level=WARNING logger=kura.security event="file.upload_rejected" reason="extension_mismatch" worker=392463 seq=3 mac="984c94283e93010209cc0f1d5acdcf4c"
+time=2026-11-25T19:30:44+0200 level=WARNING logger=kura.security event="file.upload_rejected" reason="size_limit" worker=392463 seq=4 mac="e0d1bd4fac9f8b99741580d353d61fc8"
+time=2026-11-25T19:30:44+0200 level=WARNING logger=kura.security event="file.quarantined" detection="Eicar-Test-Signature" sha256="275a021bbfb6489e54d471899f7db9d1663fc695ec2fe2a2c4538aabf651fd0f" size="68" user_id="a7c63630-ec6e-4381-8fac-4e2a10f9780e" worker=392463 seq=5 mac="6299c786cd1af008f8375efac9207dd2"
+time=2026-11-25T19:30:44+0200 level=ERROR logger=kura.security event="clamav.unavailable" error_type="gaierror" worker=392463 seq=6 mac="594d04cb35917f7f9c54af683732f0d9"
+time=2026-11-25T19:30:44+0200 level=ERROR logger=kura.security event="clamav.unavailable" error_type="gaierror" worker=392463 seq=7 mac="8d4820eb75817f04de32430f851d34af"
+time=2026-11-25T19:30:44+0200 level=WARNING logger=kura.security event="file.upload_rejected" reason="mime_type" worker=392463 seq=8 mac="c3fb970590a1a6a851687a93643ca07a"
+Testing with user: student@kura.edu
+
+=== Test 1: PDF bytes named .html ===
+EXPECTED REJECTION: ['The file extension does not match the detected file type.']
+
+=== Test 2: 26 MiB file (limit 25 MiB) ===
+EXPECTED REJECTION: ['File size exceeds the maximum limit of 25 MiB.']
+
+=== Test 3: EICAR test file (patched ClamAV) ===
+EXPECTED QUARANTINE: ['The uploaded file failed security scanning.']
+QuarantinedFile created: id=475e8fd7-597e-4222-8a74-43361a6feec8, detection=Eicar-Test-Signature
+
+=== Test 4: Highly compressed zip of zeros (zip bomb style) ===
+Zip size: 1149 bytes (original: 1048576 bytes)
+REJECTED: ["This file type isn't allowed. Allowed: PDF, Word, PowerPoint, Excel, OpenDocument, CSV, text, Markdown, images (PNG, JPEG, GIF, WebP), MP4, MP3, ZIP."]
+
+=== SUMMARY ===
+  PASS: PDF named .html
+  PASS: 26 MiB file
+  PASS: EICAR (patched)
+  PASS: Zip bomb

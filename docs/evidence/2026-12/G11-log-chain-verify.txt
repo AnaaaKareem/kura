@@ -1,0 +1,27 @@
+=== Live kura-web Security Log Chain Verification (using container log_hmac_key) ===
+time=2026-11-25T19:10:47+0200 level=INFO logger=kura.security event="log.chain.start" boot="2026-11-25T17:10:47+00:00" worker=8 seq=0 mac="43cef2ca69b5087684e73c7dd0a3709f"
+time=2026-11-25T19:10:47+0200 level=INFO logger=kura.security event="log.chain.start" boot="2026-11-25T17:10:47+00:00" worker=7 seq=0 mac="558f87c89da76b7c3219be2a07951a4f"
+time=2026-11-25T19:10:47+0200 level=INFO logger=kura.security event="log.chain.start" boot="2026-11-25T17:10:47+00:00" worker=9 seq=0 mac="dd69d0adea1aceb77e253dc18352d64e"
+time=2026-11-25T19:10:48+0200 level=INFO logger=kura.security event="log.chain.start" boot="2026-11-25T17:10:48+00:00" worker=10 seq=0 mac="26bc544f6952a5b340a90b400eb5181e"
+time=2026-11-25T19:10:48+0200 level=INFO logger=kura.security event="log.chain.start" boot="2026-11-25T17:10:48+00:00" worker=11 seq=0 mac="3c0ab885ea264b01dea0d982b7bcdd0f"
+time=2026-11-25T19:13:02+0200 level=INFO logger=kura.security event="access.not_found" ip="172.28.10.128" actor_user_id="anonymous" request_id="2b0183aaa71fd3882089c2c82b29c1ad" path="/robots.txt" method="GET" worker=8 seq=1 mac="255e2ce24b26253009555ac2f563ca4b"
+time=2026-11-25T19:13:02+0200 level=INFO logger=kura.security event="access.not_found" ip="172.28.10.128" actor_user_id="anonymous" request_id="15055ebf3b8f8c1312ba8ce0ec35c26f" path="/sitemap.xml" method="GET" worker=11 seq=1 mac="c958a66986fe64e273b164344b18f22d"
+time=2026-11-25T19:13:02+0200 level=INFO logger=kura.security event="access.not_found" ip="172.28.10.128" actor_user_id="anonymous" request_id="e79c284a401e3216e11784e8e641daf2" path="/24" method="GET" worker=11 seq=2 mac="2685f81c5954c6e3ad1a2f9824fc23d7"
+time=2026-11-25T19:13:02+0200 level=ERROR logger=kura.security event="vault.error" operation="get_dynamic_database_credentials" worker=8 seq=2 mac="92e7a4f357b283cb2cb97b129fefd4aa"
+time=2026-11-25T19:13:02+0200 level=ERROR logger=kura.security event="vault.error" operation="get_dynamic_database_credentials" worker=8 seq=3 mac="8d3731732accaba96656740a0ccc7173"
+time=2026-11-25T19:13:02+0200 level=ERROR logger=kura.security event="server.dependency_unavailable" ip="172.28.10.128" actor_user_id="-" request_id="d422c147784db49fc6dec02ccad1c06b" path="/login/" method="POST" error_type="OperationalError" worker=8 seq=4 mac="c7bfed7a65ea751bfb6ae1a682db706b"
+time=2026-11-25T19:13:02+0200 level=INFO logger=kura.security event="access.not_found" ip="172.28.10.128" actor_user_id="anonymous" request_id="5ee9abccc2526b668f6dfd1001b7a406" path="/48" method="GET" worker=9 seq=1 mac="1c0bc7e593065ef242956993286d45b7"
+time=2026-11-25T19:13:02+0200 level=ERROR logger=kura.security event="vault.error" operation="get_dynamic_database_credentials" worker=10 seq=1 mac="8fe70bbfdb098085949d446bd4fda1d7"
+time=2026-11-25T19:13:02+0200 level=ERROR logger=kura.security event="server.dependency_unavailable" ip="172.28.10.128" actor_user_id="-" request_id="c6441c57419fff231493cb387e1cadb0" path="/password/reset/" method="POST" error_type="OperationalError" worker=10 seq=2 mac="e418993f7145d7ae2c5bddfe6f534bb5"
+
+--- Verify intact chain (--from /tmp/live-web-chain.log) ---
+Vault unavailable for gmail app password: OSError
+time=2026-11-25T19:14:10+0200 level=INFO logger=kura.security event="log.chain.start" boot="2026-11-25T17:14:10+00:00" worker=368699 seq=0 mac="47c114501844c3557e83fee79dd94eb5"
+PASS: verified 14 chained security log line(s).
+Intact exit code: 0
+
+--- Simulate single-line log tampering and re-verify ---
+Vault unavailable for gmail app password: OSError
+time=2026-11-25T19:14:11+0200 level=INFO logger=kura.security event="log.chain.start" boot="2026-11-25T17:14:11+00:00" worker=368703 seq=0 mac="8b22f5dab71472f657aa46ff6b0da539"
+CommandError: Line 22 worker=8 seq=1: tampered or forged HMAC signature.
+Tamper verify exit code: 1

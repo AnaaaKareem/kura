@@ -1,0 +1,106 @@
+=== OpenSSL TLS Protocol Enforcement Test ===
+--- Attempt TLS 1.2 (expect handshake alert / rejection) ---
+Connecting to 127.0.0.1
+4067F1CA0B720000:error:0A00042E:SSL routines:ssl3_read_bytes:tlsv1 alert protocol version:../ssl/record/rec_layer_s3.c:918:SSL alert number 70
+CONNECTED(00000003)
+---
+no peer certificate available
+---
+No client certificate CA names sent
+---
+SSL handshake has read 7 bytes and written 191 bytes
+Verification: OK
+---
+New, (NONE), Cipher is (NONE)
+Protocol: TLSv1.2
+Secure Renegotiation IS NOT supported
+Compression: NONE
+Expansion: NONE
+No ALPN negotiated
+SSL-Session:
+    Protocol  : TLSv1.2
+    Cipher    : 0000
+    Session-ID: 
+    Session-ID-ctx: 
+    Master-Key: 
+    PSK identity: None
+    PSK identity hint: None
+    SRP username: None
+    Start Time: 1795626704
+    Timeout   : 7200 (sec)
+    Verify return code: 0 (ok)
+    Extended master secret: no
+---
+
+--- Attempt TLS 1.3 (expect CONNECTED & TLSv1.3 cipher) ---
+Connecting to 127.0.0.1
+Can't use SSL_get_servername
+depth=0 C=EG, ST=Cairo, L=Cairo, O=Kura, OU=Security, CN=localhost
+verify error:num=18:self-signed certificate
+verify return:1
+depth=0 C=EG, ST=Cairo, L=Cairo, O=Kura, OU=Security, CN=localhost
+verify return:1
+CONNECTED(00000003)
+---
+Certificate chain
+ 0 s:C=EG, ST=Cairo, L=Cairo, O=Kura, OU=Security, CN=localhost
+   i:C=EG, ST=Cairo, L=Cairo, O=Kura, OU=Security, CN=localhost
+   a:PKEY: RSA, 2048 (bit); sigalg: sha256WithRSAEncryption
+   v:NotBefore: Nov 11 05:16:00 2026 GMT; NotAfter: Nov 11 05:16:00 2027 GMT
+---
+Server certificate
+-----BEGIN CERTIFICATE-----
+MIIDzzCCAregAwIBAgIUQBrjCOP84+PYhMzDcHnxZbGfS00wDQYJKoZIhvcNAQEL
+BQAwYzELMAkGA1UEBhMCRUcxDjAMBgNVBAgMBUNhaXJvMQ4wDAYDVQQHDAVDYWly
+bzENMAsGA1UECgwES3VyYTERMA8GA1UECwwIU2VjdXJpdHkxEjAQBgNVBAMMCWxv
+Y2FsaG9zdDAeFw0yNjExMTEwNTE2MDBaFw0yNzExMTEwNTE2MDBaMGMxCzAJBgNV
+BAYTAkVHMQ4wDAYDVQQIDAVDYWlybzEOMAwGA1UEBwwFQ2Fpcm8xDTALBgNVBAoM
+BEt1cmExETAPBgNVBAsMCFNlY3VyaXR5MRIwEAYDVQQDDAlsb2NhbGhvc3QwggEi
+MA0GCSqGSIb3DQEBAQUAA4IBDwAwggEKAoIBAQDMCV9ryB1RlJlXbhVt7twQtERS
+8k6gUcSeQM2hWB9BGwM+R1D1h+NQ7xv+BlXo69PZcrkvoVNkBr87+D/ZjSuNBAnw
+at8nrtvhYR/V8TYWXC0eEeXMpZo1fHvvrl1/2HbS8rxsnncimONIO6JW3mJCREl7
+OfrJzdkAYKJCm1OdaZOV8KY4LRaZU5X2L1kWPGZIlG0/hKF+j/RqKf9AhzdhgCDb
+4BJiGmzSMJ5uf/h1cLaI00RBhmMta/9KcZGyGumkYb0xFtu58FE9f5tJ34V4yDw6
+m8G6usTgg0GsVzr0K0TCpT/kQSHVpr/PZiWcfKjFSjgkEliY7MLOxyAdYK1xAgMB
+AAGjezB5MB0GA1UdDgQWBBTY4N5YxgD2KjqDEWV/YHQEIrHfyzAfBgNVHSMEGDAW
+gBTY4N5YxgD2KjqDEWV/YHQEIrHfyzAPBgNVHRMBAf8EBTADAQH/MCYGA1UdEQQf
+MB2CCWxvY2FsaG9zdIIDd2ViggVuZ2lueIcEfwAAATANBgkqhkiG9w0BAQsFAAOC
+AQEAUvsH7YMqoUkh4NG1C0lglIdb215LA3E/Ujd8+ON8Aoaboc63mVpR0e3eW1VP
+ibBxOb5HcA1L9DCb6VkrdSkabwUhLKauYSmQF+PLvI8sYW0yzwo3eAhDNo+AOiAJ
+/pDE+Zwdqh9A1ludL2KRYwy8RErKZKI8dXgyBGDdZAwaUI5ZvgkJxd1vOsomCVEm
+dsQbbpKGHKdH3RzU0GBNKQ3Nv5D1vfx9Q3q5XViOtqCsY661EOLHR5uWOcH7/3JF
+LfACVDYvPD/C3DJE2OuPuo30DbJA/E37iCJsZyq9L+tO9YuIXKHCa/H0Q9Yxyt9L
+fTHzsO2/5DAlb9FTj5T/Hfq0fg==
+-----END CERTIFICATE-----
+subject=C=EG, ST=Cairo, L=Cairo, O=Kura, OU=Security, CN=localhost
+issuer=C=EG, ST=Cairo, L=Cairo, O=Kura, OU=Security, CN=localhost
+---
+No client certificate CA names sent
+Peer signing digest: SHA256
+Peer signature type: rsa_pss_rsae_sha256
+
+--- HTTPS Security Headers ---
+HTTP/1.1 200 OK
+Server: nginx
+Date: Wed, 25 Nov 2026 17:11:44 GMT
+Content-Type: text/html; charset=utf-8
+Content-Length: 4276
+Connection: keep-alive
+Expires: Wed, 25 Nov 2026 17:11:44 GMT
+Cache-Control: max-age=0, no-cache, no-store, must-revalidate, private
+X-Frame-Options: DENY
+Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+Vary: Cookie
+Content-Security-Policy: script-src 'self'; style-src 'self'; connect-src 'self'; form-action 'self'; base-uri 'self'; default-src 'self'; font-src 'self'; img-src 'self' data:; frame-ancestors 'none'; object-src 'none'
+X-Content-Type-Options: nosniff
+Referrer-Policy: same-origin
+Cross-Origin-Opener-Policy: same-origin
+Set-Cookie: __Host-kura_csrftoken=WE2R8dyxhmeglbrI6AkXg1tYrd250P9V; expires=Wed, 24 Nov 2027 17:11:44 GMT; HttpOnly; Max-Age=31449600; Path=/; SameSite=Lax; Secure
+Strict-Transport-Security: max-age=31536000; includeSubDomains; preload
+X-Content-Type-Options: nosniff
+X-Frame-Options: DENY
+Referrer-Policy: same-origin
+Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=()
+Cross-Origin-Resource-Policy: same-origin
+Cross-Origin-Embedder-Policy: require-corp
+

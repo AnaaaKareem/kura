@@ -1,0 +1,6 @@
+=== G17 FIM Baseline & Clean Check ===
+[*] Wrote FIM baseline to /tmp/kura-fim-baseline.json
+event="fim.ok" checked=57
+=== Simulate Critical Config Tamper ===
+event="fim.changed" path="Dockerfile" reason="modified"
+Exit code: 1

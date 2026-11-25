@@ -1,0 +1,80 @@
+Name                                                           Stmts   Miss  Cover   Missing
+--------------------------------------------------------------------------------------------
+config/__init__.py                                                 0      0   100%
+config/asgi.py                                                     4      4     0%   10-16
+config/settings.py                                               147     28    81%   38-41, 55, 61-62, 179-185, 198, 271, 361-373, 441, 461
+config/urls.py                                                    10      0   100%
+config/wsgi.py                                                     4      4     0%   10-16
+kura/__init__.py                                                 141     25    82%   38, 43, 47, 52, 61, 75, 82, 90, 96, 130-133, 144, 148-150, 152, 159, 161-162, 166, 172, 176, 184, 215
+kura/admin.py                                                      0      0   100%
+kura/apps.py                                                       6      0   100%
+kura/backends.py                                                  21      1    95%   22
+kura/base.py                                                      36      0   100%
+kura/forms.py                                                    367     29    92%   293, 306, 561, 563, 571, 632-635, 702, 781, 787, 789, 797, 833-835, 1013-1016, 1077-1083, 1220, 1312
+kura/logging_utils.py                                            105      1    99%   171
+kura/management/__init__.py                                        0      0   100%
+kura/management/commands/__init__.py                               0      0   100%
+kura/management/commands/anonymize_ips.py                        100      9    91%   31, 82-87, 107-108
+kura/management/commands/disable_inactive_accounts.py             40      2    95%   39, 67
+kura/management/commands/encrypt_file_contents.py                 29      2    93%   24, 41
+kura/management/commands/encrypt_totp_seeds.py                    25      0   100%
+kura/management/commands/finalize_attempts.py                     26     26     0%   1-41
+kura/management/commands/purge_quarantine.py                      11      0   100%
+kura/management/commands/purge_retention.py                       63      2    97%   65-66
+kura/management/commands/queue_due_reminders.py                   26     26     0%   15-74
+kura/management/commands/seed_demo_data.py                        66      2    97%   110-111
+kura/management/commands/send_queued_emails.py                    83     16    81%   64, 66-67, 76-83, 127, 151, 155, 167-174
+kura/management/commands/verify_backup_config.py                  66     58    12%   12-22, 30-106
+kura/management/commands/verify_log_chain.py                      82     21    74%   19, 27-28, 48, 52, 57, 66, 71, 78, 93, 103, 111-123
+kura/management/commands/verify_signatures.py                     56      8    86%   34-37, 47, 71, 107-108
+kura/management/commands/write_app_metrics.py                     21      0   100%
+kura/middleware.py                                               191     16    92%   50-51, 98, 127, 141-145, 183, 189, 252-253, 281-290
+kura/migrations/0001_initial.py                                   11      0   100%
+kura/migrations/0002_seed_roles_permissions.py                    26      6    77%   96-102
+kura/migrations/0003_attempt_files_lock_trigger.py                 6      0   100%
+kura/migrations/0004_row_level_security.py                         6      0   100%
+kura/migrations/0005_semester_type_values.py                      17      0   100%
+kura/migrations/0006_section_item_release_controls.py              4      0   100%
+kura/migrations/0007_assessment_delivery_mode.py                   4      0   100%
+kura/migrations/0008_expand_upload_mime_allowlist.py               4      0   100%
+kura/migrations/0009_admin_course_and_session_permissions.py      31     13    58%   47-77
+kura/migrations/0010_convert_section_items_to_markdown.py         86     68    21%   16-20, 24-54, 58-73, 77-80, 89-94, 100-105
+kura/migrations/0011_search_cache_table.py                         7      0   100%
+kura/migrations/0012_section_visibility.py                         4      0   100%
+kura/migrations/0013_grade_rls_scoped_writes.py                    6      0   100%
+kura/migrations/0014_quarantined_files.py                          9      0   100%
+kura/migrations/0015_outgoing_emails.py                            5      0   100%
+kura/migrations/0016_grade_history_insert_only.py                  6      0   100%
+kura/migrations/0017_building_room.py                              5      0   100%
+kura/migrations/0018_ratelimit_cache_table.py                      7      0   100%
+kura/migrations/0019_passwordhistory.py                            7      0   100%
+kura/migrations/0020_grade_feedback.py                             4      0   100%
+kura/migrations/0021_grade_appeal_unique_pending.py                4      0   100%
+kura/migrations/0022_grade_rls_deny_by_default.py                  6      0   100%
+kura/migrations/0023_filecontent_hybrid_encryption.py              4      0   100%
+kura/migrations/0024_non_empty_reason_constraints.py               4      0   100%
+kura/migrations/0025_submission_hash_immutability_trigger.py       6      0   100%
+kura/migrations/0026_rls_and_readonly_revokes.py                   7      0   100%
+kura/migrations/0027_delete_loginattempt.py                        4      0   100%
+kura/migrations/0028_security_policy_and_gdpr_fields.py            7      0   100%
+kura/migrations/0029_strip_to_security_core.py                    10      0   100%
+kura/migrations/0030_fix_attempt_files_lock_trigger.py             6      0   100%
+kura/migrations/0031_receipt_signatures.py                         6      0   100%
+kura/migrations/0032_outgoing_email_pending_lookup.py              4      0   100%
+kura/migrations/__init__.py                                        0      0   100%
+kura/models.py                                                   592     52    91%   27-30, 53-55, 59-61, 65-67, 258, 265, 273, 280-287, 346, 352, 356, 426, 448, 469, 487, 516, 543, 567, 590, 659, 695, 721, 757, 779, 820, 856, 895, 925, 969, 1031, 1064, 1085, 1132, 1174, 1225, 1262, 1340, 1366-1367
+kura/permissions.py                                               86     10    88%   73, 104, 117, 141, 158, 177, 196, 212, 238-239
+kura/signing.py                                                  121     16    87%   54, 56, 65, 142, 162, 172, 181, 193-200, 210, 213, 255-263
+kura/tests.py                                                   3724     55    99%   120, 143, 172, 179, 210, 519, 1811-1812, 1872-1873, 2802-2806, 2867-2870, 3317-3320, 3324, 3328-3338, 3342-3346, 3350-3352, 3356-3361, 3719-3722, 3725-3726, 3729-3730, 4635, 5028, 5375, 5465, 5893, 6245
+kura/tests_security_fixtures.py                                  112      1    99%   179
+kura/tests_security_gaps.py                                      286      1    99%   37
+kura/tests_security_leads_part1.py                               440      1    99%   526
+kura/tests_security_leads_part2.py                               350      5    99%   74, 545-548, 586
+kura/tests_security_routes.py                                    311      0   100%
+kura/tests_signatures.py                                         127      0   100%
+kura/text_safety.py                                               46      6    87%   41, 43, 61, 63, 69, 83
+kura/urls.py                                                       5      0   100%
+kura/vault_secrets.py                                             35     15    57%   30, 39-40, 52-54, 67-68, 83-89
+kura/views.py                                                   2714    762    72%   234-236, 269-270, 273, 277-278, 283-284, 291-293, 339-343, 405-406, 427, 463-464, 467-469, 486-487, 489-490, 584, 602-608, 810-811, 846-872, 960, 963-964, 980, 1019-1020, 1033, 1038-1040, 1086-1093, 1111, 1209, 1214, 1328, 1336-1337, 1340, 1372-1373, 1390, 1411, 1520-1532, 1546, 1560-1561, 1586, 1639, 1654, 1656, 1744-1781, 1785-1835, 1843, 1892, 1894, 1896, 1956, 1982-1990, 2132-2138, 2232-2234, 2421, 2443, 2461, 2527, 2694, 2849, 2882-2883, 2894-2895, 2935-2956, 2999-3013, 3194-3199, 3244, 3248, 3258-3259, 3285, 3297, 3301, 3307-3308, 3339, 3368-3372, 3375-3379, 3392-3393, 3405, 3445-3508, 3529-3551, 3575-3585, 3599-3624, 3644-3692, 3706-3727, 3746-3747, 3754, 3764-3768, 3775, 3783, 3785, 3787, 3816-3829, 3844-3855, 3871, 3875-3876, 3881-3894, 3922, 3949, 3951, 3956, 3988-3989, 4024-4050, 4059-4098, 4157-4187, 4200, 4204-4229, 4242, 4250, 4270-4290, 4303-4305, 4308-4317, 4327-4328, 4332-4337, 4383, 4424, 4458, 4474, 4506-4532, 4568-4573, 4621-4630, 4639-4732, 4755-4802, 4878-4892, 4939-5029, 5045, 5049, 5051, 5065-5066, 5086, 5090, 5103, 5114-5118, 5148-5174, 5185, 5189, 5192, 5203-5222, 5233, 5237, 5254, 5257, 5279, 5283, 5286, 5293, 5300-5307, 5310-5317, 5341, 5345, 5355, 5374, 5378, 5381, 5385-5406, 5415-5442, 5453, 5457, 5460, 5470-5471, 5475-5476, 5525, 5529, 5603, 5638-5648, 5691, 5700, 5710, 5727, 5781, 5805, 5809, 5826, 5886, 5898-5899, 5925-5926, 5976-5979, 5995, 5999, 6022, 6026, 6036, 6039, 6042-6043, 6047-6048, 6053-6071, 6074, 6093, 6097, 6110, 6121, 6191-6195, 6208-6211, 6232-6234, 6245, 6249, 6253, 6258, 6271-6281, 6301, 6323, 6355-6373, 6399, 6403
+--------------------------------------------------------------------------------------------
+TOTAL                                                          10998   1291    88%

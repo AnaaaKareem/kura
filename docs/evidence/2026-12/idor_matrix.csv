@@ -1,0 +1,6 @@
+Test,URL,Status Code,Result
+Student A -> Student B attempt detail,http://127.0.0.1:18000/attempts/ce72fc7c-f7e5-4223-aa08-8dbfbc097913/,403,PASS
+Student A -> Student B file download,http://127.0.0.1:18000/attempts/ce72fc7c-f7e5-4223-aa08-8dbfbc097913/files/1/download/,404,PASS
+Student -> registrar students,http://127.0.0.1:18000/registrar/students/,403,PASS
+TA -> registrar students,http://127.0.0.1:18000/registrar/students/,403,PASS
+Instructor -> admin users,http://127.0.0.1:18000/admin/users/,403,PASS
