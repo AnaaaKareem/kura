@@ -381,7 +381,8 @@ class SecurityLeadsPart1UnitTests(SimpleTestCase):
             def __exit__(self, *args):
                 self.close()
 
-        sha1_hex = hashlib.sha1(b"Password123!@#", usedforsecurity=False).hexdigest().upper()
+        # HIBP k-anonymity API requires SHA-1 prefix; non-cryptographic test mock only.
+        sha1_hex = hashlib.sha1(b"Password123!@#", usedforsecurity=False).hexdigest().upper()  # nosemgrep: python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-sha1
         prefix, suffix = sha1_hex[:5], sha1_hex[5:]
 
         class _FakeOpener:

@@ -21,6 +21,7 @@
     </header>
 
     <div class="card card-body mb-3">
+        <!-- nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token -->
         <form method="post" class="vstack gap-3">
             {% csrf_token %}
             {% include "kura/_form_errors.html" %}

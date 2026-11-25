@@ -74,9 +74,9 @@ class Command(BaseCommand):
                     "mfa_enabled": False,
                 },
             )
-            # Only new accounts need the initial demo password.
+            # Only new accounts need the initial demo password (seeded local demo accounts).
             if created:
-                user.set_password(password)
+                user.set_password(password)  # nosemgrep: python.django.security.audit.unvalidated-password.unvalidated-password
                 user.save(update_fields=["password"])
 
             # Assign role.

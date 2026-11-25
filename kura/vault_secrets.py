@@ -67,7 +67,8 @@ def get_gmail_app_password():
         if value:
             return value
     except Exception as error:  # Vault unreachable, auth failure, missing path
-        logger.warning("Vault unavailable for gmail app password: %s", type(error).__name__)
+        # Log only the exception class name, never the path payload or credential value.
+        logger.warning("Vault unavailable for gmail app password: %s", type(error).__name__)  # nosemgrep: python.lang.security.audit.logging.logger-credential-leak.python-logger-credential-disclosure
     return ""
 
 

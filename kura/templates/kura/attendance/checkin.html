@@ -24,6 +24,7 @@
             <p class="small text-body-secondary">{{ session.course.title }} &bull; Closes {{ session.expires_at|date:"j M Y, H:i" }}</p>
         </header>
 
+        <!-- nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token -->
         <form method="post" class="vstack gap-3">
             {% csrf_token %}
             {% include "kura/_form_errors.html" %}

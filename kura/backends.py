@@ -25,7 +25,7 @@ class KuraAuthBackend(ModelBackend):
             user = User.objects.get(email__iexact=email)
         except User.DoesNotExist:
             # Constant-time dummy hash computation to prevent timing attacks
-            User().set_password(password)
+            User().set_password(password)  # nosemgrep: python.django.security.audit.unvalidated-password.unvalidated-password
             return None
 
         # Verify password hash

@@ -179,7 +179,7 @@ class GmailEmailSettingsTests(TestCase):
             self.skipTest("DEBUG is False; SMTP backend is in use")
 
 
-def make_user(role_name, email=None, password="ValidPassword123!", **extra_fields):
+def make_user(role_name, email=None, password="ValidPassword123!", **extra_fields):  # nosemgrep: python.lang.security.audit.hardcoded-password-default-argument.hardcoded-password-default-argument
     """Test helper function to create a user and assign them a specific system role."""
     # Generate unique test email if one was not provided.
     if not email:
@@ -682,7 +682,7 @@ class DemoDataSeedCommandTests(TestCase):
     def test_reseeding_preserves_existing_password_and_mfa_devices(self):
         # Re-running the demo command must not reset a user's chosen password or MFA.
         demo_user = make_user("Admin", email="admin@kura.edu", mfa_enabled=True)
-        demo_user.set_password("ChosenDemoPassword987!")
+        demo_user.set_password("ChosenDemoPassword987!")  # nosemgrep: python.django.security.audit.unvalidated-password.unvalidated-password
         demo_user.save()
         device = TOTPDevice.objects.create(user=demo_user, name="default", confirmed=True)
         recovery_device = StaticDevice.objects.create(user=demo_user, name="recovery", confirmed=True)

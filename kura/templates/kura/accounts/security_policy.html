@@ -24,6 +24,8 @@
             <h2 class="fw-semibold">Edit configurable thresholds</h2>
             <p class="small text-body-secondary mt-1">Every change is bounded to safe minimums and logged with old and new values.</p>
         </div>
+        {% comment %}CSRF token is on the next line; Semgrep AST misses multi-attribute form tags.{% endcomment %}
+        <!-- nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token -->
         <form method="post" action="{% url 'kura:security_policy' %}" class="k-grid gap-3">
             {% csrf_token %}
             {% include "kura/_form_errors.html" %}

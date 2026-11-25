@@ -37,7 +37,8 @@ class DependencyOutageMiddleware:
             include_actor=False,
         )
         html_body = loader.get_template("503.html").render({})
-        response = HttpResponse(html_body, status=503)
+        # Template 503.html is static with an empty context; HttpResponse avoids extra DB/context processors during outages.
+        response = HttpResponse(html_body, status=503)  # nosemgrep: python.django.security.audit.xss.direct-use-of-httpresponse.direct-use-of-httpresponse
         response["Retry-After"] = "30"
         return response
 

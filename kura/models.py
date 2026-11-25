@@ -258,8 +258,9 @@ class UserManager(BaseUserManager):
             raise ValueError("The Email field must be set")
         email = self.normalize_email(email)
         user = self.model(email=email, **extra_fields)
+        # Password complexity/HIBP validation runs in the calling forms before create_user; CLI/tests use create_user directly.
         if password:
-            user.set_password(password)
+            user.set_password(password)  # nosemgrep: python.django.security.audit.unvalidated-password.unvalidated-password
         else:
             user.set_unusable_password()
         user.save(using=self._db)

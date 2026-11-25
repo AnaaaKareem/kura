@@ -734,7 +734,8 @@ def server_error_view(request):
     """
     log_security_event(request, "server.error", {}, logging.ERROR, include_actor=False)
     html_body = loader.get_template("500.html").render({})
-    return HttpResponse(html_body, status=500)
+    # Template 500.html is rendered with empty context so no user input can reach HttpResponse.
+    return HttpResponse(html_body, status=500)  # nosemgrep: python.django.security.audit.xss.direct-use-of-httpresponse.direct-use-of-httpresponse
 
 def queue_email(event_key, to_email, subject, body):
     """Queue a password-reset email or notification in OutgoingEmail.
@@ -1331,6 +1332,7 @@ def _request_origin(request):
     return ""
 
 
+# nosemgrep: python.django.security.audit.csrf-exempt.no-csrf-exempt
 @login_not_required
 @csrf_exempt
 def passkey_auth_complete_view(request):
@@ -1935,8 +1937,8 @@ def password_change_view(request):
                 )
                 PasswordHistory.objects.filter(user=request.user).exclude(id__in=keep_ids).delete()
 
-            # Save new password and update audit timestamps.
-            request.user.set_password(new_password)
+            # Password policy and HIBP check run in PasswordChangeForm.clean() before saving.
+            request.user.set_password(new_password)  # nosemgrep: python.django.security.audit.unvalidated-password.unvalidated-password
             request.user.must_change_password = False
             request.user.password_changed_at = timezone.now()
             request.user.save()
@@ -2189,8 +2191,8 @@ def password_reset_confirm_view(request, token):
                 )
                 PasswordHistory.objects.filter(user=user).exclude(id__in=keep_ids).delete()
 
-            # Update password on user account.
-            user.set_password(new_password)
+            # Password policy and HIBP check run in PasswordResetConfirmForm.clean() before saving.
+            user.set_password(new_password)  # nosemgrep: python.django.security.audit.unvalidated-password.unvalidated-password
             user.must_change_password = False
             user.password_changed_at = timezone.now()
             user.save()

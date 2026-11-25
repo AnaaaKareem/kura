@@ -1,0 +1,358 @@
+                    
+                    
+┌──────────────────┐
+│ 21 Code Findings │
+└──────────────────┘
+                                                
+  [36m[22m[24m  docker/nginx/conf.d/kura.conf[0m
+    ❯❱ generic.nginx.security.missing-internal.missing-internal
+          [31m[1m[24m❰❰ Blocking ❱❱[0m
+          This location block contains a 'proxy_pass' directive but   
+          does not contain the 'internal' directive. The 'internal'   
+          directive restricts access to this location to internal     
+          requests. Without 'internal', an attacker could use your    
+          server for server-side request forgeries (SSRF). Include the
+          'internal' directive in this block to limit exposure.       
+          Details: https://sg.run/Q5px                                
+                                                                      
+          111┆ proxy_pass $kura_upstream;
+            ⋮┆----------------------------------------
+          129┆ proxy_pass $kura_upstream;
+                                   
+  [36m[22m[24m  kura/backends.py[0m
+    ❯❱ python.django.security.audit.unvalidated-password.unvalidated-password
+          [31m[1m[24m❰❰ Blocking ❱❱[0m
+          The password on 'User()' is being set without validating the
+          password. Call                                              
+          django.contrib.auth.password_validation.validate_password() 
+          with validation functions before setting the password. See  
+          https://docs.djangoproject.com/en/3.0/topics/auth/passwords/
+          for more information.                                       
+          Details: https://sg.run/OPBL                                
+                                                                      
+           ▶▶┆ Autofix ▶ if django.contrib.auth.password_validation.validate_pas
+              sword(password, user=User()):                                     
+              User().set_password(password)                                     
+           28┆ User().set_password(password)
+                                                             
+  [36m[22m[24m  kura/management/commands/seed_demo_data.py[0m
+    ❯❱ python.django.security.audit.unvalidated-password.unvalidated-password
+          [31m[1m[24m❰❰ Blocking ❱❱[0m
+          The password on 'user' is being set without validating the  
+          password. Call                                              
+          django.contrib.auth.password_validation.validate_password() 
+          with validation functions before setting the password. See  
+          https://docs.djangoproject.com/en/3.0/topics/auth/passwords/
+          for more information.                                       
+          Details: https://sg.run/OPBL                                
+                                                                      
+           ▶▶┆ Autofix ▶ if django.contrib.auth.password_validation.validate_pas
+              sword(password, user=user):                                       
+              user.set_password(password)                                       
+           79┆ user.set_password(password)
+                                     
+  [36m[22m[24m  kura/middleware.py[0m
+    ❯❱ python.django.security.audit.xss.direct-use-of-httpresponse.direct-use-
+       of-httpresponse                                                        
+          [31m[1m[24m❰❰ Blocking ❱❱[0m
+          Detected data rendered directly to the end user via         
+          'HttpResponse' or a similar object. This bypasses Django's  
+          built-in cross-site scripting (XSS) defenses and could      
+          result in an XSS vulnerability. Use Django's template engine
+          to safely render HTML.                                      
+          Details: https://sg.run/EknN                                
+                                                                      
+           40┆ response = HttpResponse(html_body, status=503)
+                                 
+  [36m[22m[24m  kura/models.py[0m
+    ❯❱ python.django.security.audit.unvalidated-password.unvalidated-password
+          [31m[1m[24m❰❰ Blocking ❱❱[0m
+          The password on 'user' is being set without validating the  
+          password. Call                                              
+          django.contrib.auth.password_validation.validate_password() 
+          with validation functions before setting the password. See  
+          https://docs.djangoproject.com/en/3.0/topics/auth/passwords/
+          for more information.                                       
+          Details: https://sg.run/OPBL                                
+                                                                      
+           ▶▶┆ Autofix ▶ if django.contrib.auth.password_validation.validate_pas
+              sword(password, user=user):                                       
+              user.set_password(password)                                       
+          262┆ user.set_password(password)
+                                                                    
+  [36m[22m[24m  kura/templates/kura/accounts/security_policy.html[0m
+    ❯❱ python.django.security.django-no-csrf-token.django-no-csrf-token
+          [31m[1m[24m❰❰ Blocking ❱❱[0m
+          Manually-created forms in django templates should specify a
+          csrf_token to prevent CSRF attacks.                        
+          Details: https://sg.run/N0Bp                               
+                                                                     
+           27┆ <form method="post" action="{% url              
+               'kura:security_policy' %}" class="k-grid gap-3">
+           28┆     {% csrf_token %}
+           29┆     {% include "kura/_form_errors.html" %}
+           30┆     {% include "kura/_field.html" with
+               field=form.min_password_length %}     
+           31┆     {% include "kura/_field.html" with
+               field=form.password_history_count %}  
+           32┆     {% include "kura/_field.html" with
+               field=form.axes_failure_limit %}      
+           33┆     {% include "kura/_field.html" with
+               field=form.axes_cooloff_hours %}      
+           34┆     {% include "kura/_field.html" with
+               field=form.session_idle_minutes %}    
+           35┆     {% include "kura/_field.html" with
+               field=form.session_absolute_hours %}  
+           36┆     <div class="pt-2 d-flex justify-content-end">
+             [hid 3 additional lines, adjust with --max-lines-per-finding] 
+                                                                         
+  [36m[22m[24m  kura/templates/kura/assessments/assessment_create.html[0m
+    ❯❱ python.django.security.django-no-csrf-token.django-no-csrf-token
+          [31m[1m[24m❰❰ Blocking ❱❱[0m
+          Manually-created forms in django templates should specify a
+          csrf_token to prevent CSRF attacks.                        
+          Details: https://sg.run/N0Bp                               
+                                                                     
+           30┆ <form method="post" class="card card-body vstack
+               gap-3">                                         
+           31┆     {% csrf_token %}
+           32┆     {% include "kura/_form_errors.html" %}
+           33┆     {% include "kura/_field.html" with
+               field=form.title %}                   
+           34┆     {% include "kura/_field.html" with
+               field=form.description %}             
+           35┆     {% include "kura/_field.html" with
+               field=form.component_type %}          
+           36┆     <div class="row g-3">
+           37┆         <div class="col-sm-6">{% include    
+               "kura/_field.html" with field=form.max_score
+               %}</div>                                    
+           38┆         <div class="col-sm-6">{% include       
+               "kura/_field.html" with field=form.max_attempts
+               %}</div>                                       
+           39┆         <div class="col-sm-6">{% include   
+               "kura/_field.html" with field=form.opens_at
+               %}</div>                                   
+             [hid 7 additional lines, adjust with --max-lines-per-finding] 
+                                                              
+  [36m[22m[24m  kura/templates/kura/attendance/checkin.html[0m
+    ❯❱ python.django.security.django-no-csrf-token.django-no-csrf-token
+          [31m[1m[24m❰❰ Blocking ❱❱[0m
+          Manually-created forms in django templates should specify a
+          csrf_token to prevent CSRF attacks.                        
+          Details: https://sg.run/N0Bp                               
+                                                                     
+           27┆ <form method="post" class="vstack gap-3">
+           28┆     {% csrf_token %}
+           29┆     {% include "kura/_form_errors.html" %}
+           30┆     {% include "kura/_field.html" with
+               field=form.passcode %}                
+           31┆
+           32┆     <div class="pt-2">
+           33┆         <button type="submit" class="btn btn-
+               primary w-100">Check in</button>             
+           34┆     </div>
+           35┆
+           36┆     <div class="text-center">
+             [hid 3 additional lines, adjust with --max-lines-per-finding] 
+                                                                     
+  [36m[22m[24m  kura/templates/kura/courses/admin_course_form.html[0m
+    ❯❱ python.django.security.django-no-csrf-token.django-no-csrf-token
+          [31m[1m[24m❰❰ Blocking ❱❱[0m
+          Manually-created forms in django templates should specify a
+          csrf_token to prevent CSRF attacks.                        
+          Details: https://sg.run/N0Bp                               
+                                                                     
+           24┆ <form method="post" class="vstack gap-3">
+           25┆     {% csrf_token %}
+           26┆     {% include "kura/_form_errors.html" %}
+           27┆
+           28┆     {% for field in form %}
+           29┆     {% include "kura/_field.html" with field=field
+               %}                                                
+           30┆     {% endfor %}
+           31┆
+           32┆     <div class="pt-3 border-top d-flex flex-column-
+               reverse flex-sm-row justify-content-sm-end gap-2"> 
+           33┆         <a href="{% url 'kura:course_list' %}"
+               class="btn btn-link text-decoration-          
+               none">Cancel</a>                              
+             [hid 3 additional lines, adjust with --max-lines-per-finding] 
+                                                                
+  [36m[22m[24m  kura/templates/kura/courses/staff_assign.html[0m
+    ❯❱ python.django.security.django-no-csrf-token.django-no-csrf-token
+          [31m[1m[24m❰❰ Blocking ❱❱[0m
+          Manually-created forms in django templates should specify a
+          csrf_token to prevent CSRF attacks.                        
+          Details: https://sg.run/N0Bp                               
+                                                                     
+           27┆ <form method="post" class="vstack gap-3">
+           28┆     {% csrf_token %}
+           29┆     {% include "kura/_form_errors.html" %}
+           30┆
+           31┆     {% include "kura/_field.html" with
+               field=form.user %}                    
+           32┆     {% include "kura/_field.html" with
+               field=form.staff_role %}              
+           33┆     {% include "kura/_field.html" with
+               field=form.can_release_grades %}      
+           34┆
+           35┆     <div class="pt-3 border-top d-flex flex-column-
+               reverse flex-sm-row justify-content-sm-end gap-2"> 
+           36┆         <a href="{% url 'kura:course_detail'      
+               course.id %}" class="btn btn-link text-decoration-
+               none">Cancel</a>                                  
+             [hid 3 additional lines, adjust with --max-lines-per-finding] 
+                                
+  [36m[22m[24m  kura/tests.py[0m
+    ❯❱ python.lang.security.audit.hardcoded-password-default-
+       argument.hardcoded-password-default-argument          
+          [31m[1m[24m❰❰ Blocking ❱❱[0m
+          Hardcoded password is used as a default argument to       
+          'make_user'. This could be dangerous if a real password is
+          not supplied.                                             
+          Details: https://sg.run/Lw9r                              
+                                                                    
+          182┆ def make_user(role_name, email=None,          
+               password="ValidPassword123!", **extra_fields):
+          183┆     """Test helper function to create a user and
+               assign them a specific system role."""          
+          184┆     # Generate unique test email if one was not
+               provided.                                      
+          185┆     if not email:
+          186┆         email = f"{role_name.lower().replace(' ',
+               '_')}_{secrets.token_hex(4)}@example.com"        
+          187┆
+          188┆     extra_fields.setdefault("is_active", True)
+          189┆     extra_fields.setdefault("must_change_password",
+               False)                                             
+          190┆     extra_fields.setdefault("mfa_enabled", True)
+          191┆
+             [hid 11 additional lines, adjust with --max-lines-per-finding] 
+   
+    ❯❱ python.django.security.audit.unvalidated-password.unvalidated-password
+          [31m[1m[24m❰❰ Blocking ❱❱[0m
+          The password on 'demo_user' is being set without validating 
+          the password. Call                                          
+          django.contrib.auth.password_validation.validate_password() 
+          with validation functions before setting the password. See  
+          https://docs.djangoproject.com/en/3.0/topics/auth/passwords/
+          for more information.                                       
+          Details: https://sg.run/OPBL                                
+                                                                      
+           ▶▶┆ Autofix ▶ if django.contrib.auth.password_validation.validate_pas
+              sword("ChosenDemoPassword987!",                                   
+              user=demo_user): demo_user.set_password("Ch                       
+              osenDemoPassword987!")                                            
+          685┆ demo_user.set_password("ChosenDemoPassword987!")
+                                                     
+  [36m[22m[24m  kura/tests_security_leads_part1.py[0m
+    ❯❱ python.lang.security.insecure-hash-algorithms.insecure-hash-algorithm-
+       sha1                                                                  
+          [31m[1m[24m❰❰ Blocking ❱❱[0m
+          Detected SHA1 hash algorithm which is considered insecure.
+          SHA1 is not collision resistant and is therefore not      
+          suitable as a cryptographic signature. Use SHA256 or SHA3 
+          instead.                                                  
+          Details: https://sg.run/ydYx                              
+                                                                    
+           ▶▶┆ Autofix ▶ hashlib.sha256(b"Password123!@#",
+              usedforsecurity=False)                      
+          384┆ sha1_hex = hashlib.sha1(b"Password123!@#",
+               usedforsecurity=False).hexdigest().upper()
+                                                
+  [36m[22m[24m  kura/tests_security_routes.py[0m
+    ❯❱ python.lang.security.audit.non-literal-import.non-literal-import
+          [31m[1m[24m❰❰ Blocking ❱❱[0m
+          Untrusted user input in `importlib.import_module()` function
+          allows an attacker to load arbitrary code. Avoid dynamic    
+          values in `importlib.import_module()` or use a whitelist to 
+          prevent running untrusted code.                             
+          Details: https://sg.run/y6Jk                                
+                                                                      
+          135┆ view_fn = getattr(import_module(mod_name), fn_name)
+            ⋮┆----------------------------------------
+          155┆ view_fn = getattr(import_module(mod_name), fn_name)
+                                        
+  [36m[22m[24m  kura/vault_secrets.py[0m
+    ❯❱ python.lang.security.audit.logging.logger-credential-leak.python-
+       logger-credential-disclosure                                     
+          [31m[1m[24m❰❰ Blocking ❱❱[0m
+          Detected a python logger call with a potential hardcoded   
+          secret "Vault unavailable for gmail app password: %s" being
+          logged. This may lead to secret credentials being exposed. 
+          Make sure that the logger is not logging  sensitive        
+          information.                                               
+          Details: https://sg.run/ydNx                               
+                                                                     
+           70┆ logger.warning("Vault unavailable for gmail app
+               password: %s", type(error).__name__)           
+                                
+  [36m[22m[24m  kura/views.py[0m
+    ❯❱ python.django.security.audit.xss.direct-use-of-httpresponse.direct-use-
+       of-httpresponse                                                        
+          [31m[1m[24m❰❰ Blocking ❱❱[0m
+          Detected data rendered directly to the end user via         
+          'HttpResponse' or a similar object. This bypasses Django's  
+          built-in cross-site scripting (XSS) defenses and could      
+          result in an XSS vulnerability. Use Django's template engine
+          to safely render HTML.                                      
+          Details: https://sg.run/EknN                                
+                                                                      
+          737┆ return HttpResponse(html_body, status=500)
+   
+    ❯❱ python.django.security.audit.csrf-exempt.no-csrf-exempt
+          [31m[1m[24m❰❰ Blocking ❱❱[0m
+          Detected usage of @csrf_exempt, which indicates that there  
+          is no CSRF token set for this route. This could lead to an  
+          attacker manipulating the user's account and exfiltration of
+          private data. Instead, create a function without this       
+          decorator.                                                  
+          Details: https://sg.run/rd5e                                
+                                                                      
+          1334┆ @login_not_required
+          1335┆ @csrf_exempt
+          1336┆ def passkey_auth_complete_view(request):
+          1337┆     """Complete FIDO2 / WebAuthn passkey
+               authentication through django-mfa2.      
+          1338┆     Who can use it: Users completing step 2
+               passkey login.                              
+          1339┆     Security: Kept csrf_exempt to match django-
+               mfa2's JS; enforces POST-only,                  
+          1340┆     explicit Origin/Referer matching against
+               SITE_URL, and an active 5-minute             
+          1341┆     pre-MFA password window before calling
+               FIDO2.authenticate_complete (G12).         
+          1342┆     """
+          1343┆     if request.method != "POST":
+             [hid 20 additional lines, adjust with --max-lines-per-finding] 
+   
+    ❯❱ python.django.security.audit.unvalidated-password.unvalidated-password
+          [31m[1m[24m❰❰ Blocking ❱❱[0m
+          The password on 'request.user' is being set without         
+          validating the password. Call                               
+          django.contrib.auth.password_validation.validate_password() 
+          with validation functions before setting the password. See  
+          https://docs.djangoproject.com/en/3.0/topics/auth/passwords/
+          for more information.                                       
+          Details: https://sg.run/OPBL                                
+                                                                      
+           ▶▶┆ Autofix ▶ if django.contrib.auth.password_validation.validate_pas
+              sword(new_password, user=request.user):                           
+              request.user.set_password(new_password)                           
+          1939┆ request.user.set_password(new_password)
+            ⋮┆----------------------------------------
+    ❯❱ python.django.security.audit.unvalidated-password.unvalidated-password
+          [31m[1m[24m❰❰ Blocking ❱❱[0m
+          The password on 'user' is being set without validating the  
+          password. Call                                              
+          django.contrib.auth.password_validation.validate_password() 
+          with validation functions before setting the password. See  
+          https://docs.djangoproject.com/en/3.0/topics/auth/passwords/
+          for more information.                                       
+          Details: https://sg.run/OPBL                                
+                                                                      
+           ▶▶┆ Autofix ▶ if django.contrib.auth.password_validation.validate_pas
+              sword(new_password, user=user):                                   
+              user.set_password(new_password)                                   
+          2193┆ user.set_password(new_password)

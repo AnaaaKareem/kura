@@ -1,0 +1,968 @@
+Run started:2026-11-25 16:36:08.685238+00:00
+
+Test results:
+>> Issue: [B105:hardcoded_password_string] Possible hardcoded password: 'django-insecure-local-development-only'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b105_hardcoded_password_string.html
+   Location: config/settings.py:53:17
+52	if DEBUG and not SECRET_KEY:
+53	    SECRET_KEY = "django-insecure-local-development-only"
+54	
+
+--------------------------------------------------
+>> Issue: [B105:hardcoded_password_string] Possible hardcoded password: ''
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b105_hardcoded_password_string.html
+   Location: kura/base.py:31:40
+30	# Reuse the temporary login until five minutes before it expires.
+31	database_login_cache = {"username": "", "password": "", "refresh_after": 0}
+32	
+
+--------------------------------------------------
+>> Issue: [B105:hardcoded_password_string] Possible hardcoded password: 'Minimum password length (12 to 128 characters)'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b105_hardcoded_password_string.html
+   Location: kura/forms.py:1238:12
+1237	        labels = {
+1238	            "min_password_length": "Minimum password length (12 to 128 characters)",
+1239	            "password_history_count": "Password reuse history count (1 to 24)",
+1240	            "axes_failure_limit": "Failed login attempts before lockout (3 to 20)",
+1241	            "axes_cooloff_hours": "Lockout duration in hours (1 to 24)",
+1242	            "session_idle_minutes": "Session idle timeout in minutes (5 to 240)",
+1243	            "session_absolute_hours": "Session absolute limit in hours (1 to 72)",
+1244	        }
+1245	        widgets = {
+1246	            "min_password_length": forms.NumberInput(attrs={"class": "form-control", "min": 12, "max": 128}),
+
+--------------------------------------------------
+>> Issue: [B105:hardcoded_password_string] Possible hardcoded password: 'Password reuse history count (1 to 24)'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b105_hardcoded_password_string.html
+   Location: kura/forms.py:1239:12
+1238	            "min_password_length": "Minimum password length (12 to 128 characters)",
+1239	            "password_history_count": "Password reuse history count (1 to 24)",
+1240	            "axes_failure_limit": "Failed login attempts before lockout (3 to 20)",
+1241	            "axes_cooloff_hours": "Lockout duration in hours (1 to 24)",
+1242	            "session_idle_minutes": "Session idle timeout in minutes (5 to 240)",
+1243	            "session_absolute_hours": "Session absolute limit in hours (1 to 72)",
+1244	        }
+1245	        widgets = {
+1246	            "min_password_length": forms.NumberInput(attrs={"class": "form-control", "min": 12, "max": 128}),
+1247	            "password_history_count": forms.NumberInput(attrs={"class": "form-control", "min": 1, "max": 24}),
+
+--------------------------------------------------
+>> Issue: [B105:hardcoded_password_string] Possible hardcoded password: 'KuraPass2026!'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b105_hardcoded_password_string.html
+   Location: kura/management/commands/seed_demo_data.py:47:19
+46	
+47	        password = "KuraPass2026!"
+48	
+
+--------------------------------------------------
+>> Issue: [B105:hardcoded_password_string] Possible hardcoded password: 'False'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b105_hardcoded_password_string.html
+   Location: kura/management/commands/seed_demo_data.py:73:20
+72	                    "is_active": True,
+73	                    "must_change_password": False,
+74	                    "mfa_enabled": False,
+75	                },
+76	            )
+77	            # Only new accounts need the initial demo password.
+78	            if created:
+79	                user.set_password(password)
+80	                user.save(update_fields=["password"])
+
+--------------------------------------------------
+>> Issue: [B106:hardcoded_password_funcarg] Possible hardcoded password: '123456'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b106_hardcoded_password_funcarg.html
+   Location: kura/management/commands/seed_demo_data.py:86:12
+85	            # Remove the old shared recovery code without deleting the user's other factors.
+86	            StaticToken.objects.filter(device__user=user, token="123456").delete()
+87	
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Low
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: kura/migrations/0026_rls_and_readonly_revokes.py:13:18
+12	
+13	FORWARD_SQL = f"""
+14	-- 1. W4: Restrict kura_readonly from reading sensitive binary, key, token, and MFA secret columns.
+15	DO $$
+16	BEGIN
+17	    IF EXISTS (SELECT 1 FROM pg_roles WHERE rolname = 'kura_readonly') THEN
+18	        REVOKE SELECT ON file_contents, exam_answer_keys, password_reset_tokens FROM kura_readonly;
+19	        REVOKE SELECT ON users FROM kura_readonly;
+20	        GRANT SELECT (
+21	            id, email, password_hash, first_name, last_name, mfa_enabled, is_active,
+22	            must_change_password, locked_until, last_login_at, password_changed_at,
+23	            deactivated_at, created_by_id, created_at, updated_at
+24	        ) ON users TO kura_readonly;
+25	    END IF;
+26	END
+27	$$;
+28	
+29	-- 2. W5: Narrow grades RLS by staff_role and exclude Admin/Registrar even with stale links.
+30	DROP POLICY IF EXISTS grade_isolation_policy ON grades;
+31	
+32	CREATE POLICY grades_service_all ON grades
+33	    AS PERMISSIVE FOR ALL
+34	    USING (current_setting('kura.service_role', true) = 'management_command')
+35	    WITH CHECK (current_setting('kura.service_role', true) = 'management_command');
+36	
+37	CREATE POLICY grades_select ON grades
+38	    AS PERMISSIVE FOR SELECT
+39	    USING (
+40	        {NOT_ADMIN_OR_REGISTRAR}
+41	        AND (
+42	            student_id::text = current_setting('kura.current_user_id', true)
+43	            OR EXISTS (
+44	                SELECT 1 FROM course_staff cs
+45	                JOIN assessments a ON a.id = grades.assessment_id
+46	                JOIN module_sections ms ON ms.id = a.section_id
+47	                JOIN modules m ON m.id = ms.module_id
+48	                WHERE cs.course_id = m.course_id
+49	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+50	                AND cs.staff_role IN ('lead_instructor', 'co_instructor', 'teaching_assistant')
+51	            )
+52	            OR EXISTS (
+53	                SELECT 1 FROM assessments a
+54	                JOIN module_sections ms ON ms.id = a.section_id
+55	                JOIN modules m ON m.id = ms.module_id
+56	                JOIN courses c ON c.id = m.course_id
+57	                JOIN departments d ON d.id = c.department_id
+58	                WHERE a.id = grades.assessment_id
+59	                AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+60	            )
+61	        )
+62	    );
+63	
+64	CREATE POLICY grades_insert ON grades
+65	    AS PERMISSIVE FOR INSERT
+66	    WITH CHECK (
+67	        {NOT_ADMIN_OR_REGISTRAR}
+68	        AND (
+69	            (
+70	                student_id::text = current_setting('kura.current_user_id', true)
+71	                AND status = 'draft'
+72	                AND grader_id IS NULL
+73	                AND finalized_by_id IS NULL
+74	                AND finalized_at IS NULL
+75	                AND released_by_id IS NULL
+76	                AND released_at IS NULL
+77	            )
+78	            OR (
+79	                status = 'draft'
+80	                AND finalized_by_id IS NULL
+81	                AND finalized_at IS NULL
+82	                AND released_by_id IS NULL
+83	                AND released_at IS NULL
+84	                AND EXISTS (
+85	                    SELECT 1 FROM course_staff cs
+86	                    JOIN assessments a ON a.id = grades.assessment_id
+87	                    JOIN module_sections ms ON ms.id = a.section_id
+88	                    JOIN modules m ON m.id = ms.module_id
+89	                    WHERE cs.course_id = m.course_id
+90	                    AND cs.user_id::text = current_setting('kura.current_user_id', true)
+91	                    AND cs.staff_role = 'teaching_assistant'
+92	                )
+93	            )
+94	            OR EXISTS (
+95	                SELECT 1 FROM course_staff cs
+96	                JOIN assessments a ON a.id = grades.assessment_id
+97	                JOIN module_sections ms ON ms.id = a.section_id
+98	                JOIN modules m ON m.id = ms.module_id
+99	                WHERE cs.course_id = m.course_id
+100	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+101	                AND cs.staff_role IN ('lead_instructor', 'co_instructor')
+102	            )
+103	        )
+104	    );
+105	
+106	CREATE POLICY grades_update ON grades
+107	    AS PERMISSIVE FOR UPDATE
+108	    USING (
+109	        {NOT_ADMIN_OR_REGISTRAR}
+110	        AND (
+111	            EXISTS (
+112	                SELECT 1 FROM course_staff cs
+113	                JOIN assessments a ON a.id = grades.assessment_id
+114	                JOIN module_sections ms ON ms.id = a.section_id
+115	                JOIN modules m ON m.id = ms.module_id
+116	                WHERE cs.course_id = m.course_id
+117	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+118	                AND cs.staff_role IN ('lead_instructor', 'co_instructor', 'teaching_assistant')
+119	            )
+120	            OR EXISTS (
+121	                SELECT 1 FROM assessments a
+122	                JOIN module_sections ms ON ms.id = a.section_id
+123	                JOIN modules m ON m.id = ms.module_id
+124	                JOIN courses c ON c.id = m.course_id
+125	                JOIN departments d ON d.id = c.department_id
+126	                WHERE a.id = grades.assessment_id
+127	                AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+128	            )
+129	        )
+130	    )
+131	    WITH CHECK (
+132	        {NOT_ADMIN_OR_REGISTRAR}
+133	        AND (
+134	            (
+135	                status = 'draft'
+136	                AND finalized_by_id IS NULL
+137	                AND finalized_at IS NULL
+138	                AND released_by_id IS NULL
+139	                AND released_at IS NULL
+140	                AND EXISTS (
+141	                    SELECT 1 FROM course_staff cs
+142	                    JOIN assessments a ON a.id = grades.assessment_id
+143	                    JOIN module_sections ms ON ms.id = a.section_id
+144	                    JOIN modules m ON m.id = ms.module_id
+145	                    WHERE cs.course_id = m.course_id
+146	                    AND cs.user_id::text = current_setting('kura.current_user_id', true)
+147	                    AND cs.staff_role = 'teaching_assistant'
+148	                )
+149	            )
+150	            OR EXISTS (
+151	                SELECT 1 FROM course_staff cs
+152	                JOIN assessments a ON a.id = grades.assessment_id
+153	                JOIN module_sections ms ON ms.id = a.section_id
+154	                JOIN modules m ON m.id = ms.module_id
+155	                WHERE cs.course_id = m.course_id
+156	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+157	                AND cs.staff_role IN ('lead_instructor', 'co_instructor')
+158	            )
+159	            OR (
+160	                status = 'released'
+161	                AND EXISTS (
+162	                    SELECT 1 FROM assessments a
+163	                    JOIN module_sections ms ON ms.id = a.section_id
+164	                    JOIN modules m ON m.id = ms.module_id
+165	                    JOIN courses c ON c.id = m.course_id
+166	                    JOIN departments d ON d.id = c.department_id
+167	                    WHERE a.id = grades.assessment_id
+168	                    AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+169	                )
+170	            )
+171	        )
+172	    );
+173	
+174	CREATE POLICY grades_delete ON grades
+175	    AS PERMISSIVE FOR DELETE
+176	    USING (false);
+177	
+178	-- 3. W5: Enable and force RLS on course_results.
+179	ALTER TABLE course_results ENABLE ROW LEVEL SECURITY;
+180	ALTER TABLE course_results FORCE ROW LEVEL SECURITY;
+181	
+182	CREATE POLICY course_results_service_all ON course_results
+183	    AS PERMISSIVE FOR ALL
+184	    USING (current_setting('kura.service_role', true) = 'management_command')
+185	    WITH CHECK (current_setting('kura.service_role', true) = 'management_command');
+186	
+187	CREATE POLICY course_results_select ON course_results
+188	    AS PERMISSIVE FOR SELECT
+189	    USING (
+190	        {NOT_ADMIN_OR_REGISTRAR}
+191	        AND (
+192	            (student_id::text = current_setting('kura.current_user_id', true) AND status = 'released')
+193	            OR EXISTS (
+194	                SELECT 1 FROM course_staff cs
+195	                WHERE cs.course_id = course_results.course_id
+196	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+197	                AND cs.staff_role IN ('lead_instructor', 'co_instructor', 'teaching_assistant')
+198	            )
+199	            OR EXISTS (
+200	                SELECT 1 FROM courses c
+201	                JOIN departments d ON d.id = c.department_id
+202	                WHERE c.id = course_results.course_id
+203	                AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+204	            )
+205	        )
+206	    );
+207	
+208	CREATE POLICY course_results_insert ON course_results
+209	    AS PERMISSIVE FOR INSERT
+210	    WITH CHECK (
+211	        {NOT_ADMIN_OR_REGISTRAR}
+212	        AND EXISTS (
+213	            SELECT 1 FROM course_staff cs
+214	            WHERE cs.course_id = course_results.course_id
+215	            AND cs.user_id::text = current_setting('kura.current_user_id', true)
+216	            AND cs.staff_role IN ('lead_instructor', 'co_instructor')
+217	        )
+218	    );
+219	
+220	CREATE POLICY course_results_update ON course_results
+221	    AS PERMISSIVE FOR UPDATE
+222	    USING (
+223	        {NOT_ADMIN_OR_REGISTRAR}
+224	        AND (
+225	            EXISTS (
+226	                SELECT 1 FROM course_staff cs
+227	                WHERE cs.course_id = course_results.course_id
+228	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+229	                AND cs.staff_role IN ('lead_instructor', 'co_instructor')
+230	            )
+231	            OR EXISTS (
+232	                SELECT 1 FROM courses c
+233	                JOIN departments d ON d.id = c.department_id
+234	                WHERE c.id = course_results.course_id
+235	                AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+236	            )
+237	        )
+238	    )
+239	    WITH CHECK (
+240	        {NOT_ADMIN_OR_REGISTRAR}
+241	        AND (
+242	            EXISTS (
+243	                SELECT 1 FROM course_staff cs
+244	                WHERE cs.course_id = course_results.course_id
+245	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+246	                AND cs.staff_role IN ('lead_instructor', 'co_instructor')
+247	            )
+248	            OR EXISTS (
+249	                SELECT 1 FROM courses c
+250	                JOIN departments d ON d.id = c.department_id
+251	                WHERE c.id = course_results.course_id
+252	                AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+253	            )
+254	        )
+255	    );
+256	
+257	CREATE POLICY course_results_delete ON course_results
+258	    AS PERMISSIVE FOR DELETE
+259	    USING (false);
+260	
+261	-- 4. W5: Enable and force RLS on grade_history.
+262	ALTER TABLE grade_history ENABLE ROW LEVEL SECURITY;
+263	ALTER TABLE grade_history FORCE ROW LEVEL SECURITY;
+264	
+265	CREATE POLICY grade_history_service_all ON grade_history
+266	    AS PERMISSIVE FOR ALL
+267	    USING (current_setting('kura.service_role', true) = 'management_command')
+268	    WITH CHECK (current_setting('kura.service_role', true) = 'management_command');
+269	
+270	CREATE POLICY grade_history_select ON grade_history
+271	    AS PERMISSIVE FOR SELECT
+272	    USING (
+273	        {NOT_ADMIN_OR_REGISTRAR}
+274	        AND (
+275	            EXISTS (
+276	                SELECT 1 FROM grades g
+277	                JOIN assessments a ON a.id = g.assessment_id
+278	                JOIN module_sections ms ON ms.id = a.section_id
+279	                JOIN modules m ON m.id = ms.module_id
+280	                JOIN course_staff cs ON cs.course_id = m.course_id
+281	                WHERE g.id = grade_history.grade_id
+282	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+283	                AND cs.staff_role IN ('lead_instructor', 'co_instructor', 'teaching_assistant')
+284	            )
+285	            OR EXISTS (
+286	                SELECT 1 FROM grades g
+287	                JOIN assessments a ON a.id = g.assessment_id
+288	                JOIN module_sections ms ON ms.id = a.section_id
+289	                JOIN modules m ON m.id = ms.module_id
+290	                JOIN courses c ON c.id = m.course_id
+291	                JOIN departments d ON d.id = c.department_id
+292	                WHERE g.id = grade_history.grade_id
+293	                AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+294	            )
+295	        )
+296	    );
+297	
+298	CREATE POLICY grade_history_insert ON grade_history
+299	    AS PERMISSIVE FOR INSERT
+300	    WITH CHECK (
+301	        {NOT_ADMIN_OR_REGISTRAR}
+302	        AND (
+303	            (
+304	                old_status IS NULL
+305	                AND new_status = 'draft'
+306	                AND approved_by_id IS NULL
+307	                AND changed_by_id::text = current_setting('kura.current_user_id', true)
+308	                AND EXISTS (
+309	                    SELECT 1 FROM grades g
+310	                    WHERE g.id = grade_history.grade_id
+311	                    AND g.student_id::text = current_setting('kura.current_user_id', true)
+312	                )
+313	            )
+314	            OR (
+315	                (old_status IS NULL OR old_status = 'draft')
+316	                AND new_status = 'draft'
+317	                AND approved_by_id IS NULL
+318	                AND EXISTS (
+319	                    SELECT 1 FROM grades g
+320	                    JOIN assessments a ON a.id = g.assessment_id
+321	                    JOIN module_sections ms ON ms.id = a.section_id
+322	                    JOIN modules m ON m.id = ms.module_id
+323	                    JOIN course_staff cs ON cs.course_id = m.course_id
+324	                    WHERE g.id = grade_history.grade_id
+325	                    AND cs.user_id::text = current_setting('kura.current_user_id', true)
+326	                    AND cs.staff_role = 'teaching_assistant'
+327	                )
+328	            )
+329	            OR EXISTS (
+330	                SELECT 1 FROM grades g
+331	                JOIN assessments a ON a.id = g.assessment_id
+332	                JOIN module_sections ms ON ms.id = a.section_id
+333	                JOIN modules m ON m.id = ms.module_id
+334	                JOIN course_staff cs ON cs.course_id = m.course_id
+335	                WHERE g.id = grade_history.grade_id
+336	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+337	                AND cs.staff_role IN ('lead_instructor', 'co_instructor')
+338	            )
+339	            OR (
+340	                old_status = 'released'
+341	                AND new_status = 'released'
+342	                AND approved_by_id::text = current_setting('kura.current_user_id', true)
+343	                AND EXISTS (
+344	                    SELECT 1 FROM grades g
+345	                    JOIN assessments a ON a.id = g.assessment_id
+346	                    JOIN module_sections ms ON ms.id = a.section_id
+347	                    JOIN modules m ON m.id = ms.module_id
+348	                    JOIN courses c ON c.id = m.course_id
+349	                    JOIN departments d ON d.id = c.department_id
+350	                    WHERE g.id = grade_history.grade_id
+351	                    AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+352	                )
+353	            )
+354	        )
+355	    );
+356	
+357	-- 5. W5: Enable and force RLS on assessment_attempts.
+358	ALTER TABLE assessment_attempts ENABLE ROW LEVEL SECURITY;
+359	ALTER TABLE assessment_attempts FORCE ROW LEVEL SECURITY;
+360	
+361	CREATE POLICY assessment_attempts_service_all ON assessment_attempts
+362	    AS PERMISSIVE FOR ALL
+363	    USING (current_setting('kura.service_role', true) = 'management_command')
+364	    WITH CHECK (current_setting('kura.service_role', true) = 'management_command');
+365	
+366	CREATE POLICY assessment_attempts_select ON assessment_attempts
+367	    AS PERMISSIVE FOR SELECT
+368	    USING (
+369	        {NOT_ADMIN_OR_REGISTRAR}
+370	        AND (
+371	            student_id::text = current_setting('kura.current_user_id', true)
+372	            OR EXISTS (
+373	                SELECT 1 FROM assessments a
+374	                JOIN module_sections ms ON ms.id = a.section_id
+375	                JOIN modules m ON m.id = ms.module_id
+376	                JOIN course_staff cs ON cs.course_id = m.course_id
+377	                WHERE a.id = assessment_attempts.assessment_id
+378	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+379	                AND cs.staff_role IN ('lead_instructor', 'co_instructor', 'teaching_assistant')
+380	            )
+381	            OR EXISTS (
+382	                SELECT 1 FROM assessments a
+383	                JOIN module_sections ms ON ms.id = a.section_id
+384	                JOIN modules m ON m.id = ms.module_id
+385	                JOIN courses c ON c.id = m.course_id
+386	                JOIN departments d ON d.id = c.department_id
+387	                WHERE a.id = assessment_attempts.assessment_id
+388	                AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+389	            )
+390	        )
+391	    );
+392	
+393	CREATE POLICY assessment_attempts_insert ON assessment_attempts
+394	    AS PERMISSIVE FOR INSERT
+395	    WITH CHECK (
+396	        {NOT_ADMIN_OR_REGISTRAR}
+397	        AND (
+398	            student_id::text = current_setting('kura.current_user_id', true)
+399	            OR EXISTS (
+400	                SELECT 1 FROM assessments a
+401	                JOIN module_sections ms ON ms.id = a.section_id
+402	                JOIN modules m ON m.id = ms.module_id
+403	                JOIN course_staff cs ON cs.course_id = m.course_id
+404	                WHERE a.id = assessment_attempts.assessment_id
+405	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+406	                AND cs.staff_role IN ('lead_instructor', 'co_instructor', 'teaching_assistant')
+407	            )
+408	            OR EXISTS (
+409	                SELECT 1 FROM assessments a
+410	                JOIN module_sections ms ON ms.id = a.section_id
+411	                JOIN modules m ON m.id = ms.module_id
+412	                JOIN courses c ON c.id = m.course_id
+413	                JOIN departments d ON d.id = c.department_id
+414	                WHERE a.id = assessment_attempts.assessment_id
+415	                AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+416	            )
+417	        )
+418	    );
+419	
+420	CREATE POLICY assessment_attempts_update ON assessment_attempts
+421	    AS PERMISSIVE FOR UPDATE
+422	    USING (
+423	        {NOT_ADMIN_OR_REGISTRAR}
+424	        AND (
+425	            student_id::text = current_setting('kura.current_user_id', true)
+426	            OR EXISTS (
+427	                SELECT 1 FROM assessments a
+428	                JOIN module_sections ms ON ms.id = a.section_id
+429	                JOIN modules m ON m.id = ms.module_id
+430	                JOIN course_staff cs ON cs.course_id = m.course_id
+431	                WHERE a.id = assessment_attempts.assessment_id
+432	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+433	                AND cs.staff_role IN ('lead_instructor', 'co_instructor', 'teaching_assistant')
+434	            )
+435	            OR EXISTS (
+436	                SELECT 1 FROM assessments a
+437	                JOIN module_sections ms ON ms.id = a.section_id
+438	                JOIN modules m ON m.id = ms.module_id
+439	                JOIN courses c ON c.id = m.course_id
+440	                JOIN departments d ON d.id = c.department_id
+441	                WHERE a.id = assessment_attempts.assessment_id
+442	                AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+443	            )
+444	        )
+445	    )
+446	    WITH CHECK (
+447	        {NOT_ADMIN_OR_REGISTRAR}
+448	        AND (
+449	            student_id::text = current_setting('kura.current_user_id', true)
+450	            OR EXISTS (
+451	                SELECT 1 FROM assessments a
+452	                JOIN module_sections ms ON ms.id = a.section_id
+453	                JOIN modules m ON m.id = ms.module_id
+454	                JOIN course_staff cs ON cs.course_id = m.course_id
+455	                WHERE a.id = assessment_attempts.assessment_id
+456	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+457	                AND cs.staff_role IN ('lead_instructor', 'co_instructor', 'teaching_assistant')
+458	            )
+459	            OR EXISTS (
+460	                SELECT 1 FROM assessments a
+461	                JOIN module_sections ms ON ms.id = a.section_id
+462	                JOIN modules m ON m.id = ms.module_id
+463	                JOIN courses c ON c.id = m.course_id
+464	                JOIN departments d ON d.id = c.department_id
+465	                WHERE a.id = assessment_attempts.assessment_id
+466	                AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+467	            )
+468	        )
+469	    );
+470	
+471	CREATE POLICY assessment_attempts_delete ON assessment_attempts
+472	    AS PERMISSIVE FOR DELETE
+473	    USING (false);
+474	
+475	-- 6. W5: Enable and force RLS on exam_answer_keys (instructors and department heads only).
+476	ALTER TABLE exam_answer_keys ENABLE ROW LEVEL SECURITY;
+477	ALTER TABLE exam_answer_keys FORCE ROW LEVEL SECURITY;
+478	
+479	CREATE POLICY exam_answer_keys_service_all ON exam_answer_keys
+480	    AS PERMISSIVE FOR ALL
+481	    USING (current_setting('kura.service_role', true) = 'management_command')
+482	    WITH CHECK (current_setting('kura.service_role', true) = 'management_command');
+483	
+484	CREATE POLICY exam_answer_keys_staff_all ON exam_answer_keys
+485	    AS PERMISSIVE FOR ALL
+486	    USING (
+487	        {NOT_ADMIN_OR_REGISTRAR}
+488	        AND (
+489	            EXISTS (
+490	                SELECT 1 FROM assessments a
+491	                JOIN module_sections ms ON ms.id = a.section_id
+492	                JOIN modules m ON m.id = ms.module_id
+493	                JOIN course_staff cs ON cs.course_id = m.course_id
+494	                WHERE a.id = exam_answer_keys.assessment_id
+495	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+496	                AND cs.staff_role IN ('lead_instructor', 'co_instructor')
+497	            )
+498	            OR EXISTS (
+499	                SELECT 1 FROM assessments a
+500	                JOIN module_sections ms ON ms.id = a.section_id
+501	                JOIN modules m ON m.id = ms.module_id
+502	                JOIN courses c ON c.id = m.course_id
+503	                JOIN departments d ON d.id = c.department_id
+504	                WHERE a.id = exam_answer_keys.assessment_id
+505	                AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+506	            )
+507	        )
+508	    )
+509	    WITH CHECK (
+510	        {NOT_ADMIN_OR_REGISTRAR}
+511	        AND (
+512	            EXISTS (
+513	                SELECT 1 FROM assessments a
+514	                JOIN module_sections ms ON ms.id = a.section_id
+515	                JOIN modules m ON m.id = ms.module_id
+516	                JOIN course_staff cs ON cs.course_id = m.course_id
+517	                WHERE a.id = exam_answer_keys.assessment_id
+518	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+519	                AND cs.staff_role IN ('lead_instructor', 'co_instructor')
+520	            )
+521	            OR EXISTS (
+522	                SELECT 1 FROM assessments a
+523	                JOIN module_sections ms ON ms.id = a.section_id
+524	                JOIN modules m ON m.id = ms.module_id
+525	                JOIN courses c ON c.id = m.course_id
+526	                JOIN departments d ON d.id = c.department_id
+527	                WHERE a.id = exam_answer_keys.assessment_id
+528	                AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+529	            )
+530	        )
+531	    );
+532	"""
+533	
+
+--------------------------------------------------
+>> Issue: [B608:hardcoded_sql_expressions] Possible SQL injection vector through string-based query construction.
+   Severity: Medium   Confidence: Low
+   CWE: CWE-89 (https://cwe.mitre.org/data/definitions/89.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b608_hardcoded_sql_expressions.html
+   Location: kura/migrations/0029_strip_to_security_core.py:60:23
+59	# Same rules as migration 0026, with the course read straight from assessments.course_id.
+60	NEW_POLICIES_SQL = f"""
+61	CREATE POLICY grades_service_all ON grades
+62	    AS PERMISSIVE FOR ALL
+63	    USING (current_setting('kura.service_role', true) = 'management_command')
+64	    WITH CHECK (current_setting('kura.service_role', true) = 'management_command');
+65	
+66	CREATE POLICY grades_select ON grades
+67	    AS PERMISSIVE FOR SELECT
+68	    USING (
+69	        {NOT_ADMIN_OR_REGISTRAR}
+70	        AND (
+71	            student_id::text = current_setting('kura.current_user_id', true)
+72	            OR EXISTS (
+73	                SELECT 1 FROM course_staff cs
+74	                JOIN assessments a ON a.id = grades.assessment_id
+75	                WHERE cs.course_id = a.course_id
+76	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+77	                AND cs.staff_role IN ('lead_instructor', 'co_instructor', 'teaching_assistant')
+78	            )
+79	            OR EXISTS (
+80	                SELECT 1 FROM assessments a
+81	                JOIN courses c ON c.id = a.course_id
+82	                JOIN departments d ON d.id = c.department_id
+83	                WHERE a.id = grades.assessment_id
+84	                AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+85	            )
+86	        )
+87	    );
+88	
+89	CREATE POLICY grades_insert ON grades
+90	    AS PERMISSIVE FOR INSERT
+91	    WITH CHECK (
+92	        {NOT_ADMIN_OR_REGISTRAR}
+93	        AND (
+94	            (
+95	                student_id::text = current_setting('kura.current_user_id', true)
+96	                AND status = 'draft'
+97	                AND grader_id IS NULL
+98	                AND finalized_by_id IS NULL
+99	                AND finalized_at IS NULL
+100	                AND released_by_id IS NULL
+101	                AND released_at IS NULL
+102	            )
+103	            OR (
+104	                status = 'draft'
+105	                AND finalized_by_id IS NULL
+106	                AND finalized_at IS NULL
+107	                AND released_by_id IS NULL
+108	                AND released_at IS NULL
+109	                AND EXISTS (
+110	                    SELECT 1 FROM course_staff cs
+111	                    JOIN assessments a ON a.id = grades.assessment_id
+112	                    WHERE cs.course_id = a.course_id
+113	                    AND cs.user_id::text = current_setting('kura.current_user_id', true)
+114	                    AND cs.staff_role = 'teaching_assistant'
+115	                )
+116	            )
+117	            OR EXISTS (
+118	                SELECT 1 FROM course_staff cs
+119	                JOIN assessments a ON a.id = grades.assessment_id
+120	                WHERE cs.course_id = a.course_id
+121	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+122	                AND cs.staff_role IN ('lead_instructor', 'co_instructor')
+123	            )
+124	        )
+125	    );
+126	
+127	CREATE POLICY grades_update ON grades
+128	    AS PERMISSIVE FOR UPDATE
+129	    USING (
+130	        {NOT_ADMIN_OR_REGISTRAR}
+131	        AND (
+132	            EXISTS (
+133	                SELECT 1 FROM course_staff cs
+134	                JOIN assessments a ON a.id = grades.assessment_id
+135	                WHERE cs.course_id = a.course_id
+136	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+137	                AND cs.staff_role IN ('lead_instructor', 'co_instructor', 'teaching_assistant')
+138	            )
+139	            OR EXISTS (
+140	                SELECT 1 FROM assessments a
+141	                JOIN courses c ON c.id = a.course_id
+142	                JOIN departments d ON d.id = c.department_id
+143	                WHERE a.id = grades.assessment_id
+144	                AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+145	            )
+146	        )
+147	    )
+148	    WITH CHECK (
+149	        {NOT_ADMIN_OR_REGISTRAR}
+150	        AND (
+151	            (
+152	                status = 'draft'
+153	                AND finalized_by_id IS NULL
+154	                AND finalized_at IS NULL
+155	                AND released_by_id IS NULL
+156	                AND released_at IS NULL
+157	                AND EXISTS (
+158	                    SELECT 1 FROM course_staff cs
+159	                    JOIN assessments a ON a.id = grades.assessment_id
+160	                    WHERE cs.course_id = a.course_id
+161	                    AND cs.user_id::text = current_setting('kura.current_user_id', true)
+162	                    AND cs.staff_role = 'teaching_assistant'
+163	                )
+164	            )
+165	            OR EXISTS (
+166	                SELECT 1 FROM course_staff cs
+167	                JOIN assessments a ON a.id = grades.assessment_id
+168	                WHERE cs.course_id = a.course_id
+169	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+170	                AND cs.staff_role IN ('lead_instructor', 'co_instructor')
+171	            )
+172	            OR (
+173	                status = 'released'
+174	                AND EXISTS (
+175	                    SELECT 1 FROM assessments a
+176	                    JOIN courses c ON c.id = a.course_id
+177	                    JOIN departments d ON d.id = c.department_id
+178	                    WHERE a.id = grades.assessment_id
+179	                    AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+180	                )
+181	            )
+182	        )
+183	    );
+184	
+185	CREATE POLICY grades_delete ON grades
+186	    AS PERMISSIVE FOR DELETE
+187	    USING (false);
+188	
+189	CREATE POLICY grade_history_service_all ON grade_history
+190	    AS PERMISSIVE FOR ALL
+191	    USING (current_setting('kura.service_role', true) = 'management_command')
+192	    WITH CHECK (current_setting('kura.service_role', true) = 'management_command');
+193	
+194	CREATE POLICY grade_history_select ON grade_history
+195	    AS PERMISSIVE FOR SELECT
+196	    USING (
+197	        {NOT_ADMIN_OR_REGISTRAR}
+198	        AND (
+199	            EXISTS (
+200	                SELECT 1 FROM grades g
+201	                JOIN assessments a ON a.id = g.assessment_id
+202	                JOIN course_staff cs ON cs.course_id = a.course_id
+203	                WHERE g.id = grade_history.grade_id
+204	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+205	                AND cs.staff_role IN ('lead_instructor', 'co_instructor', 'teaching_assistant')
+206	            )
+207	            OR EXISTS (
+208	                SELECT 1 FROM grades g
+209	                JOIN assessments a ON a.id = g.assessment_id
+210	                JOIN courses c ON c.id = a.course_id
+211	                JOIN departments d ON d.id = c.department_id
+212	                WHERE g.id = grade_history.grade_id
+213	                AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+214	            )
+215	        )
+216	    );
+217	
+218	CREATE POLICY grade_history_insert ON grade_history
+219	    AS PERMISSIVE FOR INSERT
+220	    WITH CHECK (
+221	        {NOT_ADMIN_OR_REGISTRAR}
+222	        AND (
+223	            (
+224	                old_status IS NULL
+225	                AND new_status = 'draft'
+226	                AND approved_by_id IS NULL
+227	                AND changed_by_id::text = current_setting('kura.current_user_id', true)
+228	                AND EXISTS (
+229	                    SELECT 1 FROM grades g
+230	                    WHERE g.id = grade_history.grade_id
+231	                    AND g.student_id::text = current_setting('kura.current_user_id', true)
+232	                )
+233	            )
+234	            OR (
+235	                (old_status IS NULL OR old_status = 'draft')
+236	                AND new_status = 'draft'
+237	                AND approved_by_id IS NULL
+238	                AND EXISTS (
+239	                    SELECT 1 FROM grades g
+240	                    JOIN assessments a ON a.id = g.assessment_id
+241	                    JOIN course_staff cs ON cs.course_id = a.course_id
+242	                    WHERE g.id = grade_history.grade_id
+243	                    AND cs.user_id::text = current_setting('kura.current_user_id', true)
+244	                    AND cs.staff_role = 'teaching_assistant'
+245	                )
+246	            )
+247	            OR EXISTS (
+248	                SELECT 1 FROM grades g
+249	                JOIN assessments a ON a.id = g.assessment_id
+250	                JOIN course_staff cs ON cs.course_id = a.course_id
+251	                WHERE g.id = grade_history.grade_id
+252	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+253	                AND cs.staff_role IN ('lead_instructor', 'co_instructor')
+254	            )
+255	            OR (
+256	                old_status = 'released'
+257	                AND new_status = 'released'
+258	                AND approved_by_id::text = current_setting('kura.current_user_id', true)
+259	                AND EXISTS (
+260	                    SELECT 1 FROM grades g
+261	                    JOIN assessments a ON a.id = g.assessment_id
+262	                    JOIN courses c ON c.id = a.course_id
+263	                    JOIN departments d ON d.id = c.department_id
+264	                    WHERE g.id = grade_history.grade_id
+265	                    AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+266	                )
+267	            )
+268	        )
+269	    );
+270	
+271	CREATE POLICY assessment_attempts_service_all ON assessment_attempts
+272	    AS PERMISSIVE FOR ALL
+273	    USING (current_setting('kura.service_role', true) = 'management_command')
+274	    WITH CHECK (current_setting('kura.service_role', true) = 'management_command');
+275	
+276	CREATE POLICY assessment_attempts_select ON assessment_attempts
+277	    AS PERMISSIVE FOR SELECT
+278	    USING (
+279	        {NOT_ADMIN_OR_REGISTRAR}
+280	        AND (
+281	            student_id::text = current_setting('kura.current_user_id', true)
+282	            OR EXISTS (
+283	                SELECT 1 FROM assessments a
+284	                JOIN course_staff cs ON cs.course_id = a.course_id
+285	                WHERE a.id = assessment_attempts.assessment_id
+286	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+287	                AND cs.staff_role IN ('lead_instructor', 'co_instructor', 'teaching_assistant')
+288	            )
+289	            OR EXISTS (
+290	                SELECT 1 FROM assessments a
+291	                JOIN courses c ON c.id = a.course_id
+292	                JOIN departments d ON d.id = c.department_id
+293	                WHERE a.id = assessment_attempts.assessment_id
+294	                AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+295	            )
+296	        )
+297	    );
+298	
+299	CREATE POLICY assessment_attempts_insert ON assessment_attempts
+300	    AS PERMISSIVE FOR INSERT
+301	    WITH CHECK (
+302	        {NOT_ADMIN_OR_REGISTRAR}
+303	        AND (
+304	            student_id::text = current_setting('kura.current_user_id', true)
+305	            OR EXISTS (
+306	                SELECT 1 FROM assessments a
+307	                JOIN course_staff cs ON cs.course_id = a.course_id
+308	                WHERE a.id = assessment_attempts.assessment_id
+309	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+310	                AND cs.staff_role IN ('lead_instructor', 'co_instructor', 'teaching_assistant')
+311	            )
+312	            OR EXISTS (
+313	                SELECT 1 FROM assessments a
+314	                JOIN courses c ON c.id = a.course_id
+315	                JOIN departments d ON d.id = c.department_id
+316	                WHERE a.id = assessment_attempts.assessment_id
+317	                AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+318	            )
+319	        )
+320	    );
+321	
+322	CREATE POLICY assessment_attempts_update ON assessment_attempts
+323	    AS PERMISSIVE FOR UPDATE
+324	    USING (
+325	        {NOT_ADMIN_OR_REGISTRAR}
+326	        AND (
+327	            student_id::text = current_setting('kura.current_user_id', true)
+328	            OR EXISTS (
+329	                SELECT 1 FROM assessments a
+330	                JOIN course_staff cs ON cs.course_id = a.course_id
+331	                WHERE a.id = assessment_attempts.assessment_id
+332	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+333	                AND cs.staff_role IN ('lead_instructor', 'co_instructor', 'teaching_assistant')
+334	            )
+335	            OR EXISTS (
+336	                SELECT 1 FROM assessments a
+337	                JOIN courses c ON c.id = a.course_id
+338	                JOIN departments d ON d.id = c.department_id
+339	                WHERE a.id = assessment_attempts.assessment_id
+340	                AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+341	            )
+342	        )
+343	    )
+344	    WITH CHECK (
+345	        {NOT_ADMIN_OR_REGISTRAR}
+346	        AND (
+347	            student_id::text = current_setting('kura.current_user_id', true)
+348	            OR EXISTS (
+349	                SELECT 1 FROM assessments a
+350	                JOIN course_staff cs ON cs.course_id = a.course_id
+351	                WHERE a.id = assessment_attempts.assessment_id
+352	                AND cs.user_id::text = current_setting('kura.current_user_id', true)
+353	                AND cs.staff_role IN ('lead_instructor', 'co_instructor', 'teaching_assistant')
+354	            )
+355	            OR EXISTS (
+356	                SELECT 1 FROM assessments a
+357	                JOIN courses c ON c.id = a.course_id
+358	                JOIN departments d ON d.id = c.department_id
+359	                WHERE a.id = assessment_attempts.assessment_id
+360	                AND d.head_user_id::text = current_setting('kura.current_user_id', true)
+361	            )
+362	        )
+363	    );
+364	
+365	CREATE POLICY assessment_attempts_delete ON assessment_attempts
+366	    AS PERMISSIVE FOR DELETE
+367	    USING (false);
+368	"""
+369	
+
+--------------------------------------------------
+>> Issue: [B105:hardcoded_password_string] Possible hardcoded password: 'gmail-app-password'
+   Severity: Low   Confidence: Medium
+   CWE: CWE-259 (https://cwe.mitre.org/data/definitions/259.html)
+   More Info: https://bandit.readthedocs.io/en/1.9.4/plugins/b105_hardcoded_password_string.html
+   Location: kura/vault_secrets.py:21:26
+20	# KV v2 paths for secrets that used to live in Docker secret files.
+21	GMAIL_APP_PASSWORD_PATH = "gmail-app-password"
+22	MIGRATOR_KEY_PATH = "migrator-key"
+
+--------------------------------------------------
+
+Code scanned:
+	Total lines of code: 12255
+	Total lines skipped (#nosec): 0
+	Total potential issues skipped due to specifically being disabled (e.g., #nosec BXXX): 0
+
+Run metrics:
+	Total issues (by severity):
+		Undefined: 0
+		Low: 8
+		Medium: 2
+		High: 0
+	Total issues (by confidence):
+		Undefined: 0
+		Low: 2
+		Medium: 8
+		High: 0
+Files skipped (0):

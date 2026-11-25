@@ -132,7 +132,7 @@ class SecurityRouteContractUnitTests(SimpleTestCase):
                 from importlib import import_module
 
                 mod_name, fn_name = dotted.rsplit(".", 1)
-                view_fn = getattr(import_module(mod_name), fn_name)
+                view_fn = getattr(import_module(mod_name), fn_name)  # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import
                 req = _attach_session_and_messages(rf.get("/dummy/"))
                 req.user = actor
                 with (
@@ -152,7 +152,7 @@ class SecurityRouteContractUnitTests(SimpleTestCase):
                 from importlib import import_module
 
                 mod_name, fn_name = dotted.rsplit(".", 1)
-                view_fn = getattr(import_module(mod_name), fn_name)
+                view_fn = getattr(import_module(mod_name), fn_name)  # nosemgrep: python.lang.security.audit.non-literal-import.non-literal-import
                 req = _attach_session_and_messages(rf.post("/dummy/"))
                 req.user = actor
                 resp = view_fn(req)

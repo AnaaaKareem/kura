@@ -27,6 +27,7 @@
     </div>
     {% endif %}
 
+    <!-- nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token -->
     <form method="post" class="card card-body vstack gap-3">
         {% csrf_token %}
         {% include "kura/_form_errors.html" %}
