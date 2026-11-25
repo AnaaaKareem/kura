@@ -11,6 +11,7 @@ import socket
 import ssl
 import struct
 import time
+import unicodedata
 import urllib.parse
 import urllib.request
 import uuid
@@ -90,6 +91,7 @@ from .forms import (
     UserRoleChangeForm,
 )
 from .logging_utils import get_client_ip, hash_login_identifier, log_invalid_form, log_security_event
+from .text_safety import BIDI_AND_INVISIBLE
 from .signing import (
     build_grade_payload,
     build_submission_payload,
@@ -323,12 +325,26 @@ ALLOWED_EXTENSIONS_BY_MIME = {
 }
 
 
-def sanitize_filename(filename):
-    """Strip directory traversal paths and leading/trailing whitespace from an uploaded filename.
-    Returns 'download' if the name becomes empty.
+def sanitize_filename(filename, request=None):
+    """Strip traversal paths, NFKC-normalize, remove bidi/control characters, and cap length.
+    Returns 'download' if the name becomes empty, logging file.name_sanitized on change.
     """
-    clean_name = filename.replace("\\", "/").split("/")[-1].strip()
-    return clean_name or "download"
+    raw_base = (filename or "").replace("\\", "/").split("/")[-1].strip()
+    nfkc = unicodedata.normalize("NFKC", raw_base)
+    filtered = "".join(
+        ch for ch in nfkc if ch not in BIDI_AND_INVISIBLE and unicodedata.category(ch) not in ("Cc", "Cf")
+    )
+    collapsed = " ".join(filtered.split())
+    if len(collapsed) > 200:
+        stem, ext = os.path.splitext(collapsed)
+        if ext and len(ext) < 32:
+            collapsed = f"{stem[: 200 - len(ext)]}{ext}"
+        else:
+            collapsed = collapsed[:200]
+    clean_name = collapsed or "download"
+    if raw_base and clean_name != raw_base:
+        log_security_event(request, "file.name_sanitized", {"changed": True})
+    return clean_name
 
 
 def scan_file_for_malware(content_bytes):
@@ -486,7 +502,7 @@ def validate_and_save_upload(uploaded_file, user, request=None, log_context=None
             log_security_event(request, "file.upload_rejected", {"reason": "scanner_unavailable"}, level=logging.WARNING)
             raise
         detection = error.params["detection"]
-        original_filename = sanitize_filename(uploaded_file.name)
+        original_filename = sanitize_filename(uploaded_file.name, request=request)
         content_sha256 = hashlib.sha256(content_bytes).hexdigest()
 
         # Keep the rejected file for 7 days so an Admin can investigate.
@@ -532,7 +548,7 @@ def validate_and_save_upload(uploaded_file, user, request=None, log_context=None
     content_sha256 = hashlib.sha256(content_bytes).hexdigest()
 
     # The extension must match the detected type, so a valid PDF named .html cannot be stored and later downloaded under a web-page extension (INP-01).
-    original_filename = sanitize_filename(uploaded_file.name)
+    original_filename = sanitize_filename(uploaded_file.name, request=request)
     extension = os.path.splitext(original_filename)[1].lower()
     if extension not in ALLOWED_EXTENSIONS_BY_MIME.get(detected_mime_type, set()):
         log_security_event(request, "file.upload_rejected", {"reason": "extension_mismatch"}, level=logging.WARNING)
@@ -730,6 +746,39 @@ def not_found_view(request, exception):
     Security: Logs the requested path and correlation ID without leaking object details.
     """
     log_security_event(request, "access.not_found", {}, logging.INFO)
+    return render(request, "404.html", status=404)
+
+
+# High-signal deception routes that no legitimate Kura workflow ever hits (G09).
+HONEYPOT_PATHS = (
+    "wp-login.php",
+    "wp-admin/",
+    ".env",
+    ".git/config",
+    "phpmyadmin/",
+    "admin/login/",
+    "backup.sql",
+    "api/v1/users",
+)
+
+
+# nosemgrep: python.django.security.audit.csrf-exempt.no-csrf-exempt
+@login_not_required
+@csrf_exempt
+def honeypot_view(request):
+    """Return a normal 404 page for deception lure paths while logging high-confidence scanner alerts.
+
+    Who can use it: Anyone (registered without URL names specifically to trap unauthorized probing).
+    Security: Exempt from CSRF and login middleware so unauthenticated scanner GET/POST probes log
+    security.honeypot.hit cleanly for CrowdSec/Loki blocking while mutating zero application state (G09).
+    """
+    # path and method are automatically added by log_security_event(request, ...); pass empty details to avoid duplicate keys.
+    log_security_event(
+        request,
+        "security.honeypot.hit",
+        {},
+        level=logging.WARNING,
+    )
     return render(request, "404.html", status=404)
 
 
@@ -1019,6 +1068,14 @@ def login_view(request):
                     {"login_identifier_hash": hash_login_identifier(email), "reason": reason},
                     logging.WARNING,
                 )
+                honeytoken_email = getattr(settings, "KURA_HONEYTOKEN_EMAIL", "").strip().lower()
+                if honeytoken_email and hmac.compare_digest(email, honeytoken_email):
+                    log_security_event(
+                        request,
+                        "security.honeytoken.used",
+                        {"login_identifier_hash": hash_login_identifier(email), "reason": reason},
+                        logging.ERROR,
+                    )
                 messages.error(request, "Invalid email or password.")
                 return render(request, "kura/accounts/login.html", {"form": form}, status=400)
 

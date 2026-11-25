@@ -271,3 +271,140 @@ class SecurityGapG12PasskeyOriginTests(TestCase):
             mock_fido.assert_called_once()
 
 
+class SecurityGapG08UnicodeTests(TestCase):
+    """Verification tests for G08 Unicode normalization, bidi/control blocking, and filename sanitization."""
+
+    def test_g08_fullwidth_email_normalizes_and_cyrillic_homoglyph_rejected(self):
+        """Plan ID: G08 | Risk ID: R16
+        Verify full-width ASCII email normalizes via NFKC before LoginForm validation, while
+        Cyrillic homoglyph emails are rejected before lookup or account creation.
+        """
+        from kura.forms import LoginForm, StaffCreateForm
+        from kura.models import Department
+        from kura.tests import make_user
+
+        make_user("Student", email="admin@kura.edu", password="ValidPassword123!")
+        login_form = LoginForm({"email": "\uff21dmin@kura.edu", "password": "ValidPassword123!\U0001f680"})
+        self.assertTrue(login_form.is_valid(), login_form.errors)
+        self.assertEqual(login_form.cleaned_data["email"], "admin@kura.edu")
+        self.assertEqual(login_form.cleaned_data["password"], "ValidPassword123!\U0001f680")
+
+        dept = Department.objects.create(code="UNI", name="Unicode Dept")
+        homoglyph_form = StaffCreateForm(
+            {
+                "email": "\u0430dmin@kura.edu",
+                "first_name": "Alice",
+                "last_name": "Smith",
+                "department": str(dept.id),
+                "staff_title": "Instructor",
+            }
+        )
+        self.assertFalse(homoglyph_form.is_valid())
+        self.assertIn("email", homoglyph_form.errors)
+
+    def test_g08_bidi_control_chars_rejected_in_forms_and_multiline_preserved(self):
+        """Plan ID: G08 | Risk ID: R16
+        Verify zero-width/bidi characters are rejected in text forms, newlines pass in Textarea
+        fields, and mixed-script tokens emit input.mixed_script telemetry.
+        """
+        from decimal import Decimal
+        from kura.forms import CourseCreateForm, GradeEntryForm
+        from kura.models import Department, SemesterType
+        from kura.tests import make_user
+
+        head = make_user("Department head")
+        dept = Department.objects.create(code="U2", name="Unicode Security", head_user=head)
+
+        bad_course = CourseCreateForm(
+            {
+                "department": str(dept.id),
+                "code": "SEC101",
+                "title": "Intro\u200bSec",
+                "description": "Syllabus",
+                "semester": SemesterType.SEMESTER_1,
+                "academic_year": "2026",
+            },
+            head_departments=Department.objects.filter(id=dept.id),
+        )
+        self.assertFalse(bad_course.is_valid())
+        self.assertIn("title", bad_course.errors)
+
+        grade_form = GradeEntryForm({"score": Decimal("85.00"), "feedback": "Line 1\nLine 2\tOK"})
+        self.assertTrue(grade_form.is_valid(), grade_form.errors)
+        self.assertIn("\n", grade_form.cleaned_data["feedback"])
+
+        with self.assertLogs("kura.security", level="INFO") as captured:
+            mixed_form = GradeEntryForm({"score": Decimal("90.00"), "feedback": "Good work Al\u0435x"})
+            self.assertTrue(mixed_form.is_valid(), mixed_form.errors)
+        self.assertTrue(any('event="input.mixed_script"' in r.getMessage() for r in captured.records))
+
+    def test_g08_sanitize_filename_removes_bidi_override_and_logs(self):
+        """Plan ID: G08 | Risk ID: R16
+        Verify sanitize_filename strips U+202E right-to-left override and emits file.name_sanitized.
+        """
+        from kura.views import sanitize_filename
+
+        with self.assertLogs("kura.security", level="INFO") as captured:
+            cleaned = sanitize_filename("../../report\u202efdp.exe")
+        self.assertEqual(cleaned, "reportfdp.exe")
+        self.assertTrue(any('event="file.name_sanitized"' in r.getMessage() for r in captured.records))
+
+
+class SecurityGapG09DeceptionTests(TestCase):
+    """Verification tests for G09 honeypot decoy routes and honeytoken login detection."""
+
+    def test_g09_honeypot_paths_return_404_and_log_without_normal_404_false_positive(self):
+        """Plan ID: G09 | Risk ID: R14
+        Every HONEYPOT_PATHS route returns 404 on GET and POST and emits security.honeypot.hit
+        without duplicate logfmt keys, whereas normal unknown URLs emit access.not_found only.
+        """
+        from kura.views import HONEYPOT_PATHS
+
+        client = Client()
+        for hp in HONEYPOT_PATHS:
+            url = "/" + hp.lstrip("/")
+            with self.subTest(path=url):
+                with self.assertLogs("kura.security", level="WARNING") as cap_get:
+                    resp_get = client.get(url)
+                self.assertEqual(resp_get.status_code, 404)
+                get_lines = [r.getMessage() for r in cap_get.records if 'event="security.honeypot.hit"' in r.getMessage()]
+                self.assertEqual(len(get_lines), 1)
+                self.assertEqual(get_lines[0].count("path="), 1)
+
+                with self.assertLogs("kura.security", level="WARNING") as cap_post:
+                    resp_post = client.post(url, {"probe": "1"})
+                self.assertEqual(resp_post.status_code, 404)
+                self.assertTrue(any('event="security.honeypot.hit"' in r.getMessage() for r in cap_post.records))
+
+        with self.assertLogs("kura.security", level="INFO") as cap_normal:
+            resp_normal = client.get("/not-a-honeypot-page-12345/")
+        self.assertEqual(resp_normal.status_code, 404)
+        self.assertTrue(any('event="access.not_found"' in r.getMessage() for r in cap_normal.records))
+        self.assertFalse(any('event="security.honeypot.hit"' in r.getMessage() for r in cap_normal.records))
+
+    def test_g09_honeytoken_login_returns_generic_failure_and_logs_error(self):
+        """Plan ID: G09 | Risk ID: R14
+        Submitting the honeytoken account returns the same status and generic message as any unknown
+        email while logging security.honeytoken.used at ERROR level.
+        """
+        client = Client()
+        resp_unknown = client.post(
+            reverse("kura:login"),
+            {"email": "nonexistent@kura.edu", "password": "WrongPassword123!"},
+        )
+        with (
+            override_settings(KURA_HONEYTOKEN_EMAIL="it-support@kura.edu"),
+            self.assertLogs("kura.security", level="ERROR") as captured,
+        ):
+            resp_honey = client.post(
+                reverse("kura:login"),
+                {"email": "it-support@kura.edu", "password": "WrongPassword123!"},
+            )
+        self.assertEqual(resp_honey.status_code, 400)
+        self.assertEqual(resp_honey.status_code, resp_unknown.status_code)
+        self.assertContains(resp_honey, "Invalid email or password.", status_code=400)
+        self.assertContains(resp_unknown, "Invalid email or password.", status_code=400)
+        self.assertTrue(any('event="security.honeytoken.used"' in r.getMessage() for r in captured.records))
+
+
+

@@ -11,8 +11,10 @@ grok:
   pattern: 'event="%{DATA:event}" ip="%{IP:source_ip}"'
   apply_on: message
 statics:
-  # The event name becomes the log type the scenarios match on.
+  # The event name becomes the log type and event meta the scenarios match on.
   - meta: log_type
+    expression: evt.Parsed.event
+  - meta: event
     expression: evt.Parsed.event
   - meta: source_ip
     expression: evt.Parsed.source_ip

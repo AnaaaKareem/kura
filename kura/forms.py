@@ -1,8 +1,11 @@
+import logging
+
 from django import forms
 from django.contrib.auth import authenticate
 from django.contrib.auth.hashers import check_password
 from django.contrib.auth.password_validation import validate_password
 from django.core.exceptions import ValidationError
+from .logging_utils import log_security_event
 from .models import (
     AcademicLevel,
     Assessment,
@@ -24,6 +27,55 @@ from .models import (
     User,
     get_security_policy,
 )
+from .text_safety import has_mixed_scripts, normalize_email, normalize_text
+
+
+class SafeTextMixin:
+    """Normalize and validate Unicode text/email inputs before field validators run (G08).
+
+    Who can use it: All non-password text/email forms in kura/forms.py.
+    Security: Applies NFKC normalization, blocks bidi/control characters, requires ASCII
+    for EmailField, and logs mixed-script tokens without modifying PasswordInput values.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        for field_name, field in self.fields.items():
+            if isinstance(field.widget, forms.PasswordInput):
+                continue
+            if isinstance(field, forms.EmailField):
+                orig_to_python = field.to_python
+
+                def _safe_email_to_python(value, _orig=orig_to_python):
+                    coerced = _orig(value)
+                    return normalize_email(coerced)
+
+                field.to_python = _safe_email_to_python
+            elif isinstance(field, forms.CharField):
+                orig_to_python = field.to_python
+                is_multiline = isinstance(field.widget, forms.Textarea)
+
+                def _safe_text_to_python(
+                    value,
+                    _orig=orig_to_python,
+                    _multiline=is_multiline,
+                    _fname=field_name,
+                    _form_cls=self.__class__.__name__,
+                ):
+                    coerced = _orig(value)
+                    if not coerced:
+                        return coerced
+                    normalized = normalize_text(coerced, multiline=_multiline)
+                    if has_mixed_scripts(normalized):
+                        log_security_event(
+                            None,
+                            "input.mixed_script",
+                            {"field": _fname, "form": _form_cls},
+                            level=logging.INFO,
+                        )
+                    return normalized
+
+                field.to_python = _safe_text_to_python
 
 
 def password_was_used_recently(user, raw_password):
@@ -58,7 +110,7 @@ class AdminCourseFilterForm(forms.Form):
     published = forms.ChoiceField(choices=[("", "All statuses"), ("yes", "Published"), ("no", "Draft")], required=False)
 
 
-class AdminStaffFilterForm(forms.Form):
+class AdminStaffFilterForm(SafeTextMixin, forms.Form):
     """Validate administrator staff account filters."""
 
     q = forms.CharField(required=False, max_length=150, label="Name or email")
@@ -80,7 +132,7 @@ class AdminStaffFilterForm(forms.Form):
     )
 
 
-class AdminUserFilterForm(forms.Form):
+class AdminUserFilterForm(SafeTextMixin, forms.Form):
     """Validate administrator all-account directory filters (no grade data)."""
 
     q = forms.CharField(required=False, max_length=150, label="Name or email")
@@ -102,7 +154,7 @@ class AdminUserFilterForm(forms.Form):
     )
 
 
-class AdminSessionFilterForm(forms.Form):
+class AdminSessionFilterForm(SafeTextMixin, forms.Form):
     """Validate the search and filters for the administrator's session list."""
 
     # Limit the inputs used to search session records.
@@ -150,7 +202,7 @@ class UserRoleChangeForm(forms.Form):
     role_id = forms.ModelChoiceField(queryset=Role.objects.all())
 
 
-class LoginForm(forms.Form):
+class LoginForm(SafeTextMixin, forms.Form):
     """
     Form for user authentication with email and password.
     """
@@ -267,7 +319,7 @@ class PasswordChangeForm(forms.Form):
         return cleaned_data
 
 
-class PasswordResetRequestForm(forms.Form):
+class PasswordResetRequestForm(SafeTextMixin, forms.Form):
     """
     Form to start a password reset. Kura always emails a reset link (AUTH-03);
     users with MFA must also enter a second-factor code after opening it.
@@ -375,7 +427,7 @@ class MFAVerifyForm(forms.Form):
     )
 
 
-class DepartmentForm(forms.ModelForm):
+class DepartmentForm(SafeTextMixin, forms.ModelForm):
     """Validate the department code, name, and optional Department Head (M11)."""
 
     class Meta:
@@ -429,7 +481,7 @@ class DepartmentHeadAssignForm(forms.Form):
         )
 
 
-class BuildingForm(forms.ModelForm):
+class BuildingForm(SafeTextMixin, forms.ModelForm):
     """Validate a building name."""
 
     class Meta:
@@ -437,7 +489,7 @@ class BuildingForm(forms.ModelForm):
         fields = ["name"]
 
 
-class RoomForm(forms.ModelForm):
+class RoomForm(SafeTextMixin, forms.ModelForm):
     """Validate a room and its building."""
 
     class Meta:
@@ -445,7 +497,7 @@ class RoomForm(forms.ModelForm):
         fields = ["building", "name"]
 
 
-class StaffCreateForm(forms.Form):
+class StaffCreateForm(SafeTextMixin, forms.Form):
     """
     Form used by administrators to provision a new staff account.
     Creates a User record and an associated StaffProfile.
@@ -520,7 +572,7 @@ class StaffCreateForm(forms.Form):
         return email
 
 
-class StudentCreateForm(forms.Form):
+class StudentCreateForm(SafeTextMixin, forms.Form):
     """
     Form used by the registrar to provision a new student account.
     Creates a User record and an associated StudentProfile.
@@ -583,7 +635,7 @@ class StudentCreateForm(forms.Form):
         return email
 
 
-class StudentFilterForm(forms.Form):
+class StudentFilterForm(SafeTextMixin, forms.Form):
     """Validate search and filters for the registrar's student list."""
 
     q = forms.CharField(required=False, max_length=150, label="Student ID, name or email")
@@ -628,7 +680,7 @@ class EnrollmentForm(forms.Form):
     )
 
 
-class AdminCourseForm(forms.ModelForm):
+class AdminCourseForm(SafeTextMixin, forms.ModelForm):
     """Validate the course details an administrator may create or edit."""
 
     # Only these course fields can be changed by the administrator's form.
@@ -650,7 +702,7 @@ class AdminCourseForm(forms.ModelForm):
         return self.cleaned_data["code"].strip().upper()
 
 
-class CourseCreateForm(forms.Form):
+class CourseCreateForm(SafeTextMixin, forms.Form):
     """
     Form for Department Heads to create a new course within one of their departments (P13).
     """
@@ -815,7 +867,7 @@ class DeleteConfirmationForm(forms.Form):
     confirm = forms.BooleanField(required=True)
 
 
-class ScheduleForm(forms.Form):
+class ScheduleForm(SafeTextMixin, forms.Form):
     """
     Form for course instructors to define recurring class timetables.
     Enforces that class end time must be after start time.
@@ -883,7 +935,7 @@ class ScheduleForm(forms.Form):
         return cleaned_data
 
 
-class AttendanceSessionStartForm(forms.Form):
+class AttendanceSessionStartForm(SafeTextMixin, forms.Form):
     """
     Form for instructors and TAs to launch a live attendance roll session.
     """
@@ -908,7 +960,7 @@ class AttendanceSessionStartForm(forms.Form):
     )
 
 
-class StudentCheckinForm(forms.Form):
+class StudentCheckinForm(SafeTextMixin, forms.Form):
     """
     Form for students to submit a 6-character check-in passcode.
     """
@@ -926,7 +978,7 @@ class StudentCheckinForm(forms.Form):
     )
 
 
-class ManualAttendanceForm(forms.Form):
+class ManualAttendanceForm(SafeTextMixin, forms.Form):
     """
     Form for staff to manually override or record attendance with a required reason.
     """
@@ -964,7 +1016,7 @@ class ManualAttendanceForm(forms.Form):
         return reason
 
 
-class AssessmentCreateForm(forms.Form):
+class AssessmentCreateForm(SafeTextMixin, forms.Form):
     """
     Form for Instructors to author a coursework assessment that students answer with file uploads.
     """
@@ -1031,7 +1083,7 @@ class AssessmentCreateForm(forms.Form):
         return cleaned_data
 
 
-class CourseFileForm(forms.Form):
+class CourseFileForm(SafeTextMixin, forms.Form):
     """
     Form for course staff to add a material file (slides, notes) to a course.
     """
@@ -1061,7 +1113,7 @@ class AssessmentFileUploadForm(forms.Form):
 # Grades & change requests forms
 
 
-class GradeEntryForm(forms.Form):
+class GradeEntryForm(SafeTextMixin, forms.Form):
     """
     Form for TAs and instructors to input manual scores and feedback.
     """
@@ -1108,7 +1160,7 @@ class GradeReleaseForm(forms.Form):
     )
 
 
-class GradeChangeRequestForm(forms.Form):
+class GradeChangeRequestForm(SafeTextMixin, forms.Form):
     """
     Form for instructors to request a formal score change on a released grade.
     """
@@ -1134,7 +1186,7 @@ class GradeChangeRequestForm(forms.Form):
     )
 
 
-class GradeChangeRequestReviewForm(forms.Form):
+class GradeChangeRequestReviewForm(SafeTextMixin, forms.Form):
     """
     Form for department heads to approve or reject a requested grade modification.
     """
@@ -1183,7 +1235,7 @@ class ScheduleFilterForm(forms.Form):
             self.fields["course"].queryset = courses
 
 
-class AttendanceHistoryFilterForm(forms.Form):
+class AttendanceHistoryFilterForm(SafeTextMixin, forms.Form):
     """Validate staff filters on the attendance history list."""
 
     q = forms.CharField(required=False, max_length=150, label="Student")
@@ -1207,7 +1259,7 @@ class AttendanceHistoryFilterForm(forms.Form):
             self.fields["course"].queryset = courses
 
 
-class CourseGradesFilterForm(forms.Form):
+class CourseGradesFilterForm(SafeTextMixin, forms.Form):
     """Validate assessment, status, and student filters on the course gradebook."""
 
     q = forms.CharField(required=False, max_length=150, label="Student")

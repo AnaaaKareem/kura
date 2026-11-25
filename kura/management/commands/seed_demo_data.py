@@ -1,4 +1,6 @@
+import secrets
 from decimal import Decimal
+
 from django.conf import settings
 from django.core.management.base import BaseCommand
 from django.core.management.base import CommandError
@@ -226,3 +228,20 @@ class Command(BaseCommand):
         )
 
         self.stdout.write(self.style.SUCCESS("Demo data seeded successfully!"))
+
+        honeytoken_email = getattr(settings, "KURA_HONEYTOKEN_EMAIL", "").strip().lower()
+        if honeytoken_email:
+            ht_user, ht_created = User.objects.get_or_create(
+                email=honeytoken_email,
+                defaults={
+                    "first_name": "IT",
+                    "last_name": "Support",
+                    "is_active": True,
+                    "must_change_password": False,
+                    "mfa_enabled": True,
+                },
+            )
+            if ht_created:
+                # Unguessable random credential never issued to any human; exists solely to detect reconnaissance (G09).
+                ht_user.set_password(secrets.token_urlsafe(36))  # nosemgrep: python.django.security.audit.unvalidated-password.unvalidated-password
+                ht_user.save(update_fields=["password"])

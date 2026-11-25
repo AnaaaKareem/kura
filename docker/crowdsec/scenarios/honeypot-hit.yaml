@@ -1,0 +1,11 @@
+# Trigger an immediate 4-hour ban whenever an attacker touches a Kura honeypot route or honeytoken account (G09).
+type: trigger
+name: kura/honeypot-hit
+description: "Immediate ban when an IP accesses a honeypot decoy route or submits the honeytoken account"
+filter: "evt.Meta.service == 'kura' && evt.Meta.event in ['security.honeypot.hit', 'security.honeytoken.used']"
+groupby: evt.Meta.source_ip
+blackhole: 1m
+labels:
+  remediation: true
+  service: kura
+  type: recon

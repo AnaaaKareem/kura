@@ -269,3 +269,21 @@ groups:
         annotations:
           summary: "Cryptographic signature verification failed"
           description: "verify_signatures or attempt inspection detected an invalid submission or grade signature within the last 5 minutes."
+
+      # 29. Decoy honeypot URL probed (G09).
+      - alert: HoneypotHit
+        expr: sum(count_over_time({service="web"} | logfmt | event="security.honeypot.hit" [5m])) >= 1
+        labels:
+          severity: warning
+        annotations:
+          summary: "Deception honeypot route probed"
+          description: "An unauthenticated or internal client probed a known deception lure route within the last 5 minutes."
+
+      # 30. Honeytoken login attempted (G09).
+      - alert: HoneytokenLogin
+        expr: sum(count_over_time({service="web"} | logfmt | event="security.honeytoken.used" [5m])) >= 1
+        labels:
+          severity: critical
+        annotations:
+          summary: "Honeytoken account authentication attempt"
+          description: "A login attempt targeted the reserved honeytoken account within the last 5 minutes."

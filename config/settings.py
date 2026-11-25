@@ -455,6 +455,7 @@ ALLOW_LEGACY_UNENCRYPTED_FILE_READS = os.environ.get("ALLOW_LEGACY_UNENCRYPTED_F
 VAULT_TRANSIT_MOUNT = os.environ.get("VAULT_TRANSIT_MOUNT", "transit")
 VAULT_DB_MOUNT = os.environ.get("VAULT_DB_MOUNT", "database")
 VAULT_DB_ROLE = os.environ.get("VAULT_DB_ROLE", "kura-app")
+KURA_HONEYTOKEN_EMAIL = os.environ.get("KURA_HONEYTOKEN_EMAIL", "it-support@kura.edu").strip().lower()
 
 # Multi-Factor Authentication (django-mfa2 / FIDO2 / WebAuthn Passkeys)
 MFA_SERVER_PATH = "mfa/"

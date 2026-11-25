@@ -12,7 +12,9 @@ from django.urls import Resolver404, resolve, reverse
 from django.utils.crypto import constant_time_compare
 from django.utils import timezone
 from .models import UserSession, get_security_policy
-from .views import get_client_ip, hash_session_token, log_security_event
+from .views import HONEYPOT_PATHS, get_client_ip, hash_session_token, log_security_event
+
+_HONEYPOT_URL_PATHS = frozenset("/" + p.lstrip("/") for p in HONEYPOT_PATHS)
 
 User = get_user_model()
 
@@ -183,6 +185,8 @@ class SecurityEnforcementMiddleware:
             return add_no_store_headers(self.get_response(request))
         if path == reverse("kura:receipts_public_key"):
             return self.get_response(request)
+        if path in _HONEYPOT_URL_PATHS:
+            return add_no_store_headers(self.get_response(request))
         if path == reverse("kura:logout"):
             return add_no_store_headers(self.get_response(request))
 

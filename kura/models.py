@@ -266,6 +266,15 @@ class UserManager(BaseUserManager):
         user.save(using=self._db)
         return user
 
+    @classmethod
+    def normalize_email(cls, email):
+        """Normalize account emails consistently with NFKC and lowercase ASCII handling."""
+        if not email:
+            return ""
+        import unicodedata
+
+        return unicodedata.normalize("NFKC", str(email).strip()).strip().lower()
+
     def create_superuser(self, email, password=None, **extra_fields):
         """Create a user with active status and the Admin system role."""
         extra_fields.setdefault("is_active", True)

@@ -483,6 +483,7 @@ services:
       - ./docker/crowdsec/scenarios/login-bruteforce.yaml:/etc/crowdsec/scenarios/kura-login-bruteforce.yaml:ro
       - ./docker/crowdsec/scenarios/mfa-bruteforce.yaml:/etc/crowdsec/scenarios/kura-mfa-bruteforce.yaml:ro
       - ./docker/crowdsec/scenarios/idor-probing.yaml:/etc/crowdsec/scenarios/kura-idor-probing.yaml:ro
+      - ./docker/crowdsec/scenarios/honeypot-hit.yaml:/etc/crowdsec/scenarios/kura-honeypot-hit.yaml:ro
       - ./docker/crowdsec/scenarios/waf-repeat-offender.yaml:/etc/crowdsec/scenarios/kura-waf-repeat-offender.yaml:ro
       - ./docker/crowdsec/scenarios/reset-abuse.yaml:/etc/crowdsec/scenarios/kura-reset-abuse.yaml:ro
       - crowdsec_data:/var/lib/crowdsec/data

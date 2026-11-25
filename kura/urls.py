@@ -147,3 +147,6 @@ urlpatterns = [
     path("transcript/", views.student_transcript_view, name="student_transcript"),
     path("departments/<int:department_id>/reports/", views.department_reports_view, name="department_reports"),
 ]
+
+# Deception lure routes are registered without `name=` so automated route-contract enumeration keeps its named-route boundary.
+urlpatterns += [path(honeypot_path, views.honeypot_view) for honeypot_path in views.HONEYPOT_PATHS]
