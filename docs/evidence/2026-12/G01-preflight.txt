@@ -1,0 +1,53 @@
+[PASS] docker compose config is valid
+[PASS] no inline secrets in docker-compose.yml environment blocks
+[FAIL] manage.py check --deploy reported problems:
+       SystemCheckError: System check identified some issues:
+       ?: (staticfiles.W004) The directory '/app/static' in the STATICFILES_DIRS setting does not exist.
+       System check identified 1 issue (0 silenced).
+[FAIL] DEBUG is true in .env
+[FAIL] secrets/db_password.txt is not readable by this user (run preflight as root)
+[FAIL] secrets/backup_encryption_key.txt is not readable by this user (run preflight as root)
+[FAIL] secrets/django_secret_key.txt is not readable by this user (run preflight as root)
+[FAIL] secrets/crowdsec_bouncer_key.txt is not readable by this user (run preflight as root)
+[FAIL] secrets/grafana_admin_password.txt is not readable by this user (run preflight as root)
+[FAIL] secrets/grafana_viewer_password.txt is not readable by this user (run preflight as root)
+[FAIL] secrets/telegram_bot_token.txt is not readable by this user (run preflight as root)
+[FAIL] secrets/telegram_chat_id.txt is not readable by this user (run preflight as root)
+[FAIL] secrets/vault_role_id.txt is not readable by this user (run preflight as root)
+[FAIL] secrets/vault_secret_id.txt is not readable by this user (run preflight as root)
+[FAIL] secrets/vault_issuer_role_id.txt is not readable by this user (run preflight as root)
+[FAIL] secrets/vault_issuer_secret_id.txt is not readable by this user (run preflight as root)
+[PASS] secrets is mode 700, owner 1000
+[PASS] secrets/db_password.txt is mode 600, owner 26
+[PASS] secrets/backup_encryption_key.txt is mode 600, owner 26
+[PASS] secrets/django_secret_key.txt is mode 600, owner 10001
+[PASS] secrets/crowdsec_bouncer_key.txt is mode 600, owner 0
+[PASS] secrets/grafana_admin_password.txt is mode 600, owner 472
+[PASS] secrets/grafana_viewer_password.txt is mode 600, owner 0
+[PASS] secrets/telegram_bot_token.txt is mode 600, owner 65534
+[PASS] secrets/telegram_chat_id.txt is mode 600, owner 65534
+[PASS] secrets/vault_role_id.txt is mode 600, owner 10001
+[PASS] secrets/vault_secret_id.txt is mode 600, owner 10001
+[PASS] secrets/vault_issuer_role_id.txt is mode 600, owner 0
+[PASS] secrets/vault_issuer_secret_id.txt is mode 600, owner 0
+[PASS] certs/kura.key is mode 600, owner 0
+[PASS] certs/internal/db.key is mode 600, owner 26
+[PASS] certs/internal/web.key is mode 600, owner 10001
+[FAIL] certs/internal/migrator.key is mode/owner 600 10001, expected 600 0:10002
+[PASS] certs/internal/waf.key is mode 600, owner 101
+[PASS] certs/internal/nginx.key is mode 600, owner 0
+[PASS] certs/internal/vault.key is mode 600, owner 100
+[PASS] certs/internal/alloy.key is mode 600, owner 473
+[PASS] certs/kura.crt is valid for more than 7 days
+[PASS] certs/internal/ca.crt is valid for more than 7 days
+[PASS] certs/internal/nginx.crt is valid for more than 7 days
+[PASS] certs/internal/waf.crt is valid for more than 7 days
+[PASS] certs/internal/web.crt is valid for more than 7 days
+[PASS] certs/internal/db.crt is valid for more than 7 days
+[PASS] certs/internal/vault.crt is valid for more than 7 days
+[PASS] certs/internal/alloy.crt is valid for more than 7 days
+[PASS] certs/internal/migrator.crt is valid for more than 7 days
+[PASS] published ports: only nginx 80 and 443 on all interfaces; Grafana 127.0.0.1:3000; CrowdSec API on loopback
+[note] sshd not found or not readable here: SSH settings not checked (run preflight on the VM)
+
+PREFLIGHT FAIL (15 failed, 32 passed)

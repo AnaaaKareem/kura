@@ -1,0 +1,16 @@
+=== ss -tlnp (after G02) ===
+State  Recv-Q Send-Q  Local Address:Port  Peer Address:PortProcess                             
+LISTEN 0      4096        127.0.0.1:3000       0.0.0.0:*                                       
+LISTEN 0      4096          0.0.0.0:443        0.0.0.0:*                                       
+LISTEN 0      4096          0.0.0.0:80         0.0.0.0:*                                       
+LISTEN 0      4096        127.0.0.1:55432      0.0.0.0:*                                       
+LISTEN 0      4096        127.0.0.1:8085       0.0.0.0:*                                       
+LISTEN 0      4096       127.0.0.54:53         0.0.0.0:*                                       
+LISTEN 0      1000   10.255.255.254:53         0.0.0.0:*                                       
+LISTEN 0      512         127.0.0.1:37700      0.0.0.0:*    users:(("bun",pid=4118,fd=8))      
+LISTEN 0      512         127.0.0.1:49374      0.0.0.0:*    users:(("opencode",pid=3954,fd=10))
+LISTEN 0      4096        127.0.0.1:38217      0.0.0.0:*    users:(("agy",pid=86188,fd=12))    
+LISTEN 0      4096        127.0.0.1:34003      0.0.0.0:*    users:(("agy",pid=86188,fd=14))    
+LISTEN 0      4096    127.0.0.53%lo:53         0.0.0.0:*                                       
+LISTEN 0      4096             [::]:443           [::]:*                                       
+LISTEN 0      4096             [::]:80            [::]:*                                       

@@ -1,0 +1,11 @@
+VAULT_CA_CERT=/certs/internal/ca.crt
+VAULT_DATABASE_CREDENTIALS=True
+VAULT_ENABLED=True
+VAULT_ROLE_ID=1e2b<redacted>
+VAULT_SECRET_ID=16fd<redacted>
+VAULT_URL=https://vault:8200
+      DB_SSL_KEY: "/certs/internal/web.key"
+      # Vault AppRole login for Django (credentials from environment; no Docker secret files needed).
+      VAULT_ROLE_ID: "1e2b<redacted>"
+      VAULT_SECRET_ID: "16fd<redacted>"
+    # Runs as kura (UID 10001) with no entrypoint: gunicorn starts directly.

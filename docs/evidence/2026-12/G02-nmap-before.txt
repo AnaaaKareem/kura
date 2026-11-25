@@ -1,0 +1,40 @@
+=== ss -tlnp (before G02) ===
+State  Recv-Q Send-Q  Local Address:Port  Peer Address:PortProcess                             
+LISTEN 0      4096        127.0.0.1:3000       0.0.0.0:*                                       
+LISTEN 0      4096          0.0.0.0:443        0.0.0.0:*                                       
+LISTEN 0      4096          0.0.0.0:80         0.0.0.0:*                                       
+LISTEN 0      4096        127.0.0.1:55432      0.0.0.0:*                                       
+LISTEN 0      4096        127.0.0.1:8085       0.0.0.0:*                                       
+LISTEN 0      4096       127.0.0.54:53         0.0.0.0:*                                       
+LISTEN 0      1000   10.255.255.254:53         0.0.0.0:*                                       
+LISTEN 0      512         127.0.0.1:37700      0.0.0.0:*    users:(("bun",pid=4118,fd=8))      
+LISTEN 0      512         127.0.0.1:49374      0.0.0.0:*    users:(("opencode",pid=3954,fd=10))
+LISTEN 0      4096        127.0.0.1:38217      0.0.0.0:*    users:(("agy",pid=86188,fd=12))    
+LISTEN 0      4096        127.0.0.1:34003      0.0.0.0:*    users:(("agy",pid=86188,fd=14))    
+LISTEN 0      4096    127.0.0.53%lo:53         0.0.0.0:*                                       
+LISTEN 0      4096             [::]:443           [::]:*                                       
+LISTEN 0      4096             [::]:80            [::]:*                                       
+=== docker-compose.yml db ports ===
+  db:
+    image: ghcr.io/pgedge/pgedge-postgres:17-spock5-standard@sha256:6d2fb528a11a059d07247e38b38e601a3795d1ab2bfd78ad945f9e77227c0a15
+    logging: *default-logging
+    container_name: kura-db
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    read_only: true
+    # Writable in-memory RAM partitions: temp files, PostgreSQL Unix sockets (used by the health check and pgBackRest), and pgBackRest log files.
+    tmpfs:
+=== pg_hba.conf kura-admin ===
+3-# Every TCP connection must use TLS.
+4-# Users not listed here cannot log in.
+5:# - kura-admin:   migrations and administration, password inside TLS.
+6-# - vault_admin:  Vault's database engine.
+7-# Password (only Vault knows it, after "rotate-root") AND a client certificate from our CA.
+--
+18-hostssl kura           kura_migrator   all                     cert clientcert=verify-full
+19-
+20:# Administrative maintenance: kura-admin with its password (Docker secret), always inside an encrypted TLS session.
+21:hostssl all            kura-admin      all                     scram-sha-256
+22-
+23-# Vault's database engine: password + client certificate signed by our CA.

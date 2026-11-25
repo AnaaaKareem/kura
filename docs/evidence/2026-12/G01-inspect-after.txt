@@ -1,0 +1,11 @@
+=== docker inspect kura-web Config.Env (VAULT_*) ===
+VAULT_CA_CERT=/certs/internal/ca.crt
+VAULT_DATABASE_CREDENTIALS=True
+VAULT_ENABLED=True
+VAULT_URL=https://vault:8200
+=== docker inspect kura-web Mounts ===
+/home/anaaa/kura/secrets/django_secret_key.txt -> /run/secrets/django_secret_key
+/home/anaaa/kura/secrets/vault_role_id.txt -> /run/secrets/vault_role_id
+/home/anaaa/kura/secrets/vault_secret_id.txt -> /run/secrets/vault_secret_id
+=== settings.VAULT_SECRET_ID present ===
+VAULT_ROLE_ID: True VAULT_SECRET_ID: True

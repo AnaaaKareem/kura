@@ -1,0 +1,12 @@
+=== docker compose ps db ===
+NAME      IMAGE                                                                                                                       COMMAND                  SERVICE   CREATED          STATUS                    PORTS
+kura-db   ghcr.io/pgedge/pgedge-postgres:17-spock5-standard@sha256:6d2fb528a11a059d07247e38b38e601a3795d1ab2bfd78ad945f9e77227c0a15   "/usr/local/bin/kura…"   db        53 seconds ago   Up 51 seconds (healthy)   5432/tcp
+=== TCP kura-admin login test (must reject) ===
+psql: error: connection to server at "db" (172.21.0.3), port 5432 failed: FATAL:  pg_hba.conf rejects connection for host "172.21.0.3", user "kura-admin", database "kura", SSL encryption
+connection to server at "db" (172.21.0.3), port 5432 failed: FATAL:  pg_hba.conf rejects connection for host "172.21.0.3", user "kura-admin", database "kura", no encryption
+=== Socket kura-admin login test (must succeed) ===
+ ?column? 
+----------
+        1
+(1 row)
+

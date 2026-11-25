@@ -170,6 +170,7 @@ Setup
   vault-init         One-time Vault setup (unseal key, Transit, database users, PKI, AppRoles),
                      then switch every service to Vault-issued certificates
   vault-add-name N   Add service name N to Vault's kura-service certificate role
+  vault-rotate-approle  Rotate Django's kura-web AppRole secret ID, destroy old accessors, restart web
   renew-certs        Renew internal certificates from Vault and reload services (weekly cron)
   grafana-users      Check the Grafana admin login and create the read-only "viewer" account
                      (--reset-password resets both passwords to the secret files)
@@ -647,6 +648,29 @@ show_root_token_on_failure() {
     fi
 }
 
+# Obtain a short-lived root token by prompting for the Vault unseal key.
+# Always sets an EXIT trap to revoke the temporary root token.
+obtain_temp_root_token() {
+    printf "Unseal key (input hidden): "
+    stty -echo 2>/dev/null || true
+    read -r UNSEAL_KEY
+    stty echo 2>/dev/null || true
+    echo ""
+    # Remove spaces, tabs and line breaks that often come along when pasting.
+    UNSEAL_KEY=$(printf '%s' "$UNSEAL_KEY" | tr -d ' \t\r\n')
+
+    # Cancel any earlier attempt that was left unfinished (e.g. a wrong key).
+    vault_cli operator generate-root -cancel > /dev/null 2>&1 || true
+    OTP=$(vault_cli operator generate-root -generate-otp)
+    NONCE=$(vault_cli operator generate-root -init -otp="$OTP" -format=json | grep '"nonce"' | cut -d'"' -f4)
+    ENCODED=$(printf '%s' "$UNSEAL_KEY" | vault_cli write -field=encoded_root_token sys/generate-root/update key=- nonce="$NONCE")
+    ROOT_TOKEN=$(vault_cli operator generate-root -decode="$ENCODED" -otp="$OTP")
+    UNSEAL_KEY=""
+
+    # Always revoke the temporary root token at the end, even if a step fails.
+    trap revoke_root_token EXIT
+}
+
 # vault-add-name
 
 # Add a service name to Vault's "kura-service" certificate role on a Vault that is already set up.
@@ -665,29 +689,9 @@ cmd_vault_add_name() {
         return 0
     fi
 
-    # 1. Ask for the unseal key without showing it on screen.
-    printf "Unseal key (input hidden): "
-    stty -echo 2>/dev/null || true
-    read -r UNSEAL_KEY
-    stty echo 2>/dev/null || true
-    echo ""
-    # Remove spaces, tabs and line breaks that often come along when pasting.
-    UNSEAL_KEY=$(printf '%s' "$UNSEAL_KEY" | tr -d ' \t\r\n')
+    obtain_temp_root_token
 
-    # 2. Make a temporary root token.
-    # Vault returns it encoded with a one-time password (OTP); only someone holding both can decode it.
-    # Cancel any earlier attempt that was left unfinished (e.g. a wrong key).
-    vault_cli operator generate-root -cancel > /dev/null 2>&1 || true
-    OTP=$(vault_cli operator generate-root -generate-otp)
-    NONCE=$(vault_cli operator generate-root -init -otp="$OTP" -format=json | grep '"nonce"' | cut -d'"' -f4)
-    ENCODED=$(printf '%s' "$UNSEAL_KEY" | vault_cli write -field=encoded_root_token sys/generate-root/update key=- nonce="$NONCE")
-    ROOT_TOKEN=$(vault_cli operator generate-root -decode="$ENCODED" -otp="$OTP")
-    UNSEAL_KEY=""
-
-    # Always revoke the temporary root token at the end, even if a step fails.
-    trap revoke_root_token EXIT
-
-    # 3. Read the current allowed names and add the new one (if not there yet).
+    # Read the current allowed names and add the new one (if not there yet).
     # "patch" changes ONLY allowed_domains; "write" would reset the role's other settings (lifetimes, key type, flags) to their defaults.
     CURRENT=$(vault_root read -field=allowed_domains pki_int/roles/kura-service | tr -d '[]' | tr ' ' ',')
     case ",$CURRENT," in
@@ -698,6 +702,39 @@ cmd_vault_add_name() {
     esac
     vault_root patch pki_int/roles/kura-service allowed_domains="$CURRENT,$NEW_NAME" > /dev/null
     say "kura-service now allows: $CURRENT,$NEW_NAME"
+}
+
+# vault-rotate-approle
+
+# Mint a new secret ID for Django's kura-web AppRole, write it to secrets/vault_secret_id.txt,
+# restart web so it picks up the new Docker secret, and destroy all prior secret ID accessors.
+cmd_vault_rotate_approle() {
+    need_root vault-rotate-approle
+    if planned "mint a new Vault secret ID for kura-web, update secrets/vault_secret_id.txt, restart web, and destroy old accessors"; then
+        return 0
+    fi
+    confirm "This mints a new Vault secret ID for kura-web, destroys old secret ID accessors, and restarts web."
+
+    obtain_temp_root_token
+
+    OLD_ACCESSORS=$(vault_root list -format=json auth/approle/role/kura-web/secret-id 2>/dev/null | python3 -c 'import json, sys; data = json.load(sys.stdin); print("\n".join(data)) if isinstance(data, list) else None' || true)
+
+    say "Minting new kura-web secret ID..."
+    (
+        umask 077
+        vault_root write -f -field=secret_id auth/approle/role/kura-web/secret-id > "$SECRETS_DIR/vault_secret_id.txt"
+    )
+    fix_secret_file vault_secret_id
+
+    say "Recreating web service to load the new secret..."
+    docker compose up -d web
+
+    if [ -n "$OLD_ACCESSORS" ]; then
+        for acc in $OLD_ACCESSORS; do
+            vault_root write auth/approle/role/kura-web/secret-id-accessor/destroy secret_id_accessor="$acc" > /dev/null
+        done
+        say "Destroyed previous kura-web secret ID accessor(s)"
+    fi
 }
 
 # Revoke the temporary root token made by vault-add-name.
@@ -999,6 +1036,7 @@ fail() { echo "[FAIL] $*"; FAILED=$((FAILED + 1)); }
 # As another user, unreadable files are reported as failures.
 cmd_preflight() {
     check_compose_config
+    check_no_inline_secrets
     check_django_deploy
     check_debug_off
     check_secret_values
@@ -1021,6 +1059,43 @@ check_compose_config() {
         pass "docker compose config is valid"
     else
         fail "docker compose config reports an error (run: docker compose config --quiet)"
+    fi
+}
+
+# Reject literal secret, password, token, or key values inside Compose environment blocks.
+check_no_inline_secrets() {
+    findings=$(docker compose --profile tools config --format json 2>/dev/null | python3 -c '
+import json, re, sys
+config = json.load(sys.stdin)
+allowlist = {
+    "VAULT_TRANSIT_KEY",
+    "VAULT_FILES_KEY",
+    "VAULT_RECEIPTS_KEY",
+    "DB_SSL_KEY",
+    "POSTGRES_PASSWORD_FILE",
+    "GF_SECURITY_ADMIN_PASSWORD__FILE",
+}
+pattern = re.compile(r"(?i)(?:secret|password|token|_key|secret_id|role_id)$")
+for svc_name, svc in config.get("services", {}).items():
+    env = svc.get("environment") or {}
+    if isinstance(env, dict):
+        items = env.items()
+    else:
+        items = [tuple(x.split("=", 1)) if "=" in x else (x, "") for x in env]
+    for key, val in items:
+        if key in allowlist:
+            continue
+        if pattern.search(str(key)) and str(val or "").strip() != "":
+            print(f"{svc_name}: {key}")
+')
+    if [ -n "$findings" ]; then
+        while IFS= read -r line; do
+            fail "inline secret in compose environment: $line"
+        done <<EOF
+$findings
+EOF
+    else
+        pass "no inline secrets in docker-compose.yml environment blocks"
     fi
 }
 
@@ -1536,6 +1611,7 @@ case "$COMMAND" in
     mtls-bootstrap) cmd_mtls_bootstrap ;;
     vault-init) cmd_vault_init ;;
     vault-add-name) cmd_vault_add_name "$ARGUMENT" ;;
+    vault-rotate-approle) cmd_vault_rotate_approle ;;
     renew-certs) cmd_renew_certs ;;
     grafana-users) cmd_grafana_users ;;
     preflight) cmd_preflight ;;
