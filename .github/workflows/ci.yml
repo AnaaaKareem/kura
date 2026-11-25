@@ -127,7 +127,7 @@ jobs:
           SECRET_KEY: ci-test-secret-key-not-for-production-environment
           DEBUG: "True"
         run: |
-          python manage.py test kura.tests_security_leads_part1 kura.tests_security_leads_part2 kura.tests_security_routes --noinput
+          python manage.py test kura.tests_security_leads_part1 kura.tests_security_leads_part2 kura.tests_security_routes kura.tests_security_gaps kura.tests_signatures --noinput
 
       - name: Verify Django Production Deploy Checks
         env:
@@ -185,7 +185,21 @@ jobs:
           format: "table"
           exit-code: "1"
           ignore-unfixed: true
+          trivyignores: ".trivyignore"
           severity: "HIGH,CRITICAL"
+
+      - name: Generate CycloneDX SBOM for kura
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          image-ref: "kura:${{ github.sha }}"
+          format: "cyclonedx"
+          output: "sbom-kura-web.cdx.json"
+
+      - name: Upload SBOM Artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: kura-web-sbom
+          path: sbom-kura-web.cdx.json
 
       # Scan the nginx image built from the Dockerfile's nginx stage.
       - name: Scan nginx image with Trivy
@@ -210,7 +224,7 @@ jobs:
       - name: Create missing placeholder secret files
         run: |
           mkdir -p secrets
-          for name in db_password backup_encryption_key django_secret_key crowdsec_bouncer_key grafana_admin_password telegram_bot_token telegram_chat_id vault_role_id vault_secret_id; do
+          for name in db_password backup_encryption_key django_secret_key crowdsec_bouncer_key grafana_admin_password telegram_bot_token telegram_chat_id vault_role_id vault_secret_id log_hmac_key; do
             test -e "secrets/$name.txt" || touch "secrets/$name.txt"
           done
 

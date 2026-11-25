@@ -422,3 +422,12 @@ Only `docs/SECURITY_TRIVY_FINDINGS.md` is tracked in git.
   - `docker logs kura-loki` confirms clean startup (`msg="Loki started"`), ruler active (`msg="ruler up and running"`), rule file loaded (`msg="updating rule file" file=/tmp/loki/rules-scratch/fake/kura-alerts.yml`), and alerting rules actively evaluating.
   - Security invariant verified: `ruler.enable_api: false` remains intact in `docker/loki/loki.yml` (line 64) and live `GET http://loki:3100/loki/api/v1/rules` returns `HTTP/1.1 404 Not Found`.
   - Follow-up timestamped evidence blocks appended to `docs/evidence/ports.txt` and `docs/evidence/loki-alerts.txt`.
+
+---
+
+## Supply-Chain Hardening (G06) - 2026-11-25
+
+- Rebuilt `kura-web:latest` after updating `Dockerfile` to uninstall and delete `pip`, `setuptools`, `wheel`, and `ensurepip` from the final `runtime` image (`docker run --rm --entrypoint python kura-web:latest -m pip --version` fails with `No module named pip`).
+- Re-ran Trivy against `kura-web:latest` (`docs/evidence/2026-12/trivy-image-after-G06.txt`): Python package findings dropped to 0 (`setuptools`, `msgpack`, and vendored `urllib3 2.7.0` removed; `urllib3 2.8.0` reports 0 vulnerabilities), while Debian 13.8 base OS reports 309 total findings (0 Critical, 100 High, 100 Medium, 92 Low, 17 Unknown). `kura-nginx:latest` (Alpine 3.24.3) reports 0 HIGH/CRITICAL findings.
+- Ran `.venv/bin/pip-audit -r requirements.lock.txt --strict --ignore-vuln PYSEC-2026-4298 --ignore-vuln PYSEC-2026-1325` (`docs/evidence/2026-12/pip-audit-after-G06.txt`): exited `0` (`No known vulnerabilities found, 3 ignored`).
+- Generated CycloneDX SBOMs for both custom images (`docs/evidence/2026-12/sbom-kura-web.cdx.json` and `docs/evidence/2026-12/sbom-kura-nginx.cdx.json`) and pinned all GitHub Actions in `.github/workflows/ci.yml` and `.github/workflows/security.yml` to full 40-character commit SHAs.

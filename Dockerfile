@@ -58,7 +58,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 # attack surface (util-linux, ncurses-base, perl-base are essential packages
 # and require --allow-remove-essential). Only libpq5 and libmagic1 remain as
 # shared libraries. apt, bash, and tar are retained because dpkg depends on
-# tar and Python's pip needs apt's infrastructure.
+# tar for package extraction.
 RUN apt-get update && \
     apt-get upgrade -y && \
     apt-get install -y --no-install-recommends libpq5 libmagic1 && \
@@ -67,6 +67,16 @@ RUN apt-get update && \
 
 # Copy pre-compiled Python packages from the builder stage
 COPY --from=builder /install /usr/local
+
+# Remove packaging tools and bundled ensurepip wheels that the read-only runtime
+# container never needs at runtime (eliminates setuptools CVE-2025-47273 and
+# vendored pip/urllib3/msgpack findings in Trivy).
+RUN python -m pip uninstall -y pip setuptools wheel 2>/dev/null || true && \
+    rm -rf /usr/local/lib/python3.14/site-packages/pip* \
+           /usr/local/lib/python3.14/site-packages/setuptools* \
+           /usr/local/lib/python3.14/site-packages/wheel* \
+           /usr/local/lib/python3.14/ensurepip \
+           /usr/local/bin/pip*
 
 # Copy collected static files from the static stage
 COPY --from=static /app/staticfiles /app/staticfiles

@@ -1294,14 +1294,69 @@ def passkey_register_complete_view(request):
     return normalized
 
 
+def _allowed_passkey_origins():
+    """Return allowed scheme+host origin strings for WebAuthn passkey completion."""
+    parsed_site = urllib.parse.urlsplit(settings.SITE_URL)
+    allowed = set()
+    if parsed_site.scheme and parsed_site.netloc:
+        allowed.add(f"{parsed_site.scheme}://{parsed_site.netloc}".lower())
+    if settings.DEBUG:
+        allowed.update(
+            {
+                "https://localhost",
+                "http://localhost",
+                "http://localhost:8000",
+                "http://127.0.0.1:8000",
+                "https://127.0.0.1",
+                "http://testserver",
+                "https://testserver",
+            }
+        )
+    return allowed
+
+
+def _request_origin(request):
+    """Extract scheme://host from Origin, falling back to Referer when Origin is absent."""
+    raw_origin = request.META.get("HTTP_ORIGIN", "").strip()
+    if raw_origin and raw_origin.lower() != "null":
+        parsed = urllib.parse.urlsplit(raw_origin)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}".lower()
+        return ""
+    raw_referer = request.META.get("HTTP_REFERER", "").strip()
+    if raw_referer:
+        parsed = urllib.parse.urlsplit(raw_referer)
+        if parsed.scheme and parsed.netloc:
+            return f"{parsed.scheme}://{parsed.netloc}".lower()
+    return ""
+
+
 @login_not_required
 @csrf_exempt
 def passkey_auth_complete_view(request):
     """Complete FIDO2 / WebAuthn passkey authentication through django-mfa2.
     Who can use it: Users completing step 2 passkey login.
-    Security: Kept csrf_exempt to match django-mfa2's JS; normalizes None/ERR
-    responses to 400 or 500 JSON without exposing exception text.
+    Security: Kept csrf_exempt to match django-mfa2's JS; enforces POST-only,
+    explicit Origin/Referer matching against SITE_URL, and an active 5-minute
+    pre-MFA password window before calling FIDO2.authenticate_complete (G12).
     """
+    if request.method != "POST":
+        return HttpResponseNotAllowed(["POST"])
+
+    origin = _request_origin(request)
+    if not origin or origin not in _allowed_passkey_origins():
+        log_security_event(request, "access.csrf_failed", {"reason": "passkey_origin"}, logging.WARNING)
+        return JsonResponse({"status": "ERR", "message": "Sign-in failed. Please start again."}, status=403)
+
+    if not request.session.get("pre_mfa_user_id") or not has_valid_pre_mfa_window(request):
+        log_security_event(
+            request,
+            "auth.mfa.failed",
+            {"method": "passkey", "reason": "missing_pre_mfa"},
+            logging.WARNING,
+        )
+        return JsonResponse({"status": "ERR", "message": "Sign-in failed. Please start again."}, status=403)
+
     from mfa import FIDO2
 
     response = FIDO2.authenticate_complete(request)

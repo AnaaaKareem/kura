@@ -87,7 +87,7 @@ class SecurityLeadsPart1UnitTests(SimpleTestCase):
             save=MagicMock(),
         )
 
-        # Negative 1: Cross-site POST with no session fido2_state returns generic normalized JSON error.
+        # Negative 1: Cross-site POST with evil Origin is rejected before FIDO2 runs (G12).
         req_no_state = _attach_session_and_messages(
             rf.post(
                 reverse("fido2_complete_auth"),
@@ -97,13 +97,8 @@ class SecurityLeadsPart1UnitTests(SimpleTestCase):
             )
         )
         req_no_state.user = AnonymousUser()
-        with patch("mfa.FIDO2.User_Keys.objects") as mock_keys:
-            mock_qs = MagicMock()
-            mock_qs.exists.return_value = False
-            mock_qs.__iter__.return_value = iter([])
-            mock_keys.filter.return_value = mock_qs
-            resp_no_state = passkey_auth_complete_view(req_no_state)
-        self.assertEqual(resp_no_state.status_code, 500)
+        resp_no_state = passkey_auth_complete_view(req_no_state)
+        self.assertEqual(resp_no_state.status_code, 403)
         self.assertEqual(
             json.loads(resp_no_state.content),
             {"status": "ERR", "message": "Sign-in failed. Please start again."},
@@ -576,7 +571,7 @@ class SecurityLeadsPart1Tests(TestCase):
             content_type="application/json",
             HTTP_ORIGIN="https://evil.example",
         )
-        self.assertIn(resp_no_state.status_code, (400, 500))
+        self.assertEqual(resp_no_state.status_code, 403)
         self.assertEqual(resp_no_state.json(), {"status": "ERR", "message": "Sign-in failed. Please start again."})
         self.assertNotIn("_auth_user_id", anon_client.session)
 
@@ -599,6 +594,7 @@ class SecurityLeadsPart1Tests(TestCase):
                 reverse("fido2_complete_auth"),
                 data=json.dumps({"id": "cred_b"}),
                 content_type="application/json",
+                HTTP_ORIGIN="http://localhost:8000",
             )
         self.assertEqual(resp_mismatch.status_code, 302)
         self.assertEqual(resp_mismatch["Location"], reverse("kura:login"))
@@ -621,6 +617,7 @@ class SecurityLeadsPart1Tests(TestCase):
                 reverse("fido2_complete_auth"),
                 data=json.dumps({"id": "cred_a"}),
                 content_type="application/json",
+                HTTP_ORIGIN="http://localhost:8000",
             )
         self.assertEqual(resp_ok.status_code, 200)
         self.assertEqual(resp_ok.json(), {"status": "OK", "redirect": reverse("kura:password_change")})

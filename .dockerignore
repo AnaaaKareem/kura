@@ -9,6 +9,11 @@ __pycache__
 .env
 secrets/
 certs/
+*.key
+*.pem
+*.crt
+*.p12
+*.pfx
 *.log
 .DS_Store
 

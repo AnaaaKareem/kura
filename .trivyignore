@@ -1,0 +1,12 @@
+# Accepted transitive dependency CVEs from django-mfa2==3.2.0.
+# Both python-jose and ecdsa are imported at module load time by django-mfa2,
+# while kura/__init__.py replaces jose.jwt.encode/decode with cryptography==50.0.2
+# so the vulnerable code paths never execute. Re-evaluate if django-mfa2 drops python-jose.
+
+# python-jose 3.5.0 algorithm confusion (no upstream fix available) exp:2027-06-01
+CVE-2026-85394
+PYSEC-2026-4298
+
+# ecdsa 0.19.2 Minerva timing attack (no upstream fix; signing not used via ecdsa) exp:2027-06-01
+CVE-2024-23342
+PYSEC-2026-1325

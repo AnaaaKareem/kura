@@ -15,8 +15,10 @@ from unittest.mock import patch
 
 from django.conf import settings
 from django.db import OperationalError
-from django.test import Client, TestCase
+from django.http import JsonResponse
+from django.test import Client, TestCase, override_settings
 from django.urls import reverse
+from django.utils import timezone
 
 BASE_DIR = Path(settings.BASE_DIR)
 
@@ -121,6 +123,27 @@ class SecurityGapStaticTests(unittest.TestCase):
         self.assertIn("alert: WebLogsAbsent", loki_alerts)
         self.assertIn('absent_over_time({service="web"}[15m])', loki_alerts)
 
+    @skipIf(not (BASE_DIR / ".dockerignore").exists(), ".dockerignore not available in container")
+    def test_g06_dockerignore_and_pinned_workflows(self):
+        """Plan ID: G06 | Risk ID: R15, R16
+        Verify .dockerignore excludes secrets, certs, keys, and local artifacts, and verify
+        GitHub workflows pin every third-party action to a 40-hex commit SHA.
+        """
+        dockerignore = (BASE_DIR / ".dockerignore").read_text(encoding="utf-8")
+        for required in (".git", ".env", "secrets/", "certs/", ".venv", "docs/", "*.key", "*.pem", "staticfiles/"):
+            self.assertIn(required, dockerignore)
+
+        workflows_dir = BASE_DIR / ".github" / "workflows"
+        if workflows_dir.exists():
+            for wf in workflows_dir.glob("*.yml"):
+                text = wf.read_text(encoding="utf-8")
+                for match in re.findall(r"uses:\s*([^\s#]+)", text):
+                    self.assertRegex(
+                        match,
+                        r"^[^@]+@[0-9a-f]{40}$",
+                        f"Workflow {wf.name} uses mutable action reference: {match}",
+                    )
+
 
 class SecurityGapG04ErrorHandlingTests(TestCase):
     """Regression tests for G04 malformed POST payloads and DB/Vault dependency outages."""
@@ -192,4 +215,59 @@ class SecurityGapG04ErrorHandlingTests(TestCase):
         self.assertEqual(resp_reset.status_code, 503)
         self._assert_no_sensitive_leak(resp_reset)
         self.assertTrue(any('event="server.dependency_unavailable"' in rec.getMessage() for rec in captured_reset.records))
+
+
+class SecurityGapG12PasskeyOriginTests(TestCase):
+    """Verification tests for G12 Origin/Referer and pre-MFA checks on passkey_auth_complete_view."""
+
+    def test_g12_passkey_complete_enforces_post_origin_and_pre_mfa_window(self):
+        """Plan ID: G12 | Risk ID: R12
+        Verify passkey_auth_complete_view rejects GET (405), missing/foreign Origin (403),
+        and missing pre-MFA session (403) before delegating to FIDO2.authenticate_complete.
+        """
+        client = Client()
+        url = reverse("fido2_complete_auth")
+
+        self.assertEqual(client.get(url).status_code, 405)
+
+        with self.assertLogs("kura.security", level="WARNING") as cap_missing:
+            resp_missing = client.post(url, data="{}", content_type="application/json")
+        self.assertEqual(resp_missing.status_code, 403)
+        self.assertTrue(any('event="access.csrf_failed"' in r.getMessage() for r in cap_missing.records))
+
+        with self.assertLogs("kura.security", level="WARNING"):
+            resp_bad_origin = client.post(
+                url,
+                data="{}",
+                content_type="application/json",
+                HTTP_ORIGIN="https://attacker.example",
+            )
+        self.assertEqual(resp_bad_origin.status_code, 403)
+
+        # Valid Origin without pre_mfa window must still be rejected.
+        with override_settings(DEBUG=False, SITE_URL="https://kura.example.com"):
+            resp_no_premfa = client.post(
+                url,
+                data="{}",
+                content_type="application/json",
+                HTTP_ORIGIN="https://kura.example.com",
+            )
+            self.assertEqual(resp_no_premfa.status_code, 403)
+
+            session = client.session
+            session["pre_mfa_user_id"] = "00000000-0000-0000-0000-000000000001"
+            session["pre_mfa_started_at"] = timezone.now().timestamp()
+            session.save()
+
+            # Referer fallback works when Origin is omitted and pre-MFA window is active.
+            with patch("mfa.FIDO2.authenticate_complete", return_value=JsonResponse({"status": "OK"})) as mock_fido:
+                resp_ok = client.post(
+                    url,
+                    data="{}",
+                    content_type="application/json",
+                    HTTP_REFERER="https://kura.example.com/login/mfa/",
+                )
+            self.assertEqual(resp_ok.status_code, 200)
+            mock_fido.assert_called_once()
+
 
