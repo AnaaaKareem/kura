@@ -170,6 +170,7 @@ Setup
   vault-init         One-time Vault setup (unseal key, Transit, database users, PKI, AppRoles),
                      then switch every service to Vault-issued certificates
   vault-add-name N   Add service name N to Vault's kura-service certificate role
+  vault-add-receipts-key  Create the ECDSA kura-receipts signing key and refresh kura-web policy
   vault-rotate-approle  Rotate Django's kura-web AppRole secret ID, destroy old accessors, restart web
   renew-certs        Renew internal certificates from Vault and reload services (weekly cron)
   grafana-users      Check the Grafana admin login and create the read-only "viewer" account
@@ -491,6 +492,11 @@ cmd_vault_init() {
     # Vault Transit keeps old key versions, so previously encrypted seeds and file keys still decrypt (LOG-05).
     vault_root write transit/keys/kura-mfa/config auto_rotate_period=720h > /dev/null
     vault_root write transit/keys/kura-files/config auto_rotate_period=720h > /dev/null
+    # ECDSA P-256 key for non-repudiable submission receipts and grade decisions (G05).
+    if ! vault_root read transit/keys/kura-receipts > /dev/null 2>&1; then
+        vault_root write -f transit/keys/kura-receipts type=ecdsa-p256 > /dev/null
+    fi
+    vault_root write transit/keys/kura-receipts/config auto_rotate_period=720h > /dev/null
 
     # 5. Temporary database users.
     say "[5/9] Setting up temporary database users..."
@@ -735,6 +741,26 @@ cmd_vault_rotate_approle() {
         done
         say "Destroyed previous kura-web secret ID accessor(s)"
     fi
+}
+
+# vault-add-receipts-key
+
+# Create the ECDSA P-256 signing key "kura-receipts" and reload the kura-web policy
+# on an already-initialized Vault installation (idempotent).
+cmd_vault_add_receipts_key() {
+    if planned "ensure transit/keys/kura-receipts (ecdsa-p256) exists and reload kura-web Vault policy"; then
+        return 0
+    fi
+    obtain_temp_root_token
+    if ! vault_root read transit/keys/kura-receipts > /dev/null 2>&1; then
+        vault_root write -f transit/keys/kura-receipts type=ecdsa-p256 > /dev/null
+        say "Created transit/keys/kura-receipts (ecdsa-p256)"
+    else
+        skip "transit/keys/kura-receipts already exists"
+    fi
+    vault_root write transit/keys/kura-receipts/config auto_rotate_period=720h > /dev/null
+    vault_root policy write kura-web /vault/policies/kura-web.hcl > /dev/null
+    say "Updated kura-web Vault policy"
 }
 
 # Revoke the temporary root token made by vault-add-name.
@@ -1611,6 +1637,7 @@ case "$COMMAND" in
     mtls-bootstrap) cmd_mtls_bootstrap ;;
     vault-init) cmd_vault_init ;;
     vault-add-name) cmd_vault_add_name "$ARGUMENT" ;;
+    vault-add-receipts-key) cmd_vault_add_receipts_key ;;
     vault-rotate-approle) cmd_vault_rotate_approle ;;
     renew-certs) cmd_renew_certs ;;
     grafana-users) cmd_grafana_users ;;

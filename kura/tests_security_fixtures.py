@@ -59,14 +59,15 @@ from .models import (
 )
 from .views import hash_attendance_passcode, hash_session_token
 
-# Complete 90-route contract registry matching kura/urls.py (83) + config/urls.py (7).
+# Complete 91-route contract registry matching kura/urls.py (84) + config/urls.py (7).
 ROUTE_CLASS_MAP = {
-    # CLS-01: Public & Pre-MFA Auth (9 routes)
+    # CLS-01: Public & Pre-MFA Auth (10 routes)
     "kura:login": {"cls": "CLS-01", "methods": ("GET", "POST"), "public": True, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
     "kura:mfa_verify": {"cls": "CLS-01", "methods": ("GET", "POST"), "public": True, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
     "kura:password_reset_request": {"cls": "CLS-01", "methods": ("GET", "POST"), "public": True, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
     "kura:password_reset_confirm": {"cls": "CLS-01", "methods": ("GET", "POST"), "public": True, "csrf_exempt": False, "fresh_mfa": False, "kw": "reset_token"},
     "kura:privacy_notice": {"cls": "CLS-01", "methods": ("GET",), "public": True, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
+    "kura:receipts_public_key": {"cls": "CLS-01", "methods": ("GET",), "public": True, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
     "fido2_auth": {"cls": "CLS-01", "methods": ("GET",), "public": True, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
     "fido2_begin_auth": {"cls": "CLS-01", "methods": ("GET",), "public": True, "csrf_exempt": False, "fresh_mfa": False, "kw": None},
     "fido2_complete_auth": {"cls": "CLS-01", "methods": ("POST",), "public": True, "csrf_exempt": True, "fresh_mfa": False, "kw": None},

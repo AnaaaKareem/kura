@@ -4,6 +4,7 @@ from django.utils import timezone
 
 from kura.models import AssessmentAttempt, AttemptStatus
 from kura.permissions import service_rls_context
+from kura.signing import build_submission_payload, sign_payload
 from kura.views import compute_submission_hash
 
 
@@ -29,10 +30,11 @@ class Command(BaseCommand):
                     )
                     if attempt.status != AttemptStatus.IN_PROGRESS or attempt.assessment.due_date >= timezone.now():
                         continue
-                    # An empty attempt is still sealed, with a hash over no files, so it goes to the marker as a non-submission.
+                    # An empty attempt is still sealed, with a hash and signature over no files, so it goes to the marker as a signed non-submission record.
                     attempt.submitted_at = attempt.assessment.due_date
                     attempt.status = AttemptStatus.REQUIRES_MANUAL_GRADING
                     attempt.submission_hash = compute_submission_hash(attempt)
+                    attempt.submission_signature = sign_payload(build_submission_payload(attempt))
                     attempt.save()
                     finalized_count += 1
 

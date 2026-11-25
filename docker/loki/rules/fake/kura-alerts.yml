@@ -260,3 +260,12 @@ groups:
         annotations:
           summary: "No web container logs in Loki"
           description: "Loki has not received any log lines from the web container in the last 15 minutes. Check Alloy log collection."
+
+      # 28. Submission receipt or grade signature verification failed (G05).
+      - alert: SignatureVerificationFailed
+        expr: sum(count_over_time({service=~"web|cron"} | logfmt | event="integrity.signature_failed" [5m])) >= 1
+        labels:
+          severity: critical
+        annotations:
+          summary: "Cryptographic signature verification failed"
+          description: "verify_signatures or attempt inspection detected an invalid submission or grade signature within the last 5 minutes."

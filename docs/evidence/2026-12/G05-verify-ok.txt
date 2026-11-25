@@ -1,0 +1,4 @@
+# Command: python manage.py verify_signatures
+ATTEMPT  03ab0aac-bd3a-438b-a43c-b16b2650f1b0  OK
+GRADE    0582e5d5-cbce-4688-9617-ff683f3de9df  OK
+Checked 2 signed record(s); failures=0.

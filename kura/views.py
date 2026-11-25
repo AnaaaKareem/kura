@@ -90,6 +90,14 @@ from .forms import (
     UserRoleChangeForm,
 )
 from .logging_utils import get_client_ip, hash_login_identifier, log_invalid_form, log_security_event
+from .signing import (
+    build_grade_payload,
+    build_submission_payload,
+    parse_signature_version,
+    public_key_pem,
+    sign_payload,
+    verify_payload,
+)
 from .models import (
     ALLOWED_UPLOAD_MIME_TYPES,
     MAX_UPLOAD_BYTES,
@@ -736,6 +744,26 @@ def server_error_view(request):
     html_body = loader.get_template("500.html").render({})
     # Template 500.html is rendered with empty context so no user input can reach HttpResponse.
     return HttpResponse(html_body, status=500)  # nosemgrep: python.django.security.audit.xss.direct-use-of-httpresponse.direct-use-of-httpresponse
+
+
+@login_not_required
+def receipts_public_key_view(request):
+    """Serve the public verification key used for offline receipt signature checks.
+
+    Who can use it: Anyone (anonymous students, staff, or external examiners).
+    Security: GET-only endpoint returning only non-secret ECDSA/Ed25519 public key PEM
+    bytes with public caching enabled so private signing keys remain isolated inside Vault.
+    """
+    if request.method != "GET":
+        return HttpResponseNotAllowed(["GET"])
+    try:
+        pem_text = public_key_pem()
+    except ValidationError:
+        return HttpResponse("Public verification key unavailable.", status=503, content_type="text/plain")  # nosemgrep: python.django.security.audit.xss.direct-use-of-httpresponse.direct-use-of-httpresponse
+    # Returns static PEM public key bytes with explicit non-HTML content type.
+    response = HttpResponse(pem_text, content_type="application/x-pem-file")  # nosemgrep: python.django.security.audit.xss.direct-use-of-httpresponse.direct-use-of-httpresponse
+    response["Cache-Control"] = "public, max-age=3600"
+    return response
 
 def queue_email(event_key, to_email, subject, body):
     """Queue a password-reset email or notification in OutgoingEmail.
@@ -5409,20 +5437,24 @@ def assessment_submit_view(request, attempt_id):
             messages.error(request, "Upload at least one file before submitting.")
             return redirect("kura:assessment_take", attempt_id=attempt.id)
 
-        # Seal the attempt and its integrity hash together, capping the time at the deadline.
+        # Seal the attempt, its SHA-256 hash, and its asymmetric signature together inside atomic().
         attempt.submitted_at = min(timezone.now(), attempt.assessment.due_date)
         attempt.status = AttemptStatus.REQUIRES_MANUAL_GRADING
         attempt.submission_hash = compute_submission_hash(attempt)
+        attempt.submission_signature = sign_payload(build_submission_payload(attempt))
         attempt.save()
 
-        # Email a receipt: when it was submitted, its integrity hash and the SHA-256 of each attached file.
-        # The student can use it as proof later.
+        # Email a receipt: timestamp, integrity hash, asymmetric signature, verification key URL, and file SHA-256s.
+        # The student or an external examiner can verify it independently.
+        receipt_verify_url = f"{settings.SITE_URL.rstrip('/')}{reverse('kura:receipts_public_key')}"
         receipt_lines = [
             "Hello,",
             "",
             f"Kura received your submission for: {attempt.assessment.title}",
             f"Submitted at: {timezone.localtime(attempt.submitted_at).strftime('%d %b %Y, %H:%M:%S')}",
             f"Submission integrity hash (SHA-256): {attempt.submission_hash}",
+            f"Submission signature: {attempt.submission_signature}",
+            f"Verify public key: {receipt_verify_url}",
         ]
         for attempt_file in AttemptFile.objects.filter(attempt=attempt).select_related("file"):
             receipt_lines.append(f"File: {attempt_file.file.original_filename}  SHA-256: {attempt_file.file.sha256_hash}")
@@ -5489,12 +5521,26 @@ def attempt_detail_view(request, attempt_id):
 
     attempt_files = AttemptFile.objects.filter(attempt=attempt).select_related("file")
 
+    signature_valid = None
+    signature_key_version = None
+    submission_hash = getattr(attempt, "submission_hash", None)
+    submission_signature = getattr(attempt, "submission_signature", "")
+    if submission_hash and submission_signature:
+        expected_hash = compute_submission_hash(attempt)
+        signature_key_version = parse_signature_version(submission_signature)
+        signature_valid = expected_hash == submission_hash and verify_payload(
+            build_submission_payload(attempt),
+            submission_signature,
+        )
+
     context = {
         "attempt": attempt,
         "assessment": attempt.assessment,
         "is_staff": is_head or is_staff,
         "attempt_files": attempt_files,
         "released_grade": released_grade,
+        "signature_valid": signature_valid,
+        "signature_key_version": signature_key_version,
     }
     return render(request, "kura/assessments/attempt_detail.html", context)
 
@@ -5757,7 +5803,15 @@ def grade_finalize_view(request, grade_id):
         grade.status = GradeStatus.FINALIZED
         grade.finalized_by = request.user
         grade.finalized_at = timezone.now()
-        grade.save(update_fields=["status", "finalized_by", "finalized_at"])
+        grade.finalization_signature = sign_payload(
+            build_grade_payload(
+                grade,
+                status=GradeStatus.FINALIZED,
+                actor_id=request.user.id,
+                at=grade.finalized_at,
+            )
+        )
+        grade.save(update_fields=["status", "finalized_by", "finalized_at", "finalization_signature"])
 
         GradeHistory.objects.create(
             grade=grade,
@@ -5837,7 +5891,15 @@ def grade_release_view(request, grade_id):
             grade.status = GradeStatus.RELEASED
             grade.released_by = request.user
             grade.released_at = timezone.now()
-            grade.save(update_fields=["status", "released_by", "released_at"])
+            grade.release_signature = sign_payload(
+                build_grade_payload(
+                    grade,
+                    status=GradeStatus.RELEASED,
+                    actor_id=request.user.id,
+                    at=grade.released_at,
+                )
+            )
+            grade.save(update_fields=["status", "released_by", "released_at", "release_signature"])
 
             GradeHistory.objects.create(
                 grade=grade,
@@ -6056,7 +6118,19 @@ def grade_change_request_review_view(request, request_id):
                 grade = Grade.objects.select_for_update().get(id=change_request.grade_id)
                 old_score = grade.score
                 grade.score = change_request.proposed_score
-                grade.save(update_fields=["score"])
+                # Re-sign the released grade decision by the approving head so grade integrity stays verifiable.
+                grade.released_by = request.user
+                grade.released_at = change_request.reviewed_at
+                grade.release_signature = sign_payload(
+                    build_grade_payload(
+                        grade,
+                        status=GradeStatus.RELEASED,
+                        actor_id=request.user.id,
+                        at=grade.released_at,
+                        score=grade.score,
+                    )
+                )
+                grade.save(update_fields=["score", "released_by", "released_at", "release_signature"])
 
                 # Immutable audit log with department head approval.
                 GradeHistory.objects.create(

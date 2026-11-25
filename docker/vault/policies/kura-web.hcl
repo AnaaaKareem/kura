@@ -26,6 +26,21 @@ path "transit/decrypt/kura-files" {
   capabilities = ["update"]
 }
 
+# Sign submission receipts and grade decisions for non-repudiation (G05). Django never sees the private key.
+path "transit/sign/kura-receipts" {
+  capabilities = ["update"]
+}
+
+# Verify receipt and grade signatures via Vault Transit.
+path "transit/verify/kura-receipts" {
+  capabilities = ["update"]
+}
+
+# Read the public verification key so Kura can publish it at /.well-known/kura-receipts.pem.
+path "transit/keys/kura-receipts" {
+  capabilities = ["read"]
+}
+
 # Get a new temporary database login (username + password) for 15 minutes.
 path "database/creds/kura-app" {
   capabilities = ["read"]

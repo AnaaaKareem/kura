@@ -446,6 +446,8 @@ else:
 VAULT_TRANSIT_KEY = os.environ.get("VAULT_TRANSIT_KEY", "kura-mfa")
 # RSA-4096 Transit key used to wrap per-file AES-256-GCM data keys (FileContent.wrapped_key).
 VAULT_FILES_KEY = os.environ.get("VAULT_FILES_KEY", "kura-files")
+# ECDSA P-256 Transit key used to sign submission receipts and grade decisions (G05).
+VAULT_RECEIPTS_KEY = os.environ.get("VAULT_RECEIPTS_KEY", "kura-receipts")
 ALLOW_LEGACY_UNENCRYPTED_FILE_READS = os.environ.get("ALLOW_LEGACY_UNENCRYPTED_FILE_READS", "False").lower() in (
     "true",
     "1",

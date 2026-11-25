@@ -52,9 +52,25 @@
                 </dl>
 
                 {% if attempt.submission_hash %}
-                <div class="mt-3 p-2 bg-body-tertiary rounded border">
-                    <span class="text-uppercase small fw-semibold text-body-secondary">Integrity code</span>
-                    <p class="text-nowrap small text-break text-primary fw-semibold mt-1">{{ attempt.submission_hash }}</p>
+                <div class="mt-3 p-2 bg-body-tertiary rounded border vstack gap-2">
+                    <div>
+                        <span class="text-uppercase small fw-semibold text-body-secondary">Integrity code</span>
+                        <p class="text-nowrap small text-break text-primary fw-semibold mt-1 mb-0">{{ attempt.submission_hash }}</p>
+                    </div>
+                    {% if attempt.submission_signature %}
+                    <div class="pt-2 border-top">
+                        <span class="text-uppercase small fw-semibold text-body-secondary">Digital signature</span>
+                        <p class="small fw-semibold mt-1 mb-0 {% if signature_valid %}text-success{% else %}text-danger{% endif %}">
+                            {% if signature_valid %}
+                            Signature: valid (key version {{ signature_key_version|default:"1" }})
+                            {% else %}
+                            Signature: INVALID
+                            {% endif %}
+                        </p>
+                        <p class="small text-break text-body-secondary mb-0 mt-1">{{ attempt.submission_signature }}</p>
+                        <a href="{% url 'kura:receipts_public_key' %}" class="small">Download public verification key (.pem)</a>
+                    </div>
+                    {% endif %}
                 </div>
                 {% endif %}
             </div>

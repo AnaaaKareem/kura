@@ -1037,6 +1037,7 @@ class AssessmentAttempt(models.Model):
     ip_address = models.GenericIPAddressField()
     user_agent = models.CharField(max_length=255, null=True, blank=True)
     submission_hash = FixedCharField(max_length=SHA256_HEX, null=True, blank=True)
+    submission_signature = models.TextField(blank=True, default="")
 
     class Meta:
         db_table = "assessment_attempts"
@@ -1100,10 +1101,12 @@ class Grade(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="finalized_grades"
     )
     finalized_at = models.DateTimeField(null=True, blank=True)
+    finalization_signature = models.TextField(blank=True, default="")
     released_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="released_grades"
     )
     released_at = models.DateTimeField(null=True, blank=True)
+    release_signature = models.TextField(blank=True, default="")
 
     class Meta:
         db_table = "grades"

@@ -68,20 +68,20 @@ def _attach_session_and_messages(request, session_dict=None):
 
 
 class SecurityRouteContractUnitTests(SimpleTestCase):
-    """DB-independent verification of all 90 URLconf routes, Section 17.2 exceptions, and GDPR routes."""
+    """DB-independent verification of all 91 URLconf routes, Section 17.2 exceptions, and GDPR routes."""
 
     def test_cls_all_90_urlconf_routes_mapped(self):
         """Plan ID: CLS-01..CLS-08 | Risk ID: R10
-        Verify every named URL pattern in config/urls.py and kura/urls.py (90 total) is mapped
+        Verify every named URL pattern in config/urls.py and kura/urls.py (91 total) is mapped
         in ROUTE_CLASS_MAP with zero unmapped or extra entries.
         """
         discovered = dict(_walk_named_routes(get_resolver().url_patterns))
-        self.assertEqual(len(discovered), 90)
+        self.assertEqual(len(discovered), 91)
         self.assertEqual(set(discovered.keys()), set(ROUTE_CLASS_MAP.keys()))
 
     def test_cls_01_to_cls_08_login_required_baseline(self):
         """Plan ID: CLS-01..CLS-08 | Risk ID: R10, R12
-        Verify LoginRequiredMiddleware fail-closed contract: ONLY the 9 CLS-01 routes carry
+        Verify LoginRequiredMiddleware fail-closed contract: ONLY the 10 CLS-01 routes carry
         @login_not_required (login_required=False), while all 81 CLS-02..CLS-08 routes require login.
         """
         discovered = dict(_walk_named_routes(get_resolver().url_patterns))
@@ -144,6 +144,7 @@ class SecurityRouteContractUnitTests(SimpleTestCase):
 
         get_only_views = [
             ("kura:privacy_notice", "kura.views.privacy_notice_view"),
+            ("kura:receipts_public_key", "kura.views.receipts_public_key_view"),
             ("kura:privacy_dashboard", "kura.views.privacy_dashboard_view"),
             ("kura:privacy_export", "kura.views.privacy_export_view"),
         ]

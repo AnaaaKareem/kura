@@ -1,0 +1,5 @@
+# Command: openssl dgst -sha256 -verify kura-receipts.pem -signature sig.der payload.json
+# Date: 2026-11-25T18:49:47+02:00
+# Format: Vault Transit ecdsa-p256 signature vault:v1:<base64-asn1-der>
+vault_signature=vault:v1:MEUCIQD4C4jLMNHMC2Eo8kcfMMN186tjrcuvMKybT8jGxd535QIgdl9PoYweaMMJr6CiSS3RbbqU7nIWI7O17EK8n24CaAU=
+Verified OK

@@ -43,6 +43,9 @@ KURA_METRICS_DIR=/var/lib/kura-metrics
 0 5 1 * * /bin/sh $KURA_DIR/docker/cron/run-job.sh purge-retention docker compose exec -T -u 10001:10001 web python manage.py purge_retention --days=180 >> /var/log/kura/purge-retention.log 2>&1
 0 5 * * 0 /bin/sh $KURA_DIR/docker/cron/run-job.sh anonymize-ips docker compose exec -T -u 10001:10001 web python manage.py anonymize_ips --days=180 >> /var/log/kura/anonymize-ips.log 2>&1
 
+# Every day at 04:45: verify all submission and grade cryptographic signatures (G05).
+45 4 * * * /bin/sh $KURA_DIR/docker/cron/run-job.sh verify-signatures docker compose exec -T -u 10001:10001 web python manage.py verify_signatures >> /var/log/kura/verify-signatures.log 2>&1
+
 # Backups (pgBackRest, local encrypted repository repo1 and secondary repo2).
 # WAL is archived continuously by PostgreSQL itself.
 # Full backup every Sunday at 02:00; differential every other day at 02:00; secondary repo2 sync/backup daily at 03:00; consistency check every day at 06:00.

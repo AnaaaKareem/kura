@@ -176,11 +176,13 @@ class SecurityEnforcementMiddleware:
 
         path = request.path_info
 
-        # Allow static files, media uploads, and logout without redirection.
+        # Allow static files, media uploads, the public verification key, and logout without redirection.
         if settings.STATIC_URL and path.startswith(settings.STATIC_URL):
             return add_no_store_headers(self.get_response(request))
         if settings.MEDIA_URL and settings.MEDIA_URL != "/" and path.startswith(settings.MEDIA_URL):
             return add_no_store_headers(self.get_response(request))
+        if path == reverse("kura:receipts_public_key"):
+            return self.get_response(request)
         if path == reverse("kura:logout"):
             return add_no_store_headers(self.get_response(request))
 

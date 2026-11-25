@@ -24,6 +24,7 @@ urlpatterns = [
     path("passkeys/<int:key_id>/delete/", views.passkey_delete_view, name="passkey_delete"),
     # User sessions & privacy management
     path("privacy/", views.privacy_notice_view, name="privacy_notice"),
+    path(".well-known/kura-receipts.pem", views.receipts_public_key_view, name="receipts_public_key"),
     path("account/privacy/", views.privacy_dashboard_view, name="privacy_dashboard"),
     path("account/privacy/export/", views.privacy_export_view, name="privacy_export"),
     path("account/privacy/restrict/", views.privacy_restrict_view, name="privacy_restrict"),
