@@ -392,6 +392,8 @@ Save everything under `docs/evidence/2026-12/`. For each tool record: command, t
 | T14 | Backup & restore drill **with data** | `python manage.py seed_demo_data` (or the docker equivalent), then `sudo ./kura.sh restore-drill` | non-zero row counts match (current evidence shows 0 → 0, which proves nothing) |
 | T15 | Signature tamper test | from G05 | tamper detected |
 | T16 | Log pipeline | from G03 | LokiDown alert fires |
+| T17 | Service vulnerability script scan (`nmap vulners`) | `nmap -sV --script vulners <host> -oN docs/evidence/security-tests/<TS>_nmap-vulners.txt` | Only ports 80 and 443 open; server version banners hidden (`server_tokens off`); 0 Critical/High CVEs matched |
+| T18 | Web server and WAF baseline scan (`Nikto`) | `nikto -h https://localhost -ssl -output docs/evidence/security-tests/<TS>_nikto.txt` | TLS 1.3 enforced, security headers present, probe payloads blocked with 403/404/429 by Coraza CRS, Nginx rate limits, or CrowdSec |
 
 Then write `docs/coursework/TEST_RESULTS_SUMMARY.md`: one table, per test: objective, tool, white/black box, result, findings (count by severity), fix applied (gap ID / commit), residual risk, link to raw file. Finish with a "Residual risks" section (at least: python-jose/ecdsa transitive CVEs, HIBP check fails open, Debian base-image OS CVEs without fixes, single-VM availability, Gmail SMTP dependency, self-signed public cert in the prototype, human factors/phishing).
 

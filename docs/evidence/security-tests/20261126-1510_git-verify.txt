@@ -1,0 +1,255 @@
+commit 1667807953011385dff5e285284285b36905ff80
+Author: AnaaaKareem <anaaakareem@gmail.com>
+Date:   Wed Nov 25 18:21:05 2026 +0200
+
+    G04/G03: handle dependency outages with 503 and alert on Loki gaps
+    
+    Add DependencyOutageMiddleware and 503.html so PostgreSQL or Vault outages return HTTP 503 with server.dependency_unavailable logs instead of unhandled 500s, guard malformed POST bodies with HTTP 400, and update docs/SECURITY_TRIVY_FINDINGS.md with the proven ZAP 500 root cause. Configure Alloy to scrape Loki metrics and add LokiDown, SecurityLogsStopped, and WebLogsAbsent alert rules.
+
+ config/settings.py                         |   2 +
+ docker/alloy/config.alloy                  |  10 ++
+ docker/loki/rules/fake/kura-alerts.yml     |   9 ++
+ docker/prometheus/alerts.yml               |  20 +++
+ docs/SECURITY_TRIVY_FINDINGS.md            |  22 ++--
+ docs/evidence/2026-12/G03-loki-crash.txt   |  60 +++++++++
+ docs/evidence/2026-12/G03-ps-healthy.txt   |  25 ++++
+ docs/evidence/2026-12/G04-repro-after.txt  |  18 +++
+ docs/evidence/2026-12/G04-repro-before.txt |  46 +++++++
+ kura/middleware.py                         |  64 ++++++++--
+ kura/templates/503.html                    |  25 ++++
+ kura/tests_security_gaps.py                | 195 +++++++++++++++++++++++++++++
+ kura/views.py                              |  43 ++++++-
+ 13 files changed, 519 insertions(+), 20 deletions(-)
+
+commit bcd8ff074fad4b59cd8f93cb27a23bfb9b028e88
+Author: AnaaaKareem <anaaakareem@gmail.com>
+Date:   Wed Nov 25 18:37:40 2026 +0200
+
+    G01/G02: move Vault AppRole creds to secrets and close Postgres port
+
+ AGENTS.md                                    |  60 ++++
+ docker-compose.yml                           |  12 +-
+ docker/postgres/pg_hba.conf                  |   5 +-
+ docs/Kura_Security_Gap_Plan.md               | 504 +++++++++++++++++++++++++++
+ docs/evidence/2026-12/G01-inspect-after.txt  |  11 +
+ docs/evidence/2026-12/G01-inspect-before.txt |  11 +
+ docs/evidence/2026-12/G01-preflight.txt      |  53 +++
+ docs/evidence/2026-12/G02-nmap-after.txt     |  12 +
+ docs/evidence/2026-12/G02-nmap-before.txt    |  40 +++
+ docs/evidence/2026-12/G02-preflight.txt      |  53 +++
+ docs/evidence/2026-12/G02-ss-tlnp.txt        |  16 +
+ kura.sh                                      | 120 +++++--
+ 12 files changed, 868 insertions(+), 29 deletions(-)
+
+commit d7138109e66a022c29aee17b44fbcb3892f3d38d
+Author: AnaaaKareem <anaaakareem@gmail.com>
+Date:   Wed Nov 25 18:52:08 2026 +0200
+
+    G05: sign submission receipts and grade decisions for non-repudiation
+
+ config/settings.py                                 |   2 +
+ docker/cron/kura.crontab                           |   3 +
+ docker/loki/rules/fake/kura-alerts.yml             |   9 +
+ docker/vault/policies/kura-web.hcl                 |  15 ++
+ docs/coursework/NON_REPUDIATION.md                 |  40 +++
+ docs/evidence/2026-12/G05-openssl-verify.txt       |   5 +
+ docs/evidence/2026-12/G05-tamper-detected.txt      |   5 +
+ docs/evidence/2026-12/G05-verify-ok.txt            |   4 +
+ kura.sh                                            |  27 ++
+ kura/management/commands/finalize_attempts.py      |   4 +-
+ kura/management/commands/verify_signatures.py      | 120 +++++++++
+ kura/middleware.py                                 |   4 +-
+ kura/migrations/0031_receipt_signatures.py         |  59 +++++
+ kura/models.py                                     |   3 +
+ kura/signing.py                                    | 269 ++++++++++++++++++++
+ .../templates/kura/assessments/attempt_detail.html |  22 +-
+ kura/tests_security_fixtures.py                    |   5 +-
+ kura/tests_security_routes.py                      |   9 +-
+ kura/tests_signatures.py                           | 283 +++++++++++++++++++++
+ kura/urls.py                                       |   1 +
+ kura/views.py                                      |  86 ++++++-
+ 21 files changed, 958 insertions(+), 17 deletions(-)
+
+commit d1b06ff59f74082342d639b3ae818de9ee36a2ce
+Author: AnaaaKareem <anaaakareem@gmail.com>
+Date:   Wed Nov 25 19:08:15 2026 +0200
+
+    G13/G14/G11/G17: equalize reset timing, prefix Host cookies, HMAC-chain logs, and add FIM
+    
+    G13: Move password reset user lookup, per-account throttling, and token generation into send_queued_emails so password_reset_request_view executes one OutgoingEmail pending_lookup insert regardless of address existence. Update PasswordResetTests.test_request_always_emails_a_link in kura/tests.py to invoke call_command('send_queued_emails') before checking queued emails.
+    
+    G14: Set __Host-kura_session and __Host-kura_csrftoken when DEBUG is False, add both cookie names to REDACTED_LOG_KEYS, and align Postman cookie parsing.
+    
+    G11: Add LOG_HMAC_KEY support across kura.sh, docker-compose.yml, and settings, initialize fork-safe seq=0 HMAC-SHA256 chains in Gunicorn post_fork and KuraConfig.ready, and add verify_log_chain management command.
+    
+    G17: Add SHA-256 baseline and verify subcommands (fim-baseline, fim-check) in kura.sh, hourly cron check, and HostFileIntegrityChanged Loki alert.
+
+ config/settings.py                                 |  16 ++
+ docker-compose.yml                                 |   3 +
+ docker/cron/kura.crontab                           |   3 +
+ docker/loki/rules/fake/kura-alerts.yml             |   9 ++
+ docs/postman/kura.postman_collection.json          |   2 +-
+ gunicorn.conf.py                                   |  11 ++
+ kura.sh                                            |  83 +++++++++-
+ kura/apps.py                                       |   6 +
+ kura/logging_utils.py                              |  77 +++++++++-
+ kura/management/commands/send_queued_emails.py     |  62 +++++++-
+ kura/management/commands/verify_log_chain.py       | 123 +++++++++++++++
+ .../0032_outgoing_email_pending_lookup.py          |  25 +++
+ kura/models.py                                     |   5 +-
+ kura/tests.py                                      |   3 +-
+ kura/tests_security_gaps.py                        | 167 ++++++++++++++++++++-
+ kura/views.py                                      |  47 ++----
+ 16 files changed, 598 insertions(+), 44 deletions(-)
+
+commit eabcd59e1ed50466abf53ad9888ec0c804372062
+Author: AnaaaKareem <anaaakareem@gmail.com>
+Date:   Wed Nov 25 20:24:39 2026 +0200
+
+    G10: add security testing evidence T1-T16 and results summary
+
+ docs/HANDOFF_Security_Gap_Plan.md                 |  183 ++
+ docs/coursework/ASSETS_AND_CLASSIFICATION.md      |   88 +
+ docs/coursework/IMPLEMENTATION_STATUS.md          |   46 +
+ docs/coursework/LECTURE_TRACEABILITY.md           |   93 +
+ docs/coursework/MITIGATION_PLAN.md                |   53 +
+ docs/coursework/PRESENTATION_OUTLINE.md           |  215 +++
+ docs/coursework/TEST_RESULTS_SUMMARY.md           |   70 +
+ docs/coursework/THREAT_MODEL.md                   |  116 ++
+ docs/coursework/risk_register.csv                 |   29 +
+ docs/coursework/risk_register.md                  |   32 +
+ docs/evidence/2026-12/G03-alert-fired.txt         | 2121 +++++++++++++++++++++
+ docs/evidence/2026-12/G11-log-chain-verify.txt    |   27 +
+ docs/evidence/2026-12/G17-fim-check.txt           |    6 +
+ docs/evidence/2026-12/coverage.txt                |   80 +
+ docs/evidence/2026-12/deploy-check.txt            |    3 +
+ docs/evidence/2026-12/django-tests-2026-12.txt    | 1979 +++++++++++++++++++
+ docs/evidence/2026-12/idor_matrix.csv             |    6 +
+ docs/evidence/2026-12/idor_matrix.txt             |   23 +
+ docs/evidence/2026-12/port-scan.txt               |   45 +
+ docs/evidence/2026-12/restore-drill-with-data.txt |   16 +
+ docs/evidence/2026-12/testssl-openssl.txt         |  106 +
+ docs/evidence/2026-12/testssl.txt                 |  232 +++
+ docs/evidence/2026-12/trivy-fs-all.txt            |   19 +
+ docs/evidence/2026-12/trivy-fs.txt                |   19 +
+ docs/evidence/2026-12/upload-controls.txt         |   31 +
+ docs/evidence/2026-12/zap-baseline.html           | 1653 ++++++++++++++++
+ docs/evidence/2026-12/zap-baseline.txt            |   87 +
+ docs/evidence/2026-12/zap.yaml                    |   33 +
+ 28 files changed, 7411 insertions(+)
+
+commit f8026f53f1ce023017952c30441b8aa8ebfba5ae
+Author: AnaaaKareem <anaaakareem@gmail.com>
+Date:   Wed Nov 25 18:37:40 2026 +0200
+
+    G06/G12: strip runtime packaging tools, pin CI actions, and check passkey Origin
+
+ .dockerignore                                   |    5 +
+ .github/workflows/ci.yml                        |   18 +-
+ .github/workflows/security.yml                  |  190 +-
+ .trivyignore                                    |   12 +
+ Dockerfile                                      |   12 +-
+ docs/SECURITY_TRIVY_FINDINGS.md                 |    9 +
+ docs/evidence/2026-12/pip-audit-after-G06.txt   |    1 +
+ docs/evidence/2026-12/sbom-kura-nginx.cdx.json  | 4384 ++++++++++
+ docs/evidence/2026-12/sbom-kura-web.cdx.json    | 9808 +++++++++++++++++++++++
+ docs/evidence/2026-12/trivy-image-after-G06.txt | 1311 +++
+ kura/tests_security_gaps.py                     |   80 +-
+ kura/tests_security_leads_part1.py              |   15 +-
+ kura/views.py                                   |   59 +-
+ 13 files changed, 15823 insertions(+), 81 deletions(-)
+
+commit 18489f4ef402c5782828da6ac7fbc22af30f9e51
+Author: AnaaaKareem <anaaakareem@gmail.com>
+Date:   Wed Nov 25 18:42:15 2026 +0200
+
+    G07: triage Semgrep and Bandit SAST findings with documented verdicts
+
+ docker/nginx/conf.d/kura.conf                      |   6 +-
+ docs/coursework/SEMGREP_TRIAGE.md                  |  41 +
+ docs/evidence/2026-12/bandit.txt                   | 968 +++++++++++++++++++++
+ docs/evidence/2026-12/semgrep-after.txt            |   0
+ docs/evidence/2026-12/semgrep-before.json          |   1 +
+ docs/evidence/2026-12/semgrep-before.txt           | 358 ++++++++
+ kura/backends.py                                   |   2 +-
+ kura/management/commands/seed_demo_data.py         |   4 +-
+ kura/middleware.py                                 |   3 +-
+ kura/models.py                                     |   3 +-
+ kura/templates/kura/accounts/security_policy.html  |   2 +
+ .../kura/assessments/assessment_create.html        |   1 +
+ kura/templates/kura/attendance/checkin.html        |   1 +
+ kura/templates/kura/courses/admin_course_form.html |   1 +
+ kura/templates/kura/courses/staff_assign.html      |   1 +
+ kura/tests.py                                      |   4 +-
+ kura/tests_security_leads_part1.py                 |   3 +-
+ kura/tests_security_routes.py                      |   4 +-
+ kura/vault_secrets.py                              |   3 +-
+ kura/views.py                                      |  12 +-
+ 20 files changed, 1400 insertions(+), 18 deletions(-)
+
+commit c494a89ec6995f538f8b125be9b1f198d9e96fef
+Author: AnaaaKareem <anaaakareem@gmail.com>
+Date:   Wed Nov 25 18:59:25 2026 +0200
+
+    G08/G09: enforce Unicode text safety and add honeypot deception layer
+
+ config/settings.py                                 |   1 +
+ docker-compose.yml                                 |   1 +
+ .../REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf    |   9 ++
+ docker/crowdsec/parsers/kura-django-logfmt.yaml    |   4 +-
+ docker/crowdsec/scenarios/honeypot-hit.yaml        |  11 ++
+ docker/loki/rules/fake/kura-alerts.yml             |  18 +++
+ docker/nginx/conf.d/kura.conf                      |   1 +
+ kura/forms.py                                      | 100 +++++++++++----
+ kura/management/commands/seed_demo_data.py         |  19 +++
+ kura/middleware.py                                 |   6 +-
+ kura/models.py                                     |   9 ++
+ kura/tests_security_gaps.py                        | 137 +++++++++++++++++++++
+ kura/text_safety.py                                |  95 ++++++++++++++
+ kura/urls.py                                       |   3 +
+ kura/views.py                                      |  71 +++++++++--
+ 15 files changed, 452 insertions(+), 33 deletions(-)
+
+commit ce707900db9269a27aff682c76ebbcd4a6f7c6a0
+Author: AnaaaKareem <anaaakareem@gmail.com>
+Date:   Thu Nov 26 09:10:35 2026 +0200
+
+    G10/G15: add defensive QA evidence and fix coursework citations
+    
+    - Record live T16 LokiDown alert drill, T13 live ClamAV INSTREAM output, G09 honeypot probes, and defensive QA evidence for T4, T5, T6 (idor_matrix.py 11/11), T7, and T8
+    - Fix relative evidence links, exact tool versions, commit hashes, and verified file:line citations across docs/coursework/
+    - Complete 33-model inventory and secret list in ASSETS_AND_CLASSIFICATION.md, correct OWASP Top 10:2025 mappings, sync risk_register.md from CSV, and remove forbidden dashes and banned words
+
+ docs/coursework/ASSETS_AND_CLASSIFICATION.md       |  145 +-
+ docs/coursework/IMPLEMENTATION_STATUS.md           |   58 +-
+ docs/coursework/LECTURE_TRACEABILITY.md            |  160 +-
+ docs/coursework/MITIGATION_PLAN.md                 |   78 +-
+ docs/coursework/PRESENTATION_OUTLINE.md            |  205 +-
+ docs/coursework/TEST_RESULTS_SUMMARY.md            |   95 +-
+ docs/coursework/THREAT_MODEL.md                    |  120 +-
+ docs/coursework/risk_register.csv                  |   58 +-
+ docs/coursework/risk_register.md                   |   65 +-
+ docs/evidence/2026-12/G03-alert-fired.txt          | 2194 +-------------------
+ docs/evidence/2026-12/G09-honeypot-check.txt       |   27 +
+ docs/evidence/2026-12/db-boundary-validation.txt   |   31 +
+ docs/evidence/2026-12/idor_matrix.csv              |   18 +-
+ docs/evidence/2026-12/idor_matrix.py               |  216 ++
+ docs/evidence/2026-12/idor_matrix.txt              |   40 +-
+ .../evidence/2026-12/input-boundary-validation.txt |   67 +
+ docs/evidence/2026-12/rate-limit-verification.txt  |   65 +
+ docs/evidence/2026-12/session-validation.txt       |   42 +
+ docs/evidence/2026-12/upload-controls.txt          |    5 +
+ 19 files changed, 1052 insertions(+), 2637 deletions(-)
+
+commit f957aae634105fc9aaed1cafeb29e1377236b5b8
+Author: AnaaaKareem <anaaakareem@gmail.com>
+Date:   Thu Nov 26 14:34:35 2026 +0200
+
+    G05: allow /.well-known/kura-receipts.pem past Coraza rule 920440
+    
+    Coraza CRS rule 920440 blocks .pem URLs as restricted key material, which returned HTTP 403 when students or examiners downloaded the public receipt verification key linked from submission receipts.
+    
+    Add exclusion rule 10006 matching only /.well-known/kura-receipts.pem to remove rule 920440. Other .pem paths still return HTTP 403.
+
+ .../coraza/rules.d/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf   | 9 +++++++++
+ 1 file changed, 9 insertions(+)

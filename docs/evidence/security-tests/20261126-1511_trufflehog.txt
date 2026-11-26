@@ -1,0 +1,2 @@
+{"level":"info-0","ts":"2026-11-26T13:11:25Z","logger":"trufflehog","msg":"running source","source_name":"trufflehog - git","source_type":"SOURCE_TYPE_GIT","source_id":1,"job_id":1,"source_manager_worker_id":"KyJU1","with_units":true}
+{"level":"info-0","ts":"2026-11-26T13:11:26Z","logger":"trufflehog","msg":"finished scanning","chunks":8286,"bytes":24898666,"verified_secrets":0,"unverified_secrets":0,"scan_duration":"2.478118231s","trufflehog_version":"3.100.1","verification_caching":{"Hits":2,"Misses":2,"HitsWasted":0,"AttemptsSaved":2,"VerificationTimeSpentMS":4}}

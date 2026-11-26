@@ -1,0 +1,76 @@
+# Gitleaks stderr:
+# 
+#     ○
+#     │╲
+#     │ ○
+#     ○ ░
+#     ░    gitleaks
+# 
+# [90m1:22PM[0m [32mINF[0m [1m491 commits scanned.[0m
+# [90m1:22PM[0m [32mINF[0m [1mscanned ~31432416 bytes (31.43 MB) in 11.1s[0m
+# [90m1:22PM[0m [33mWRN[0m [1mleaks found: 3[0m
+[
+  {
+    "RuleID": "google-gmail-app-password",
+    "Description": "Google Account 16-character App Password",
+    "StartLine": 228,
+    "EndLine": 228,
+    "StartColumn": 63,
+    "EndColumn": 83,
+    "Match": "`[REDACTED]`",
+    "Secret": "[REDACTED]",
+    "File": "docs/SECURITY_TRIVY_FINDINGS.md",
+    "SymlinkFile": "",
+    "Commit": "b0dd739d0a32a90c0e3b040ae81545c40142e956",
+    "Link": "https://github.com/AnaaaKareem/kura/blob/b0dd739d0a32a90c0e3b040ae81545c40142e956/docs/SECURITY_TRIVY_FINDINGS.md?plain=1#L228",
+    "Entropy": 3.787144,
+    "Author": "AnaaaKareem",
+    "Email": "anaaakareem@gmail.com",
+    "Date": "2026-11-23T10:44:43Z",
+    "Message": "Verification & remediation run: fix lint, Vault DB creds, rebuild, full evidence capture\n\n- kura/__init__.py: remove unused field_size (ruff F841 fix)\n- docker-compose.yml: VAULT_DATABASE_CREDENTIALS=True (template matches pg_hba.conf)\n- docs/SECURITY_TRIVY_FINDINGS.md: redact secret, add correction callouts, append full verification section\n- docs/evidence/: pip-audit.txt, trivy-fs.txt, trivy-image-post-rebuild.txt, semgrep.txt, ruff.txt, restore-drill.txt, egress-refresh.txt, ports.txt, loki-alerts.txt\n- All 367 tests pass in container; 360/367 [REDACTED] (1 fail + 1 error = Docker secrets not mounted)\n- Restore drill PASS (RTO 28s)\n- Only ports 80/443 exposed externally\n- Loki 26 alert rules configured and mounted\n- Missing .md files confirmed not in repo",
+    "Tags": [],
+    "Fingerprint": "b0dd739d0a32a90c0e3b040ae81545c40142e956:docs/SECURITY_TRIVY_FINDINGS.md:google-gmail-app-password:228"
+  },
+  {
+    "RuleID": "generic-api-key",
+    "Description": "Detected a Generic API Key, potentially exposing access to various services and sensitive operations.",
+    "StartLine": 197,
+    "EndLine": 197,
+    "StartColumn": 8,
+    "EndColumn": 62,
+    "Match": "VAULT_SECRET_ID: \"[REDACTED]\"",
+    "Secret": "[REDACTED]",
+    "File": "docker-compose.yml",
+    "SymlinkFile": "",
+    "Commit": "e8cdfb9c4da8c5ff8372c40d251c1a391b9af4b6",
+    "Link": "https://github.com/AnaaaKareem/kura/blob/e8cdfb9c4da8c5ff8372c40d251c1a391b9af4b6/docker-compose.yml#L197",
+    "Entropy": 3.798145,
+    "Author": "AnaaaKareem",
+    "Email": "anaaakareem@gmail.com",
+    "Date": "2026-11-21T18:46:22Z",
+    "Message": "refactor: switch web runtime to distroless, add kura-migrate service\n\n- Dockerfile: distroless python3-debian13 runtime stage (strips apt, bash,\n  util-linux, ncurses, perl-base, tar); static build stage for collectstatic;\n  runtime copies packages into /python, source code, staticfiles\n- docker-compose.yml: web runs as nonroot:nonroot, no entrypoint/setpriv,\n  gunicorn via /python/bin/gunicorn; new kura-migrate service runs manage.py\n  migrate as kura_migrator before web starts; healthcheck uses /python/bin/python3\n- requirements.lock.txt: regenerated with uv, urllib3==2.8.0 pinned",
+    "Tags": [],
+    "Fingerprint": "e8cdfb9c4da8c5ff8372c40d251c1a391b9af4b6:docker-compose.yml:generic-api-key:197"
+  },
+  {
+    "RuleID": "generic-api-key",
+    "Description": "Detected a Generic API Key, potentially exposing access to various services and sensitive operations.",
+    "StartLine": 197,
+    "EndLine": 197,
+    "StartColumn": 8,
+    "EndColumn": 62,
+    "Match": "VAULT_SECRET_ID: \"[REDACTED]\"",
+    "Secret": "[REDACTED]",
+    "File": "docker-compose.yml",
+    "SymlinkFile": "",
+    "Commit": "c547d752b84a8c2ab1f17b1a0e1d21032c3149c4",
+    "Link": "https://github.com/AnaaaKareem/kura/blob/c547d752b84a8c2ab1f17b1a0e1d21032c3149c4/docker-compose.yml#L197",
+    "Entropy": 3.798145,
+    "Author": "AnaaaKareem",
+    "Email": "anaaakareem@gmail.com",
+    "Date": "2026-11-21T18:46:22Z",
+    "Message": "Switch web runtime to distroless, add kura-migrate service - Dockerfile: distroless python3-debian13 runtime stage (strips apt, bash, util-linux, ncurses, perl-base, tar); static build stage for collectstatic; runtime copies packages into /python, source code, staticfiles - docker-compose.yml: web runs as nonroot:nonroot, no entrypoint/setpriv, gunicorn via /python/bin/gunicorn; new kura-migrate service runs manage.py migrate as kura_migrator before web starts; healthcheck uses /python/bin/python3 - requirements.lock.txt: regenerated with uv, urllib3==2.8.0 pinned",
+    "Tags": [],
+    "Fingerprint": "c547d752b84a8c2ab1f17b1a0e1d21032c3149c4:docker-compose.yml:generic-api-key:197"
+  }
+]
