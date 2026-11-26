@@ -1,0 +1,42 @@
+Vault unavailable for gmail app password: OSError
+time=2026-11-26T08:06:41+0200 level=INFO logger=kura.security event="log.chain.start" boot="2026-11-26T06:06:41+00:00" worker=65535 seq=0 mac="7da2eb7a9567b04b0fe04ace6ae3526f"
+time=2026-11-26T08:06:42+0200 level=WARNING logger=kura.security event="access.denied" ip="127.0.0.1" actor_user_id="9ba96e0e-c6d6-4f5c-9cb5-bcfc9610943b" request_id="314c589171dd0fe7edb49b0e89ff3b28" path="/admin/users/" method="GET" reason="" worker=65535 seq=1 mac="5b45e6359c7b20396d1d211fcee56665"
+time=2026-11-26T08:06:42+0200 level=WARNING logger=django.request Forbidden (Permission denied): /admin/users/
+Traceback (most recent call last):
+  File "/home/anaaa/kura/.venv/lib/python3.14/site-packages/django/core/handlers/exception.py", line 56, in inner
+    response = get_response(request)
+  File "/home/anaaa/kura/.venv/lib/python3.14/site-packages/django/core/handlers/base.py", line 199, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+  File "/home/anaaa/kura/.venv/lib/python3.14/site-packages/django/contrib/auth/decorators.py", line 60, in _view_wrapper
+    return view_func(request, *args, **kwargs)
+  File "/home/anaaa/kura/kura/views.py", line 2993, in admin_users_view
+    raise PermissionDenied
+django.core.exceptions.PermissionDenied
+time=2026-11-26T08:06:42+0200 level=WARNING logger=kura.security event="access.denied" ip="127.0.0.1" actor_user_id="cfb44332-6a0d-4304-b06e-6ac2b3a520f1" request_id="8a39750dc599b6ce9c30c80dd77b2c3e" path="/admin/users/" method="GET" reason="" worker=65535 seq=2 mac="b3e326dcf4200260c1fc99d6e8582789"
+time=2026-11-26T08:06:42+0200 level=WARNING logger=django.request Forbidden (Permission denied): /admin/users/
+Traceback (most recent call last):
+  File "/home/anaaa/kura/.venv/lib/python3.14/site-packages/django/core/handlers/exception.py", line 56, in inner
+    response = get_response(request)
+  File "/home/anaaa/kura/.venv/lib/python3.14/site-packages/django/core/handlers/base.py", line 199, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+  File "/home/anaaa/kura/.venv/lib/python3.14/site-packages/django/contrib/auth/decorators.py", line 60, in _view_wrapper
+    return view_func(request, *args, **kwargs)
+  File "/home/anaaa/kura/kura/views.py", line 2993, in admin_users_view
+    raise PermissionDenied
+django.core.exceptions.PermissionDenied
+time=2026-11-26T08:06:42+0200 level=WARNING logger=kura.security event="session.invalid" ip="127.0.0.1" actor_user_id="9ba96e0e-c6d6-4f5c-9cb5-bcfc9610943b" request_id="e34a4b5e633e9d2bf7f8c9c12cbfddc8" path="/grades/my/" method="GET" reason="revoked" worker=65535 seq=3 mac="30e5bf03dfc235191071e852190215ad"
+=== T4 Defensive Authenticated Session & Route Validation ===
+[PASS] Anonymous -> / (login required redirect): GET / -> HTTP 302
+[PASS] Student -> / (home): GET / -> HTTP 200
+[PASS] Student -> /grades/my/: GET /grades/my/ -> HTTP 200
+[PASS] Student -> /attendance/history/: GET /attendance/history/ -> HTTP 200
+[PASS] Student -> /privacy/: GET /privacy/ -> HTTP 200
+[PASS] Student -> /account/sessions/: GET /account/sessions/ -> HTTP 200
+[PASS] Student -> /admin/users/ (denied): GET /admin/users/ -> HTTP 403
+[PASS] Instructor -> / (home): GET / -> HTTP 200
+[PASS] Instructor -> /courses/<id>/: GET /courses/b8470917-2f61-401d-a043-ff9366936a64/ -> HTTP 200
+[PASS] Instructor -> /courses/<id>/grades/: GET /courses/b8470917-2f61-401d-a043-ff9366936a64/grades/ -> HTTP 200
+[PASS] Instructor -> /account/sessions/: GET /account/sessions/ -> HTTP 200
+[PASS] Instructor -> /admin/users/ (denied): GET /admin/users/ -> HTTP 403
+[PASS] Revoked Student UserSession immediately redirected: GET /grades/my/ -> HTTP 302
+Overall: PASS

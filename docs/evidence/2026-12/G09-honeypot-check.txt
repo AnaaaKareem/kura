@@ -1,0 +1,27 @@
+=== G09 Live Honeypot Decoy Route Check ===
+2026-11-26T07:38:35+02:00
+GET https://localhost/.env -> HTTP 404
+GET https://localhost/wp-login.php -> HTTP 404
+GET https://localhost/.git/config -> HTTP 404
+GET https://localhost/phpmyadmin/ -> HTTP 404
+GET https://localhost/admin/login/ -> HTTP 404
+
+=== Recent security.honeypot.hit log lines from kura-web ===
+kura-web  | time=2026-11-26T07:38:35+0200 level=WARNING logger=kura.security event="security.honeypot.hit" ip="172.28.10.128" actor_user_id="anonymous" request_id="9afe7bb75ebe15d864d55617f40b6dce" path="/.env" method="GET" worker=9 seq=1 mac="638ce87a0f780ab34cf8bc19e87c1198"
+kura-web  | time=2026-11-26T07:38:35+0200 level=WARNING logger=kura.security event="security.honeypot.hit" ip="172.28.10.128" actor_user_id="anonymous" request_id="cae15a4b04930aab64a6d0d73332d26b" path="/wp-login.php" method="GET" worker=10 seq=1 mac="4ecf16b65b687411956e8e19aff7d3e7"
+kura-web  | time=2026-11-26T07:38:35+0200 level=WARNING logger=kura.security event="security.honeypot.hit" ip="172.28.10.128" actor_user_id="anonymous" request_id="5aa418e7a8add5eb8a2e33daef6eb793" path="/.git/config" method="GET" worker=10 seq=2 mac="4d7c5c26065017a239c7cc410b8d7ea2"
+kura-web  | time=2026-11-26T07:38:35+0200 level=WARNING logger=kura.security event="security.honeypot.hit" ip="172.28.10.128" actor_user_id="anonymous" request_id="4ed3740e92b11c12ae54db00d75c0319" path="/phpmyadmin/" method="GET" worker=7 seq=1 mac="e369278e2c744fd45a8a702b7b3d1ba8"
+kura-web  | time=2026-11-26T07:38:35+0200 level=WARNING logger=kura.security event="security.honeypot.hit" ip="172.28.10.128" actor_user_id="anonymous" request_id="b2716b458d1535a3c178718241ec12f2" path="/admin/login/" method="GET" worker=9 seq=2 mac="eba876080b853673c6e9b30369d419fb"
+
+=== CrowdSec loaded scenarios ===
+ Name                                              📦 Status          Version  Local Path                                                      
+ kura/honeypot-hit                                 🏠  enabled,local           /etc/crowdsec/scenarios/kura-honeypot-hit.yaml                  
+ kura/idor-probing                                 🏠  enabled,local           /etc/crowdsec/scenarios/kura-idor-probing.yaml                  
+ kura/login-bruteforce                             🏠  enabled,local           /etc/crowdsec/scenarios/kura-login-bruteforce.yaml              
+ kura/mfa-bruteforce                               🏠  enabled,local           /etc/crowdsec/scenarios/kura-mfa-bruteforce.yaml                
+ kura/reset-abuse                                  🏠  enabled,local           /etc/crowdsec/scenarios/kura-reset-abuse.yaml                   
+ kura/waf-repeat-offender                          🏠  enabled,local           /etc/crowdsec/scenarios/kura-waf-repeat-offender.yaml           
+
+=== CrowdSec active decisions & alerts (note: localhost/private ranges are whitelisted) ===
+No active decisions
+No active alerts

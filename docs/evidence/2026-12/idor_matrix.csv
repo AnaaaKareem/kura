@@ -1,6 +1,12 @@
-Test,URL,Status Code,Result
-Student A -> Student B attempt detail,http://127.0.0.1:18000/attempts/ce72fc7c-f7e5-4223-aa08-8dbfbc097913/,403,PASS
-Student A -> Student B file download,http://127.0.0.1:18000/attempts/ce72fc7c-f7e5-4223-aa08-8dbfbc097913/files/1/download/,404,PASS
-Student -> registrar students,http://127.0.0.1:18000/registrar/students/,403,PASS
-TA -> registrar students,http://127.0.0.1:18000/registrar/students/,403,PASS
-Instructor -> admin users,http://127.0.0.1:18000/admin/users/,403,PASS
+Test,Method,URL,Expected,Status Code,Result
+Positive control: Student A -> own attempt detail,GET,/attempts/bf3d4138-77eb-4fe4-ae2e-0401d7aa2ef0/,200,200,PASS
+Positive control: Instructor -> own course grades,GET,/courses/b8470917-2f61-401d-a043-ff9366936a64/grades/,200,200,PASS
+Student A -> Student B attempt detail,GET,/attempts/0be0d02e-0720-4978-a652-25cedd0731a4/,403/404,403,PASS
+Student A -> Student B attempt file download,GET,/attempts/0be0d02e-0720-4978-a652-25cedd0731a4/files/8b707c32-ec60-4dc3-9b52-b8f6adf4f439/download/,403/404,403,PASS
+Student A -> Student B grade change request,GET,/grades/7b05b225-54de-4a51-a9f8-bda25536af65/change-request/,403/404,403,PASS
+TA -> grade finalize (POST),POST,/grades/08191552-534f-499f-8584-0933ecf8e8e6/finalize/,403/404,403,PASS
+Registrar -> course grades (separation of duties),GET,/courses/b8470917-2f61-401d-a043-ff9366936a64/grades/,403/404,403,PASS
+Admin -> course grades (separation of duties),GET,/courses/b8470917-2f61-401d-a043-ff9366936a64/grades/,403/404,403,PASS
+Student A -> registrar students,GET,/registrar/students/,403/404,403,PASS
+TA -> registrar students,GET,/registrar/students/,403/404,403,PASS
+Instructor -> admin users,GET,/admin/users/,403/404,403,PASS

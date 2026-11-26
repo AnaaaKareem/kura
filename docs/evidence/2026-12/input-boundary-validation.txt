@@ -1,0 +1,67 @@
+=== T7 Defensive Input-Validation & Boundary Handling Checks ===
+2026-11-26T08:06:09+02:00
+Vault unavailable for gmail app password: OSError
+time=2026-11-26T08:06:09+0200 level=INFO logger=kura.security event="log.chain.start" boot="2026-11-26T06:06:09+00:00" worker=64524 seq=0 mac="22b4c0cac3fcfc0dd4f945f6945ac79c"
+time=2026-11-26T08:06:10+0200 level=WARNING logger=kura.security event="input.invalid" ip="198.51.100.10" actor_user_id="anonymous" request_id="48d11f3c8aaca7bc9afb73fa888aa3e5" path="/login/" method="POST" fields="['email']" form="LoginForm" worker=64524 seq=1 mac="878b57ca750fcf9edfaf55ddea24e9a2"
+time=2026-11-26T08:06:10+0200 level=WARNING logger=django.request Bad Request: /login/
+time=2026-11-26T08:06:10+0200 level=WARNING logger=kura.security event="input.invalid" ip="198.51.100.11" actor_user_id="anonymous" request_id="486757d80cc96d6511f1466218e9ae91" path="/password/reset/" method="POST" fields="['email']" form="PasswordResetRequestForm" worker=64524 seq=2 mac="c87fd796b4ffa1c763269bf569382410"
+time=2026-11-26T08:06:10+0200 level=WARNING logger=django.request Bad Request: /password/reset/
+time=2026-11-26T08:06:10+0200 level=WARNING logger=kura.security event="input.invalid" ip="198.51.100.10" actor_user_id="anonymous" request_id="5668a10bc000f0add761d23c253234d6" path="/login/" method="POST" fields="['email']" form="LoginForm" worker=64524 seq=3 mac="9078390dd72919f6dc53946249c2557c"
+time=2026-11-26T08:06:10+0200 level=WARNING logger=django.request Bad Request: /login/
+time=2026-11-26T08:06:10+0200 level=WARNING logger=kura.security event="input.invalid" ip="198.51.100.11" actor_user_id="anonymous" request_id="825b6ba36ca67fe79c6a1f2f550afd3e" path="/password/reset/" method="POST" fields="['email']" form="PasswordResetRequestForm" worker=64524 seq=4 mac="a54a84a74877c8f810685c4112026bda"
+time=2026-11-26T08:06:10+0200 level=WARNING logger=django.request Bad Request: /password/reset/
+time=2026-11-26T08:06:10+0200 level=WARNING logger=axes.handlers.database AXES: New login failure by {username: "********************", ip_address: "********************", user_agent: "<unknown>", path_info: "/login/"}. Created new record in the database.
+time=2026-11-26T08:06:10+0200 level=WARNING logger=kura.security event="auth.login.failed" ip="198.51.100.10" actor_user_id="anonymous" request_id="21c3804bc928e494fed88b0fc4a7583c" path="/login/" method="POST" login_identifier_hash="ca2171a306f42ba1" reason="bad_credentials" worker=64524 seq=5 mac="bdaf1d1f56f59ed714e60b54b97dcbc9"
+time=2026-11-26T08:06:10+0200 level=WARNING logger=django.request Bad Request: /login/
+time=2026-11-26T08:06:10+0200 level=INFO logger=kura.security event="auth.password.reset_requested" ip="198.51.100.11" actor_user_id="anonymous" request_id="154b27b4e17614800a972e12c3edc093" path="/password/reset/" method="POST" queued="True" reason="pending_lookup" worker=64524 seq=6 mac="9e37b8950bfbe8e2746883006dd4d4a8"
+time=2026-11-26T08:06:10+0200 level=WARNING logger=kura.security event="input.invalid" ip="198.51.100.10" actor_user_id="anonymous" request_id="de9ea214da874f6ebaef4be04ef29873" path="/login/" method="POST" fields="['email']" form="LoginForm" worker=64524 seq=7 mac="3922d9efd962ee85d43edf3b3bfc2189"
+time=2026-11-26T08:06:10+0200 level=WARNING logger=django.request Bad Request: /login/
+time=2026-11-26T08:06:10+0200 level=WARNING logger=kura.security event="input.invalid" ip="198.51.100.11" actor_user_id="anonymous" request_id="512d9f8d58e24f05e0cb880f35b4e7a1" path="/password/reset/" method="POST" fields="['email']" form="PasswordResetRequestForm" worker=64524 seq=8 mac="a36b4d2c672e0ff50fc32359f84c42c4"
+time=2026-11-26T08:06:10+0200 level=WARNING logger=django.request Bad Request: /password/reset/
+time=2026-11-26T08:06:10+0200 level=WARNING logger=kura.security event="input.invalid" ip="198.51.100.10" actor_user_id="anonymous" request_id="8042dc3463549cca9175f792170a5e50" path="/login/" method="POST" fields="['email']" form="LoginForm" worker=64524 seq=9 mac="72950115ea89929d967abb5ffd2aca7e"
+time=2026-11-26T08:06:10+0200 level=WARNING logger=django.request Bad Request: /login/
+time=2026-11-26T08:06:10+0200 level=WARNING logger=kura.security event="input.invalid" ip="198.51.100.11" actor_user_id="anonymous" request_id="b7ccd23c8e556c69185a4bfd04d664a1" path="/password/reset/" method="POST" fields="['email']" form="PasswordResetRequestForm" worker=64524 seq=10 mac="937fcdd295932505eb2afb46c9c0c46b"
+time=2026-11-26T08:06:10+0200 level=WARNING logger=django.request Bad Request: /password/reset/
+time=2026-11-26T08:06:10+0200 level=WARNING logger=kura.security event="input.invalid" ip="198.51.100.10" actor_user_id="anonymous" request_id="4b2498a3d09d6cb20cec9b676ece2a5b" path="/login/" method="POST" fields="['email']" form="LoginForm" worker=64524 seq=11 mac="cdc9f26ce68efee1dbba0856dfe79eb0"
+time=2026-11-26T08:06:10+0200 level=WARNING logger=django.request Bad Request: /login/
+time=2026-11-26T08:06:10+0200 level=WARNING logger=kura.security event="input.invalid" ip="198.51.100.11" actor_user_id="anonymous" request_id="33465529734a8c018fbed2ae0bf22663" path="/password/reset/" method="POST" fields="['email']" form="PasswordResetRequestForm" worker=64524 seq=12 mac="2b2a143ffadde259ef405f3e91bebe8f"
+time=2026-11-26T08:06:10+0200 level=WARNING logger=django.request Bad Request: /password/reset/
+time=2026-11-26T08:06:10+0200 level=WARNING logger=kura.security event="input.invalid" ip="198.51.100.10" actor_user_id="anonymous" request_id="d8de9ff43e0b8830c670e235694d3b7a" path="/login/" method="POST" fields="['email']" form="LoginForm" worker=64524 seq=13 mac="74048821b07f0cf65bce885e02269b59"
+time=2026-11-26T08:06:10+0200 level=WARNING logger=django.request Bad Request: /login/
+time=2026-11-26T08:06:10+0200 level=WARNING logger=kura.security event="input.invalid" ip="198.51.100.11" actor_user_id="anonymous" request_id="19503038cd5aa86f8a914ec0738f4519" path="/password/reset/" method="POST" fields="['email']" form="PasswordResetRequestForm" worker=64524 seq=14 mac="0d510cd283e8924ffd6022b84e1f3a6f"
+time=2026-11-26T08:06:10+0200 level=WARNING logger=django.request Bad Request: /password/reset/
+time=2026-11-26T08:06:10+0200 level=INFO logger=kura.security event="input.mixed_script" field="q" form="StudentFilterForm" worker=64524 seq=15 mac="4d23a462105d56056e20b57d9ebf9ab3"
+time=2026-11-26T08:06:10+0200 level=WARNING logger=kura.security event="input.invalid" ip="198.51.100.10" actor_user_id="anonymous" request_id="7db438f69f7c95d5f3d47e6f46f95bed" path="/login/" method="POST" fields="['email']" form="LoginForm" worker=64524 seq=16 mac="344ccaadc9ce7cb27e4a5e0f23a7e5ce"
+time=2026-11-26T08:06:10+0200 level=WARNING logger=django.request Bad Request: /login/
+time=2026-11-26T08:06:10+0200 level=WARNING logger=kura.security event="input.invalid" ip="198.51.100.11" actor_user_id="anonymous" request_id="e26a88f01cb7878c885cfa6e6a36d23e" path="/password/reset/" method="POST" fields="['email']" form="PasswordResetRequestForm" worker=64524 seq=17 mac="9907857291161d3d6d54cf77ddd7d366"
+time=2026-11-26T08:06:10+0200 level=WARNING logger=django.request Bad Request: /password/reset/
+time=2026-11-26T08:06:10+0200 level=WARNING logger=kura.security event="input.invalid" ip="127.0.0.1" actor_user_id="anonymous" request_id="4d4bdb1885a9ed2f9e6ba57af994a7a1" path="/login/" method="POST" fields="['email']" form="LoginForm" worker=64524 seq=18 mac="d7dfabae371bbc3c6f8d7fe33ea2a822"
+time=2026-11-26T08:06:10+0200 level=WARNING logger=django.request Bad Request: /login/
+  POST /login/                 [empty             ] -> HTTP 400
+  POST /password/reset/        [empty             ] -> HTTP 400
+  GET /registrar/students/?q=  [empty             ] -> HTTP 200
+  POST /login/                 [oversized_10k     ] -> HTTP 400
+  POST /password/reset/        [oversized_10k     ] -> HTTP 400
+  GET /registrar/students/?q=  [oversized_10k     ] -> HTTP 200
+  POST /login/                 [fullwidth_nfkc    ] -> HTTP 400
+  POST /password/reset/        [fullwidth_nfkc    ] -> HTTP 302
+  GET /registrar/students/?q=  [fullwidth_nfkc    ] -> HTTP 200
+  POST /login/                 [bidi_override     ] -> HTTP 400
+  POST /password/reset/        [bidi_override     ] -> HTTP 400
+  GET /registrar/students/?q=  [bidi_override     ] -> HTTP 200
+  POST /login/                 [zero_width        ] -> HTTP 400
+  POST /password/reset/        [zero_width        ] -> HTTP 400
+  GET /registrar/students/?q=  [zero_width        ] -> HTTP 200
+  POST /login/                 [nul_byte          ] -> HTTP 400
+  POST /password/reset/        [nul_byte          ] -> HTTP 400
+  GET /registrar/students/?q=  [nul_byte          ] -> HTTP 200
+  POST /login/                 [cyrillic_homoglyph] -> HTTP 400
+  POST /password/reset/        [cyrillic_homoglyph] -> HTTP 400
+  GET /registrar/students/?q=  [cyrillic_homoglyph] -> HTTP 200
+  POST /login/                 [html_markup       ] -> HTTP 400
+  POST /password/reset/        [html_markup       ] -> HTTP 400
+  GET /registrar/students/?q=  [html_markup       ] -> HTTP 200
+  POST /login/                 [malformed_utf8    ] -> HTTP 400
+Status distribution: {400: 16, 200: 8, 302: 1}
+HTTP 5xx count: 0
+Overall: PASS (0 HTTP 5xx responses across all boundary inputs)

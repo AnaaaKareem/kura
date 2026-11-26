@@ -1,0 +1,65 @@
+=== T8 Defensive Login Rate-Limit & Lockout Verification ===
+2026-11-26T08:06:12+02:00
+
+--- 1. Application Layer: django-axes lockout verification via Django Client ---
+Vault unavailable for gmail app password: OSError
+time=2026-11-26T08:06:12+0200 level=INFO logger=kura.security event="log.chain.start" boot="2026-11-26T06:06:12+00:00" worker=64599 seq=0 mac="11f4443d0b9ef6f6ba10a89d8f5a77af"
+time=2026-11-26T08:06:13+0200 level=WARNING logger=axes.handlers.database AXES: New login failure by {username: "********************", ip_address: "********************", user_agent: "<unknown>", path_info: "/login/"}. Created new record in the database.
+time=2026-11-26T08:06:13+0200 level=WARNING logger=kura.security event="auth.login.failed" ip="203.0.113.55" actor_user_id="anonymous" request_id="ec1a5ec478bd9bc53b35b28e51f28573" path="/login/" method="POST" login_identifier_hash="6290a9b9035788cf" reason="bad_credentials" worker=64599 seq=1 mac="892d9ae286486e6698f11d339be6055e"
+time=2026-11-26T08:06:13+0200 level=WARNING logger=django.request Bad Request: /login/
+time=2026-11-26T08:06:13+0200 level=WARNING logger=axes.handlers.database AXES: Repeated login failure by {username: "********************", ip_address: "********************", user_agent: "<unknown>", path_info: "/login/"}. Updated existing record in the database.
+time=2026-11-26T08:06:13+0200 level=WARNING logger=kura.security event="auth.login.failed" ip="203.0.113.55" actor_user_id="anonymous" request_id="8ab4c0dd4d10983687e72b038460a579" path="/login/" method="POST" login_identifier_hash="6290a9b9035788cf" reason="bad_credentials" worker=64599 seq=2 mac="dee97f138fce29fe372469dbc3e0c43d"
+time=2026-11-26T08:06:13+0200 level=WARNING logger=django.request Bad Request: /login/
+time=2026-11-26T08:06:13+0200 level=WARNING logger=axes.handlers.database AXES: Repeated login failure by {username: "********************", ip_address: "********************", user_agent: "<unknown>", path_info: "/login/"}. Updated existing record in the database.
+time=2026-11-26T08:06:13+0200 level=WARNING logger=kura.security event="auth.login.failed" ip="203.0.113.55" actor_user_id="anonymous" request_id="dfbcd27f07934423a3e47dbb745d7060" path="/login/" method="POST" login_identifier_hash="6290a9b9035788cf" reason="bad_credentials" worker=64599 seq=3 mac="f8e6ef5ef2b6f83248112af7ad1e5868"
+time=2026-11-26T08:06:13+0200 level=WARNING logger=django.request Bad Request: /login/
+time=2026-11-26T08:06:13+0200 level=WARNING logger=axes.handlers.database AXES: Repeated login failure by {username: "********************", ip_address: "********************", user_agent: "<unknown>", path_info: "/login/"}. Updated existing record in the database.
+time=2026-11-26T08:06:13+0200 level=WARNING logger=kura.security event="auth.login.failed" ip="203.0.113.55" actor_user_id="anonymous" request_id="197420f30a7aae1b90484afc60b1cac9" path="/login/" method="POST" login_identifier_hash="6290a9b9035788cf" reason="bad_credentials" worker=64599 seq=4 mac="c30102cd6e6eb927131399ab1a89809b"
+time=2026-11-26T08:06:13+0200 level=WARNING logger=django.request Bad Request: /login/
+time=2026-11-26T08:06:13+0200 level=WARNING logger=axes.handlers.database AXES: Repeated login failure by {username: "********************", ip_address: "********************", user_agent: "<unknown>", path_info: "/login/"}. Updated existing record in the database.
+time=2026-11-26T08:06:13+0200 level=WARNING logger=axes.handlers.database AXES: Locking out {username: "********************", ip_address: "********************", user_agent: "<unknown>", path_info: "/login/"} after repeated login failures.
+time=2026-11-26T08:06:13+0200 level=WARNING logger=kura.security event="auth.login.failed" ip="203.0.113.55" actor_user_id="anonymous" request_id="a6f4f6659649813a2948efe55246664a" path="/login/" method="POST" login_identifier_hash="6290a9b9035788cf" reason="axes_lockout" worker=64599 seq=5 mac="9ae23d4e5c7dd53b7796c132584dba64"
+time=2026-11-26T08:06:13+0200 level=WARNING logger=kura.security event="access.denied" ip="203.0.113.55" actor_user_id="anonymous" request_id="a6f4f6659649813a2948efe55246664a" path="/login/" method="POST" reason="axes_lockout" worker=64599 seq=6 mac="fc4f30b43a6acb24c1d13efc0e18f1ba"
+time=2026-11-26T08:06:13+0200 level=WARNING logger=django.request Too Many Requests: /login/
+time=2026-11-26T08:06:13+0200 level=WARNING logger=axes.handlers.database AXES: Repeated login failure by {username: "********************", ip_address: "********************", user_agent: "<unknown>", path_info: "/login/"}. Updated existing record in the database.
+time=2026-11-26T08:06:13+0200 level=WARNING logger=axes.handlers.database AXES: Locking out {username: "********************", ip_address: "********************", user_agent: "<unknown>", path_info: "/login/"} after repeated login failures.
+time=2026-11-26T08:06:13+0200 level=WARNING logger=kura.security event="auth.login.failed" ip="203.0.113.55" actor_user_id="anonymous" request_id="332e3187b0fa0eba5aa6a9c9365d00aa" path="/login/" method="POST" login_identifier_hash="6290a9b9035788cf" reason="axes_lockout" worker=64599 seq=7 mac="4d47e2f30f326fb52f94c91e939f300c"
+time=2026-11-26T08:06:13+0200 level=WARNING logger=kura.security event="access.denied" ip="203.0.113.55" actor_user_id="anonymous" request_id="332e3187b0fa0eba5aa6a9c9365d00aa" path="/login/" method="POST" reason="axes_lockout" worker=64599 seq=8 mac="43ca90c027be88ebbb64aebccf7265c5"
+time=2026-11-26T08:06:13+0200 level=WARNING logger=django.request Too Many Requests: /login/
+time=2026-11-26T08:06:13+0200 level=WARNING logger=axes.handlers.database AXES: Repeated login failure by {username: "********************", ip_address: "********************", user_agent: "<unknown>", path_info: "/login/"}. Updated existing record in the database.
+time=2026-11-26T08:06:13+0200 level=WARNING logger=axes.handlers.database AXES: Locking out {username: "********************", ip_address: "********************", user_agent: "<unknown>", path_info: "/login/"} after repeated login failures.
+time=2026-11-26T08:06:13+0200 level=WARNING logger=kura.security event="auth.login.failed" ip="203.0.113.55" actor_user_id="anonymous" request_id="b15c6ba670712d4afa2c0d326115acf1" path="/login/" method="POST" login_identifier_hash="6290a9b9035788cf" reason="axes_lockout" worker=64599 seq=9 mac="663568472ef9601a61ddd4f25dce81cd"
+time=2026-11-26T08:06:13+0200 level=WARNING logger=kura.security event="access.denied" ip="203.0.113.55" actor_user_id="anonymous" request_id="b15c6ba670712d4afa2c0d326115acf1" path="/login/" method="POST" reason="axes_lockout" worker=64599 seq=10 mac="085af4107976f066bd32714b9f5e7a2f"
+time=2026-11-26T08:06:13+0200 level=WARNING logger=django.request Too Many Requests: /login/
+Configured SecurityPolicy.axes_failure_limit = 5
+  Attempt 1: HTTP 400
+  Attempt 2: HTTP 400
+  Attempt 3: HTTP 400
+  Attempt 4: HTTP 400
+  Attempt 5: HTTP 429
+  Attempt 6: HTTP 429
+  Attempt 7: HTTP 429
+PASS: django-axes returned HTTP 429 Too Many Requests upon reaching lockout threshold.
+
+--- 2. Reverse-Proxy Layer: Nginx limit_req_zone configuration ---
+43:    limit_req_zone $binary_remote_addr zone=general_limit:10m rate=10r/s;
+44:    limit_req_zone $binary_remote_addr zone=login_limit:10m rate=10r/m;
+109:        limit_req zone=login_limit burst=10 nodelay;
+128:        limit_req zone=general_limit burst=10 nodelay;
+
+--- 3. IPS Layer: CrowdSec brute-force scenarios & metrics ---
+ Name                                              📦 Status          Version  Local Path                                                      
+ kura/login-bruteforce                             🏠  enabled,local           /etc/crowdsec/scenarios/kura-login-bruteforce.yaml              
+ kura/mfa-bruteforce                               🏠  enabled,local           /etc/crowdsec/scenarios/kura-mfa-bruteforce.yaml                
+ kura/reset-abuse                                  🏠  enabled,local           /etc/crowdsec/scenarios/kura-reset-abuse.yaml                   
+ kura/waf-repeat-offender                          🏠  enabled,local           /etc/crowdsec/scenarios/kura-waf-repeat-offender.yaml           
++-----------------------------------------------------------------------------------------------------------------------+
+| Acquisition Metrics                                                                                                   |
++-----------------------------+------------+--------------+----------------+------------------------+-------------------+
+| Source                      | Lines read | Lines parsed | Lines unparsed | Lines poured to bucket | Lines whitelisted |
++-----------------------------+------------+--------------+----------------+------------------------+-------------------+
+| docker:kura-nginx           | 311        | 311          | -              | -                      | 622               |
+| docker:kura-waf             | 311        | -            | 311            | -                      | -                 |
+| docker:kura-web             | 10         | 5            | 5              | -                      | 10                |
+| file:/var/log/host/auth.log | 2          | -            | 2              | -                      | -                 |
++-----------------------------+------------+--------------+----------------+------------------------+-------------------+

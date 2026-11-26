@@ -1,70 +1,71 @@
 # Test Results Summary
 
-This document summarizes all security testing evidence (T1-T16) for the Kura Secure Learning Management System.
+This document summarizes the security testing evidence (T1 to T16, plus G09 deception checks) for the Kura Secure Learning Management System.
 
 ## Test Overview
 
 | # | Test | Objective | Tool & Version | White/Black Box | Result | Findings | Fix Applied | Residual Risk | Evidence |
 |---|------|-----------|----------------|-----------------|--------|----------|-------------|---------------|----------|
-| T1 | Unit + security test suite with coverage | Verify all tests pass, measure coverage | pytest 8.3.4, coverage 7.6.1 | White box | PASS | 388 tests OK, skipped=8 | N/A | None | [django-tests-2026-12.txt](evidence/2026-12/django-tests-2026-12.txt), [coverage.txt](evidence/2026-12/coverage.txt) |
-| T2 | Django deploy check | Verify production readiness | Django 6.1.2 | White box | PASS | 0 issues | N/A | None | [deploy-check.txt](evidence/2026-12/deploy-check.txt) |
-| T3 | ZAP baseline (passive) | Passive vulnerability scan | ZAP 2.16.0 | Black box | PASS | 0 High, 0 Medium, 5 Warnings | G04 (500 errors fixed) | Cache-control on /privacy/, suspicious comments in theme.js, non-storable content | [zap-baseline.html](evidence/2026-12/zap-baseline.html), [zap-baseline.txt](evidence/2026-12/zap-baseline.txt) |
-| T4 | ZAP authenticated full scan | Active scan with student/instructor sessions | ZAP 2.16.0 | Black box | PARTIAL | Not completed - runserver RLS context issue with grade_finalize view | N/A | Authenticated scan incomplete | N/A |
-| T5 | SQL injection probing | Test SQLi on search endpoints | sqlmap 1.8.11 | Black box | PASS | Not injectable on /registrar/students/, /admin/users/, /attendance/history/; WAF blocks logged | G04 (input validation) | None | [sqli-probing.txt](evidence/2026-12/sqli-probing.txt) |
-| T6 | IDOR / access-control matrix | Test cross-user access to protected resources | Custom Python script (requests 2.32.3) | Black box | PASS | All forbidden cells return 403/404 | G08, G09 (Unicode, honeypots) | None | [idor_matrix.csv](evidence/2026-12/idor_matrix.csv), [idor_matrix.txt](evidence/2026-12/idor_matrix.txt) |
-| T7 | Form fuzzing | Fuzz login, reset, course create, search | Custom Python script | Black box | PASS | Zero HTTP 500 on local server; WAF blocks logged | G04, G08 | None | [form-fuzzing.txt](evidence/2026-12/form-fuzzing.txt) |
-| T8 | Brute-force control check | Test axes, nginx limit_req, CrowdSec | Custom Python script, hydra 9.5 | Black box | PASS | All three layers visible: axes 429, nginx 429/503, CrowdSec ban | G02, G09 | None | [bruteforce-check.txt](evidence/2026-12/bruteforce-check.txt) |
-| T9 | TLS configuration | Verify TLS 1.3 only, no weak ciphers | testssl.sh 3.2 | Black box | PASS | TLS 1.3 only, HSTS present, grade T (self-signed cert) | G06 (supply chain) | Self-signed cert in prototype | [testssl.txt](evidence/2026-12/testssl.txt), [testssl-openssl.txt](evidence/2026-12/testssl-openssl.txt) |
-| T10 | External port scan | Verify only 80, 443 public | nmap 7.95 | Black box | PASS | Only 80, 443 public; 3000, 8085 loopback; 5432, 8200, 3100, 9090, 8000, 3310 closed | G02 | Scan from same host, not external | [port-scan.txt](evidence/2026-12/port-scan.txt) |
-| T11 | Container/dependency scans | Trivy fs+image, pip-audit, SBOM | Trivy 0.61.1, pip-audit 2.8.0 | White box | PASS | Only accepted python-jose/ecdsa CVEs; requirements.txt 0 vulns | G06 | Transitive CVEs in python-jose, ecdsa | [trivy-fs.txt](evidence/2026-12/trivy-fs.txt), [trivy-fs-all.txt](evidence/2026-12/trivy-fs-all.txt), [trivy-image-after-G06.txt](evidence/2026-12/trivy-image-after-G06.txt), [pip-audit-after-G06.txt](evidence/2026-12/pip-audit-after-G06.txt), [sbom-kura-web.cdx.json](evidence/2026-12/sbom-kura-web.cdx.json) |
-| T12 | SAST | Semgrep + Bandit | Semgrep 1.118.0, Bandit 1.8.3 | White box | PASS | 0 un-triaged findings after annotation | G07 | None | [semgrep-after.txt](evidence/2026-12/semgrep-after.txt), [bandit.txt](evidence/2026-12/bandit.txt) |
-| T13 | Upload controls | EICAR, PDF renamed .html, 26 MiB, zip bomb | Custom Python script, ClamAV 1.5.4 | Black box | PASS | All rejected/quarantined correctly; QuarantinedFile row created for EICAR | G08 (Unicode), G05 (signatures) | None | [upload-controls.txt](evidence/2026-12/upload-controls.txt) |
-| T14 | Backup & restore drill with data | pgBackRest restore, row count compare | pgBackRest 2.59.3 | White box | PASS | 8 users, 1 course, 2 enrollments, 1 assessment, 2 grades match | G03, G11 | Drill uses disposable volume, not full DR test | [restore-drill-with-data.txt](evidence/2026-12/restore-drill-with-data.txt) |
-| T15 | Signature tamper test | Verify Vault Transit ECDSA detects tamper | Custom Python script, OpenSSL 3.4 | White box | PASS | Tampered submission_hash detected, verify_signatures exits 1, Loki alert fires | G05 | None | [G05-tamper-detected.txt](evidence/2026-12/G05-tamper-detected.txt) |
-| T16 | Log pipeline | Verify LokiDown alert fires on Loki stop | Prometheus 3.15.1, Alertmanager 0.34.2 | Black box | PASS | LokiDown fires after 2m, resolves on restart; SecurityLogsStopped alert configured | G03 | Alert drill window may need tuning | [G03-alert-fired.txt](evidence/2026-12/G03-alert-fired.txt) |
+| T1 | Unit and security test suite with coverage | Verify all automated security tests pass and measure coverage | Django 6.1.2 (`manage.py test`), Python 3.14, coverage.py | White box | PASS | 388 tests OK, skipped=8; 88% total coverage across 10,998 statements | N/A | None | [django-tests-2026-12.txt](../evidence/2026-12/django-tests-2026-12.txt), [coverage.txt](../evidence/2026-12/coverage.txt) |
+| T2 | Django deploy check | Verify production security settings | Django 6.1.2 (`manage.py check --deploy`) | White box | PASS | 0 issues | N/A | None | [deploy-check.txt](../evidence/2026-12/deploy-check.txt) |
+| T3 | ZAP baseline (passive) | Passive web vulnerability scan against live HTTPS endpoint | ZAP (`ghcr.io/zaproxy/zaproxy:stable`) | Black box | PASS | 0 High, 0 Medium, 5 Warnings; rule 90022 (Application Error Disclosure) cleared after G04 | G04 (`1667807`) | Cache-control on `/privacy/`, comments in `theme.js`, non-storable content; live Vault sealed during run so DB-backed POST paths returned 503 | [zap-baseline.html](../evidence/2026-12/zap-baseline.html), [zap-baseline.txt](../evidence/2026-12/zap-baseline.txt) |
+| T4 | Authenticated session and route validation | Verify authenticated Student and Instructor sessions, role gates, and immediate session revocation | Django 6.1.2 Test Client (Python 3.14) | White/Grey box | PARTIAL (defensive QA PASS; active ZAP scan manual) | 13/13 defensive session checks pass across Anonymous, Student, Instructor, and revoked `UserSession` paths; active authenticated `zap-full-scan.py` was not executed in this workspace | G04 (`1667807`), G14 (`d1b06ff`) | Active authenticated DAST scan (`zap-full-scan.py`) remains a manual operator check | [session-validation.txt](../evidence/2026-12/session-validation.txt) |
+| T5 | Database boundary and ORM parameterization validation | Confirm parameterized ORM usage, zero unsafe raw SQL, safe query handling on search endpoints, and live Coraza WAF health | Django 6.1.2 Test Client, static ORM audit, Coraza CRS WAF | White/Grey box | PASS (defensive QA; active sqlmap manual) | 0 `.raw()`, `.extra()`, `RawSQL`, or interpolated SQL in `kura/` (only 6 RLS `set_config`/`RESET` calls); search endpoints handle special characters with HTTP 200; live `kura-waf` healthy | G04 (`1667807`) | External active `sqlmap` run was not executed in this workspace and remains a manual operator check | [db-boundary-validation.txt](../evidence/2026-12/db-boundary-validation.txt) |
+| T6 | IDOR and access-control matrix | Verify horizontal IDOR protection, RBAC, and separation of duties across roles | Django 6.1.2 Test Client (`idor_matrix.py`) | Grey box | PASS | 11/11 checks pass: 2 positive controls return HTTP 200; all 9 forbidden cross-student, TA-finalize, Registrar/Admin grade access, and privilege-escalation cells return HTTP 403 with HMAC-chained `access.denied` logs | G08 (`c494a89`), G11 (`d1b06ff`) | None | [idor_matrix.py](../evidence/2026-12/idor_matrix.py), [idor_matrix.csv](../evidence/2026-12/idor_matrix.csv), [idor_matrix.txt](../evidence/2026-12/idor_matrix.txt) |
+| T7 | Automated input boundary validation | Test empty, oversized (10 KB), NFKC full-width, bidi (`U+202E`), zero-width (`U+200B`), NUL, Cyrillic homoglyph, HTML, and malformed UTF-8 inputs on login, reset, and search forms | Django 6.1.2 Test Client (Python 3.14) | Grey box | PASS | 25/25 boundary inputs handled cleanly (`400`: 16, `200`: 8, `302`: 1), 0 HTTP 5xx, homoglyph input logged as `input.mixed_script` | G04 (`1667807`), G08 (`c494a89`) | External fuzzing via `ffuf` or SecLists against live WAF remains a manual operator check | [input-boundary-validation.txt](../evidence/2026-12/input-boundary-validation.txt) |
+| T8 | Login rate-limit and lockout verification | Verify `django-axes` lockout, Nginx `limit_req`, and CrowdSec brute-force scenarios | Django 6.1.2 Test Client, Nginx, CrowdSec 1.8.2 | Grey box | PASS (defensive QA; active hydra manual) | `axes_failure_limit=5` returns HTTP 400 on attempts 1 to 4 and HTTP 429 (`axes_lockout`) on attempts 5 to 7; Nginx `limit_req_zone`/`limit_req` verified; 4 CrowdSec brute-force/WAF scenarios enabled and acquiring logs | G02 (`bcd8ff0`), G09 (`c494a89`) | Active credential-stuffing runs (`hydra`) were not executed in this workspace; loopback traffic is whitelisted in CrowdSec | [rate-limit-verification.txt](../evidence/2026-12/rate-limit-verification.txt) |
+| T9 | TLS configuration | Verify TLS 1.3 only, HSTS, and cipher hygiene on port 443 | testssl.sh 3.2.5, OpenSSL 3.5.5 | Black box | PASS | TLS 1.3 only, HSTS present, grade T due to self-signed prototype certificate | G06 (`f8026f5`) | Self-signed public TLS certificate in prototype | [testssl.txt](../evidence/2026-12/testssl.txt), [testssl-openssl.txt](../evidence/2026-12/testssl-openssl.txt) |
+| T10 | Host port exposure check | Verify only ports 80 and 443 bind publicly and internal ports stay closed | `ss`, `docker compose ps`, Python 3.14 TCP connect scan | Black box (local host) | PASS | Only 80 and 443 bound publicly; 3000 and 8085 loopback only; 5432, 8200, 3100, 9090, 8000, and 3310 closed; `kura-admin` TCP login rejected by `pg_hba.conf` | G02 (`bcd8ff0`) | Local host scan only; external `nmap` from a second host remains a manual operator check | [port-scan.txt](../evidence/2026-12/port-scan.txt), [G02-nmap-after.txt](../evidence/2026-12/G02-nmap-after.txt), [G02-ss-tlnp.txt](../evidence/2026-12/G02-ss-tlnp.txt) |
+| T11 | Container and dependency scans | Inspect filesystem, container images, Python lockfile, and CycloneDX SBOMs | Trivy 0.76.2, pip-audit 2.10.1 | White box | PASS | Runtime `pip`/`setuptools`/`wheel` removed; `pip-audit` reports 0 unignored vulnerabilities (3 accepted `python-jose`/`ecdsa` advisories documented in `.trivyignore`); CycloneDX SBOMs generated for web and nginx | G06 (`f8026f5`) | Transitive CVEs in `python-jose` and `ecdsa` plus unfixed Debian OS packages | [trivy-fs.txt](../evidence/2026-12/trivy-fs.txt), [trivy-fs-all.txt](../evidence/2026-12/trivy-fs-all.txt), [trivy-image-after-G06.txt](../evidence/2026-12/trivy-image-after-G06.txt), [pip-audit-after-G06.txt](../evidence/2026-12/pip-audit-after-G06.txt), [sbom-kura-web.cdx.json](../evidence/2026-12/sbom-kura-web.cdx.json), [sbom-kura-nginx.cdx.json](../evidence/2026-12/sbom-kura-nginx.cdx.json) |
+| T12 | Static analysis (SAST) | Run Semgrep and Bandit and triage all findings | Semgrep 1.186.0, Bandit 1.9.4 | White box | PASS | 0 un-triaged Semgrep findings after code fixes and documented annotations; Bandit findings triaged | G07 (`18489f4`) | None | [semgrep-after.txt](../evidence/2026-12/semgrep-after.txt), [bandit.txt](../evidence/2026-12/bandit.txt), [SEMGREP_TRIAGE.md](SEMGREP_TRIAGE.md) |
+| T13 | Upload security controls | Verify live ClamAV scanning, MIME/extension checks, 25 MiB cap, quarantine table, and zip rejection | ClamAV 1.5.4 (`INSTREAM`), Django 6.1.2 upload pipeline | Black/Grey box | PASS | Live `kura-clamav:3310` returns `Eicar-Test-Signature FOUND` and `OK` for clean PDF; Django pipeline rejects `.html` PDF mismatch, 26 MiB file, and 1 MiB zero-zip, and records EICAR in `QuarantinedFile` | G05 (`d713810`), G08 (`c494a89`) | None | [upload-controls.txt](../evidence/2026-12/upload-controls.txt) |
+| T14 | Backup and restore drill with data | Restore pgBackRest backup into disposable PostgreSQL instance and compare row counts | pgBackRest 2.59.3 | White box | PASS | Restored in 21 s with exact match: users 8 -> 8, courses 1 -> 1, enrollments 2 -> 2, assessments 1 -> 1, grades 0 -> 0, outgoing_emails 0 -> 0 | G03 (`1667807`), G11 (`d1b06ff`) | Drill ran against seeded demo data in a disposable volume; full production DR test not performed | [restore-drill-with-data.txt](../evidence/2026-12/restore-drill-with-data.txt) |
+| T15 | Signature tamper detection | Verify Vault Transit ECDSA-P256 detects altered `submission_hash` and supports offline OpenSSL verification | Vault Transit, OpenSSL 3.5.5, `verify_signatures` | White box | PASS | Valid signatures verify online and via OpenSSL `dgst -sha256 -verify`; tampered `submission_hash` detected and `verify_signatures` exits 1 | G05 (`d713810`) | None | [G05-verify-ok.txt](../evidence/2026-12/G05-verify-ok.txt), [G05-tamper-detected.txt](../evidence/2026-12/G05-tamper-detected.txt), [G05-openssl-verify.txt](../evidence/2026-12/G05-openssl-verify.txt) |
+| T16 | Log pipeline, alerting, and deception verification | Verify `LokiDown` alert fires and resolves on `kura-loki` outage, HMAC log chain integrity, and honeypot detection | Prometheus 3.15.1, Alertmanager 0.34.2, Loki 3.7.9, CrowdSec 1.8.2, `verify_log_chain` | Black/White box | PASS | Stopping `kura-loki` drove `LokiDown` from `pending` to `firing` in Prometheus and active in Alertmanager, then resolved after restart; `verify_log_chain` detects edits/gaps; all 5 live honeypot probes return 404 and emit HMAC-chained `security.honeypot.hit` events | G03 (`1667807`), G09 (`c494a89`), G11 (`d1b06ff`) | Alert evaluation window may need tuning in production; loopback IPs are whitelisted in CrowdSec | [G03-alert-fired.txt](../evidence/2026-12/G03-alert-fired.txt), [G11-log-chain-verify.txt](../evidence/2026-12/G11-log-chain-verify.txt), [G09-honeypot-check.txt](../evidence/2026-12/G09-honeypot-check.txt) |
 
 ## Coverage Summary
 
 - **Total statements**: 10,998
 - **Total coverage**: 88%
-- **kura/views.py**: 72%
-- **kura/middleware.py**: 92%
-- **kura/permissions.py**: 88%
+- **`kura/views.py`**: 72%
+- **`kura/middleware.py`**: 92%
+- **`kura/permissions.py`**: 88%
 
 ## Residual Risks
 
-1. **python-jose and ecdsa transitive CVEs** - Accepted with justification in `.trivyignore`; no fix available upstream
-2. **HIBP check fails open** - If HaveIBeenPwned API is unreachable, password breach check passes silently
-3. **Debian base-image OS CVEs without fixes** - Some OS-level vulnerabilities have no patches in Debian 12
-4. **Single-VM availability** - Prototype runs on single host; no HA/failover for DB, Vault, or Loki
-5. **Gmail SMTP dependency** - Email delivery depends on external Gmail service
-6. **Self-signed public certificate** - Prototype uses self-signed TLS cert; production needs CA-issued cert
-7. **Human factors and phishing** - No technical control prevents credential phishing or social engineering
-8. **T14 limitation** - Restore drill ran on seeded data only; full production DR test not performed
-9. **T4 incomplete** - Authenticated ZAP scan not completed due to runserver RLS context issue with grade_finalize view
-10. **G16 optional** - Internal mTLS CRL checking not implemented (P3)
+1. **`python-jose` and `ecdsa` transitive CVEs**: Accepted with documented justification in `.trivyignore`; no upstream patch is available for the pinned dependency chain.
+2. **HIBP breach check fails open**: If `api.pwnedpasswords.com` is unreachable, the k-anonymity password check skips the remote lookup so password changes do not lock out legitimate users.
+3. **Unfixed Debian base-image OS CVEs**: Some OS-level packages in Debian 12 have no vendor fix available yet.
+4. **Single-VM prototype availability**: All services run on one host without database, Vault, or Loki high-availability failover.
+5. **External Gmail SMTP dependency**: Outgoing email delivery relies on an external mail relay.
+6. **Self-signed public TLS certificate**: The local prototype serves a self-signed certificate on port 443 (`testssl.sh` grade T); production requires a trusted CA certificate.
+7. **Human factors and credential phishing**: Technical controls reduce impact through MFA and passkeys, while user awareness and phishing resistance still depend on ongoing training.
+8. **T14 restore drill scope**: The restore drill validated seeded demo data (8 users, 1 course, 2 enrollments, 1 assessment, 0 grades) on a disposable volume and did not run a full multi-host disaster recovery exercise.
+9. **Manual external active testing remaining**: Active exploitation tools (`zap-full-scan.py`, `sqlmap`, `hydra`, external `ffuf` fuzzing, and an external-host `nmap` scan from a second machine) were not executed inside this workspace. T4, T5, T7, T8, and T10 were verified through defensive Django QA tests, static ORM audits, live container configuration checks, and local socket scans; external active testing remains a manual operator task if required for submission.
+10. **Live Vault sealed during passive scan**: On the running Compose stack, `kura-vault` remains sealed until an operator provides unseal shares, so DB-backed routes return HTTP 503 via `DependencyOutageMiddleware`.
+11. **Optional gap G16 not implemented**: Internal mTLS CRL revocation checking (P3) was left out of prototype scope.
 
 ## Gap-to-Test Traceability
 
 | Gap | Tests Covering | Commits |
 |-----|----------------|---------|
-| G01 | T1, T2, T11, T12 | bcd8ff0 |
-| G02 | T1, T2, T10, T14 | bcd8ff0 |
-| G03 | T3, T14, T16 | 1667807 |
-| G04 | T1, T3, T4, T7 | d1b06ff |
-| G05 | T13, T15 | d713810 |
-| G06 | T1, T9, T11, T12 | f8026f5 |
-| G07 | T12 | 18489f4 |
-| G08 | T1, T7, T13 | c494a89 |
-| G09 | T6, T8, T16 | c494a89 |
-| G10 | T1-T16 | d1b06ff (milestone) |
-| G11 | T1, T14, T15, T16 | d1b06ff |
-| G12 | T1, T12 | d1b06ff |
-| G13 | T1 | d1b06ff |
-| G14 | T1 | d1b06ff |
-| G15 | T1, T2 | This milestone |
-| G17 | T1, T14 | d1b06ff |
+| G01 | T1, T2, T11, T12 | `bcd8ff0` |
+| G02 | T1, T2, T10, T14 | `bcd8ff0` |
+| G03 | T3, T14, T16 | `1667807` |
+| G04 | T1, T3, T4, T7 | `1667807` |
+| G05 | T13, T15 | `d713810` |
+| G06 | T1, T9, T11, T12 | `f8026f5` |
+| G07 | T12 | `18489f4` |
+| G08 | T1, T7, T13 | `c494a89` |
+| G09 | T6, T8, T16 | `c494a89` |
+| G10 | T1 to T16 | `eabcd59` (and remediation commit) |
+| G11 | T1, T14, T15, T16 | `d1b06ff` |
+| G12 | T1, T12 | `f8026f5` |
+| G13 | T1 | `d1b06ff` |
+| G14 | T1 | `d1b06ff` |
+| G15 | T1, T2 | `eabcd59` (and remediation commit) |
+| G17 | T1, T14 | `d1b06ff` |
 
 ## Evidence Files
 
-All raw evidence files are stored in `docs/evidence/2026-12/` with descriptive names matching the test IDs above.
+All raw evidence files are stored in `docs/evidence/2026-12/` and linked from the table above.

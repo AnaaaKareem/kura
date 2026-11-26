@@ -1,0 +1,31 @@
+=== T5 Defensive Database Boundary & Parameterized ORM Validation ===
+2026-11-26T08:06:05+02:00
+
+--- 1. Static check for raw SQL APIs in kura/ (excluding migrations & tests) ---
+kura/middleware.py:312:                    cursor.execute("SELECT set_config('kura.current_user_id', %s, false);", [str(request.user.id)])
+kura/middleware.py:331:                    cursor.execute("RESET kura.current_user_id;")
+kura/permissions.py:13:        cursor.execute("SELECT current_setting('kura.service_role', true);")
+kura/permissions.py:15:        cursor.execute("SET kura.service_role = 'management_command';")
+kura/permissions.py:22:                cursor.execute("SELECT set_config('kura.service_role', %s, false);", [previous_role])
+kura/permissions.py:24:                cursor.execute("RESET kura.service_role;")
+
+--- 2. Runtime parameterized queryset checks on search endpoints via Django Client ---
+Vault unavailable for gmail app password: OSError
+time=2026-11-26T08:06:06+0200 level=INFO logger=kura.security event="log.chain.start" boot="2026-11-26T06:06:06+00:00" worker=64414 seq=0 mac="4abefd6fd023578efcab62fc30a6d8af"
+[PASS] Registrar GET /registrar/students/?q='test' -> HTTP 200
+[PASS] Registrar GET /registrar/students/?q="O'Brien" -> HTTP 200
+[PASS] Registrar GET /registrar/students/?q='"quoted" -- comment; %_' -> HTTP 200
+[PASS] Registrar GET /registrar/students/?q='100% \\ backslash' -> HTTP 200
+[PASS] Admin GET /admin/users/?q='test' -> HTTP 200
+[PASS] Admin GET /admin/users/?q="O'Brien" -> HTTP 200
+[PASS] Admin GET /admin/users/?q='"quoted" -- comment; %_' -> HTTP 200
+[PASS] Admin GET /admin/users/?q='100% \\ backslash' -> HTTP 200
+[PASS] Student GET /attendance/history/?q='test' -> HTTP 200
+[PASS] Student GET /attendance/history/?q="O'Brien" -> HTTP 200
+[PASS] Student GET /attendance/history/?q='"quoted" -- comment; %_' -> HTTP 200
+[PASS] Student GET /attendance/history/?q='100% \\ backslash' -> HTTP 200
+Overall: PASS
+
+--- 3. Live Coraza WAF service configuration check (OWASP CRS) ---
+NAME       IMAGE                                                                                                          COMMAND                  SERVICE   CREATED        STATUS                    PORTS
+kura-waf   ghcr.io/coreruleset/coraza-crs:nginx@sha256:0089154673011788070e7b7591b62dd8e7a6686d4e6ba75ad92947b97d54799a   "nginx -c /etc/coraz…"   waf       14 hours ago   Up 52 minutes (healthy)   8080/tcp, 8443/tcp

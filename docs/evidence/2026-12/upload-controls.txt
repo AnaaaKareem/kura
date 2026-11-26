@@ -1,3 +1,8 @@
+=== T13 Live ClamAV Container INSTREAM Check (via kura-web -> clamav:3310) ===
+EICAR scan response: stream: Eicar-Test-Signature FOUND
+Clean PDF scan response: stream: OK
+
+=== T13 Django Upload Pipeline Validation Checks ===
 Vault unavailable for gmail app password: OSError
 time=2026-11-25T19:30:43+0200 level=INFO logger=kura.security event="log.chain.start" boot="2026-11-25T17:30:43+00:00" worker=392463 seq=0 mac="2e6ff93448512781523dc5a373e31ecf"
 time=2026-11-25T19:30:43+0200 level=ERROR logger=kura.security event="clamav.unavailable" error_type="gaierror" worker=392463 seq=1 mac="e5c6f978ccd42f92e41e6b2d8ced3f10"
