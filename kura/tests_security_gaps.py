@@ -477,6 +477,104 @@ class SecurityGapG14HostCookieTests(TestCase):
         self.assertEqual(csrf_cookie["path"], "/")
         self.assertEqual(csrf_cookie["domain"], "")
 
+    @override_settings(
+        DEBUG=False,
+        SESSION_COOKIE_NAME="__Host-kura_session",
+        CSRF_COOKIE_NAME="__Host-kura_csrftoken",
+        SESSION_COOKIE_SECURE=True,
+        CSRF_COOKIE_SECURE=True,
+        SESSION_COOKIE_HTTPONLY=True,
+        CSRF_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+        CSRF_COOKIE_SAMESITE="Lax",
+        SESSION_COOKIE_PATH="/",
+        CSRF_COOKIE_PATH="/",
+        SESSION_COOKIE_DOMAIN=None,
+        CSRF_COOKIE_DOMAIN=None,
+    )
+    def test_g14_session_and_csrf_cookies_enforce_host_prefix_and_security_flags(self):
+        """Plan ID: G14 | Risk ID: R04
+        Verify config/settings.py configures __Host- prefixes in production mode and that live HTTPS
+        login responses emit both session and CSRF cookies with __Host-, Secure, HttpOnly, SameSite=Lax,
+        Path=/, and no Domain attribute.
+        """
+        import json
+        import subprocess
+        import sys
+        from kura.tests import make_user
+
+        # 1. Verify config.settings module evaluation when DEBUG=False sets every required attribute.
+        probe_env = {
+            **os.environ,
+            "DEBUG": "False",
+            "VAULT_ENABLED": "False",
+            "VAULT_DATABASE_CREDENTIALS": "False",
+            "CLAMAV_REQUIRED": "False",
+            "SECRET_KEY": "production-cookie-probe-secret-key-at-least-fifty-characters-long-12345",
+        }
+        probe_code = (
+            "import json; from config import settings as s; "
+            "print(json.dumps({"
+            "'session_name': s.SESSION_COOKIE_NAME, 'csrf_name': s.CSRF_COOKIE_NAME, "
+            "'session_secure': s.SESSION_COOKIE_SECURE, 'csrf_secure': s.CSRF_COOKIE_SECURE, "
+            "'session_httponly': s.SESSION_COOKIE_HTTPONLY, 'csrf_httponly': s.CSRF_COOKIE_HTTPONLY, "
+            "'session_samesite': s.SESSION_COOKIE_SAMESITE, 'csrf_samesite': s.CSRF_COOKIE_SAMESITE, "
+            "'session_path': s.SESSION_COOKIE_PATH, 'csrf_path': s.CSRF_COOKIE_PATH, "
+            "'session_domain': s.SESSION_COOKIE_DOMAIN, 'csrf_domain': s.CSRF_COOKIE_DOMAIN"
+            "}))"
+        )
+        proc = subprocess.run(
+            [sys.executable, "-c", probe_code],
+            cwd=str(BASE_DIR),
+            env=probe_env,
+            capture_output=True,
+            text=True,
+            check=True,
+        )
+        cfg = json.loads(proc.stdout.strip())
+        self.assertTrue(cfg["session_name"].startswith("__Host-"))
+        self.assertTrue(cfg["csrf_name"].startswith("__Host-"))
+        self.assertEqual(cfg["session_name"], "__Host-kura_session")
+        self.assertEqual(cfg["csrf_name"], "__Host-kura_csrftoken")
+        self.assertTrue(cfg["session_secure"])
+        self.assertTrue(cfg["csrf_secure"])
+        self.assertTrue(cfg["session_httponly"])
+        self.assertTrue(cfg["csrf_httponly"])
+        self.assertEqual(cfg["session_samesite"], "Lax")
+        self.assertEqual(cfg["csrf_samesite"], "Lax")
+        self.assertEqual(cfg["session_path"], "/")
+        self.assertEqual(cfg["csrf_path"], "/")
+        self.assertIsNone(cfg["session_domain"])
+        self.assertIsNone(cfg["csrf_domain"])
+
+        # 2. Exercise HTTPS GET + POST /login/ to verify Set-Cookie headers on both cookies.
+        user = make_user("Student", email="cookie-check@kura.edu", password="ValidPassword123!")
+        client = Client()
+        get_resp = client.get(reverse("kura:login"), secure=True)
+        self.assertEqual(get_resp.status_code, 200)
+        self.assertIn("__Host-kura_csrftoken", get_resp.cookies)
+
+        post_resp = client.post(
+            reverse("kura:login"),
+            {"email": user.email, "password": "ValidPassword123!"},
+            secure=True,
+        )
+        self.assertEqual(post_resp.status_code, 302)
+        self.assertIn("__Host-kura_session", post_resp.cookies)
+
+        for cookie_name, morsel in (
+            ("__Host-kura_csrftoken", get_resp.cookies["__Host-kura_csrftoken"]),
+            ("__Host-kura_session", post_resp.cookies["__Host-kura_session"]),
+        ):
+            with self.subTest(cookie=cookie_name):
+                self.assertTrue(cookie_name.startswith("__Host-"))
+                self.assertTrue(morsel["secure"])
+                self.assertTrue(morsel["httponly"])
+                self.assertEqual(morsel["samesite"], "Lax")
+                self.assertEqual(morsel["path"], "/")
+                self.assertEqual(morsel["domain"], "")
+                self.assertNotIn("Domain=", morsel.output())
+
 
 class SecurityGapG11LogChainTests(unittest.TestCase):
     """Verification tests for G11 tamper-evident HMAC-SHA256 log chains."""

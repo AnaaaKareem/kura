@@ -1,10 +1,12 @@
 """Tests for G05 cryptographic non-repudiation signatures and verification."""
 
+import base64
 import datetime
 from decimal import Decimal
 from io import StringIO
 from unittest.mock import MagicMock, patch
 
+from cryptography.hazmat.primitives.asymmetric.ed25519 import Ed25519PrivateKey
 from django.core.exceptions import ValidationError
 from django.core.management import CommandError, call_command
 from django.db import DatabaseError, connection, transaction
@@ -281,3 +283,174 @@ class ReceiptTamperDetectionTests(TransactionTestCase):
             with self.assertRaises(CommandError):
                 call_command("verify_signatures", stdout=StringIO(), stderr=StringIO())
         self.assertTrue(any('event="integrity.signature_failed"' in r.getMessage() for r in captured.records))
+
+    def test_g05_forged_signature_wrong_key_and_tampered_payload_rejected(self):
+        """Plan ID: G05, T15 | Risk ID: R13
+        Verify both a signature forged with a different private key and a tampered submission
+        payload are rejected by verify_payload, the attempt_detail receipt view, and verify_signatures.
+        """
+        helper = ReceiptSignatureTests()
+        _head, _instructor, student, _course, _assessment, attempt = helper._create_submitted_attempt()
+        original_sig = attempt.submission_signature
+
+        # Positive control: valid receipt renders valid on the receipt view and passes verify_signatures.
+        student_client = helper._authenticate(student)
+        ok_resp = student_client.get(reverse("kura:attempt_detail", args=[attempt.id]))
+        self.assertEqual(ok_resp.status_code, 200)
+        self.assertTrue(ok_resp.context["signature_valid"])
+        self.assertContains(ok_resp, "Signature: valid")
+
+        # Negative control 1: signature over the exact payload created by an unauthorized keypair must fail.
+        rogue_key = Ed25519PrivateKey.generate()
+        rogue_sig_bytes = rogue_key.sign(build_submission_payload(attempt))
+        forged_sig = "dev:v1:" + base64.b64encode(rogue_sig_bytes).decode("ascii")
+        self.assertFalse(verify_payload(build_submission_payload(attempt), forged_sig))
+
+        with connection.cursor() as cursor:
+            cursor.execute("ALTER TABLE assessment_attempts DISABLE TRIGGER submission_hash_immutable")
+            try:
+                cursor.execute(
+                    "UPDATE assessment_attempts SET submission_signature = %s WHERE id = %s",
+                    [forged_sig, str(attempt.id)],
+                )
+            finally:
+                cursor.execute("ALTER TABLE assessment_attempts ENABLE TRIGGER submission_hash_immutable")
+
+        forged_resp = student_client.get(reverse("kura:attempt_detail", args=[attempt.id]))
+        self.assertEqual(forged_resp.status_code, 200)
+        self.assertFalse(forged_resp.context["signature_valid"])
+        self.assertContains(forged_resp, "Signature: INVALID")
+        self.assertNotContains(forged_resp, "Signature: valid")
+
+        with self.assertLogs("kura.security", level="ERROR") as cap_forged:
+            with self.assertRaises(CommandError):
+                call_command("verify_signatures", stdout=StringIO(), stderr=StringIO())
+        self.assertTrue(any('event="integrity.signature_failed"' in r.getMessage() for r in cap_forged.records))
+
+        # Negative control 2: restore valid signature, then tamper the stored file hash so payload check fails.
+        with connection.cursor() as cursor:
+            cursor.execute("ALTER TABLE assessment_attempts DISABLE TRIGGER submission_hash_immutable")
+            try:
+                cursor.execute(
+                    "UPDATE assessment_attempts SET submission_signature = %s WHERE id = %s",
+                    [original_sig, str(attempt.id)],
+                )
+            finally:
+                cursor.execute("ALTER TABLE assessment_attempts ENABLE TRIGGER submission_hash_immutable")
+            cursor.execute(
+                "UPDATE stored_files SET sha256_hash = %s WHERE uploaded_by_id = %s",
+                ["b" * 64, str(student.id)],
+            )
+
+        tampered_resp = student_client.get(reverse("kura:attempt_detail", args=[attempt.id]))
+        self.assertEqual(tampered_resp.status_code, 200)
+        self.assertFalse(tampered_resp.context["signature_valid"])
+        self.assertContains(tampered_resp, "Signature: INVALID")
+
+        with self.assertLogs("kura.security", level="ERROR"):
+            with self.assertRaises(CommandError):
+                call_command("verify_signatures", stdout=StringIO(), stderr=StringIO())
+
+    def test_g05_replayed_signature_across_records_and_after_change_rejected(self):
+        """Plan ID: G05, T15 | Risk ID: R13
+        Verify a genuine signature cannot be replayed onto another submission record (even with identical
+        file bytes) or retained after a signed grade record's score is altered.
+        """
+        helper = ReceiptSignatureTests()
+        _head, instructor, student_a, course, assessment, attempt_a = helper._create_submitted_attempt()
+
+        # Create a second student attempt on the same assessment with identical file SHA-256.
+        student_b = make_user("Student")
+        Enrollment.objects.create(course=course, student=student_b)
+        attempt_b = AssessmentAttempt.objects.create(
+            assessment=assessment,
+            student=student_b,
+            attempt_no=1,
+            ip_address="127.0.0.1",
+        )
+        sf_b = StoredFile.objects.create(
+            uploaded_by=student_b,
+            original_filename="answer.pdf",
+            mime_type="application/pdf",
+            size_bytes=128,
+            sha256_hash="a" * 64,
+        )
+        FileContent.objects.create(file=sf_b, content=b"%PDF-1.4\n%test\n")
+        AttemptFile.objects.create(attempt=attempt_b, file=sf_b)
+        client_b = helper._authenticate(student_b)
+        resp_sub_b = client_b.post(reverse("kura:assessment_submit", args=[attempt_b.id]))
+        self.assertEqual(resp_sub_b.status_code, 302)
+        attempt_b.refresh_from_db()
+        original_sig_b = attempt_b.submission_signature
+
+        # Replay case 1: transplant attempt_a's valid signature onto attempt_b.
+        self.assertFalse(verify_payload(build_submission_payload(attempt_b), attempt_a.submission_signature))
+        with connection.cursor() as cursor:
+            cursor.execute("ALTER TABLE assessment_attempts DISABLE TRIGGER submission_hash_immutable")
+            try:
+                cursor.execute(
+                    "UPDATE assessment_attempts SET submission_signature = %s WHERE id = %s",
+                    [attempt_a.submission_signature, str(attempt_b.id)],
+                )
+            finally:
+                cursor.execute("ALTER TABLE assessment_attempts ENABLE TRIGGER submission_hash_immutable")
+
+        replay_resp = client_b.get(reverse("kura:attempt_detail", args=[attempt_b.id]))
+        self.assertEqual(replay_resp.status_code, 200)
+        self.assertFalse(replay_resp.context["signature_valid"])
+        self.assertContains(replay_resp, "Signature: INVALID")
+
+        out_replay = StringIO()
+        with self.assertLogs("kura.security", level="ERROR"):
+            with self.assertRaises(CommandError):
+                call_command("verify_signatures", stdout=out_replay, stderr=StringIO())
+        self.assertIn(f"ATTEMPT  {attempt_a.id}  OK", out_replay.getvalue())
+        self.assertIn(f"ATTEMPT  {attempt_b.id}  FAIL", out_replay.getvalue())
+
+        # Restore attempt_b's legitimate signature before testing post-mutation replay on a finalized grade.
+        with connection.cursor() as cursor:
+            cursor.execute("ALTER TABLE assessment_attempts DISABLE TRIGGER submission_hash_immutable")
+            try:
+                cursor.execute(
+                    "UPDATE assessment_attempts SET submission_signature = %s WHERE id = %s",
+                    [original_sig_b, str(attempt_b.id)],
+                )
+            finally:
+                cursor.execute("ALTER TABLE assessment_attempts ENABLE TRIGGER submission_hash_immutable")
+
+        grade = Grade.objects.create(
+            assessment=assessment,
+            student=student_a,
+            attempt=attempt_a,
+            grader=instructor,
+            score=Decimal("75.00"),
+            status=GradeStatus.DRAFT,
+        )
+        inst_client = helper._authenticate(instructor)
+        self.assertEqual(inst_client.post(reverse("kura:grade_finalize", args=[grade.id])).status_code, 302)
+        grade.refresh_from_db()
+
+        out_ok = StringIO()
+        call_command("verify_signatures", stdout=out_ok)
+        self.assertIn(f"GRADE    {grade.id}  OK", out_ok.getvalue())
+
+        # Replay case 2: mutate finalized grade score while retaining its previously valid signature.
+        with connection.cursor() as cursor:
+            cursor.execute("ALTER TABLE grade_history DISABLE TRIGGER ALL")
+            try:
+                cursor.execute(
+                    "UPDATE grades SET score = %s WHERE id = %s",
+                    [Decimal("99.00"), str(grade.id)],
+                )
+                cursor.execute(
+                    "UPDATE grade_history SET new_score = %s WHERE grade_id = %s",
+                    [Decimal("99.00"), str(grade.id)],
+                )
+            finally:
+                cursor.execute("ALTER TABLE grade_history ENABLE TRIGGER ALL")
+
+        out_grade_replay = StringIO()
+        with self.assertLogs("kura.security", level="ERROR"):
+            with self.assertRaises(CommandError):
+                call_command("verify_signatures", stdout=out_grade_replay, stderr=StringIO())
+        self.assertIn(f"GRADE    {grade.id}  FAIL", out_grade_replay.getvalue())
