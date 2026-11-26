@@ -1,0 +1,24 @@
+# OWASP ZAP Baseline Passive Scan Rules for Kura LMS
+# Format: <rule_id><TAB><IGNORE|INFO|WARN|FAIL><TAB><optional note>
+# Every non-default rule below is an accepted passive-scan false positive or informational tag.
+# Any unlisted WARN or FAIL finding breaks CI because fail_action is enabled in security.yml.
+
+# Rule 10015 (Re-examine Cache-control Directives): fires on /privacy/, a static public notice
+# with zero user-specific or sensitive content. Authenticated views emit private/no-store headers.
+10015	IGNORE	Public static privacy page has no sensitive or session-bound content
+
+# Rule 10027 (Information Disclosure - Suspicious Comments): matches ordinary code comments in
+# static/js/theme.js (client-side dark/light mode toggle). Contains no secrets or internal URLs.
+10027	IGNORE	Benign theme-switcher comments in static/js/theme.js
+
+# Rule 10049 (Non-Storable Content): informational RFC 7234 cacheability classification emitted
+# because Kura intentionally prevents shared proxies from caching login pages and redirects.
+10049	IGNORE	Intentional anti-caching headers on login and redirect responses
+
+# Rule 10111 (Authentication Request Identified): informational ZAP passive classifier confirming
+# detection of the /login/ form endpoint rather than reporting a vulnerability.
+10111	IGNORE	Informational login endpoint classification
+
+# Rule 10112 (Session Management Response Identified): informational ZAP passive classifier
+# confirming detection of __Host- cookie issuance on /login/ and /password/reset/.
+10112	IGNORE	Informational session/CSRF cookie classification

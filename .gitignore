@@ -162,6 +162,8 @@ activemq-data/
 
 # Environments
 .env
+.env.*
+!.env.example
 .envrc
 .venv
 env/
@@ -230,8 +232,16 @@ __marimo__/
 # Streamlit
 .streamlit/secrets.toml
 
-# Docker Compose Secrets
-secrets/*.txt
+# Docker Compose Secrets and local database dumps
+secrets/*
+!secrets/.gitkeep
+*.dump
+*.pgdump
+*.sql.gz
+*.sql.zst
+*.backup
+/*dump*.sql
+/backups/
 
 # TLS Certificates
 certs/*.key

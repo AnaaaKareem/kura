@@ -1,0 +1,26 @@
+title = "Kura Gitleaks Configuration"
+
+[extend]
+useDefault = true
+
+# Detect quoted, backticked, or colon-delimited Google 16-character space-grouped App Passwords.
+[[rules]]
+id = "google-gmail-app-password"
+description = "Google Account 16-character App Password"
+regex = '''[`"':]([a-z]{4} [a-z]{4} [a-z]{4} [a-z]{4})(?:[`"']|\b)'''
+secretGroup = 1
+
+[allowlist]
+description = "Allowlist verified non-secret false positives and gitignored local secret mounts"
+paths = [
+  '''^certs/''',
+  '''^secrets/''',
+  '''^\.env$''',
+]
+regexTarget = "line"
+regexes = [
+  # Verified false positive: Python attribute copy in unit tests (kura/tests.py), not a literal key.
+  '''fc1\.wrapped_key\s*=\s*fc2\.wrapped_key''',
+  # Verified false positive: redacted placeholder documentation examples.
+  '''xxxx xxxx xxxx xxxx''',
+]

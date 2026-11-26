@@ -8,7 +8,24 @@ on:
   schedule:
     - cron: '0 2 * * 1'
 
+permissions:
+  contents: read
+
 jobs:
+  gitleaks:
+    name: Gitleaks full-history secret scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout full git history
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+        with:
+          fetch-depth: 0
+      - name: Run Gitleaks secret scanner
+        uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2.3.9
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GITLEAKS_ENABLE_UPLOAD_ARTIFACT: false
+
   pip-audit:
     name: Python dependency audit (requirements.lock.txt)
     runs-on: ubuntu-latest
@@ -37,6 +54,9 @@ jobs:
       - name: Build images
         run: |
           docker compose build web nginx
+      # ignore-unfixed is enabled only because upstream Debian/distroless base layers occasionally
+      # carry CVEs with no vendor patch released yet, so rebuilding cannot resolve them. Any
+      # HIGH/CRITICAL vulnerability with an available upstream fix fails the build (exit-code: 1).
       - name: Scan kura-web Python dependencies with Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
@@ -47,13 +67,13 @@ jobs:
           ignore-unfixed: true
           trivyignores: '.trivyignore'
           severity: 'CRITICAL,HIGH'
-      - name: Scan kura-web base OS packages with Trivy (informational)
+      - name: Scan kura-web base OS packages with Trivy
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         with:
           image-ref: 'kura-web:latest'
           pkg-types: 'os'
           format: 'table'
-          exit-code: '0'
+          exit-code: '1'
           ignore-unfixed: true
           severity: 'CRITICAL,HIGH'
       - name: Scan kura-nginx with Trivy
@@ -99,19 +119,13 @@ jobs:
           docker compose up -d
           sleep 30
       - name: ZAP baseline scan
-        run: |
-          mkdir -p zap-reports
-          chmod 777 zap-reports
-          docker run --rm --network host \
-            -v "$PWD/zap-reports:/zap/wrk:rw" \
-            ghcr.io/zaproxy/zaproxy:stable@sha256:9624669db72f54d86c4b46a7064518bd9bf79d8c61a4c31befa9923489f328af \
-            zap-baseline.py -t https://localhost -r zap-baseline.html -I
-      - name: Upload ZAP report
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        uses: zaproxy/action-baseline@de8ad967d3548d44ef623df22cf95c3b0baf8b25 # v0.15.0
         with:
-          name: zap-baseline-report
-          path: zap-reports/
+          target: 'https://localhost'
+          rules_file_name: '.zap/rules.tsv'
+          fail_action: true
+          allow_issue_writing: false
+          artifact_name: 'zap-baseline-report'
 
   security-tests:
     name: Django security test suite
