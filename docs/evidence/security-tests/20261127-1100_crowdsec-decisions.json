@@ -1,0 +1,683 @@
+[
+ {
+  "capacity": 5,
+  "created_at": "2026-11-27T09:00:26Z",
+  "decisions": [
+   {
+    "duration": "3h59m56s",
+    "id": 58202,
+    "origin": "crowdsec",
+    "scenario": "crowdsecurity/nginx-req-limit-exceeded",
+    "scope": "Ip",
+    "simulated": false,
+    "type": "ban",
+    "value": "172.20.101.228"
+   }
+  ],
+  "events": [
+   {
+    "meta": [
+     {
+      "key": "datasource_path",
+      "value": "kura-nginx"
+     },
+     {
+      "key": "datasource_type",
+      "value": "docker"
+     },
+     {
+      "key": "http_args_len",
+      "value": "0"
+     },
+     {
+      "key": "http_path",
+      "value": "/login/"
+     },
+     {
+      "key": "http_verb",
+      "value": "POST"
+     },
+     {
+      "key": "log_type",
+      "value": "http_error-log"
+     },
+     {
+      "key": "service",
+      "value": "http"
+     },
+     {
+      "key": "source_ip",
+      "value": "172.20.101.228"
+     },
+     {
+      "key": "sub_type",
+      "value": "req_limit_exceeded"
+     },
+     {
+      "key": "target_fqdn",
+      "value": "localhost"
+     },
+     {
+      "key": "timestamp",
+      "value": "2026-11-27T09:00:26Z"
+     }
+    ],
+    "timestamp": "2026-11-27 09:00:26 +0000 UTC"
+   },
+   {
+    "meta": [
+     {
+      "key": "datasource_path",
+      "value": "kura-nginx"
+     },
+     {
+      "key": "datasource_type",
+      "value": "docker"
+     },
+     {
+      "key": "http_args_len",
+      "value": "0"
+     },
+     {
+      "key": "http_path",
+      "value": "/login/"
+     },
+     {
+      "key": "http_verb",
+      "value": "POST"
+     },
+     {
+      "key": "log_type",
+      "value": "http_error-log"
+     },
+     {
+      "key": "service",
+      "value": "http"
+     },
+     {
+      "key": "source_ip",
+      "value": "172.20.101.228"
+     },
+     {
+      "key": "sub_type",
+      "value": "req_limit_exceeded"
+     },
+     {
+      "key": "target_fqdn",
+      "value": "localhost"
+     },
+     {
+      "key": "timestamp",
+      "value": "2026-11-27T09:00:26Z"
+     }
+    ],
+    "timestamp": "2026-11-27 09:00:26 +0000 UTC"
+   },
+   {
+    "meta": [
+     {
+      "key": "datasource_path",
+      "value": "kura-nginx"
+     },
+     {
+      "key": "datasource_type",
+      "value": "docker"
+     },
+     {
+      "key": "http_args_len",
+      "value": "0"
+     },
+     {
+      "key": "http_path",
+      "value": "/login/"
+     },
+     {
+      "key": "http_verb",
+      "value": "POST"
+     },
+     {
+      "key": "log_type",
+      "value": "http_error-log"
+     },
+     {
+      "key": "service",
+      "value": "http"
+     },
+     {
+      "key": "source_ip",
+      "value": "172.20.101.228"
+     },
+     {
+      "key": "sub_type",
+      "value": "req_limit_exceeded"
+     },
+     {
+      "key": "target_fqdn",
+      "value": "localhost"
+     },
+     {
+      "key": "timestamp",
+      "value": "2026-11-27T09:00:26Z"
+     }
+    ],
+    "timestamp": "2026-11-27 09:00:26 +0000 UTC"
+   },
+   {
+    "meta": [
+     {
+      "key": "datasource_path",
+      "value": "kura-nginx"
+     },
+     {
+      "key": "datasource_type",
+      "value": "docker"
+     },
+     {
+      "key": "http_args_len",
+      "value": "0"
+     },
+     {
+      "key": "http_path",
+      "value": "/login/"
+     },
+     {
+      "key": "http_verb",
+      "value": "POST"
+     },
+     {
+      "key": "log_type",
+      "value": "http_error-log"
+     },
+     {
+      "key": "service",
+      "value": "http"
+     },
+     {
+      "key": "source_ip",
+      "value": "172.20.101.228"
+     },
+     {
+      "key": "sub_type",
+      "value": "req_limit_exceeded"
+     },
+     {
+      "key": "target_fqdn",
+      "value": "localhost"
+     },
+     {
+      "key": "timestamp",
+      "value": "2026-11-27T09:00:26Z"
+     }
+    ],
+    "timestamp": "2026-11-27 09:00:26 +0000 UTC"
+   },
+   {
+    "meta": [
+     {
+      "key": "datasource_path",
+      "value": "kura-nginx"
+     },
+     {
+      "key": "datasource_type",
+      "value": "docker"
+     },
+     {
+      "key": "http_args_len",
+      "value": "0"
+     },
+     {
+      "key": "http_path",
+      "value": "/login/"
+     },
+     {
+      "key": "http_verb",
+      "value": "POST"
+     },
+     {
+      "key": "log_type",
+      "value": "http_error-log"
+     },
+     {
+      "key": "service",
+      "value": "http"
+     },
+     {
+      "key": "source_ip",
+      "value": "172.20.101.228"
+     },
+     {
+      "key": "sub_type",
+      "value": "req_limit_exceeded"
+     },
+     {
+      "key": "target_fqdn",
+      "value": "localhost"
+     },
+     {
+      "key": "timestamp",
+      "value": "2026-11-27T09:00:26Z"
+     }
+    ],
+    "timestamp": "2026-11-27 09:00:26 +0000 UTC"
+   },
+   {
+    "meta": [
+     {
+      "key": "datasource_path",
+      "value": "kura-nginx"
+     },
+     {
+      "key": "datasource_type",
+      "value": "docker"
+     },
+     {
+      "key": "http_args_len",
+      "value": "0"
+     },
+     {
+      "key": "http_path",
+      "value": "/login/"
+     },
+     {
+      "key": "http_verb",
+      "value": "POST"
+     },
+     {
+      "key": "log_type",
+      "value": "http_error-log"
+     },
+     {
+      "key": "service",
+      "value": "http"
+     },
+     {
+      "key": "source_ip",
+      "value": "172.20.101.228"
+     },
+     {
+      "key": "sub_type",
+      "value": "req_limit_exceeded"
+     },
+     {
+      "key": "target_fqdn",
+      "value": "localhost"
+     },
+     {
+      "key": "timestamp",
+      "value": "2026-11-27T09:00:26Z"
+     }
+    ],
+    "timestamp": "2026-11-27 09:00:26 +0000 UTC"
+   }
+  ],
+  "events_count": 6,
+  "id": 19,
+  "kind": "crowdsec",
+  "labels": null,
+  "leakspeed": "1m0s",
+  "machine_id": "localhost",
+  "message": "Ip 172.20.101.228 performed 'crowdsecurity/nginx-req-limit-exceeded' (6 events over 44.150001ms) at 2026-11-27 09:00:26.496166282 +0000 UTC",
+  "meta": [
+   {
+    "key": "method",
+    "value": "[\"POST\"]"
+   },
+   {
+    "key": "target_uri",
+    "value": "[\"/login/\"]"
+   }
+  ],
+  "remediation": true,
+  "scenario": "crowdsecurity/nginx-req-limit-exceeded",
+  "scenario_hash": "d135e5fe0f486f5f5223006c53324b51b5b1130c4d71fcf51f75e13b8575cc03",
+  "scenario_version": "0.3",
+  "simulated": false,
+  "source": {
+   "ip": "172.20.101.228",
+   "scope": "Ip",
+   "value": "172.20.101.228"
+  },
+  "start_at": "2026-11-27T09:00:26Z",
+  "stop_at": "2026-11-27T09:00:26Z",
+  "uuid": "901807b9-e733-4c00-9f74-8d0605c08146"
+ },
+ {
+  "capacity": 5,
+  "created_at": "2026-11-27T09:00:26Z",
+  "decisions": [],
+  "events": [
+   {
+    "meta": [
+     {
+      "key": "datasource_path",
+      "value": "kura-nginx"
+     },
+     {
+      "key": "datasource_type",
+      "value": "docker"
+     },
+     {
+      "key": "http_args_len",
+      "value": "0"
+     },
+     {
+      "key": "http_path",
+      "value": "/login/"
+     },
+     {
+      "key": "http_status",
+      "value": "403"
+     },
+     {
+      "key": "http_user_agent",
+      "value": "curl/8.18.0"
+     },
+     {
+      "key": "http_verb",
+      "value": "POST"
+     },
+     {
+      "key": "log_type",
+      "value": "http_access-log"
+     },
+     {
+      "key": "service",
+      "value": "http"
+     },
+     {
+      "key": "source_ip",
+      "value": "172.20.101.228"
+     },
+     {
+      "key": "timestamp",
+      "value": "2026-11-27T09:00:26Z"
+     }
+    ],
+    "timestamp": "2026-11-27 09:00:26 +0000 UTC"
+   },
+   {
+    "meta": [
+     {
+      "key": "datasource_path",
+      "value": "kura-nginx"
+     },
+     {
+      "key": "datasource_type",
+      "value": "docker"
+     },
+     {
+      "key": "http_args_len",
+      "value": "0"
+     },
+     {
+      "key": "http_path",
+      "value": "/login/"
+     },
+     {
+      "key": "http_status",
+      "value": "403"
+     },
+     {
+      "key": "http_user_agent",
+      "value": "curl/8.18.0"
+     },
+     {
+      "key": "http_verb",
+      "value": "POST"
+     },
+     {
+      "key": "log_type",
+      "value": "http_access-log"
+     },
+     {
+      "key": "service",
+      "value": "http"
+     },
+     {
+      "key": "source_ip",
+      "value": "172.20.101.228"
+     },
+     {
+      "key": "timestamp",
+      "value": "2026-11-27T09:00:26Z"
+     }
+    ],
+    "timestamp": "2026-11-27 09:00:26 +0000 UTC"
+   },
+   {
+    "meta": [
+     {
+      "key": "datasource_path",
+      "value": "kura-nginx"
+     },
+     {
+      "key": "datasource_type",
+      "value": "docker"
+     },
+     {
+      "key": "http_args_len",
+      "value": "0"
+     },
+     {
+      "key": "http_path",
+      "value": "/login/"
+     },
+     {
+      "key": "http_status",
+      "value": "403"
+     },
+     {
+      "key": "http_user_agent",
+      "value": "curl/8.18.0"
+     },
+     {
+      "key": "http_verb",
+      "value": "POST"
+     },
+     {
+      "key": "log_type",
+      "value": "http_access-log"
+     },
+     {
+      "key": "service",
+      "value": "http"
+     },
+     {
+      "key": "source_ip",
+      "value": "172.20.101.228"
+     },
+     {
+      "key": "timestamp",
+      "value": "2026-11-27T09:00:26Z"
+     }
+    ],
+    "timestamp": "2026-11-27 09:00:26 +0000 UTC"
+   },
+   {
+    "meta": [
+     {
+      "key": "datasource_path",
+      "value": "kura-nginx"
+     },
+     {
+      "key": "datasource_type",
+      "value": "docker"
+     },
+     {
+      "key": "http_args_len",
+      "value": "0"
+     },
+     {
+      "key": "http_path",
+      "value": "/login/"
+     },
+     {
+      "key": "http_status",
+      "value": "403"
+     },
+     {
+      "key": "http_user_agent",
+      "value": "curl/8.18.0"
+     },
+     {
+      "key": "http_verb",
+      "value": "POST"
+     },
+     {
+      "key": "log_type",
+      "value": "http_access-log"
+     },
+     {
+      "key": "service",
+      "value": "http"
+     },
+     {
+      "key": "source_ip",
+      "value": "172.20.101.228"
+     },
+     {
+      "key": "timestamp",
+      "value": "2026-11-27T09:00:26Z"
+     }
+    ],
+    "timestamp": "2026-11-27 09:00:26 +0000 UTC"
+   },
+   {
+    "meta": [
+     {
+      "key": "datasource_path",
+      "value": "kura-nginx"
+     },
+     {
+      "key": "datasource_type",
+      "value": "docker"
+     },
+     {
+      "key": "http_args_len",
+      "value": "0"
+     },
+     {
+      "key": "http_path",
+      "value": "/login/"
+     },
+     {
+      "key": "http_status",
+      "value": "403"
+     },
+     {
+      "key": "http_user_agent",
+      "value": "curl/8.18.0"
+     },
+     {
+      "key": "http_verb",
+      "value": "POST"
+     },
+     {
+      "key": "log_type",
+      "value": "http_access-log"
+     },
+     {
+      "key": "service",
+      "value": "http"
+     },
+     {
+      "key": "source_ip",
+      "value": "172.20.101.228"
+     },
+     {
+      "key": "timestamp",
+      "value": "2026-11-27T09:00:26Z"
+     }
+    ],
+    "timestamp": "2026-11-27 09:00:26 +0000 UTC"
+   },
+   {
+    "meta": [
+     {
+      "key": "datasource_path",
+      "value": "kura-nginx"
+     },
+     {
+      "key": "datasource_type",
+      "value": "docker"
+     },
+     {
+      "key": "http_args_len",
+      "value": "0"
+     },
+     {
+      "key": "http_path",
+      "value": "/login/"
+     },
+     {
+      "key": "http_status",
+      "value": "403"
+     },
+     {
+      "key": "http_user_agent",
+      "value": "curl/8.18.0"
+     },
+     {
+      "key": "http_verb",
+      "value": "POST"
+     },
+     {
+      "key": "log_type",
+      "value": "http_access-log"
+     },
+     {
+      "key": "service",
+      "value": "http"
+     },
+     {
+      "key": "source_ip",
+      "value": "172.20.101.228"
+     },
+     {
+      "key": "timestamp",
+      "value": "2026-11-27T09:00:26Z"
+     }
+    ],
+    "timestamp": "2026-11-27 09:00:26 +0000 UTC"
+   }
+  ],
+  "events_count": 6,
+  "id": 18,
+  "kind": "crowdsec",
+  "labels": null,
+  "leakspeed": "10s",
+  "machine_id": "localhost",
+  "message": "Ip 172.20.101.228 performed 'LePresidente/http-generic-403-bf' (6 events over 2.113288ms) at 2026-11-27 09:00:26.355599188 +0000 UTC",
+  "meta": [
+   {
+    "key": "user_agent",
+    "value": "[\"curl/8.18.0\"]"
+   },
+   {
+    "key": "method",
+    "value": "[\"POST\"]"
+   },
+   {
+    "key": "status",
+    "value": "[\"403\"]"
+   },
+   {
+    "key": "target_uri",
+    "value": "[\"/login/\"]"
+   }
+  ],
+  "remediation": true,
+  "scenario": "LePresidente/http-generic-403-bf",
+  "scenario_hash": "1c85426f8613c6e6cbe6cb42527abd0a8a9ac1282169b116549b091dcad91737",
+  "scenario_version": "1.1",
+  "simulated": false,
+  "source": {
+   "ip": "172.20.101.228",
+   "scope": "Ip",
+   "value": "172.20.101.228"
+  },
+  "start_at": "2026-11-27T09:00:26Z",
+  "stop_at": "2026-11-27T09:00:26Z",
+  "uuid": "d7db6f76-c6b2-4383-91bd-5a6f1a58855d"
+ }
+]

@@ -1,0 +1,2 @@
+NAME            IMAGE                                                                                                   COMMAND                  SERVICE    CREATED         STATUS                   PORTS
+kura-crowdsec   crowdsecurity/crowdsec:v1.8.2@sha256:65b74942f7e7ed5c60fde4ac15fc4ba715904c398c8b16dd451f4907d90347d4   "/bin/bash /docker_s…"   crowdsec   6 minutes ago   Up 5 minutes (healthy)   127.0.0.1:8085->8080/tcp

@@ -1,0 +1,94 @@
++-------------------------------------------------------------------------------------------------------------+
+| Acquisition Metrics                                                                                         |
++-------------------+------------+--------------+----------------+------------------------+-------------------+
+| Source            | Lines read | Lines parsed | Lines unparsed | Lines poured to bucket | Lines whitelisted |
++-------------------+------------+--------------+----------------+------------------------+-------------------+
+| docker:kura-nginx | 82         | 82           | -              | 31                     | 33                |
+| docker:kura-waf   | 55         | 11           | 44             | -                      | -                 |
+| docker:kura-web   | 22         | 11           | 11             | -                      | -                 |
++-------------------+------------+--------------+----------------+------------------------+-------------------+
++------------------------------------------------+
+| Local API Alerts                               |
++----------------------------------------+-------+
+| Reason                                 | Count |
++----------------------------------------+-------+
+| LePresidente/http-generic-403-bf       | 1     |
+| crowdsecurity/nginx-req-limit-exceeded | 1     |
++----------------------------------------+-------+
++--------------------------------------------------------------------+
+| Local API Decisions                                                |
++----------------------------------------+----------+--------+-------+
+| Reason                                 | Origin   | Action | Count |
++----------------------------------------+----------+--------+-------+
+| crowdsecurity/nginx-req-limit-exceeded | crowdsec | ban    | 1     |
+| generic:scan                           | CAPI     | ban    | 29    |
+| http:bruteforce                        | CAPI     | ban    | 1105  |
+| http:dos                               | CAPI     | ban    | 166   |
+| http:exploit                           | CAPI     | ban    | 71    |
+| ssh:bruteforce                         | CAPI     | ban    | 2445  |
+| http:crawl                             | CAPI     | ban    | 3655  |
+| http:scan                              | CAPI     | ban    | 6379  |
+| vm-management:exploit                  | CAPI     | ban    | 1     |
+| LePresidente/http-generic-403-bf       | crowdsec | ban    | 1     |
++----------------------------------------+----------+--------+-------+
++------------------------------------+
+| Local API Metrics                  |
++--------------------+--------+------+
+| Route              | Method | Hits |
++--------------------+--------+------+
+| /v1/alerts         | GET    | 2    |
+| /v1/alerts         | POST   | 1    |
+| /v1/heartbeat      | GET    | 5    |
+| /v1/usage-metrics  | POST   | 1    |
+| /v1/watchers/login | POST   | 24   |
++--------------------+--------+------+
++-------------------------------------------+
+| Local API Machines Metrics                |
++-----------+---------------+--------+------+
+| Machine   | Route         | Method | Hits |
++-----------+---------------+--------+------+
+| localhost | /v1/alerts    | GET    | 2    |
+| localhost | /v1/alerts    | POST   | 1    |
+| localhost | /v1/heartbeat | GET    | 5    |
++-----------+---------------+--------+------+
++----------------------------------------------------------------------------+
+| Parser Metrics                                                             |
++-------------------------------------------------+------+--------+----------+
+| Parsers                                         | Hits | Parsed | Unparsed |
++-------------------------------------------------+------+--------+----------+
+| child-child-crowdsecurity/nginx-logs            | 19   | 19     | -        |
+| child-crowdsecurity/http-logs                   | 246  | 164    | 82       |
+| child-crowdsecurity/nginx-logs                  | 101  | 82     | 19       |
+| crowdsecurity/cdn-whitelist                     | 2    | 2      | -        |
+| crowdsecurity/dateparse-enrich                  | 82   | 82     | -        |
+| crowdsecurity/google-special-crawlers-whitelist | 2    | 2      | -        |
+| crowdsecurity/http-logs                         | 82   | 82     | -        |
+| crowdsecurity/nginx-logs                        | 82   | 82     | -        |
+| crowdsecurity/non-syslog                        | 159  | 159    | -        |
+| crowdsecurity/public-dns-allowlist              | 104  | 104    | -        |
+| crowdsecurity/rdns                              | 2    | 2      | -        |
+| crowdsecurity/seo-bots-whitelist                | 2    | 2      | -        |
+| kura/coraza-audit                               | 11   | 11     | -        |
+| kura/django-logfmt                              | 22   | 11     | 11       |
+| kura/internal-whitelist                         | 104  | 104    | -        |
++-------------------------------------------------+------+--------+----------+
++------------------------------------------------------------------------------------------------------+
+| Scenario Metrics                                                                                     |
++----------------------------------------+---------------+-----------+--------------+--------+---------+
+| Scenario                               | Current Count | Overflows | Instantiated | Poured | Expired |
++----------------------------------------+---------------+-----------+--------------+--------+---------+
+| LePresidente/http-generic-403-bf       | 1             | 1         | 2            | 11     | -       |
+| crowdsecurity/http-probing             | 1             | -         | 1            | 1      | -       |
+| crowdsecurity/nginx-req-limit-exceeded | 1             | 3         | 4            | 19     | -       |
++----------------------------------------+---------------+-----------+--------------+--------+---------+
++------------------------------------------------------------------------------------------------------------+
+| Whitelist Metrics                                                                                          |
++-------------------------------------------------+-------------------------------------+------+-------------+
+| Whitelist                                       | Reason                              | Hits | Whitelisted |
++-------------------------------------------------+-------------------------------------+------+-------------+
+| crowdsecurity/cdn-whitelist                     | CDN provider                        | 2    | -           |
+| crowdsecurity/google-special-crawlers-whitelist | Google special crawlers ip range    | 2    | -           |
+| crowdsecurity/public-dns-allowlist              | public DNS server                   | 104  | -           |
+| crowdsecurity/seo-bots-whitelist                | good bots (search engine crawlers)  | 2    | -           |
+| kura/internal-whitelist                         | internal Docker or loopback address | 104  | 33          |
++-------------------------------------------------+-------------------------------------+------+-------------+
