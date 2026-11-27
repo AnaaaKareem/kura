@@ -1,0 +1,212 @@
+Vault unavailable for gmail app password: OSError
+time=2026-11-27T09:46:04+0200 level=INFO logger=kura.security event="log.chain.start" boot="2026-11-27T07:46:04+00:00" worker=364197 seq=0 mac="723b4d7aee6a1d6e38afab2f8c9e37ae"
+Creating test database for alias 'default' ('test_kura')...
+Found 8 test(s).
+Skipping setup of unused database(s): quarantine.
+Operations to perform:
+  Synchronize unmigrated apps: csp, django_otp, messages, staticfiles
+  Apply all migrations: admin, auth, axes, contenttypes, kura, mfa, otp_static, otp_totp, sessions
+Synchronizing apps without migrations:
+  Creating tables...
+    Running deferred SQL...
+Running migrations:
+  Applying kura.0001_initial... OK
+  Applying contenttypes.0001_initial... OK
+  Applying admin.0001_initial... OK
+  Applying admin.0002_logentry_remove_auto_add... OK
+  Applying admin.0003_logentry_add_action_flag_choices... OK
+  Applying contenttypes.0002_remove_content_type_name... OK
+  Applying auth.0001_initial... OK
+  Applying auth.0002_alter_permission_name_max_length... OK
+  Applying auth.0003_alter_user_email_max_length... OK
+  Applying auth.0004_alter_user_username_opts... OK
+  Applying auth.0005_alter_user_last_login_null... OK
+  Applying auth.0006_require_contenttypes_0002... OK
+  Applying auth.0007_alter_validators_add_error_messages... OK
+  Applying auth.0008_alter_user_username_max_length... OK
+  Applying auth.0009_alter_user_last_name_max_length... OK
+  Applying auth.0010_alter_group_name_max_length... OK
+  Applying auth.0011_update_proxy_permissions... OK
+  Applying auth.0012_alter_user_first_name_max_length... OK
+  Applying axes.0001_initial... OK
+  Applying axes.0002_auto_20151217_2044... OK
+  Applying axes.0003_auto_20160322_0929... OK
+  Applying axes.0004_auto_20181024_1538... OK
+  Applying axes.0005_remove_accessattempt_trusted... OK
+  Applying axes.0006_remove_accesslog_trusted... OK
+  Applying axes.0007_alter_accessattempt_unique_together... OK
+  Applying axes.0008_accessfailurelog... OK
+  Applying axes.0009_add_session_hash... OK
+  Applying axes.0010_accessattemptexpiration... OK
+  Applying kura.0002_seed_roles_permissions... OK
+  Applying kura.0003_attempt_files_lock_trigger... OK
+  Applying kura.0004_row_level_security... OK
+  Applying kura.0005_semester_type_values... OK
+  Applying kura.0006_section_item_release_controls... OK
+  Applying kura.0007_assessment_delivery_mode... OK
+  Applying kura.0008_expand_upload_mime_allowlist... OK
+  Applying kura.0009_admin_course_and_session_permissions... OK
+  Applying kura.0010_convert_section_items_to_markdown... OK
+  Applying kura.0011_search_cache_table... OK
+  Applying kura.0012_section_visibility... OK
+  Applying kura.0013_grade_rls_scoped_writes... OK
+  Applying kura.0014_quarantined_files... OK
+  Applying kura.0015_outgoing_emails... OK
+  Applying kura.0016_grade_history_insert_only... OK
+  Applying kura.0017_building_room... OK
+  Applying kura.0018_ratelimit_cache_table... OK
+  Applying kura.0019_passwordhistory... OK
+  Applying kura.0020_grade_feedback... OK
+  Applying kura.0021_grade_appeal_unique_pending... OK
+  Applying kura.0022_grade_rls_deny_by_default... OK
+  Applying kura.0023_filecontent_hybrid_encryption... OK
+  Applying kura.0024_non_empty_reason_constraints... OK
+  Applying kura.0025_submission_hash_immutability_trigger... OK
+  Applying kura.0026_rls_and_readonly_revokes... OK
+  Applying kura.0027_delete_loginattempt... OK
+  Applying kura.0028_security_policy_and_gdpr_fields... OK
+  Applying kura.0029_strip_to_security_core... OK
+  Applying kura.0030_fix_attempt_files_lock_trigger... OK
+  Applying kura.0031_receipt_signatures... OK
+  Applying kura.0032_outgoing_email_pending_lookup... OK
+  Applying mfa.0001_initial... OK
+  Applying mfa.0002_user_keys_key_type... OK
+  Applying mfa.0003_auto_20181114_2159... OK
+  Applying mfa.0004_user_keys_enabled... OK
+  Applying mfa.0005_auto_20181115_2014... OK
+  Applying mfa.0006_trusted_devices... OK
+  Applying mfa.0007_auto_20181230_1549... OK
+  Applying mfa.0008_user_keys_last_used... OK
+  Applying mfa.0009_user_keys_owned_by_enterprise... OK
+  Applying mfa.0010_auto_20201110_0557... OK
+  Applying mfa.0011_auto_20210530_0622... OK
+  Applying mfa.0012_user_keys_userhandle... OK
+  Applying otp_static.0001_initial... OK
+  Applying otp_static.0002_throttling... OK
+  Applying otp_static.0003_add_timestamps... OK
+  Applying otp_totp.0001_initial... OK
+  Applying otp_totp.0002_auto_20190420_0723... OK
+  Applying otp_totp.0003_add_timestamps... OK
+  Applying sessions.0001_initial...test_login_and_password_reset_prevent_account_enumeration (kura.tests_final_gaps.AccountEnumerationRegressionTests.test_login_and_password_reset_prevent_account_enumeration)
+OWASP Top 10 2025 A07 (Authentication Failures) | ASVS v4.0.3 V2.2.2 & V2.5.1: ... time=2026-11-27T09:46:09+0200 level=WARNING logger=axes.handlers.database AXES: New login failure by {username: "********************", ip_address: "********************", user_agent: "<unknown>", path_info: "/login/"}. Created new record in the database.
+time=2026-11-27T09:46:09+0200 level=WARNING logger=kura.security event="auth.login.failed" ip="198.51.100.11" actor_user_id="anonymous" request_id="91d1aaa206704d2fd10fef228cc090dc" path="/login/" method="POST" login_identifier_hash="552d395c7803ee7a" reason="bad_credentials" worker=364197 seq=1 mac="3b89e01b67b644760395dbcbe50d8115"
+time=2026-11-27T09:46:09+0200 level=WARNING logger=django.request Bad Request: /login/
+time=2026-11-27T09:46:10+0200 level=WARNING logger=axes.handlers.database AXES: New login failure by {username: "********************", ip_address: "********************", user_agent: "<unknown>", path_info: "/login/"}. Created new record in the database.
+time=2026-11-27T09:46:10+0200 level=WARNING logger=kura.security event="auth.login.failed" ip="198.51.100.12" actor_user_id="anonymous" request_id="8a9ae5c3a87837c4d13aa2c5a2c546f5" path="/login/" method="POST" login_identifier_hash="d7c1840316f060db" reason="bad_credentials" worker=364197 seq=2 mac="9f587723b89846265a8349b2348abf22"
+time=2026-11-27T09:46:10+0200 level=WARNING logger=django.request Bad Request: /login/
+time=2026-11-27T09:46:10+0200 level=INFO logger=kura.security event="auth.password.reset_requested" ip="127.0.0.1" actor_user_id="anonymous" request_id="aef1ca2b874cb90f9710fb78c66a7b6e" path="/password/reset/" method="POST" queued="True" reason="pending_lookup" worker=364197 seq=3 mac="3535895d3dc61b613059b764e2218ee2"
+time=2026-11-27T09:46:10+0200 level=INFO logger=kura.security event="auth.password.reset_requested" ip="127.0.0.1" actor_user_id="anonymous" request_id="0f964842e0a4f68770bb8ef1e173e17a" path="/password/reset/" method="POST" queued="True" reason="pending_lookup" worker=364197 seq=4 mac="748859d9a3b2422e3bcc6bcacf3b7ef2"
+ok
+test_404_403_and_500_hide_versions_tracebacks_and_x_powered_by (kura.tests_final_gaps.BannerHidingRegressionTests.test_404_403_and_500_hide_versions_tracebacks_and_x_powered_by)
+OWASP Top 10 2025 A02 (Security Misconfiguration) | ASVS v4.0.3 V14.3.3 & V7.4.1: ... time=2026-11-27T09:46:10+0200 level=INFO logger=kura.security event="access.not_found" ip="127.0.0.1" actor_user_id="b14efd2b-0278-4a6a-bed7-17202b68dcbc" request_id="362a2ccd8cd378f62196eef5d2d36c98" path="/nonexistent-banner-hiding-probe/" method="GET" worker=364197 seq=5 mac="4b556daef3b5e4406ab179ec3587a1d0"
+time=2026-11-27T09:46:10+0200 level=WARNING logger=django.request Not Found: /nonexistent-banner-hiding-probe/
+time=2026-11-27T09:46:10+0200 level=WARNING logger=kura.security event="access.denied" ip="127.0.0.1" actor_user_id="b14efd2b-0278-4a6a-bed7-17202b68dcbc" request_id="78e5e7e452bbf8b4a711e792e4480dde" path="/admin/users/" method="GET" reason="" worker=364197 seq=6 mac="75340c97a29f4e95e360aaa628570504"
+time=2026-11-27T09:46:10+0200 level=WARNING logger=django.request Forbidden (Permission denied): /admin/users/
+Traceback (most recent call last):
+  File "/home/anaaa/kura/.venv/lib/python3.14/site-packages/django/core/handlers/exception.py", line 56, in inner
+    response = get_response(request)
+  File "/home/anaaa/kura/.venv/lib/python3.14/site-packages/django/core/handlers/base.py", line 199, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+  File "/home/anaaa/kura/.venv/lib/python3.14/site-packages/django/contrib/auth/decorators.py", line 60, in _view_wrapper
+    return view_func(request, *args, **kwargs)
+  File "/home/anaaa/kura/kura/views.py", line 2993, in admin_users_view
+    raise PermissionDenied
+django.core.exceptions.PermissionDenied
+time=2026-11-27T09:46:11+0200 level=ERROR logger=kura.security event="server.error" ip="127.0.0.1" actor_user_id="-" request_id="310106ab9bd57b505aac67fb52c670c1" path="/" method="GET" worker=364197 seq=7 mac="057b7e718e7dd6fb88db9647d524dcea"
+time=2026-11-27T09:46:11+0200 level=ERROR logger=django.request Internal Server Error: /
+Traceback (most recent call last):
+  File "/home/anaaa/kura/.venv/lib/python3.14/site-packages/django/core/handlers/exception.py", line 56, in inner
+    response = get_response(request)
+  File "/home/anaaa/kura/.venv/lib/python3.14/site-packages/django/core/handlers/base.py", line 199, in _get_response
+    response = wrapped_callback(request, *callback_args, **callback_kwargs)
+  File "/home/anaaa/kura/.venv/lib/python3.14/site-packages/django/contrib/auth/decorators.py", line 60, in _view_wrapper
+    return view_func(request, *args, **kwargs)
+  File "/home/anaaa/kura/kura/views.py", line 1649, in home_view
+    attention_items = build_dashboard_attention(request.user, role_names, head_departments)
+  File "/usr/lib/python3.14/unittest/mock.py", line 1176, in __call__
+    return self._mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/unittest/mock.py", line 1180, in _mock_call
+    return self._execute_mock_call(*args, **kwargs)
+           ~~~~~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+  File "/usr/lib/python3.14/unittest/mock.py", line 1241, in _execute_mock_call
+    raise effect
+RuntimeError: DB_LEAK_SENTINEL SELECT * FROM users WHERE id=1
+ok
+test_login_mfa_verify_and_mfa_reauth_reject_open_redirect_variants (kura.tests_final_gaps.OpenRedirectVariantsRegressionTests.test_login_mfa_verify_and_mfa_reauth_reject_open_redirect_variants)
+OWASP Top 10 2025 A01 (Broken Access Control) | ASVS v4.0.3 V5.1.5: ... time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="auth.login.password_ok" ip="127.0.0.1" actor_user_id="anonymous" request_id="bc3a2ddf259a3fa96e509b67ca8915a2" path="/login/" method="POST" user_id="1f63efd0-624d-419e-aac2-3a34a626434d" worker=364197 seq=8 mac="cdda894f2916f4e3febd374e7eec5544"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="auth.mfa.ok" ip="127.0.0.1" actor_user_id="anonymous" request_id="901140d93be1c336dea71cb4279b3d9d" path="/login/mfa/" method="POST" method="totp" worker=364197 seq=9 mac="33bf386f80554d66e768e7ee712d9b2c"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="session.created" ip="127.0.0.1" actor_user_id="1f63efd0-624d-419e-aac2-3a34a626434d" request_id="901140d93be1c336dea71cb4279b3d9d" path="/login/mfa/" method="POST" method="totp" session_id="cb7cf45b-bebb-449c-abe9-19d1214abfea" worker=364197 seq=10 mac="6c6c32f5e46031dab013ec110841b700"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="auth.login.password_ok" ip="127.0.0.1" actor_user_id="anonymous" request_id="f9b1014d36e3af92b990f7be1fa943f2" path="/login/" method="POST" user_id="ba72a9a9-cbc1-475a-b84b-4e157c9d5dab" worker=364197 seq=11 mac="5f4d0b327f58e5cdbc6559289ef29122"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="session.created" ip="127.0.0.1" actor_user_id="ba72a9a9-cbc1-475a-b84b-4e157c9d5dab" request_id="f9b1014d36e3af92b990f7be1fa943f2" path="/login/" method="POST" method="password" session_id="7d004ab0-86df-4898-bbae-286ba85d5e4c" worker=364197 seq=12 mac="8d6efff90972c0fd9467f58534a8e900"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="auth.mfa.reauth_ok" ip="127.0.0.1" actor_user_id="1f63efd0-624d-419e-aac2-3a34a626434d" request_id="632ecc46e786b2246382d5714beb0848" path="/mfa/confirm/" method="POST" method="totp" worker=364197 seq=13 mac="ce3533fb59cca7c0280cef9b380a96fc"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="auth.login.password_ok" ip="127.0.0.1" actor_user_id="anonymous" request_id="66905bf50057a9faf764eb03395f994a" path="/login/" method="POST" user_id="1f63efd0-624d-419e-aac2-3a34a626434d" worker=364197 seq=14 mac="35729334a934b5a4fe22a655c73fd622"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="auth.mfa.ok" ip="127.0.0.1" actor_user_id="anonymous" request_id="3b4c47a91931c37d99e5be94c68ad413" path="/login/mfa/" method="POST" method="totp" worker=364197 seq=15 mac="4a302fb9e38584f675ec5223cc1fb832"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="session.created" ip="127.0.0.1" actor_user_id="1f63efd0-624d-419e-aac2-3a34a626434d" request_id="3b4c47a91931c37d99e5be94c68ad413" path="/login/mfa/" method="POST" method="totp" session_id="ae83e76f-7e85-4ba0-a492-de243b87cb91" worker=364197 seq=16 mac="517d4d1a3fcd05cc64ed23b59706120e"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="auth.login.password_ok" ip="127.0.0.1" actor_user_id="anonymous" request_id="6ff3db77fd1c4fd22a68d4efaf8529ea" path="/login/" method="POST" user_id="ba72a9a9-cbc1-475a-b84b-4e157c9d5dab" worker=364197 seq=17 mac="da9fe748ffc45f0ccc15abfd959ae761"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="session.created" ip="127.0.0.1" actor_user_id="ba72a9a9-cbc1-475a-b84b-4e157c9d5dab" request_id="6ff3db77fd1c4fd22a68d4efaf8529ea" path="/login/" method="POST" method="password" session_id="a73b7dc3-17cf-469b-82cb-1904e6d8daec" worker=364197 seq=18 mac="7c086eb3e99a0ad545b4bbbbd9c1632b"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="auth.mfa.reauth_ok" ip="127.0.0.1" actor_user_id="1f63efd0-624d-419e-aac2-3a34a626434d" request_id="f5d5ed3211c5ae74ceb4bd957dd99cef" path="/mfa/confirm/" method="POST" method="totp" worker=364197 seq=19 mac="bcbea3fb8b8f9b1fde871e63ba65d2f7"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="auth.login.password_ok" ip="127.0.0.1" actor_user_id="anonymous" request_id="0c3700234e3d1c2ff0a9bf10ff183861" path="/login/" method="POST" user_id="1f63efd0-624d-419e-aac2-3a34a626434d" worker=364197 seq=20 mac="3fe15ecab7f3b1124f3a5da8321ad6b7"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="auth.mfa.ok" ip="127.0.0.1" actor_user_id="anonymous" request_id="a4536615ad0d7e862dbc79e645f2e51d" path="/login/mfa/" method="POST" method="totp" worker=364197 seq=21 mac="971e4a2f251573dc68463be5e193858f"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="session.created" ip="127.0.0.1" actor_user_id="1f63efd0-624d-419e-aac2-3a34a626434d" request_id="a4536615ad0d7e862dbc79e645f2e51d" path="/login/mfa/" method="POST" method="totp" session_id="42d9fd2c-d768-4d98-8c78-7be388b6f221" worker=364197 seq=22 mac="19fedb3ddce41d2c8d279734a6e9d8f2"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="auth.login.password_ok" ip="127.0.0.1" actor_user_id="anonymous" request_id="666d8aa7951a2d323c9ef2f9da0d3ef1" path="/login/" method="POST" user_id="ba72a9a9-cbc1-475a-b84b-4e157c9d5dab" worker=364197 seq=23 mac="e0e5b6194abdb54d1ef38d3470f75ddf"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="session.created" ip="127.0.0.1" actor_user_id="ba72a9a9-cbc1-475a-b84b-4e157c9d5dab" request_id="666d8aa7951a2d323c9ef2f9da0d3ef1" path="/login/" method="POST" method="password" session_id="05091c34-7002-49f1-a376-53f4787cbeb3" worker=364197 seq=24 mac="0f068b765c1889bb36cbb115bbf3e3b9"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="auth.mfa.reauth_ok" ip="127.0.0.1" actor_user_id="1f63efd0-624d-419e-aac2-3a34a626434d" request_id="52fbdf2faff3071061b01422186b4f81" path="/mfa/confirm/" method="POST" method="totp" worker=364197 seq=25 mac="5b2bad1b8bf587a913ac554f1fef5a78"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="auth.login.password_ok" ip="127.0.0.1" actor_user_id="anonymous" request_id="2de2c3d17388d9daaee6ef988a7815cb" path="/login/" method="POST" user_id="1f63efd0-624d-419e-aac2-3a34a626434d" worker=364197 seq=26 mac="e3bd2adb0b798e664164d75f25f4f58c"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="auth.mfa.ok" ip="127.0.0.1" actor_user_id="anonymous" request_id="f67826b2b6d813de7ba4a681f56fccc3" path="/login/mfa/" method="POST" method="totp" worker=364197 seq=27 mac="1132fd8b2f4dfbb5e7fcd851bea8b790"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="session.created" ip="127.0.0.1" actor_user_id="1f63efd0-624d-419e-aac2-3a34a626434d" request_id="f67826b2b6d813de7ba4a681f56fccc3" path="/login/mfa/" method="POST" method="totp" session_id="ed9ce1a9-da6b-4ac9-b90c-7c4730800729" worker=364197 seq=28 mac="061c8b23ad31441bd14e1f61cef8fae0"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="auth.login.password_ok" ip="127.0.0.1" actor_user_id="anonymous" request_id="f084d5fdd5b2d1e6fc5867d0244a3c61" path="/login/" method="POST" user_id="ba72a9a9-cbc1-475a-b84b-4e157c9d5dab" worker=364197 seq=29 mac="2094dfa5abe505b94f9b4340333b17c9"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="session.created" ip="127.0.0.1" actor_user_id="ba72a9a9-cbc1-475a-b84b-4e157c9d5dab" request_id="f084d5fdd5b2d1e6fc5867d0244a3c61" path="/login/" method="POST" method="password" session_id="a116aaf1-b966-4e35-9350-8cd5982378ad" worker=364197 seq=30 mac="0877e28a1e0d39ba16f38731de6a49b6"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="auth.mfa.reauth_ok" ip="127.0.0.1" actor_user_id="1f63efd0-624d-419e-aac2-3a34a626434d" request_id="30f3d70feeaf34aa8a61a2005b7e42a7" path="/mfa/confirm/" method="POST" method="totp" worker=364197 seq=31 mac="4e77e28b095bbdb8f62a227ac7c4c48e"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="auth.mfa.reauth_ok" ip="127.0.0.1" actor_user_id="1f63efd0-624d-419e-aac2-3a34a626434d" request_id="983f5bd5179214144a5d4f04867e08da" path="/mfa/confirm/" method="POST" method="totp" worker=364197 seq=32 mac="98bfc4a071a704bb0f4a31ccb3496580"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="auth.login.password_ok" ip="127.0.0.1" actor_user_id="anonymous" request_id="f6d8ca836e8d7aec82ef69cb6d7fe742" path="/login/" method="POST" user_id="1f63efd0-624d-419e-aac2-3a34a626434d" worker=364197 seq=33 mac="63df554420fb217558b53179755e5740"
+time=2026-11-27T09:46:12+0200 level=INFO logger=kura.security event="auth.mfa.ok" ip="127.0.0.1" actor_user_id="anonymous" request_id="35b1f61e3ea30234d091ce2b5ccd90dd" path="/login/mfa/" method="POST" method="totp" worker=364197 seq=34 mac="fafe3b267acaeb63a94d29c68abf7b0c"
+time=2026-11-27T09:46:13+0200 level=INFO logger=kura.security event="session.created" ip="127.0.0.1" actor_user_id="1f63efd0-624d-419e-aac2-3a34a626434d" request_id="35b1f61e3ea30234d091ce2b5ccd90dd" path="/login/mfa/" method="POST" method="totp" session_id="809f90c4-8005-4a3a-9eb4-7d81dcc891e5" worker=364197 seq=35 mac="0244b3a61d88c9efdbadf5776aad130e"
+time=2026-11-27T09:46:13+0200 level=INFO logger=kura.security event="auth.login.password_ok" ip="127.0.0.1" actor_user_id="anonymous" request_id="32ae15379a75ce3478f1b3b965b0b90c" path="/login/" method="POST" user_id="ba72a9a9-cbc1-475a-b84b-4e157c9d5dab" worker=364197 seq=36 mac="25abfd8e69ff0043acd3d13e6bbc6860"
+time=2026-11-27T09:46:13+0200 level=INFO logger=kura.security event="session.created" ip="127.0.0.1" actor_user_id="ba72a9a9-cbc1-475a-b84b-4e157c9d5dab" request_id="32ae15379a75ce3478f1b3b965b0b90c" path="/login/" method="POST" method="password" session_id="4ccce4d5-8cb5-4d6e-b1c9-94bfa2f10d1e" worker=364197 seq=37 mac="c81b389668f21cb772f648a1a7c2a17e"
+time=2026-11-27T09:46:13+0200 level=INFO logger=kura.security event="auth.mfa.reauth_ok" ip="127.0.0.1" actor_user_id="1f63efd0-624d-419e-aac2-3a34a626434d" request_id="4637e72954637fd875c64e8d3a1a8ece" path="/mfa/confirm/" method="POST" method="totp" worker=364197 seq=38 mac="67c9261ca8accc115796a606cc6b3ba9"
+ok
+test_cross_user_token_with_other_uidb64_rejected_and_victim_unchanged (kura.tests_final_gaps.PasswordResetAbuseRegressionTests.test_cross_user_token_with_other_uidb64_rejected_and_victim_unchanged)
+OWASP Top 10 2025 A07 (Authentication Failures) & A01 (Broken Access Control) | ASVS v4.0.3 V2.5.2 & V2.5.6: ... time=2026-11-27T09:46:13+0200 level=INFO logger=kura.security event="password_reset.token_created" expires_at="2026-11-27T08:16:13.947517+00:00" user_id="f1f3fc7c-555c-410e-abb3-e5c426f34d65" worker=364197 seq=39 mac="86514b983dfb89b15b9a09391dfbe60b"
+time=2026-11-27T09:46:13+0200 level=INFO logger=kura.security event="access.not_found" ip="127.0.0.1" actor_user_id="anonymous" request_id="4efdfcf03463b069ea4a5033f868d560" path="/password/reset/<redacted>/Nqfk16JYBaUycEPu4wl6itVKgu_P2O6dNLnHyERdyus/" method="POST" worker=364197 seq=40 mac="278d52ea7adddfa87cc53c3ff28cd59a"
+time=2026-11-27T09:46:13+0200 level=WARNING logger=django.request Not Found: /password/reset/<redacted>/Nqfk16JYBaUycEPu4wl6itVKgu_P2O6dNLnHyERdyus/
+time=2026-11-27T09:46:13+0200 level=WARNING logger=kura.security event="auth.password.reset_invalid_token" ip="127.0.0.1" actor_user_id="anonymous" request_id="a2062a44e21469c19cbdc8b21a561f89" path="/password/reset/<redacted>/" method="POST" worker=364197 seq=41 mac="d27995793f49d9cdd88246fe88e26d75"
+time=2026-11-27T09:46:14+0200 level=WARNING logger=kura.security event="auth.password.reset_2fa_failed" ip="127.0.0.1" actor_user_id="anonymous" request_id="53676a9fcdf0828e9685e153d823ac81" path="/password/reset/<redacted>/" method="POST" worker=364197 seq=42 mac="ea1d9eee16337bcfae2f3e47d5c3c4a1"
+time=2026-11-27T09:46:14+0200 level=INFO logger=kura.security event="password_reset.token_created" expires_at="2026-11-27T08:16:14.065796+00:00" user_id="9c5c1734-86f6-4d3d-b697-c055a049cad7" worker=364197 seq=43 mac="a7c1810fcf4c25cbfac6d6a5a3a57b0d"
+time=2026-11-27T09:46:14+0200 level=INFO logger=kura.security event="auth.password.reset_completed" ip="127.0.0.1" actor_user_id="anonymous" request_id="e0d8c73b7344109667a8c49366ecce4e" path="/password/reset/<redacted>/" method="POST" sessions_revoked="0" user_id="9c5c1734-86f6-4d3d-b697-c055a049cad7" worker=364197 seq=44 mac="ba76460378c4af746f751d34413efad4"
+time=2026-11-27T09:46:14+0200 level=INFO logger=kura.security event="email.queued" event_key_prefix="password-reset-complete" worker=364197 seq=45 mac="b0624216f17199c395be5be91970035c"
+ok
+test_single_character_flipped_reset_token_rejected (kura.tests_final_gaps.PasswordResetAbuseRegressionTests.test_single_character_flipped_reset_token_rejected)
+OWASP Top 10 2025 A07 (Authentication Failures) | ASVS v4.0.3 V2.5.6: ... time=2026-11-27T09:46:14+0200 level=INFO logger=kura.security event="password_reset.token_created" expires_at="2026-11-27T08:16:14.986300+00:00" user_id="f5abdc7a-518d-4f8c-bb7d-9b5538be6a6b" worker=364197 seq=46 mac="967c605cf8219fb649d7852a99651651"
+time=2026-11-27T09:46:14+0200 level=WARNING logger=kura.security event="auth.password.reset_invalid_token" ip="127.0.0.1" actor_user_id="anonymous" request_id="1bfecdddf54aa362a290c5f9b274a021" path="/password/reset/<redacted>/" method="GET" worker=364197 seq=47 mac="7faeedcf36f6d5ad6aa73c252bad0126"
+time=2026-11-27T09:46:15+0200 level=WARNING logger=kura.security event="auth.password.reset_invalid_token" ip="127.0.0.1" actor_user_id="anonymous" request_id="0beb3dfdf2b1d8fa349d0f6f2c2e4856" path="/password/reset/<redacted>/" method="POST" worker=364197 seq=48 mac="b5d2aeb97cd613cbe430b411c646e69b"
+time=2026-11-27T09:46:15+0200 level=WARNING logger=kura.security event="auth.password.reset_invalid_token" ip="127.0.0.1" actor_user_id="anonymous" request_id="be063af49e3c808d50b07c2c40a38a8f" path="/password/reset/<redacted>/" method="GET" worker=364197 seq=49 mac="0d1456808915f5b8c349e0d745cbcf7e"
+time=2026-11-27T09:46:15+0200 level=WARNING logger=kura.security event="auth.password.reset_invalid_token" ip="127.0.0.1" actor_user_id="anonymous" request_id="22082501a4bc50ca75dfd0aafd8a3e5a" path="/password/reset/<redacted>/" method="POST" worker=364197 seq=50 mac="5bf917829228cd6bc7855d990c82c2a3"
+ok
+test_replayed_host_session_cookie_rejected_after_logout (kura.tests_final_gaps.SessionAfterLogoutRegressionTests.test_replayed_host_session_cookie_rejected_after_logout)
+OWASP Top 10 2025 A07 (Authentication Failures) | ASVS v4.0.3 V3.3.1: ... time=2026-11-27T09:46:15+0200 level=INFO logger=kura.security event="auth.login.password_ok" ip="127.0.0.1" actor_user_id="anonymous" request_id="5948cd9b9891625aa496f0fb35109183" path="/login/" method="POST" user_id="2c81daca-9682-4d73-9f97-d9184f743257" worker=364197 seq=51 mac="e9700aaa04c685dd19b8371672591cbd"
+time=2026-11-27T09:46:15+0200 level=INFO logger=kura.security event="auth.mfa.ok" ip="127.0.0.1" actor_user_id="anonymous" request_id="d065b61c2fa7337c9d78077a12503ef6" path="/login/mfa/" method="POST" method="totp" worker=364197 seq=52 mac="4a5f1748c2d0608f0e1bdddee5fea77b"
+time=2026-11-27T09:46:15+0200 level=INFO logger=kura.security event="session.created" ip="127.0.0.1" actor_user_id="2c81daca-9682-4d73-9f97-d9184f743257" request_id="d065b61c2fa7337c9d78077a12503ef6" path="/login/mfa/" method="POST" method="totp" session_id="24178fc8-905d-414b-a8f8-8574569098d9" worker=364197 seq=53 mac="7334301dd245aff0216e0f10c7126c98"
+time=2026-11-27T09:46:16+0200 level=INFO logger=kura.security event="auth.logout" ip="127.0.0.1" actor_user_id="2c81daca-9682-4d73-9f97-d9184f743257" request_id="65f28d9ce127d323bf764ed3695113f0" path="/logout/" method="POST" worker=364197 seq=54 mac="73778d734a2bfbb24ce2c4255e49fee6"
+time=2026-11-27T09:46:16+0200 level=INFO logger=kura.security event="session.revoked" ip="127.0.0.1" actor_user_id="2c81daca-9682-4d73-9f97-d9184f743257" request_id="65f28d9ce127d323bf764ed3695113f0" path="/logout/" method="POST" by="self" count="1" target_user_id="2c81daca-9682-4d73-9f97-d9184f743257" worker=364197 seq=55 mac="14ac327a5d9cb804e9330fb8edf83ed2"
+ok
+test_totp_codes_just_outside_drift_window_rejected_and_throttled (kura.tests_final_gaps.StaleTOTPCodeRegressionTests.test_totp_codes_just_outside_drift_window_rejected_and_throttled)
+OWASP Top 10 2025 A07 (Authentication Failures) | ASVS v4.0.3 V2.8.2 & V2.8.4: ... time=2026-11-27T09:46:17+0200 level=INFO logger=kura.security event="auth.login.password_ok" ip="127.0.0.1" actor_user_id="anonymous" request_id="af0f74146823a35aa701884c77f66e51" path="/login/" method="POST" user_id="a634a174-ec87-47e5-a9da-556d74fc7892" worker=364197 seq=56 mac="60cefde4b2ad2807d8cc53f303fbb571"
+time=2026-11-27T09:46:17+0200 level=WARNING logger=kura.security event="auth.mfa.failed" ip="127.0.0.1" actor_user_id="anonymous" request_id="99925cfc6f94012ac7064ced196e2ff1" path="/login/mfa/" method="POST" method_tried="totp_or_recovery_code" worker=364197 seq=57 mac="35bb84d6016bdf5aee2620c912ac24f0"
+time=2026-11-27T09:46:17+0200 level=WARNING logger=django.request Bad Request: /login/mfa/
+time=2026-11-27T09:46:17+0200 level=INFO logger=kura.security event="auth.login.password_ok" ip="127.0.0.1" actor_user_id="anonymous" request_id="86abb625fa45bc183c023fd6825a05cb" path="/login/" method="POST" user_id="a634a174-ec87-47e5-a9da-556d74fc7892" worker=364197 seq=58 mac="7ea9bde1cbd9b6c446c1b4da46e9b572"
+time=2026-11-27T09:46:17+0200 level=WARNING logger=kura.security event="auth.mfa.failed" ip="127.0.0.1" actor_user_id="anonymous" request_id="efd2a438fa5a1e63f30ba09e2c6b556a" path="/login/mfa/" method="POST" method_tried="totp_or_recovery_code" worker=364197 seq=59 mac="ba06d30f781d9d13fd932089e64ac2f7"
+time=2026-11-27T09:46:17+0200 level=WARNING logger=django.request Bad Request: /login/mfa/
+ok
+test_every_outbound_http_call_in_kura_targets_allowlisted_host (kura.tests_final_gaps.SSRFStaticEvidenceRegressionTests.test_every_outbound_http_call_in_kura_targets_allowlisted_host)
+OWASP Top 10 2025 A10 / OWASP 2021 A10 (Server-Side Request Forgery) | ASVS v4.0.3 V12.6.1: ... ok
+
+----------------------------------------------------------------------
+Ran 8 tests in 8.539s
+
+OK
+Destroying test database for alias 'default' ('test_kura')...
+ OK
+Cache table 'kura_search_cache' already exists.
+Cache table 'kura_ratelimit_cache' already exists.
+System check identified no issues (0 silenced).

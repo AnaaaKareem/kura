@@ -113,7 +113,7 @@ jobs:
           SECRET_KEY: ci-test-secret-key-not-for-production-environment
           DEBUG: "True"
         run: |
-          python manage.py test kura.tests_security_leads_part1 kura.tests_security_leads_part2 kura.tests_security_routes kura.tests_security_gaps kura.tests_signatures kura.tests_owasp_regression --noinput
+          python manage.py test kura.tests_security_leads_part1 kura.tests_security_leads_part2 kura.tests_security_routes kura.tests_security_gaps kura.tests_signatures kura.tests_owasp_regression kura.tests_final_gaps --noinput
 
       - name: Verify Django Production Deploy Checks
         env:
