@@ -1,0 +1,4 @@
+GET /admin/login/ -> HTTP 404
+kura-web  | time=2026-11-27T13:20:25+0200 level=WARNING logger=kura.security event="security.honeypot.hit" ip="172.20.101.228" actor_user_id="anonymous" request_id="bdb6c0eadd11f94a1fc5dc0550723e42" path="/admin/login/" method="GET" worker=9 seq=1 mac="e19b82a43f14981c5ee5cb8ea2abfd98"
+kura-web  | time=2026-11-27T13:20:42+0200 level=WARNING logger=kura.security event="security.honeypot.hit" ip="172.20.101.228" actor_user_id="anonymous" request_id="6c170de763bf667ba0627de621737619" path="/admin/login/" method="GET" worker=12 seq=1 mac="7c3faccea7a2eb3f63180b7d5eafec62"
+kura-web  | time=2026-11-27T13:23:42+0200 level=WARNING logger=kura.security event="security.honeypot.hit" ip="172.20.101.228" actor_user_id="anonymous" request_id="dafe84e9c18afe124118045d83a5654a" path="/admin/login/" method="GET" worker=10 seq=1 mac="b352c8fe90cfdab32c3c20dfa55ff863"

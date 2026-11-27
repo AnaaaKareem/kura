@@ -1,0 +1,125 @@
+[
+ {
+  "capacity": 0,
+  "created_at": "2026-11-27T11:23:43Z",
+  "decisions": [
+   {
+    "duration": "23h59m53s",
+    "id": 58204,
+    "origin": "crowdsec",
+    "scenario": "kura/honeypot-hit",
+    "scope": "Ip",
+    "simulated": false,
+    "type": "ban",
+    "value": "172.20.101.228"
+   }
+  ],
+  "events": [
+   {
+    "meta": [
+     {
+      "key": "datasource_path",
+      "value": "kura-web"
+     },
+     {
+      "key": "datasource_type",
+      "value": "docker"
+     },
+     {
+      "key": "event",
+      "value": "security.honeypot.hit"
+     },
+     {
+      "key": "log_type",
+      "value": "security.honeypot.hit"
+     },
+     {
+      "key": "service",
+      "value": "kura"
+     },
+     {
+      "key": "source_ip",
+      "value": "172.20.101.228"
+     }
+    ],
+    "timestamp": "2026-11-27 11:23:43.181730392 +0000 UTC"
+   }
+  ],
+  "events_count": 1,
+  "id": 21,
+  "kind": "crowdsec",
+  "labels": null,
+  "leakspeed": "0s",
+  "machine_id": "localhost",
+  "message": "Ip 172.20.101.228 performed 'kura/honeypot-hit' (1 events over 0s) at 2026-11-27 11:23:43.182723812 +0000 UTC",
+  "remediation": true,
+  "scenario": "kura/honeypot-hit",
+  "scenario_hash": "",
+  "scenario_version": "",
+  "simulated": false,
+  "source": {
+   "ip": "172.20.101.228",
+   "scope": "Ip",
+   "value": "172.20.101.228"
+  },
+  "start_at": "2026-11-27T11:23:43Z",
+  "stop_at": "2026-11-27T11:23:43Z",
+  "uuid": "4b9db274-99c8-42ec-b27d-d1a209129447"
+ },
+ {
+  "capacity": 0,
+  "created_at": "2026-11-27T11:20:26Z",
+  "decisions": [],
+  "events": [
+   {
+    "meta": [
+     {
+      "key": "datasource_path",
+      "value": "kura-web"
+     },
+     {
+      "key": "datasource_type",
+      "value": "docker"
+     },
+     {
+      "key": "event",
+      "value": "security.honeypot.hit"
+     },
+     {
+      "key": "log_type",
+      "value": "security.honeypot.hit"
+     },
+     {
+      "key": "service",
+      "value": "kura"
+     },
+     {
+      "key": "source_ip",
+      "value": "172.20.101.228"
+     }
+    ],
+    "timestamp": "2026-11-27 11:20:25.485344029 +0000 UTC"
+   }
+  ],
+  "events_count": 1,
+  "id": 20,
+  "kind": "crowdsec",
+  "labels": null,
+  "leakspeed": "0s",
+  "machine_id": "localhost",
+  "message": "Ip 172.20.101.228 performed 'kura/honeypot-hit' (1 events over 0s) at 2026-11-27 11:20:25.487807296 +0000 UTC",
+  "remediation": true,
+  "scenario": "kura/honeypot-hit",
+  "scenario_hash": "",
+  "scenario_version": "",
+  "simulated": false,
+  "source": {
+   "ip": "172.20.101.228",
+   "scope": "Ip",
+   "value": "172.20.101.228"
+  },
+  "start_at": "2026-11-27T11:20:25Z",
+  "stop_at": "2026-11-27T11:20:25Z",
+  "uuid": "be0ce27c-7364-4195-b23f-cf105bdd6879"
+ }
+]
