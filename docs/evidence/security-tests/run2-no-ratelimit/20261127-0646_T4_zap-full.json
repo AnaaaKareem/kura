@@ -1,0 +1,761 @@
+{
+	"@programName": "ZAP",
+	"@version": "2.17.0",
+	"@generated": "Fri, 27 Nov 2026 05:54:51",
+	"created": "2026-11-27T05:54:51.944468515Z",
+	"insights":[
+		{
+			"level": "Medium",
+			"reason": "Exceeded High",
+			"site": "",
+			"key": "insight.network.failure",
+			"description": "Percentage of network failures",
+			"statistic": "50"
+		},
+		{
+			"level": "Medium",
+			"reason": "Exceeded High",
+			"site": "https://localhost",
+			"key": "insight.code.4xx",
+			"description": "Percentage of responses with status code 4xx",
+			"statistic": "72"
+		},
+		{
+			"level": "Low",
+			"reason": "Warning",
+			"site": "",
+			"key": "insight.log.error",
+			"description": "ZAP errors logged - see the zap.log file for details",
+			"statistic": "12"
+		},
+		{
+			"level": "Low",
+			"reason": "Warning",
+			"site": "",
+			"key": "insight.log.warn",
+			"description": "ZAP warnings logged - see the zap.log file for details",
+			"statistic": "2078"
+		},
+		{
+			"level": "Info",
+			"reason": "Informational",
+			"site": "https://localhost",
+			"key": "insight.code.2xx",
+			"description": "Percentage of responses with status code 2xx",
+			"statistic": "4"
+		},
+		{
+			"level": "Info",
+			"reason": "Informational",
+			"site": "https://localhost",
+			"key": "insight.code.3xx",
+			"description": "Percentage of responses with status code 3xx",
+			"statistic": "20"
+		},
+		{
+			"level": "Info",
+			"reason": "Informational",
+			"site": "https://localhost",
+			"key": "insight.code.5xx",
+			"description": "Percentage of responses with status code 5xx",
+			"statistic": "1"
+		},
+		{
+			"level": "Info",
+			"reason": "Informational",
+			"site": "https://localhost",
+			"key": "insight.endpoint.ctype.application/javascript",
+			"description": "Percentage of endpoints with content type application/javascript",
+			"statistic": "8"
+		},
+		{
+			"level": "Info",
+			"reason": "Informational",
+			"site": "https://localhost",
+			"key": "insight.endpoint.ctype.image/svg+xml",
+			"description": "Percentage of endpoints with content type image/svg+xml",
+			"statistic": "2"
+		},
+		{
+			"level": "Info",
+			"reason": "Informational",
+			"site": "https://localhost",
+			"key": "insight.endpoint.ctype.text/css",
+			"description": "Percentage of endpoints with content type text/css",
+			"statistic": "8"
+		},
+		{
+			"level": "Info",
+			"reason": "Informational",
+			"site": "https://localhost",
+			"key": "insight.endpoint.ctype.text/html",
+			"description": "Percentage of endpoints with content type text/html",
+			"statistic": "81"
+		},
+		{
+			"level": "Info",
+			"reason": "Informational",
+			"site": "https://localhost",
+			"key": "insight.endpoint.method.GET",
+			"description": "Percentage of endpoints with method GET",
+			"statistic": "78"
+		},
+		{
+			"level": "Info",
+			"reason": "Informational",
+			"site": "https://localhost",
+			"key": "insight.endpoint.method.POST",
+			"description": "Percentage of endpoints with method POST",
+			"statistic": "21"
+		},
+		{
+			"level": "Info",
+			"reason": "Informational",
+			"site": "https://localhost",
+			"key": "insight.endpoint.total",
+			"description": "Count of total endpoints",
+			"statistic": "37"
+		},
+		{
+			"level": "Info",
+			"reason": "Exceeded Low",
+			"site": "https://localhost",
+			"key": "insight.response.slow",
+			"description": "Percentage of slow responses",
+			"statistic": "38"
+		}
+	],
+	"site":[ 
+		{
+			"@name": "https://localhost",
+			"@host": "localhost",
+			"@port": "443",
+			"@ssl": "true",
+			"alerts": [ 
+				{
+					"pluginid": "90027",
+					"alertRef": "90027",
+					"alert": "Cookie Slack Detector",
+					"name": "Cookie Slack Detector",
+					"riskcode": "1",
+					"confidence": "1",
+					"riskdesc": "Low (Low)",
+					"desc": "<p>Repeated GET requests: drop a different cookie each time, followed by normal request with all cookies to stabilize session, compare responses against original baseline GET. This can reveal areas where cookie based authentication/attributes are not actually enforced.</p>",
+					"instances":[ 
+						{
+							"id": "52",
+							"uri": "https://localhost/courses/",
+							"nodeName": "https:\/\/localhost\/courses\/",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "",
+							"otherinfo": "NOTE: Because of its name this cookie may be important, but dropping it appears to have no effect: [__Host-kura_session]\nCookies that don't have expected effects can reveal flaws in application logic. In the worst case, this can reveal where authentication via cookie token(s) is not actually enforced.\nThese cookies affected the response: \nThese cookies did NOT affect the response: __Host-kura_session,__Host-kura_csrftoken\n"
+						},
+						{
+							"id": "49",
+							"uri": "https://localhost/grades/my/",
+							"nodeName": "https:\/\/localhost\/grades\/my\/",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "",
+							"otherinfo": "NOTE: Because of its name this cookie may be important, but dropping it appears to have no effect: [__Host-kura_session]\nCookies that don't have expected effects can reveal flaws in application logic. In the worst case, this can reveal where authentication via cookie token(s) is not actually enforced.\nThese cookies affected the response: \nThese cookies did NOT affect the response: __Host-kura_session,__Host-kura_csrftoken\n"
+						},
+						{
+							"id": "48",
+							"uri": "https://localhost/login/",
+							"nodeName": "https:\/\/localhost\/login\/",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "",
+							"otherinfo": "NOTE: Because of its name this cookie may be important, but dropping it appears to have no effect: [__Host-kura_session]\nCookies that don't have expected effects can reveal flaws in application logic. In the worst case, this can reveal where authentication via cookie token(s) is not actually enforced.\nThese cookies affected the response: \nThese cookies did NOT affect the response: __Host-kura_session,messages,__Host-kura_csrftoken\n"
+						},
+						{
+							"id": "46",
+							"uri": "https://localhost/passkeys/",
+							"nodeName": "https:\/\/localhost\/passkeys\/",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "",
+							"otherinfo": "NOTE: Because of its name this cookie may be important, but dropping it appears to have no effect: [__Host-kura_session]\nCookies that don't have expected effects can reveal flaws in application logic. In the worst case, this can reveal where authentication via cookie token(s) is not actually enforced.\nThese cookies affected the response: \nThese cookies did NOT affect the response: __Host-kura_session,messages,__Host-kura_csrftoken\n"
+						},
+						{
+							"id": "47",
+							"uri": "https://localhost/transcript/",
+							"nodeName": "https:\/\/localhost\/transcript\/",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "",
+							"otherinfo": "NOTE: Because of its name this cookie may be important, but dropping it appears to have no effect: [__Host-kura_session]\nCookies that don't have expected effects can reveal flaws in application logic. In the worst case, this can reveal where authentication via cookie token(s) is not actually enforced.\nThese cookies affected the response: \nThese cookies did NOT affect the response: __Host-kura_session,__Host-kura_csrftoken\n"
+						}
+					],
+					"count": "5",
+					"systemic": true,
+					"solution": "",
+					"otherinfo": "<p>NOTE: Because of its name this cookie may be important, but dropping it appears to have no effect: [__Host-kura_session]</p><p>Cookies that don't have expected effects can reveal flaws in application logic. In the worst case, this can reveal where authentication via cookie token(s) is not actually enforced.</p><p>These cookies affected the response: </p><p>These cookies did NOT affect the response: __Host-kura_session,__Host-kura_csrftoken</p><p></p>",
+					"reference": "<p>https://cwe.mitre.org/data/definitions/205.html</p>",
+					"cweid": "205",
+					"wascid": "45",
+					"sourceid": "4173"
+				},
+				{
+					"pluginid": "2",
+					"alertRef": "2",
+					"alert": "Private IP Disclosure",
+					"name": "Private IP Disclosure",
+					"riskcode": "1",
+					"confidence": "2",
+					"riskdesc": "Low (Medium)",
+					"desc": "<p>A private IP (such as 10.x.x.x, 172.x.x.x, 192.168.x.x) or an Amazon EC2 private hostname (for example, ip-10-0-56-78) has been found in the HTTP response body. This information might be helpful for further attacks targeting internal systems.</p>",
+					"instances":[ 
+						{
+							"id": "27",
+							"uri": "https://localhost/account/sessions/",
+							"nodeName": "https:\/\/localhost\/account\/sessions\/",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "172.28.10.128",
+							"otherinfo": "172.28.10.128\n"
+						}
+					],
+					"count": "1",
+					"systemic": false,
+					"solution": "<p>Remove the private IP address from the HTTP response body. For comments, use JSP/ASP/PHP comment instead of HTML/JavaScript comment which can be seen by client browsers.</p>",
+					"otherinfo": "<p>172.28.10.128</p><p></p>",
+					"reference": "<p>https://datatracker.ietf.org/doc/html/rfc1918</p>",
+					"cweid": "497",
+					"wascid": "13",
+					"sourceid": "38"
+				},
+				{
+					"pluginid": "10111",
+					"alertRef": "10111",
+					"alert": "Authentication Request Identified",
+					"name": "Authentication Request Identified",
+					"riskcode": "0",
+					"confidence": "3",
+					"riskdesc": "Informational (High)",
+					"desc": "<p>The given request has been identified as an authentication request. The 'Other Info' field contains a set of key=value lines which identify any relevant fields. If the request is in a context which has an Authentication Method set to \"Auto-Detect\" then this rule will change the authentication to match the request identified.</p>",
+					"instances":[ 
+						{
+							"id": "41",
+							"uri": "https://localhost/login/",
+							"nodeName": "https:\/\/localhost\/login\/ ()(csrfmiddlewaretoken,email,password)",
+							"method": "POST",
+							"param": "email",
+							"attack": "",
+							"evidence": "password",
+							"otherinfo": "userParam=email\nuserValue=zaproxy@example.com\npasswordParam=password\nreferer=https://localhost/login/"
+						}
+					],
+					"count": "1",
+					"systemic": false,
+					"solution": "<p>This is an informational alert rather than a vulnerability and so there is nothing to fix.</p>",
+					"otherinfo": "<p>userParam=email</p><p>userValue=zaproxy@example.com</p><p>passwordParam=password</p><p>referer=https://localhost/login/</p>",
+					"reference": "<p>https://www.zaproxy.org/docs/desktop/addons/authentication-helper/auth-req-id/</p>",
+					"cweid": "-1",
+					"wascid": "-1",
+					"sourceid": "119"
+				},
+				{
+					"pluginid": "10024",
+					"alertRef": "10024",
+					"alert": "Information Disclosure - Sensitive Information in URL",
+					"name": "Information Disclosure - Sensitive Information in URL",
+					"riskcode": "0",
+					"confidence": "2",
+					"riskdesc": "Informational (Medium)",
+					"desc": "<p>The request appeared to contain sensitive information leaked in the URL. This can violate PCI and most organizational compliance policies. You can configure the list of strings for this check to add or remove values specific to your environment.</p>",
+					"instances":[ 
+						{
+							"id": "40",
+							"uri": "https://localhost/schedules/?course=ab70573f-85a7-4240-bb9d-1fe4b6404ef0&day=monday&session_type=lecture",
+							"nodeName": "https:\/\/localhost\/schedules\/ (course,day,session_type)",
+							"method": "GET",
+							"param": "session_type",
+							"attack": "",
+							"evidence": "session_type",
+							"otherinfo": "The URL contains potentially sensitive information. The following string was found via the pattern: session\nsession_type"
+						}
+					],
+					"count": "1",
+					"systemic": false,
+					"solution": "<p>Do not pass sensitive information in URIs.</p>",
+					"otherinfo": "<p>The URL contains potentially sensitive information. The following string was found via the pattern: session</p><p>session_type</p>",
+					"reference": "",
+					"cweid": "598",
+					"wascid": "13",
+					"sourceid": "95"
+				},
+				{
+					"pluginid": "10027",
+					"alertRef": "10027",
+					"alert": "Information Disclosure - Suspicious Comments",
+					"name": "Information Disclosure - Suspicious Comments",
+					"riskcode": "0",
+					"confidence": "2",
+					"riskdesc": "Informational (Medium)",
+					"desc": "<p>The response appears to contain suspicious comments which may help an attacker.</p>",
+					"instances":[ 
+						{
+							"id": "11",
+							"uri": "https://localhost",
+							"nodeName": "https:\/\/localhost",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "<!-- Signed-in user summary at the bott",
+							"otherinfo": "The following pattern was used: \\bUSER\\b and was detected in likely comment: \"<!-- Signed-in user summary at the bottom of the sidebar. -->\", see evidence field for the suspicious comment/snippet."
+						},
+						{
+							"id": "1",
+							"uri": "https://localhost/",
+							"nodeName": "https:\/\/localhost\/",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "<!-- Signed-in user summary at the bott",
+							"otherinfo": "The following pattern was used: \\bUSER\\b and was detected in likely comment: \"<!-- Signed-in user summary at the bottom of the sidebar. -->\", see evidence field for the suspicious comment/snippet."
+						},
+						{
+							"id": "31",
+							"uri": "https://localhost/account/privacy/",
+							"nodeName": "https:\/\/localhost\/account\/privacy\/",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "<!-- Signed-in user summary at the bott",
+							"otherinfo": "The following pattern was used: \\bUSER\\b and was detected in likely comment: \"<!-- Signed-in user summary at the bottom of the sidebar. -->\", see evidence field for the suspicious comment/snippet."
+						},
+						{
+							"id": "28",
+							"uri": "https://localhost/account/sessions/",
+							"nodeName": "https:\/\/localhost\/account\/sessions\/",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "<!-- Signed-in user summary at the bott",
+							"otherinfo": "The following pattern was used: \\bUSER\\b and was detected in likely comment: \"<!-- Signed-in user summary at the bottom of the sidebar. -->\", see evidence field for the suspicious comment/snippet."
+						},
+						{
+							"id": "32",
+							"uri": "https://localhost/attendance/history/",
+							"nodeName": "https:\/\/localhost\/attendance\/history\/",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "<!-- Signed-in user summary at the bott",
+							"otherinfo": "The following pattern was used: \\bUSER\\b and was detected in likely comment: \"<!-- Signed-in user summary at the bottom of the sidebar. -->\", see evidence field for the suspicious comment/snippet."
+						},
+						{
+							"id": "35",
+							"uri": "https://localhost/courses/",
+							"nodeName": "https:\/\/localhost\/courses\/",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "<!-- Signed-in user summary at the bott",
+							"otherinfo": "The following pattern was used: \\bUSER\\b and was detected in likely comment: \"<!-- Signed-in user summary at the bottom of the sidebar. -->\", see evidence field for the suspicious comment/snippet."
+						},
+						{
+							"id": "34",
+							"uri": "https://localhost/grades/my/",
+							"nodeName": "https:\/\/localhost\/grades\/my\/",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "<!-- Signed-in user summary at the bott",
+							"otherinfo": "The following pattern was used: \\bUSER\\b and was detected in likely comment: \"<!-- Signed-in user summary at the bottom of the sidebar. -->\", see evidence field for the suspicious comment/snippet."
+						},
+						{
+							"id": "33",
+							"uri": "https://localhost/password/change/",
+							"nodeName": "https:\/\/localhost\/password\/change\/",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "<!-- Signed-in user summary at the bott",
+							"otherinfo": "The following pattern was used: \\bUSER\\b and was detected in likely comment: \"<!-- Signed-in user summary at the bottom of the sidebar. -->\", see evidence field for the suspicious comment/snippet."
+						},
+						{
+							"id": "30",
+							"uri": "https://localhost/schedules/",
+							"nodeName": "https:\/\/localhost\/schedules\/",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "<!-- Signed-in user summary at the bott",
+							"otherinfo": "The following pattern was used: \\bUSER\\b and was detected in likely comment: \"<!-- Signed-in user summary at the bottom of the sidebar. -->\", see evidence field for the suspicious comment/snippet."
+						},
+						{
+							"id": "17",
+							"uri": "https://localhost/static/js/theme.6b98b0d9a05d.js",
+							"nodeName": "https:\/\/localhost\/static\/js\/theme.6b98b0d9a05d.js",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "// Loaded from an external file be",
+							"otherinfo": "The following pattern was used: \\bFROM\\b and was detected 2 times, the first in likely comment: \"// Loaded from an external file because the Content Security Policy blocks inline scripts.\", see evidence field for the suspicious comment/snippet."
+						},
+						{
+							"id": "36",
+							"uri": "https://localhost/transcript/",
+							"nodeName": "https:\/\/localhost\/transcript\/",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "<!-- Signed-in user summary at the bott",
+							"otherinfo": "The following pattern was used: \\bUSER\\b and was detected in likely comment: \"<!-- Signed-in user summary at the bottom of the sidebar. -->\", see evidence field for the suspicious comment/snippet."
+						}
+					],
+					"count": "11",
+					"systemic": false,
+					"solution": "<p>Remove all comments that return information that may help an attacker and fix any underlying problems they refer to.</p>",
+					"otherinfo": "<p>The following pattern was used: \\bUSER\\b and was detected in likely comment: \"<!-- Signed-in user summary at the bottom of the sidebar. -->\", see evidence field for the suspicious comment/snippet.</p>",
+					"reference": "",
+					"cweid": "615",
+					"wascid": "13",
+					"sourceid": "13"
+				},
+				{
+					"pluginid": "10049",
+					"alertRef": "10049-1",
+					"alert": "Non-Storable Content",
+					"name": "Non-Storable Content",
+					"riskcode": "0",
+					"confidence": "2",
+					"riskdesc": "Informational (Medium)",
+					"desc": "<p>The response contents are not storable by caching components such as proxy servers. If the response does not contain sensitive, personal or user-specific information, it may benefit from being stored and cached, to improve performance.</p>",
+					"instances":[ 
+						{
+							"id": "12",
+							"uri": "https://localhost",
+							"nodeName": "https:\/\/localhost",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "no-store",
+							"otherinfo": ""
+						},
+						{
+							"id": "2",
+							"uri": "https://localhost/",
+							"nodeName": "https:\/\/localhost\/",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "no-store",
+							"otherinfo": ""
+						},
+						{
+							"id": "25",
+							"uri": "https://localhost/passkeys/",
+							"nodeName": "https:\/\/localhost\/passkeys\/",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "no-store",
+							"otherinfo": ""
+						},
+						{
+							"id": "6",
+							"uri": "https://localhost/robots.txt",
+							"nodeName": "https:\/\/localhost\/robots.txt",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "no-store",
+							"otherinfo": ""
+						},
+						{
+							"id": "9",
+							"uri": "https://localhost/sitemap.xml",
+							"nodeName": "https:\/\/localhost\/sitemap.xml",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "no-store",
+							"otherinfo": ""
+						}
+					],
+					"count": "5",
+					"systemic": true,
+					"solution": "<p>The content may be marked as storable by ensuring that the following conditions are satisfied:</p><p>The request method must be understood by the cache and defined as being cacheable (\"GET\", \"HEAD\", and \"POST\" are currently defined as cacheable)</p><p>The response status code must be understood by the cache (one of the 1XX, 2XX, 3XX, 4XX, or 5XX response classes are generally understood)</p><p>The \"no-store\" cache directive must not appear in the request or response header fields</p><p>For caching by \"shared\" caches such as \"proxy\" caches, the \"private\" response directive must not appear in the response</p><p>For caching by \"shared\" caches such as \"proxy\" caches, the \"Authorization\" header field must not appear in the request, unless the response explicitly allows it (using one of the \"must-revalidate\", \"public\", or \"s-maxage\" Cache-Control response directives)</p><p>In addition to the conditions above, at least one of the following conditions must also be satisfied by the response:</p><p>It must contain an \"Expires\" header field</p><p>It must contain a \"max-age\" response directive</p><p>For \"shared\" caches such as \"proxy\" caches, it must contain a \"s-maxage\" response directive</p><p>It must contain a \"Cache Control Extension\" that allows it to be cached</p><p>It must have a status code that is defined as cacheable by default (200, 203, 204, 206, 300, 301, 404, 405, 410, 414, 501).</p>",
+					"otherinfo": "",
+					"reference": "<p>https://datatracker.ietf.org/doc/html/rfc7234</p><p>https://datatracker.ietf.org/doc/html/rfc7231</p><p>https://www.w3.org/Protocols/rfc2616/rfc2616-sec13.html</p>",
+					"cweid": "524",
+					"wascid": "13",
+					"sourceid": "13"
+				},
+				{
+					"pluginid": "10015",
+					"alertRef": "10015",
+					"alert": "Re-examine Cache-control Directives",
+					"name": "Re-examine Cache-control Directives",
+					"riskcode": "0",
+					"confidence": "1",
+					"riskdesc": "Informational (Low)",
+					"desc": "<p>The cache-control header has not been set properly or is missing, allowing the browser and proxies to cache content. For static assets like css, js, or image files this might be intended, however, the resources should be reviewed to ensure that no sensitive content will be cached.</p>",
+					"instances":[ 
+						{
+							"id": "37",
+							"uri": "https://localhost/privacy/",
+							"nodeName": "https:\/\/localhost\/privacy\/",
+							"method": "GET",
+							"param": "cache-control",
+							"attack": "",
+							"evidence": "",
+							"otherinfo": ""
+						}
+					],
+					"count": "1",
+					"systemic": false,
+					"solution": "<p>For secure content, ensure the cache-control HTTP header is set with \"no-cache, no-store, must-revalidate\". If an asset should be cached consider setting the directives \"public, max-age, immutable\".</p>",
+					"otherinfo": "",
+					"reference": "<p>https://cheatsheetseries.owasp.org/cheatsheets/Session_Management_Cheat_Sheet.html#web-content-caching</p><p>https://developer.mozilla.org/en-US/docs/Web/HTTP/Reference/Headers/Cache-Control</p><p>https://grayduck.mn/2021/09/13/cache-control-recommendations/</p>",
+					"cweid": "525",
+					"wascid": "13",
+					"sourceid": "82"
+				},
+				{
+					"pluginid": "10112",
+					"alertRef": "10112",
+					"alert": "Session Management Response Identified",
+					"name": "Session Management Response Identified",
+					"riskcode": "0",
+					"confidence": "2",
+					"riskdesc": "Informational (Medium)",
+					"desc": "<p>The given response has been identified as containing a session management token. The 'Other Info' field contains a set of header tokens that can be used in the Header Based Session Management Method. If the request is in a context which has a Session Management Method set to \"Auto-Detect\" then this rule will change the session management to use the tokens identified.</p>",
+					"instances":[ 
+						{
+							"id": "3",
+							"uri": "https://localhost",
+							"nodeName": "https:\/\/localhost",
+							"method": "GET",
+							"param": "__Host-kura_session",
+							"attack": "",
+							"evidence": "__Host-kura_session",
+							"otherinfo": "cookie:__Host-kura_session\ncookie:__Host-kura_csrftoken"
+						},
+						{
+							"id": "0",
+							"uri": "https://localhost/",
+							"nodeName": "https:\/\/localhost\/",
+							"method": "GET",
+							"param": "__Host-kura_session",
+							"attack": "",
+							"evidence": "__Host-kura_session",
+							"otherinfo": "cookie:__Host-kura_session\ncookie:__Host-kura_csrftoken"
+						},
+						{
+							"id": "24",
+							"uri": "https://localhost/account/privacy/",
+							"nodeName": "https:\/\/localhost\/account\/privacy\/",
+							"method": "GET",
+							"param": "__Host-kura_session",
+							"attack": "",
+							"evidence": "__Host-kura_session",
+							"otherinfo": "cookie:__Host-kura_session\ncookie:__Host-kura_csrftoken"
+						},
+						{
+							"id": "19",
+							"uri": "https://localhost/account/sessions/",
+							"nodeName": "https:\/\/localhost\/account\/sessions\/",
+							"method": "GET",
+							"param": "__Host-kura_session",
+							"attack": "",
+							"evidence": "__Host-kura_session",
+							"otherinfo": "cookie:__Host-kura_session\ncookie:__Host-kura_csrftoken"
+						},
+						{
+							"id": "22",
+							"uri": "https://localhost/attendance/history/",
+							"nodeName": "https:\/\/localhost\/attendance\/history\/",
+							"method": "GET",
+							"param": "__Host-kura_session",
+							"attack": "",
+							"evidence": "__Host-kura_session",
+							"otherinfo": "cookie:__Host-kura_session\ncookie:__Host-kura_csrftoken"
+						},
+						{
+							"id": "26",
+							"uri": "https://localhost/grades/my/",
+							"nodeName": "https:\/\/localhost\/grades\/my\/",
+							"method": "GET",
+							"param": "__Host-kura_session",
+							"attack": "",
+							"evidence": "__Host-kura_session",
+							"otherinfo": "cookie:__Host-kura_session\ncookie:__Host-kura_csrftoken"
+						},
+						{
+							"id": "20",
+							"uri": "https://localhost/passkeys/",
+							"nodeName": "https:\/\/localhost\/passkeys\/",
+							"method": "GET",
+							"param": "messages",
+							"attack": "",
+							"evidence": "messages",
+							"otherinfo": "cookie:messages\ncookie:__Host-kura_session"
+						},
+						{
+							"id": "21",
+							"uri": "https://localhost/password/change/",
+							"nodeName": "https:\/\/localhost\/password\/change\/",
+							"method": "GET",
+							"param": "__Host-kura_session",
+							"attack": "",
+							"evidence": "__Host-kura_session",
+							"otherinfo": "cookie:__Host-kura_session\ncookie:__Host-kura_csrftoken"
+						},
+						{
+							"id": "4",
+							"uri": "https://localhost/robots.txt",
+							"nodeName": "https:\/\/localhost\/robots.txt",
+							"method": "GET",
+							"param": "__Host-kura_session",
+							"attack": "",
+							"evidence": "__Host-kura_session",
+							"otherinfo": "cookie:__Host-kura_session"
+						},
+						{
+							"id": "23",
+							"uri": "https://localhost/schedules/",
+							"nodeName": "https:\/\/localhost\/schedules\/",
+							"method": "GET",
+							"param": "__Host-kura_session",
+							"attack": "",
+							"evidence": "__Host-kura_session",
+							"otherinfo": "cookie:__Host-kura_session\ncookie:__Host-kura_csrftoken"
+						},
+						{
+							"id": "7",
+							"uri": "https://localhost/sitemap.xml",
+							"nodeName": "https:\/\/localhost\/sitemap.xml",
+							"method": "GET",
+							"param": "__Host-kura_session",
+							"attack": "",
+							"evidence": "__Host-kura_session",
+							"otherinfo": "cookie:__Host-kura_session"
+						}
+					],
+					"count": "11",
+					"systemic": false,
+					"solution": "<p>This is an informational alert rather than a vulnerability and so there is nothing to fix.</p>",
+					"otherinfo": "<p>cookie:__Host-kura_session</p><p>cookie:__Host-kura_csrftoken</p>",
+					"reference": "<p>https://www.zaproxy.org/docs/desktop/addons/authentication-helper/session-mgmt-id/</p>",
+					"cweid": "-1",
+					"wascid": "-1",
+					"sourceid": "13"
+				},
+				{
+					"pluginid": "10049",
+					"alertRef": "10049-3",
+					"alert": "Storable and Cacheable Content",
+					"name": "Storable and Cacheable Content",
+					"riskcode": "0",
+					"confidence": "2",
+					"riskdesc": "Informational (Medium)",
+					"desc": "<p>The response contents are storable by caching components such as proxy servers, and may be retrieved directly from the cache, rather than from the origin server by the caching servers, in response to similar requests from other users. If the response data is sensitive, personal or user-specific, this may result in sensitive information being leaked. In some cases, this may even result in a user gaining complete control of the session of another user, depending on the configuration of the caching components in use in their environment. This is primarily an issue where \"shared\" caching servers such as \"proxy\" caches are configured on the local network. This configuration is typically found in corporate or educational environments, for instance.</p>",
+					"instances":[ 
+						{
+							"id": "16",
+							"uri": "https://localhost/static/css/bootstrap.min.6a7df65a8257.css",
+							"nodeName": "https:\/\/localhost\/static\/css\/bootstrap.min.6a7df65a8257.css",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "max-age=2592000",
+							"otherinfo": ""
+						},
+						{
+							"id": "5",
+							"uri": "https://localhost/static/css/kura.ad5a0447ba85.css",
+							"nodeName": "https:\/\/localhost\/static\/css\/kura.ad5a0447ba85.css",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "max-age=2592000",
+							"otherinfo": ""
+						},
+						{
+							"id": "8",
+							"uri": "https://localhost/static/img/kura-mark.b7b9e2bd9f23.svg",
+							"nodeName": "https:\/\/localhost\/static\/img\/kura-mark.b7b9e2bd9f23.svg",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "max-age=2592000",
+							"otherinfo": ""
+						},
+						{
+							"id": "13",
+							"uri": "https://localhost/static/js/theme-init.46cf6f828b59.js",
+							"nodeName": "https:\/\/localhost\/static\/js\/theme-init.46cf6f828b59.js",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "max-age=2592000",
+							"otherinfo": ""
+						},
+						{
+							"id": "18",
+							"uri": "https://localhost/static/js/theme.6b98b0d9a05d.js",
+							"nodeName": "https:\/\/localhost\/static\/js\/theme.6b98b0d9a05d.js",
+							"method": "GET",
+							"param": "",
+							"attack": "",
+							"evidence": "max-age=2592000",
+							"otherinfo": ""
+						}
+					],
+					"count": "5",
+					"systemic": false,
+					"solution": "<p>Validate that the response does not contain sensitive, personal or user-specific information. If it does, consider the use of the following HTTP response headers, to limit, or prevent the content being stored and retrieved from the cache by another user:</p><p>Cache-Control: no-cache, no-store, must-revalidate, private</p><p>Pragma: no-cache</p><p>Expires: 0</p><p>This configuration directs both HTTP 1.0 and HTTP 1.1 compliant caching servers to not store the response, and to not retrieve the response (without validation) from the cache, in response to a similar request.</p>",
+					"otherinfo": "",
+					"reference": "<p>https://datatracker.ietf.org/doc/html/rfc7234</p><p>https://datatracker.ietf.org/doc/html/rfc7231</p><p>https://www.w3.org/Protocols/rfc2616/rfc2616-sec13.html</p>",
+					"cweid": "524",
+					"wascid": "13",
+					"sourceid": "30"
+				},
+				{
+					"pluginid": "10031",
+					"alertRef": "10031",
+					"alert": "User Controllable HTML Element Attribute (Potential XSS)",
+					"name": "User Controllable HTML Element Attribute (Potential XSS)",
+					"riskcode": "0",
+					"confidence": "1",
+					"riskdesc": "Informational (Low)",
+					"desc": "<p>This check looks at user-supplied input in query string parameters and POST data to identify where certain HTML attribute values might be controlled. This provides hot-spot detection for XSS (cross-site scripting) that will require further review by a security analyst to determine exploitability.</p>",
+					"instances":[ 
+						{
+							"id": "38",
+							"uri": "https://localhost/mfa/confirm/?next=%2Fpasskeys%2F",
+							"nodeName": "https:\/\/localhost\/mfa\/confirm\/ (next)",
+							"method": "GET",
+							"param": "next",
+							"attack": "",
+							"evidence": "",
+							"otherinfo": "User-controlled HTML attribute values were found. Try injecting special characters to see if XSS might be possible. The page at the following URL:\n\nhttps://localhost/mfa/confirm/?next=%2Fpasskeys%2F\n\nappears to include user input in:\na(n) [a] tag [href] attribute\n\nThe user input found was:\nnext=/passkeys/\n\nThe user-controlled value was:\n/passkeys/"
+						}
+					],
+					"count": "1",
+					"systemic": false,
+					"solution": "<p>Validate all input and sanitize output it before writing to any HTML attributes.</p>",
+					"otherinfo": "<p>User-controlled HTML attribute values were found. Try injecting special characters to see if XSS might be possible. The page at the following URL:</p><p></p><p>https://localhost/mfa/confirm/?next=%2Fpasskeys%2F</p><p></p><p>appears to include user input in:</p><p>a(n) [a] tag [href] attribute</p><p></p><p>The user input found was:</p><p>next=/passkeys/</p><p></p><p>The user-controlled value was:</p><p>/passkeys/</p>",
+					"reference": "<p>https://cheatsheetseries.owasp.org/cheatsheets/Input_Validation_Cheat_Sheet.html</p>",
+					"cweid": "20",
+					"wascid": "20",
+					"sourceid": "72"
+				}
+			]
+		}
+	],
+	"sequences":[
+	]
+
+}

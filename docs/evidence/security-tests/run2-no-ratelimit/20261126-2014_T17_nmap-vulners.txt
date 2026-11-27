@@ -1,0 +1,1 @@
+# Nmap 7.98 scan initiated Thu Nov 26 20:23:14 2026 as: nmap -sV --script vulners -p 80,443 -oN docs/evidence/security-tests/run2-no-ratelimit/20261126-2014_T17_nmap-vulners.txt 172.20.101.228

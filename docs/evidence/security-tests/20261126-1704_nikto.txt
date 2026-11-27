@@ -1,0 +1,56 @@
+- Nikto v2.1.5/2.1.5
++ Target Host: localhost
++ Target Port: 443
++ GET /: Uncommon header 'strict-transport-security' found, with contents: max-age=31536000; includeSubDomains; preload
++ GET /: Uncommon header 'referrer-policy' found, with contents: same-origin
++ GET /: Uncommon header 'x-content-type-options' found, with contents: nosniff
++ GET /: Uncommon header 'permissions-policy' found, with contents: camera=(), microphone=(), geolocation=(), payment=(), usb=()
++ GET /: Uncommon header 'cross-origin-embedder-policy' found, with contents: require-corp
++ GET /: Uncommon header 'content-security-policy' found, with contents: default-src 'none'; script-src 'none'; style-src 'none'; img-src 'none'; font-src 'none'; connect-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'
++ GET /: Uncommon header 'x-frame-options' found, with contents: DENY
++ GET /: Uncommon header 'cross-origin-resource-policy' found, with contents: same-origin
++ GET /clientaccesspolicy.xml: lines
++ GET /forums//admin/config.php: /forums//admin/config.php: PHP Config file may contain database IDs and passwords.
++ GET /IlohaMail/blank.html: /IlohaMail/blank.html: IlohaMail 0.8.10 contains a XSS vulnerability. Previous versions contain other non-descript vulnerabilities.
++ -15971: GET /MIDICART/midicart.mdb: /MIDICART/midicart.mdb: MIDICART database is available for browsing. This should not be allowed via the web server.
++ GET /nsn/..%5Cutil/rd.bas: /nsn/..%5Cutil/rd.bas: Netbase util access is possible which means that several utility scripts might be run (including directory listings, NDS tree enumeration and running .bas files on server
++ -31150: GET /USER/CONFIG.AP: /USER/CONFIG.AP: MIPCD configuration information. MIPCD should not have the web interface enabled.
++ GET /mail.box: /mail.box: The mail database can be read without authentication.
++ -3233: GET /admin/admin_phpinfo.php4: /admin/admin_phpinfo.php4: Mon Album from http://www.3dsrc.com version 0.6.2d allows remote admin access. This should be protected.
++ GET /order/order_log.dat: /order/order_log.dat: Web shopping system from http://www.io.com/~rga/scripts/cgiorder.html exposes order information, see http://www.mindsec.com/advisories/post2.txt
++ -551: GET /ncl_items.shtml?SUBJECT=1: /ncl_items.shtml?SUBJECT=1: This may allow attackers to reconfigure your Tektronix printer.
++ -473: GET /_vti_pvt/svacl.cnf: /_vti_pvt/svacl.cnf: File used to store whether subwebs have unique permissions settings and any IP address restrictions.  Can be used to discover information about subwebs, remove or ACL if FrontPage is not being used.
++ -2117: GET /BACLIENT: /BACLIENT: IBM Tivoli default file found.
++ -578: GET /level/28/exec//show: /level/28/exec//show: CISCO HTTP service allows remote execution of commands
++ -578: GET /level/62/exec//show: /level/62/exec//show: CISCO HTTP service allows remote execution of commands
++ -578: GET /level/94/exec//show: /level/94/exec//show: CISCO HTTP service allows remote execution of commands
++ -12184: GET /some.php?=PHPE9568F36-D428-11d2-A769-00AA001ACF42: /some.php?=PHPE9568F36-D428-11d2-A769-00AA001ACF42: PHP reveals potentially sensitive information via certain HTTP requests that contain specific QUERY strings.
++ -250: GET /wwwboard/passwd.txt: /wwwboard/passwd.txt: The wwwboard password file is browsable. Change wwwboard to store this file elsewhere, or upgrade to the latest version.
++ -3092: GET /access-log: /access-log: This might be interesting...
++ -3092: GET /logs/access_log: /logs/access_log: This might be interesting...
++ -3092: GET /oracle: /oracle: This might be interesting...
++ -3092: GET /piranha/secure/passwd.php3: /piranha/secure/passwd.php3: This might be interesting...
++ -3092: GET /clusta4.nsf: /clusta4.nsf: This database can be read without authentication, which may reveal sensitive information.
++ -3092: GET /iNotes/Forms5.nsf: /iNotes/Forms5.nsf: This database can be read without authentication, which may reveal sensitive information.
++ -3092: GET /nntp/nd000002.nsf: /nntp/nd000002.nsf: This database can be read without authentication, which may reveal sensitive information.
++ -3092: GET /smtp.box: /smtp.box: This database can be read without authentication, which may reveal sensitive information.
++ -3093: GET /finance.xls: /finance.xls: Finance spreadsheet?
++ -3093: GET /biztalktracking/RawCustomSearchField.asp?|-|0|404_Object_Not_Found: /biztalktracking/RawCustomSearchField.asp?|-|0|404_Object_Not_Found: This might be interesting... has been seen in web logs from an unknown scanner.
++ -3093: GET /dotproject/modules/files/index_table.php: /dotproject/modules/files/index_table.php: This might be interesting... has been seen in web logs from an unknown scanner.
++ -3093: GET /kernel/class/delete.php: /kernel/class/delete.php: This might be interesting... has been seen in web logs from an unknown scanner.
++ -3093: GET /modules/Search/index.php: /modules/Search/index.php: This might be interesting... has been seen in web logs from an unknown scanner.
++ -3093: GET /protectedpage.php?uid=&#039;%20OR%20&#039;&#039;=&#039;&amp;pwd=&#039;%20OR%20&#039;&#039;=&#039;: /protectedpage.php?uid=&#039;%20OR%20&#039;&#039;=&#039;&amp;pwd=&#039;%20OR%20&#039;&#039;=&#039;: This might be interesting... has been seen in web logs from an unknown scanner.
++ -3093: GET /webcalendar/view_m.php: /webcalendar/view_m.php: This might be interesting... has been seen in web logs from an unknown scanner.
++ -3093: GET /.plan: /.plan: User home dir with a .plan, a now mostly outdated file for delivering information via the finger protocol 
++ -3233: GET /cgi-bin/admin.pl: /cgi-bin/admin.pl: Default FrontPage CGI found.
++ -3233: GET /servlet/sqlcdsn: /servlet/sqlcdsn: Netware SQL connector found. All default code should be removed from web servers.
++ -3233: GET /help/npn_admn.nsf: /help/npn_admn.nsf: This documentation database can be read without authentication. All default files should be removed.
++ -3233: GET /index.html.el: /index.html.el: Apache default foreign language file found. All default files should be removed from the web server as they may give an attacker additional system information.
++ -3233: GET /iissamples/sdk/asp/docs/Winmsdp.exe: /iissamples/sdk/asp/docs/Winmsdp.exe: This is a default IIS script/file that should be removed. CVE-1999-0738. MS99-013.
++ -3092: GET /LICENSE.txt: /LICENSE.txt: License file found may identify site software.
++ -3092: GET /LICENSE.TXT: /LICENSE.TXT: License file found may identify site software.
++ GET /admin/controlpanel.html: /admin/controlpanel.html: Admin login page/section found.
++ GET /administraçao.php: /administraçao.php: Admin login page/section found.
++ GET /adminpanel.php: /adminpanel.php: Admin login page/section found.
++ GET /cp.asp: /cp.asp: Admin login page/section found.
++ -3092: GET /dochelp4.nsf: /dochelp4.nsf: This database can be read without authentication, which may reveal sensitive information.

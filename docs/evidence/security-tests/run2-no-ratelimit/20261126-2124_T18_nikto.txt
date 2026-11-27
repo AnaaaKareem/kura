@@ -1,0 +1,12 @@
+- Nikto v2.1.5/2.1.5
++ Target Host: localhost
++ Target Port: 443
++ GET /: Uncommon header 'permissions-policy' found, with contents: camera=(), microphone=(), geolocation=(), payment=(), usb=()
++ GET /: Uncommon header 'referrer-policy' found, with contents: same-origin
++ GET /: Uncommon header 'x-content-type-options' found, with contents: nosniff
++ GET /: Uncommon header 'x-frame-options' found, with contents: DENY
++ GET /: Uncommon header 'cross-origin-embedder-policy' found, with contents: require-corp
++ GET /: Uncommon header 'content-security-policy' found, with contents: default-src 'none'; script-src 'none'; style-src 'none'; img-src 'none'; font-src 'none'; connect-src 'none'; frame-ancestors 'none'; base-uri 'none'; form-action 'none'; object-src 'none'
++ GET /: Uncommon header 'cross-origin-resource-policy' found, with contents: same-origin
++ GET /: Uncommon header 'strict-transport-security' found, with contents: max-age=31536000; includeSubDomains; preload
++ GET /wp-admin/: Uncommon header 'cross-origin-opener-policy' found, with contents: same-origin

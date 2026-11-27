@@ -1,0 +1,16 @@
+# Nmap 7.98 scan initiated Fri Nov 27 06:44:52 2026 as: nmap -Pn -sS -sV -T4 --max-retries 1 -p- -oN docs/evidence/security-tests/run2-no-ratelimit/20261127-0644_T10_nmap-wsl-ip.txt 172.20.101.228
+Nmap scan report for 172.20.101.228
+Host is up (0.000056s latency).
+Not shown: 65534 filtered tcp ports (no-response)
+PORT      STATE SERVICE     VERSION
+35141/tcp open  ssl/unknown
+1 service unrecognized despite returning data. If you know the service/version, please submit the following fingerprint at https://nmap.org/cgi-bin/submit.cgi?new-service :
+SF-Port35141-TCP:V=7.98%T=SSL%I=7%D=11/27%Time=6B090F56%P=x86_64-pc-linux-
+SF:gnu%r(GetRequest,36,"HTTP/1\.1\x20200\r\nContent-Length:\x200\r\nConnec
+SF:tion:\x20close\r\n\r\n")%r(HTTPOptions,36,"HTTP/1\.1\x20200\r\nContent-
+SF:Length:\x200\r\nConnection:\x20close\r\n\r\n")%r(FourOhFourRequest,36,"
+SF:HTTP/1\.1\x20200\r\nContent-Length:\x200\r\nConnection:\x20close\r\n\r\
+SF:n");
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+# Nmap done at Fri Nov 27 07:07:50 2026 -- 1 IP address (1 host up) scanned in 1377.70 seconds

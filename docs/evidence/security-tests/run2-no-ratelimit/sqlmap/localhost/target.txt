@@ -1,0 +1,1 @@
+https://localhost/courses/ab70573f-85a7-4240-bb9d-1fe4b6404ef0/* (GET)  # /usr/bin/sqlmap -u https://localhost/courses/ab70573f-85a7-4240-bb9d-1fe4b6404ef0/* --cookie=__Host-kura_session=REDACTED --batch --level 3 --risk 2 --output-dir=docs/evidence/security-tests/run2-no-ratelimit/sqlmap

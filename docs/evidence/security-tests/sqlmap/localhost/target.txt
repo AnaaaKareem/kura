@@ -1,0 +1,1 @@
+https://localhost/courses/PASTE-UUID/* (GET)  # /usr/bin/sqlmap -u https://localhost/courses/PASTE-UUID/* --cookie=__Host-kura_session=REDACTED --batch --level 3 --risk 2 --output-dir=docs/evidence/security-tests/sqlmap

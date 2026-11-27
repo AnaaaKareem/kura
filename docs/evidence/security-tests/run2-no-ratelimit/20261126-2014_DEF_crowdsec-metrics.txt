@@ -1,0 +1,71 @@
++-----------------------------------------------------------------------------------------------------------------------+
+| Acquisition Metrics                                                                                                   |
++-----------------------------+------------+--------------+----------------+------------------------+-------------------+
+| Source                      | Lines read | Lines parsed | Lines unparsed | Lines poured to bucket | Lines whitelisted |
++-----------------------------+------------+--------------+----------------+------------------------+-------------------+
+| docker:kura-nginx           | 34.90k     | 34.90k       | -              | -                      | 69.80k            |
+| docker:kura-waf             | 59.49k     | 24.64k       | 34.85k         | -                      | 49.27k            |
+| docker:kura-web             | 26.37k     | 13.13k       | 13.24k         | -                      | 26.25k            |
+| file:/var/log/host/auth.log | 11         | -            | 11             | -                      | -                 |
++-----------------------------+------------+--------------+----------------+------------------------+-------------------+
++-------------------------------------------------+
+| Local API Decisions                             |
++-----------------------+--------+--------+-------+
+| Reason                | Origin | Action | Count |
++-----------------------+--------+--------+-------+
+| ssh:bruteforce        | CAPI   | ban    | 2467  |
+| vm-management:exploit | CAPI   | ban    | 1     |
+| generic:scan          | CAPI   | ban    | 29    |
+| http:bruteforce       | CAPI   | ban    | 1117  |
+| http:crawl            | CAPI   | ban    | 3711  |
+| http:dos              | CAPI   | ban    | 166   |
+| http:exploit          | CAPI   | ban    | 71    |
+| http:scan             | CAPI   | ban    | 6541  |
++-----------------------+--------+--------+-------+
++------------------------------------+
+| Local API Metrics                  |
++--------------------+--------+------+
+| Route              | Method | Hits |
++--------------------+--------+------+
+| /v1/alerts         | GET    | 2    |
+| /v1/heartbeat      | GET    | 31   |
+| /v1/usage-metrics  | POST   | 2    |
+| /v1/watchers/login | POST   | 126  |
+| invalid-endpoint   | GET    | 1    |
++--------------------+--------+------+
++-------------------------------------------+
+| Local API Machines Metrics                |
++-----------+---------------+--------+------+
+| Machine   | Route         | Method | Hits |
++-----------+---------------+--------+------+
+| localhost | /v1/alerts    | GET    | 2    |
+| localhost | /v1/heartbeat | GET    | 31   |
++-----------+---------------+--------+------+
++-------------------------------------------------------------------+
+| Parser Metrics                                                    |
++------------------------------------+---------+---------+----------+
+| Parsers                            | Hits    | Parsed  | Unparsed |
++------------------------------------+---------+---------+----------+
+| child-crowdsecurity/http-logs      | 104.70k | 70.22k  | 34.48k   |
+| child-crowdsecurity/nginx-logs     | 34.93k  | 34.90k  | 28       |
+| child-crowdsecurity/syslog-logs    | 22      | 11      | 11       |
+| crowdsecurity/dateparse-enrich     | 34.90k  | 34.90k  | -        |
+| crowdsecurity/http-logs            | 34.90k  | 34.86k  | 36       |
+| crowdsecurity/nginx-logs           | 34.90k  | 34.90k  | -        |
+| crowdsecurity/non-syslog           | 120.75k | 120.75k | -        |
+| crowdsecurity/public-dns-allowlist | 72.66k  | 72.66k  | -        |
+| crowdsecurity/syslog-logs          | 11      | 11      | -        |
+| crowdsecurity/whitelists           | 72.66k  | 72.66k  | -        |
+| kura/coraza-audit                  | 24.64k  | 24.64k  | -        |
+| kura/django-logfmt                 | 26.37k  | 13.13k  | 13.24k   |
+| kura/internal-whitelist            | 72.66k  | 72.66k  | -        |
++------------------------------------+---------+---------+----------+
++------------------------------------------------------------------------------------------------+
+| Whitelist Metrics                                                                              |
++------------------------------------+-------------------------------------+-------+-------------+
+| Whitelist                          | Reason                              | Hits  | Whitelisted |
++------------------------------------+-------------------------------------+-------+-------------+
+| crowdsecurity/public-dns-allowlist | public DNS server                   | 72661 | -           |
+| crowdsecurity/whitelists           | private ipv4/ipv6 ip/ranges         | 72661 | 72661       |
+| kura/internal-whitelist            | internal Docker or loopback address | 72661 | 72661       |
++------------------------------------+-------------------------------------+-------+-------------+

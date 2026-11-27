@@ -1,0 +1,4 @@
+/mail.box 404 1202
+/finance.xls 404 1202
+/admin/controlpanel.html 404 1202
+/LICENSE.txt 404 1202
