@@ -246,6 +246,11 @@ services:
       target: runtime
     image: kura-web:latest
     container_name: kura-migrate
+    # Group 10002 grants read access to certs/internal/migrator.key (root:10002, mode 0440);
+    # the web service runs as 10001:10001 without group 10002 so Gunicorn can never read it.
+    user: "10001:10001"
+    group_add:
+      - "10002"
     read_only: true
     tmpfs:
       - /tmp:size=256M,mode=1777

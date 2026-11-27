@@ -534,6 +534,7 @@ class SecurityLeadsPart2UnitTests(unittest.TestCase):
         self.assertIn('DB_SSL_MODE: "verify-full"', migrate_block)
         self.assertIn("./certs/internal/migrator.crt:/certs/internal/migrator.crt:ro", migrate_block)
         self.assertIn("./certs/internal/migrator.key:/certs/internal/migrator.key:ro", migrate_block)
+        self.assertIn('- "10002"', migrate_block)
         self.assertIn("- django_secret_key", migrate_block)
         self.assertNotIn("db_password", migrate_block)
 
