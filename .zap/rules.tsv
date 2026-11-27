@@ -2,7 +2,7 @@
 # Format: <rule_id><TAB><IGNORE|INFO|WARN|FAIL><TAB><optional note>
 # Covers only triaged Low and Informational false positives / passive classifications
 # observed during the 27 Nov 2026 authenticated full scan. No High or Medium rule is ignored.
-# Any unlisted WARN or FAIL finding breaks CI because fail_action: true is enabled in security.yml.
+# Used by scripts/zap-baseline.sh; unlisted WARN or FAIL findings fail that run.
 
 # Low: /account/sessions/ intentionally displays the signed-in user's own session client IP (Docker bridge 172.28.10.x in local/CI runs).
 2	IGNORE	Intentional user-visible client IP on /account/sessions/ (Docker bridge RFC 1918 address in local/CI environment)

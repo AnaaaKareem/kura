@@ -1,6 +1,6 @@
 # Lecture Traceability Matrix
 
-Section numbers follow the lecture topic outline referenced in `docs/Kura_Security_Gap_Plan.md` (`security_concepts_reference.md` is maintained outside this repository).
+Section numbers follow the lecture topic outline in `security_concepts_reference.md` (maintained outside this repository).
 
 | Concept / Lecture Section | Where Implemented (file:line) | How Tested (test name / evidence file) | Gap ID / Status |
 |---------------------------|-------------------------------|----------------------------------------|-----------------|

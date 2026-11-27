@@ -2,7 +2,7 @@ name: Security
 
 on:
   push:
-    branches: [main, security-tests]
+    branches: [main]
   pull_request:
     branches: [main]
   schedule:
@@ -41,7 +41,7 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install pip-audit
-          # Documented risk acceptance in docs/SECURITY_TRIVY_FINDINGS.md and .trivyignore:
+          # Documented risk acceptance in `.trivyignore`:
           # python-jose and ecdsa are transitive deps of django-mfa2 mitigated via kura/__init__.py shim.
           pip-audit -r requirements.lock.txt --strict \
             --ignore-vuln PYSEC-2026-4298 \
