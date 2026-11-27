@@ -474,6 +474,9 @@ services:
       # crowdsecurity/linux adds the base parsers the others depend on.
       # crowdsecurity/sshd bans SSH brute force found in the VM's auth log.
       COLLECTIONS: "crowdsecurity/linux crowdsecurity/sshd crowdsecurity/nginx crowdsecurity/http-cve crowdsecurity/base-http-scenarios"
+      # Skip startup hub downloads and CrowdSec Central API registration in local/lab deployments.
+      NO_HUB_UPGRADE: "true"
+      DISABLE_ONLINE_API: "true"
     volumes:
       - ./docker/crowdsec/acquis.yaml:/etc/crowdsec/acquis.yaml:ro
       - ./docker/crowdsec/profiles.yaml:/etc/crowdsec/profiles.yaml:ro
