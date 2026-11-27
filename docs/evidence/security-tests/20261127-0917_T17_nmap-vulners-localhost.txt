@@ -1,0 +1,11 @@
+# Nmap 7.98 scan initiated Fri Nov 27 09:17:30 2026 as: nmap -sV --script vulners -p 80,443 -oN docs/evidence/security-tests/20261127-0917_T17_nmap-vulners-localhost.txt localhost
+Nmap scan report for localhost (127.0.0.1)
+Host is up (0.000017s latency).
+Other addresses for localhost (not scanned): ::1
+
+PORT    STATE  SERVICE VERSION
+80/tcp  closed http
+443/tcp closed https
+
+Service detection performed. Please report any incorrect results at https://nmap.org/submit/ .
+# Nmap done at Fri Nov 27 09:17:30 2026 -- 1 IP address (1 host up) scanned in 0.23 seconds
