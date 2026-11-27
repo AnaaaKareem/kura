@@ -1,0 +1,84 @@
+# CI Test Failure Reproduction (Clean Clone of HEAD 0698c8d)
+# Date: 2026-11-27T14:37+02:00
+
+## Part 1: Historical `security.yml` "Django security test suite" job (commits 2c49b15..4409d19, removed in 6754627)
+# Command:
+#   VAULT_ENABLED=False VAULT_DATABASE_CREDENTIALS=False CLAMAV_REQUIRED=False \
+#   DATABASE_USER=kura-admin DATABASE_PASSWORD=ci_test_password DATABASE_NAME=kura \
+#   DATABASE_HOST=127.0.0.1 DATABASE_PORT=55434 DB_SSL_MODE="" \
+#   SECRET_KEY=test-secret-key-for-running-security-tests-only-not-for-production-use-at-all-12345 \
+#   DEBUG=True python manage.py test \
+#     kura.tests_security_leads_part1 kura.tests_security_leads_part2 \
+#     kura.tests_security_routes kura.tests_security_gaps kura.tests_signatures --noinput
+#
+# Cause: That job omitted `python manage.py collectstatic` before running tests, so
+# ManifestStaticFilesStorage raised ValueError on every template render (including
+# subTests in test_all_90_routes_anonymous_and_csrf_matrix -> 58 tests / 80 errors at
+# commit 2c49b15, or 61 tests / 83 errors after 3 signature tests were added in ac7b993).
+
+======================================================================
+ERROR: test_lead_01_passkey_auth_complete_csrf_exempt_and_pre_mfa_binding (kura.tests_security_leads_part1.SecurityLeadsPart1Tests.test_lead_01_passkey_auth_complete_csrf_exempt_and_pre_mfa_binding)
+Plan ID: LEAD-01, CLS-01, AUTH-09 | Risk ID: R12
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/kura-fresh/kura/tests_security_leads_part1.py", line 579, in test_lead_01_passkey_auth_complete_csrf_exempt_and_pre_mfa_binding
+    resp_no_pre_mfa = mfa_login_callback(anon_client.get("/login/").wsgi_request, username=user_a.email)
+                                         ~~~~~~~~~~~~~~~^^^^^^^^^^^
+  File "/tmp/kura-fresh/.venv/lib/python3.14/site-packages/django/test/client.py", line 1128, in get
+    response = super().get(path, **extra)
+  File "/tmp/kura-fresh/.venv/lib/python3.14/site-packages/django/test/client.py", line 475, in get
+    return self.generic("GET", **extra)
+  File "/tmp/kura-fresh/.venv/lib/python3.14/site-packages/django/test/client.py", line 671, in generic
+    return self.request(**r)
+  File "/tmp/kura-fresh/.venv/lib/python3.14/site-packages/django/test/client.py", line 1091, in request
+    self.check_exception(response)
+  File "/tmp/kura-fresh/.venv/lib/python3.14/site-packages/django/test/client.py", line 805, in check_exception
+    raise exc_value
+  File "/tmp/kura-fresh/kura/views.py", line 1118, in login_view
+    return render(request, "kura/login.html", {"form": form, "next": next_url}, status=400 if request.method == "POST" else 200)
+  File "/tmp/kura-fresh/.venv/lib/python3.14/site-packages/django/templatetags/static.py", line 129, in handle_simple
+    return staticfiles_storage.url(path)
+  File "/tmp/kura-fresh/.venv/lib/python3.14/site-packages/django/contrib/staticfiles/storage.py", line 601, in stored_name
+    raise ValueError(
+        "Missing staticfiles manifest entry for '%s'" % clean_name
+    )
+ValueError: Missing staticfiles manifest entry for 'img/kura-mark.svg'
+
+----------------------------------------------------------------------
+Ran 61 tests in 15.529s
+
+FAILED (errors=83)
+
+## Part 2: Clean-clone `ci.yml` (`Tests & Deployment Configuration Check`) & `security.yml` (`zap`) at HEAD 0698c8d
+# 2a. Before `mkdir -p secrets certs`:
+#   $ sudo ./kura.sh secrets
+#   chmod: cannot access 'secrets': No such file or directory
+#
+# 2b. After `mkdir -p secrets certs` (before `sudo chown -R "$(id -u):$(id -g)" secrets certs`):
+#   kura.sh sets `secrets/` to 0700 root:root and `backup_encryption_key.txt` to UID 26,
+#   causing 2 failures in unprivileged runner execution:
+
+======================================================================
+ERROR: test_verify_backup_config_management_command (kura.tests.PostgreSQLEncryptedBackupAndPITRTests.test_verify_backup_config_management_command)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/kura-ci/kura/tests.py", line 2868, in test_verify_backup_config_management_command
+    call_command("verify_backup_config", stdout=out)
+  File "/tmp/kura-ci/kura/management/commands/verify_backup_config.py", line 44, in handle
+    raise CommandError(
+        "[-] Backup encryption key not found in secrets/backup_encryption_key.txt or /run/secrets/"
+    )
+django.core.management.base.CommandError: [-] Backup encryption key not found in secrets/backup_encryption_key.txt or /run/secrets/
+
+======================================================================
+FAIL: test_backup_encryption_key_validity_and_entropy (kura.tests.PostgreSQLEncryptedBackupAndPITRTests.test_backup_encryption_key_validity_and_entropy)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/tmp/kura-ci/kura/tests.py", line 2796, in test_backup_encryption_key_validity_and_entropy
+    self.assertTrue(key_path.exists(), "Backup encryption key file must exist in secrets/")
+AssertionError: False is not true : Backup encryption key file must exist in secrets/
+
+----------------------------------------------------------------------
+Ran 423 tests in 144.213s
+
+FAILED (failures=1, errors=1, skipped=6)

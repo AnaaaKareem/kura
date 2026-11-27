@@ -137,8 +137,11 @@ jobs:
         run: |
           set -euo pipefail
           sudo touch /var/log/auth.log
+          sudo chown 0:4 /var/log/auth.log
           sudo chmod 640 /var/log/auth.log
-          mkdir -p var/metrics var/log/kura
+          # Gitignored folders that docker-compose.yml bind-mounts or kura.sh writes into; none exist on a fresh checkout.
+          # secrets/ (kura.sh secrets chmods it), certs/ (kura.sh certs writes certs/kura.key), var/ (Alloy metrics and cron log mounts).
+          mkdir -p secrets certs var/metrics var/log/kura
 
           sudo ./kura.sh secrets
           sudo ./kura.sh certs

@@ -1,0 +1,4 @@
+# Clean-clone verification after fix: ci.yml steps replayed (mkdir -p secrets certs; kura.sh secrets + mtls-bootstrap; chown to runner; collectstatic; full test labels), 2026-11-27T14:31:47+02:00
+Ran 423 tests in 138.952s
+OK (skipped=6)
+Found 423 test(s).
