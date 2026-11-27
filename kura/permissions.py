@@ -32,7 +32,6 @@ def has_role(user, role_name):
     if not user or not user.is_authenticated or not user.is_active:
         return False
 
-    # Check if the user has a UserRole record with this role name.
     return UserRole.objects.filter(user=user, role__name=role_name).exists()
 
 

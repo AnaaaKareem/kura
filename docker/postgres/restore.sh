@@ -12,9 +12,7 @@ CONFIG_FILE="/etc/pgbackrest/pgbackrest.conf"
 KEY_FILE="/run/secrets/backup_encryption_key"
 TARGET_TIME="${1:-latest}"
 
-echo "======================================================================"
-echo "          KURA LMS - POINT-IN-TIME RECOVERY (PITR) RESTORE            "
-echo "======================================================================"
+echo "[+] Kura point-in-time recovery restore"
 echo "[+] Recovery target: '${TARGET_TIME}'"
 
 # 1. Verify encryption key exists
