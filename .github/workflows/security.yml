@@ -2,11 +2,12 @@ name: Security
 
 on:
   push:
-    branches: [main, security-tests]
+    branches: [main]
   pull_request:
     branches: [main]
   schedule:
     - cron: '0 2 * * 1'
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -47,10 +48,30 @@ jobs:
             --ignore-vuln PYSEC-2026-1325
 
   trivy:
-    name: Trivy image scan and CycloneDX SBOM
+    name: Trivy fs, config, image scan and CycloneDX SBOM
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
+      - name: Scan repository filesystem with Trivy (CRITICAL,HIGH)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: 'fs'
+          scan-ref: '.'
+          scanners: 'vuln'
+          format: 'table'
+          exit-code: '1'
+          ignore-unfixed: true
+          trivyignores: '.trivyignore'
+          severity: 'CRITICAL,HIGH'
+      - name: Scan infrastructure config with Trivy (CRITICAL,HIGH)
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: 'config'
+          scan-ref: '.'
+          format: 'table'
+          exit-code: '1'
+          trivyignores: '.trivyignore'
+          severity: 'CRITICAL,HIGH'
       - name: Build images
         run: |
           docker compose build web nginx
@@ -126,54 +147,3 @@ jobs:
           fail_action: true
           allow_issue_writing: false
           artifact_name: 'zap-baseline-report'
-
-  security-tests:
-    name: Django security test suite
-    runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17-alpine@sha256:d3244e8ce3f165ee3c93d9c4a4b1d0fe48b3a89e2287b717fdcbbde92d405065
-        env:
-          POSTGRES_DB: kura
-          POSTGRES_USER: kura-admin
-          POSTGRES_PASSWORD: ci_test_password
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-    steps:
-      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-      - name: Set up Python 3.14
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
-        with:
-          python-version: "3.14"
-          cache: "pip"
-      - name: Install dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libmagic1 libpq-dev
-          pip install --require-hashes -r requirements.lock.txt
-      - name: Run security test modules
-        env:
-          VAULT_ENABLED: "False"
-          VAULT_DATABASE_CREDENTIALS: "False"
-          CLAMAV_REQUIRED: "False"
-          DATABASE_USER: kura-admin
-          DATABASE_PASSWORD: ci_test_password
-          DATABASE_NAME: kura
-          DATABASE_HOST: 127.0.0.1
-          DATABASE_PORT: "5432"
-          DB_SSL_MODE: ""
-          SECRET_KEY: test-secret-key-for-running-security-tests-only-not-for-production-use-at-all-12345
-          DEBUG: "True"
-        run: |
-          python manage.py test \
-            kura.tests_security_leads_part1 \
-            kura.tests_security_leads_part2 \
-            kura.tests_security_routes \
-            kura.tests_security_gaps \
-            kura.tests_signatures \
-            --noinput

@@ -2,18 +2,15 @@ name: Kura CI/CD Pipeline
 
 on:
   push:
-    branches:
-      - main
-      - development
   pull_request:
-    branches:
-      - main
-      - development
+
+permissions:
+  contents: read
 
 jobs:
-  # 1. Code Quality & Dependency Audit
-  lint-and-audit:
-    name: Lint & Dependency Security Audit
+  # 1. Code Quality Linting (Ruff)
+  lint:
+    name: Ruff Python Linter
     runs-on: ubuntu-latest
 
     steps:
@@ -26,25 +23,14 @@ jobs:
           python-version: "3.14"
           cache: "pip"
 
-      - name: Install Linting & Audit Tools
+      - name: Install Ruff
         run: |
           python -m pip install --upgrade pip
-          pip install ruff pip-audit -r requirements.txt
+          pip install ruff
 
       - name: Run Ruff Linter
         run: |
           ruff check .
-
-      # Two known issues have no fixed release and cannot be reached in Kura, so they are ignored by ID only (any NEW vulnerability still fails):
-      # - PYSEC-2026-4298 (python-jose, pulled in by django-mfa2): forging tokens needs the verifier to use a PUBLIC key. django-mfa2 signs and checks its tokens with Django's SECRET_KEY, a shared secret.
-      # - PYSEC-2026-1325 (ecdsa, pulled in by python-jose): a timing attack on CREATING ECDSA signatures.
-      # Kura never creates ECDSA signatures; passkey checks only verify them.
-      # Re-check both whenever django-mfa2 is updated.
-      - name: Run Pip-Audit Vulnerability Scanner
-        run: |
-          pip-audit -r requirements.txt \
-            --ignore-vuln PYSEC-2026-4298 \
-            --ignore-vuln PYSEC-2026-1325
 
   # 2. Automated Tests & Production Deployment Check
   test-and-deploy-check:
@@ -127,7 +113,7 @@ jobs:
           SECRET_KEY: ci-test-secret-key-not-for-production-environment
           DEBUG: "True"
         run: |
-          python manage.py test kura.tests_security_leads_part1 kura.tests_security_leads_part2 kura.tests_security_routes kura.tests_security_gaps kura.tests_signatures --noinput
+          python manage.py test kura.tests_security_leads_part1 kura.tests_security_leads_part2 kura.tests_security_routes kura.tests_security_gaps kura.tests_signatures kura.tests_owasp_regression --noinput
 
       - name: Verify Django Production Deploy Checks
         env:
@@ -144,6 +130,7 @@ jobs:
           python manage.py check --deploy
 
   # 3. Static Application Security Testing (SAST) with Semgrep
+  # Semgrep covers SAST in CI; local Bandit output is retained as coursework evidence.
   semgrep-scan:
     name: Semgrep SAST Scan (OWASP Top 10 & Django)
     runs-on: ubuntu-latest
@@ -158,60 +145,7 @@ jobs:
         run: |
           semgrep scan --config "p/django" --config "p/owasp-top-ten" --error
 
-  # 4. Container Build & Image Vulnerability Scan with Trivy
-  docker-build-and-trivy:
-    name: Docker Image Build & Trivy Vulnerability Scan
-    runs-on: ubuntu-latest
-    needs: [semgrep-scan]
-
-    steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@8d2750c68a42422c14e847fe6c8ac0403b4cbd6f # v3.12.0
-
-      - name: Build Container Image
-        uses: docker/build-push-action@10e90e3645eae34f1e60eeb005ba3a3d33f178e8 # v6.19.2
-        with:
-          context: .
-          load: true
-          tags: kura:${{ github.sha }}
-
-      - name: Scan Image with Trivy (Fail on HIGH,CRITICAL)
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: "kura:${{ github.sha }}"
-          format: "table"
-          exit-code: "1"
-          ignore-unfixed: true
-          trivyignores: ".trivyignore"
-          severity: "HIGH,CRITICAL"
-
-      - name: Generate CycloneDX SBOM for kura
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: "kura:${{ github.sha }}"
-          format: "cyclonedx"
-          output: "sbom-kura-web.cdx.json"
-
-      - name: Upload SBOM Artifact
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: kura-web-sbom
-          path: sbom-kura-web.cdx.json
-
-      # Scan the nginx image built from the Dockerfile's nginx stage.
-      - name: Scan nginx image with Trivy
-        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
-        with:
-          image-ref: "kura-nginx:latest"
-          format: "table"
-          exit-code: "1"
-          ignore-unfixed: true
-          severity: "HIGH,CRITICAL"
-
-  # Validate infrastructure files without starting the real services.
+  # 4. Validate infrastructure files without starting the real services.
   infrastructure-config:
     name: Infrastructure configuration checks
     runs-on: ubuntu-latest
@@ -262,84 +196,3 @@ jobs:
             -v "$PWD/docker/alloy/config.alloy:/tmp/config.alloy:ro" \
             grafana/alloy:v1.21.3@sha256:8ab871206bd2d8f89277f53abffee5f452a293980788d52f85fa183a87a505a4 \
             validate /tmp/config.alloy
-
-  # 5. Dynamic Application Security Testing (DAST) with OWASP ZAP
-  owasp-zap-dast:
-    name: OWASP ZAP Baseline DAST Scan
-    runs-on: ubuntu-latest
-
-    services:
-      postgres:
-        image: postgres:17-alpine@sha256:d3244e8ce3f165ee3c93d9c4a4b1d0fe48b3a89e2287b717fdcbbde92d405065
-        env:
-          POSTGRES_DB: kura
-          POSTGRES_USER: kura
-          POSTGRES_PASSWORD: kura_password
-        ports:
-          - 5432:5432
-        options: >-
-          --health-cmd pg_isready
-          --health-interval 10s
-          --health-timeout 5s
-          --health-retries 5
-
-    steps:
-      - name: Checkout Source Code
-        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4.4.0
-
-      - name: Set up Python 3.14
-        uses: actions/setup-python@a26af69be951a213d495a4c3e4e4022e16d87065 # v5.6.0
-        with:
-          python-version: "3.14"
-          cache: "pip"
-
-      - name: Install Dependencies
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y libmagic1 libpq-dev
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
-
-      - name: Migrate Database & Start Kura Server
-        env:
-          DATABASE_NAME: kura
-          DATABASE_USER: kura
-          DATABASE_PASSWORD: kura_password
-          DATABASE_HOST: 127.0.0.1
-          DATABASE_PORT: 5432
-          SECRET_KEY: ci-zap-dast-secret-key-min-fifty-chars-long-for-security-scan
-          DEBUG: "False"
-          ALLOWED_HOSTS: localhost,127.0.0.1
-          SECURE_SSL_REDIRECT: "False"
-          VAULT_ENABLED: "False"
-          CLAMAV_REQUIRED: "False"
-        run: |
-          python manage.py migrate --noinput
-          python manage.py collectstatic --noinput
-          gunicorn --bind 127.0.0.1:8000 --workers 2 config.wsgi:application --daemon
-          for i in $(seq 1 15); do
-            if curl -fsS http://127.0.0.1:8000/login/ > /dev/null; then
-              break
-            fi
-            sleep 1
-          done
-
-      - name: Run OWASP ZAP Baseline Scan
-        run: |
-          mkdir -p zap-reports
-          chmod 777 zap-reports
-          docker run --rm --network host \
-            -v "${GITHUB_WORKSPACE}/zap-reports:/zap/wrk:rw" \
-            ghcr.io/zaproxy/zaproxy:stable@sha256:9624669db72f54d86c4b46a7064518bd9bf79d8c61a4c31befa9923489f328af \
-            zap-baseline.py \
-            -t http://127.0.0.1:8000/login/ \
-            -r zap-report.html \
-            -w zap-report.md \
-            -I
-
-      - name: Upload OWASP ZAP Report Artifact
-        if: always()
-        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
-        with:
-          name: owasp-zap-dast-report
-          path: zap-reports/
