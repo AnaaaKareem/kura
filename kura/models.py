@@ -1,3 +1,14 @@
+"""Database models for Kura.
+
+Groups, in order: custom column types, enumerations, the user model, departments
+and roles, profiles, sessions and tokens, courses, files, attendance, assessments,
+grades, and the single-row security policy.
+
+Database CHECK constraints repeat the main business rules (file size, score range,
+date order) so a bug in the application cannot store invalid data. Row-level
+security policies on the sensitive tables live in the migrations.
+"""
+
 import ipaddress
 import uuid
 from decimal import Decimal
@@ -741,6 +752,7 @@ class StoredFile(models.Model):
 
     class Meta:
         db_table = "stored_files"
+        # Database-level copies of the upload rules, so a bug in the app cannot store an oversize or unlisted file type.
         constraints = [
             models.CheckConstraint(
                 condition=models.Q(size_bytes__gt=0) & models.Q(size_bytes__lte=MAX_UPLOAD_BYTES),
@@ -766,6 +778,8 @@ class FileContent(models.Model):
     file = models.OneToOneField(
         StoredFile, on_delete=models.CASCADE, primary_key=True, related_name="content", db_column="file_id"
     )
+    # With Vault on, `content` is AES-256-GCM ciphertext. `wrapped_key` is the per-file data key encrypted by Vault,
+    # and `nonce` is the GCM nonce. encryption_version 0 marks a legacy or development row stored as plain bytes.
     content = models.BinaryField()
     wrapped_key = models.TextField(blank=True, default="")
     nonce = models.BinaryField(max_length=12, blank=True, default=b"")
@@ -1046,6 +1060,8 @@ class AssessmentAttempt(models.Model):
     submitted_at = models.DateTimeField(null=True, blank=True)
     ip_address = models.GenericIPAddressField()
     user_agent = models.CharField(max_length=255, null=True, blank=True)
+    # Set when the attempt is sealed. The hash covers the files, and the signature covers the hash plus identifiers
+    # (see kura/signing.py), so a later edit to either is detectable.
     submission_hash = FixedCharField(max_length=SHA256_HEX, null=True, blank=True)
     submission_signature = models.TextField(blank=True, default="")
 
@@ -1111,6 +1127,7 @@ class Grade(models.Model):
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="finalized_grades"
     )
     finalized_at = models.DateTimeField(null=True, blank=True)
+    # Signatures made when the grade was finalized and released. They let a later check detect a score changed in the database.
     finalization_signature = models.TextField(blank=True, default="")
     released_by = models.ForeignKey(
         settings.AUTH_USER_MODEL, on_delete=models.SET_NULL, null=True, blank=True, related_name="released_grades"
@@ -1278,6 +1295,7 @@ class PasswordHistory(models.Model):
 class SecurityPolicy(models.Model):
     """Single-row configurable security policy edited by Admins with step-up MFA (O6)."""
 
+    # The primary key is always 1 (see the singleton constraint below). The validators set the safe range an Admin may choose.
     id = models.PositiveSmallIntegerField(primary_key=True, default=1, editable=False)
     min_password_length = models.PositiveSmallIntegerField(
         default=12, validators=[MinValueValidator(12), MaxValueValidator(128)]
@@ -1342,6 +1360,7 @@ class SecurityPolicy(models.Model):
 
 def get_security_policy():
     """Return active SecurityPolicy values from the DB, falling back to settings defaults."""
+    # Defaults come from settings, so the site still works before the policy row exists or while the database is down.
     min_pw = 12
     for validator in getattr(settings, "AUTH_PASSWORD_VALIDATORS", []):
         if validator["NAME"].endswith("MinimumLengthValidator"):
@@ -1361,6 +1380,7 @@ def get_security_policy():
         "session_idle_minutes": max(1, getattr(settings, "SESSION_COOKIE_AGE", 1800) // 60),
         "session_absolute_hours": getattr(settings, "SESSION_ABSOLUTE_HOURS", 12),
     }
+    # A saved policy row overrides the defaults.
     try:
         row = SecurityPolicy.objects.filter(pk=1).first()
     except DatabaseError:

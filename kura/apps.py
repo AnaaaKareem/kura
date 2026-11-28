@@ -1,3 +1,4 @@
+"""Django app configuration for Kura."""
 from django.apps import AppConfig
 
 

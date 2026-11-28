@@ -1,3 +1,4 @@
+"""Project URL configuration: Kura's routes plus the passkey pages from django-mfa2."""
 from django.contrib.auth.decorators import login_not_required, login_required
 from django.urls import include, path
 from mfa import FIDO2

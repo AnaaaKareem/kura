@@ -1,3 +1,9 @@
+"""Role and course checks used by views before they show or change records.
+
+Every helper treats anonymous or inactive users as having no access. Roles come
+from the UserRole table, and course access also needs a matching CourseStaff or
+Enrollment row, so holding a role alone is never enough to open a course.
+"""
 from contextlib import contextmanager
 
 from django.db import connection

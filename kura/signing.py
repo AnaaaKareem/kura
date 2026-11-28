@@ -125,10 +125,12 @@ def sign_payload(payload):
     ValidationError so no un-signed receipt or grade approval can be sealed during an outage.
     """
     payload_bytes = bytes(payload)
+    # Without Vault (local dev and tests) sign with the throwaway Ed25519 key.
     if not getattr(settings, "VAULT_ENABLED", False):
         sig_bytes = _get_dev_private_key().sign(payload_bytes)
         return "dev:v1:" + base64.b64encode(sig_bytes).decode("ascii")
 
+    # Vault signs the SHA-256 digest of the payload, so the private key never reaches Django.
     try:
         client = get_vault_client()
         response = client.secrets.transit.sign_data(
@@ -138,6 +140,7 @@ def sign_payload(payload):
             mount_point=settings.VAULT_TRANSIT_MOUNT,
         )
         signature = response["data"]["signature"]
+        # Refuse anything that is not a Vault Transit signature before it is stored.
         if not isinstance(signature, str) or not signature.startswith("vault:v"):
             raise ValueError("Unexpected signature format returned by Vault Transit.")
         return signature
@@ -164,6 +167,7 @@ def verify_payload(payload, signature):
     payload_bytes = bytes(payload)
     vault_enabled = bool(getattr(settings, "VAULT_ENABLED", False))
 
+    # A dev signature proves nothing in production, so it is rejected there.
     if signature.startswith("dev:"):
         if vault_enabled:
             return False
@@ -177,6 +181,7 @@ def verify_payload(payload, signature):
         except (ValueError, InvalidSignature):
             return False
 
+    # Any other format, or a Vault signature with Vault off, cannot be checked: treat as invalid.
     if not signature.startswith("vault:v") or not vault_enabled:
         return False
 
@@ -225,6 +230,7 @@ def public_key_pem():
     cache_key = (vault_enabled, getattr(settings, "VAULT_RECEIPTS_KEY", "kura-receipts"))
     now = time.monotonic()
 
+    # Serve the cached PEM while it is fresh so the public endpoint does not call Vault on every hit.
     with _PUBLIC_KEY_CACHE_LOCK:
         if _PUBLIC_KEY_CACHE["key"] == cache_key and _PUBLIC_KEY_CACHE["expires_at"] > now and _PUBLIC_KEY_CACHE["pem"]:
             return _PUBLIC_KEY_CACHE["pem"]
@@ -247,6 +253,7 @@ def public_key_pem():
                 mount_point=settings.VAULT_TRANSIT_MOUNT,
             )
             data = response.get("data", {})
+            # Verification keys rotate, so publish the newest version's public key.
             latest_version = str(data.get("latest_version", "1"))
             keys = data.get("keys", {})
             key_info = keys.get(latest_version) or {}
