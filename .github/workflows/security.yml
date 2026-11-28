@@ -1,3 +1,9 @@
+# Security scans that run on pull requests to main, on pushes to main, weekly (Monday 02:00 UTC)
+# and on demand: Gitleaks over the full git history (leaked secrets), pip-audit on the locked
+# Python dependencies (known vulnerable packages) and Trivy on the repository, the infrastructure
+# files and the built images (CRITICAL and HIGH issues with a fix fail the run).
+# The OWASP ZAP scan is not run here. It runs locally through scripts/zap-baseline.sh.
+# The token is read-only and actions are pinned to commit hashes, as in ci.yml.
 name: Security
 
 on:

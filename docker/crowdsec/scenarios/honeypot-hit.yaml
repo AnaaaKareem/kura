@@ -1,4 +1,7 @@
 # Trigger an immediate 4-hour ban whenever an attacker touches a Kura honeypot route or honeytoken account (G09).
+# Honeypot routes and the honeytoken login are never used by real people, so one hit is enough to
+# ban: there is no bucket to fill. "type: trigger" fires on the first matching event, "groupby"
+# bans only the source IP that touched the decoy, and "blackhole" stops repeat alerts for one minute.
 type: trigger
 name: kura/honeypot-hit
 description: "Immediate ban when an IP accesses a honeypot decoy route or submits the honeytoken account"

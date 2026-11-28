@@ -1,4 +1,5 @@
 {% load static %}
+{# Security note: every script on this page is loaded from our own static files. There are no inline scripts or onclick handlers, because the Content Security Policy (script-src 'self') would block them. That is what stops injected HTML from running code. Pages use data-* attributes, and static/js/theme.js reads them. #}
 <!DOCTYPE html>
 <html lang="en" data-bs-theme="light">
 <head>

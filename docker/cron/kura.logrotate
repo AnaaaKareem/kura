@@ -1,4 +1,7 @@
 # Keep eight weekly copies of Kura job logs without restarting containers.
+# "weekly" and "rotate 8" keep about two months of job logs for investigations. "compress" saves
+# space. "copytruncate" copies the log and empties it in place, so the cron jobs keep writing to
+# the same open file and nothing needs a restart. "missingok" and "notifempty" skip absent or empty logs.
 /var/log/kura/*.log {
     weekly
     rotate 8

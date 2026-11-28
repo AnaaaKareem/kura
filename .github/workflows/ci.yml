@@ -1,3 +1,9 @@
+# Main CI pipeline. On every push and pull request it checks code style (Ruff), runs the full
+# Django test suite on PostgreSQL 17 (the tests need real row-level security), checks production
+# settings, runs Semgrep static analysis and validates the infrastructure files.
+# The token is read-only (permissions: contents: read), so a compromised step cannot push code or
+# change releases. Third-party actions are pinned to full commit hashes, so a moved tag cannot
+# swap in different code.
 name: Kura CI/CD Pipeline
 
 on:
@@ -72,16 +78,16 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Secrets and certificates are never committed (.gitignore), so CI makes its own throwaway ones with the same kura.sh steps a developer uses.
-      # kura.sh gives each key and secret to its container user, so it runs as root.
+      # Secrets and certificates are never committed (.gitignore), so CI makes its own throwaway ones with the same setup.sh steps a developer uses.
+      # setup.sh gives each key and secret to its container user, so it runs as root.
       # The mTLS-certificate tests then check real files.
       - name: Create Throwaway Secrets and Internal Certificates
         run: |
-          # secrets/ and certs/ are gitignored, so they do not exist on a fresh checkout. kura.sh chmods secrets/ and openssl writes into certs/ without creating them.
+          # secrets/ and certs/ are gitignored, so they do not exist on a fresh checkout. setup.sh chmods secrets/ and openssl writes into certs/ without creating them.
           mkdir -p secrets certs
-          sudo ./kura.sh secrets
-          sudo ./kura.sh mtls-bootstrap
-          # kura.sh gives each file to a container UID (db 26, web 10001, ...) and locks secrets/ to root (mode 700). The tests run as the unprivileged runner user and must read the backup key and the certificates, so hand this throwaway runner-only copy to the runner. Modes stay 600/700, so the files are still owner-only.
+          sudo ./setup.sh secrets
+          sudo ./setup.sh mtls-bootstrap
+          # setup.sh gives each file to a container UID (db 26, web 10001, ...) and locks secrets/ to root (mode 700). The tests run as the unprivileged runner user and must read the backup key and the certificates, so hand this throwaway runner-only copy to the runner. Modes stay 600/700, so the files are still owner-only.
           sudo chown -R "$(id -u):$(id -g)" secrets certs
 
       # Pages link to content-hashed static files (ManifestStaticFilesStorage), and {% static %} raises an error until collectstatic has written the manifest, so it runs before the tests render any page.

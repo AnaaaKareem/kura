@@ -1,3 +1,5 @@
+# Ruff is the project's linter. CI and security-tests.sh both run it, so unused imports,
+# undefined names and syntax mistakes are caught before they reach production.
 [tool.ruff]
 line-length = 120
 target-version = "py314"
@@ -7,6 +9,8 @@ exclude = [
     "kura/migrations",
 ]
 
+# E, F and W are the pycodestyle and pyflakes rule sets. E501 (line length) is ignored
+# because long strings, such as SQL and log messages, are clearer on one line.
 [tool.ruff.lint]
 select = ["E", "F", "W"]
 ignore = ["E501"]
