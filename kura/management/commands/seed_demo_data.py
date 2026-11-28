@@ -50,7 +50,7 @@ class Command(BaseCommand):
 
         self.stdout.write("Starting demo data seeding...")
 
-        # 1. Fetch or create all 6 system roles.
+        # Fetch or create all 6 system roles.
         roles = {}
         for role_name in [
             "Admin",
@@ -81,7 +81,6 @@ class Command(BaseCommand):
                 user.set_password(password)  # nosemgrep: python.django.security.audit.unvalidated-password.unvalidated-password
                 user.save(update_fields=["password"])
 
-            # Assign role.
             UserRole.objects.get_or_create(user=user, role=roles[role_name])
 
             # Remove the old shared recovery code without deleting the user's other factors.
@@ -89,7 +88,7 @@ class Command(BaseCommand):
 
             return user
 
-        # 2. Create the demo accounts for all roles.
+        # Create the demo accounts for all roles.
         admin_user = setup_user("admin@kura.edu", "System", "Admin", "Admin")
         registrar_user = setup_user("registrar@kura.edu", "Rachel", "Registrar", "Registrar")
         head_user = setup_user("depthead@kura.edu", "Alan", "Turing", "Department head")
@@ -98,7 +97,7 @@ class Command(BaseCommand):
         student_user = setup_user("student@kura.edu", "Alice", "Johnson", "Student")
         student2_user = setup_user("student2@kura.edu", "Bob", "Smith", "Student")
 
-        # 3. Create or update Computer Science Department.
+        # Create or update Computer Science Department.
         department, _ = Department.objects.get_or_create(
             code="CS",
             defaults={
@@ -110,7 +109,7 @@ class Command(BaseCommand):
             department.head_user = head_user
             department.save()
 
-        # 4. Create Staff and Student Profiles.
+        # Create Staff and Student Profiles.
         StaffProfile.objects.update_or_create(
             user=admin_user,
             defaults={"department": department, "staff_title": "IT Systems Administrator"},
@@ -141,7 +140,7 @@ class Command(BaseCommand):
             defaults={"department": department, "current_level": AcademicLevel.YEAR_3, "matriculation_year": 2024},
         )
 
-        # 5. Create demo Course CS301.
+        # Create demo Course CS301.
         current_time = timezone.now()
         course, _ = Course.objects.update_or_create(
             code="CS301",
@@ -158,7 +157,7 @@ class Command(BaseCommand):
             },
         )
 
-        # 6. Assign Course Staff.
+        # Assign Course Staff.
         CourseStaff.objects.update_or_create(
             course=course,
             user=instructor_user,
@@ -178,7 +177,7 @@ class Command(BaseCommand):
             },
         )
 
-        # 7. Enroll students.
+        # Enroll students.
         Enrollment.objects.update_or_create(
             course=course,
             student=student_user,
@@ -196,7 +195,7 @@ class Command(BaseCommand):
             },
         )
 
-        # 8. Create Class Schedule.
+        # Create Class Schedule.
         Schedule.objects.update_or_create(
             course=course,
             day=DayOfWeek.MONDAY,
@@ -212,7 +211,7 @@ class Command(BaseCommand):
             },
         )
 
-        # 9. Create a coursework assessment that students answer by uploading a file.
+        # Create a coursework assessment that students answer by uploading a file.
         Assessment.objects.update_or_create(
             course=course,
             title="Coursework 1: Access Control Report",

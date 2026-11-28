@@ -207,7 +207,6 @@ class LoginForm(SafeTextMixin, forms.Form):
     Form for user authentication with email and password.
     """
 
-    # Email address of the user attempting to log in.
     email = forms.EmailField(
         label="Email address",
         widget=forms.EmailInput(
@@ -219,7 +218,6 @@ class LoginForm(SafeTextMixin, forms.Form):
         ),
     )
 
-    # Password for authentication.
     password = forms.CharField(
         label="Password",
         widget=forms.PasswordInput(
@@ -238,7 +236,6 @@ class PasswordChangeForm(forms.Form):
     Enforces minimum length of 12 characters and breach checks.
     """
 
-    # Current account password to confirm identity.
     old_password = forms.CharField(
         label="Current password",
         widget=forms.PasswordInput(
@@ -249,7 +246,6 @@ class PasswordChangeForm(forms.Form):
         ),
     )
 
-    # New password to replace the current one.
     new_password = forms.CharField(
         label="New password",
         widget=forms.PasswordInput(
@@ -260,7 +256,6 @@ class PasswordChangeForm(forms.Form):
         ),
     )
 
-    # Confirmation entry to prevent typing mistakes.
     confirm_password = forms.CharField(
         label="Confirm new password",
         widget=forms.PasswordInput(
@@ -301,7 +296,6 @@ class PasswordChangeForm(forms.Form):
         new_password = cleaned_data.get("new_password")
         confirm_password = cleaned_data.get("confirm_password")
 
-        # Make sure both password fields match.
         if new_password and confirm_password and new_password != confirm_password:
             self.add_error("confirm_password", "The two password fields did not match.")
 
@@ -325,7 +319,6 @@ class PasswordResetRequestForm(SafeTextMixin, forms.Form):
     users with MFA must also enter a second-factor code after opening it.
     """
 
-    # Email address associated with the account.
     email = forms.EmailField(
         label="Email address",
         widget=forms.EmailInput(
@@ -358,7 +351,6 @@ class PasswordResetConfirmForm(forms.Form):
         ),
     )
 
-    # New password meeting security requirements.
     new_password = forms.CharField(
         label="New password",
         widget=forms.PasswordInput(
@@ -369,7 +361,6 @@ class PasswordResetConfirmForm(forms.Form):
         ),
     )
 
-    # Confirmation to prevent typos.
     confirm_password = forms.CharField(
         label="Confirm new password",
         widget=forms.PasswordInput(
@@ -391,7 +382,6 @@ class PasswordResetConfirmForm(forms.Form):
         new_password = cleaned_data.get("new_password")
         confirm_password = cleaned_data.get("confirm_password")
 
-        # Check matching fields.
         if new_password and confirm_password and new_password != confirm_password:
             self.add_error("confirm_password", "The two password fields did not match.")
 
@@ -565,7 +555,6 @@ class StaffCreateForm(SafeTextMixin, forms.Form):
 
     def clean_email(self):
         """Normalize a new staff member's email and reject duplicates."""
-        # Ensure email is unique across the system.
         email = self.cleaned_data.get("email", "").strip().lower()
         if User.objects.filter(email=email).exists():
             raise forms.ValidationError("An account with this email already exists.")
@@ -628,7 +617,6 @@ class StudentCreateForm(SafeTextMixin, forms.Form):
 
     def clean_email(self):
         """Normalize a new student's email and reject duplicates."""
-        # Ensure student email is unique.
         email = self.cleaned_data.get("email", "").strip().lower()
         if User.objects.filter(email=email).exists():
             raise forms.ValidationError("An account with this email already exists.")
@@ -781,7 +769,7 @@ class CourseCreateForm(SafeTextMixin, forms.Form):
             self._head_departments = Department.objects.none()
 
     def clean_department(self):
-        """Ensure the selected department is headed by the requesting Department Head."""
+        """Require the selected department to be headed by the requesting Department Head."""
         dept = self.cleaned_data.get("department")
         if dept is None and self._head_departments.count() == 1:
             return self._head_departments.first()
@@ -791,7 +779,6 @@ class CourseCreateForm(SafeTextMixin, forms.Form):
 
     def clean_code(self):
         """Normalize a new course code and check that it is not already in use."""
-        # Enforce unique course code.
         code = self.cleaned_data.get("code", "").strip().upper()
         if Course.objects.filter(code=code).exists():
             raise forms.ValidationError("A course with this code already exists.")
@@ -1008,8 +995,7 @@ class ManualAttendanceForm(SafeTextMixin, forms.Form):
     )
 
     def clean_override_reason(self):
-        """Ensure a manual attendance change includes a written reason."""
-        # Override reason is mandatory for manual roll records.
+        """Require a written reason for a manual attendance change."""
         reason = self.cleaned_data.get("override_reason", "").strip()
         if not reason:
             raise forms.ValidationError("A written justification reason is required for manual roll entries.")

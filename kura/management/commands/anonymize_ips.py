@@ -19,11 +19,9 @@ def anonymize_ip_address(ip_address: str) -> str:
     try:
         ip = ipaddress.ip_address(ip_address.strip())
         if ip.version == 4:
-            # Mask to /24 subnet (replaces the final octet with 0)
             network = ipaddress.IPv4Network(f"{ip}/24", strict=False)
             return str(network.network_address)
         elif ip.version == 6:
-            # Mask to /48 subnet (zeroes out the last 80 bits)
             network = ipaddress.IPv6Network(f"{ip}/48", strict=False)
             return str(network.network_address)
     except ValueError:
@@ -62,7 +60,7 @@ class Command(BaseCommand):
         total_anonymized = 0
         try:
             with service_rls_context():
-                # 1. Anonymize historic UserSessions (pseudonymised to /24 IPv4 or /48 IPv6 subnet).
+                # Anonymize historic UserSessions (pseudonymised to /24 IPv4 or /48 IPv6 subnet).
                 sessions = UserSession.objects.filter(created_at__lt=cutoff).exclude(ip_address__isnull=True)
                 session_count = 0
                 for user_session in sessions:
@@ -75,7 +73,7 @@ class Command(BaseCommand):
                 self.stdout.write(f"  - User sessions anonymized: {session_count}")
                 total_anonymized += session_count
 
-                # 2. Anonymize historic AttendanceRecords
+                # Anonymize historic AttendanceRecords
                 attendance_records = AttendanceRecord.objects.filter(verified_at__lt=cutoff).exclude(ip_address__isnull=True)
                 attendance_count = 0
                 for attendance_record in attendance_records:
@@ -88,7 +86,7 @@ class Command(BaseCommand):
                 self.stdout.write(f"  - Attendance records anonymized: {attendance_count}")
                 total_anonymized += attendance_count
 
-                # 3. Anonymize historic AssessmentAttempts
+                # Anonymize historic AssessmentAttempts
                 exam_attempts = AssessmentAttempt.objects.filter(started_at__lt=cutoff)
                 exam_count = 0
                 for assessment_attempt in exam_attempts:
@@ -101,7 +99,7 @@ class Command(BaseCommand):
                 self.stdout.write(f"  - Assessment attempts anonymized: {exam_count}")
                 total_anonymized += exam_count
 
-                # 4. Anonymize Axes AccessAttempt and AccessLog if django-axes is installed (O7, P3, P4).
+                # Anonymize Axes AccessAttempt and AccessLog if django-axes is installed (O7, P3, P4).
                 try:
                     from axes.models import AccessAttempt, AccessLog
                 except ImportError:

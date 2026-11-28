@@ -30,7 +30,7 @@ class Command(BaseCommand):
         self.stdout.write("[+] Inspecting Kura LMS Backup & Disaster Recovery Configuration...")
         base_dir = Path(settings.BASE_DIR)
 
-        # 1. Verify backup encryption key
+        # Verify backup encryption key
         key_paths = [
             base_dir / "secrets" / "backup_encryption_key.txt",
             Path("/run/secrets/backup_encryption_key"),
@@ -63,7 +63,7 @@ class Command(BaseCommand):
             )
         )
 
-        # 2. Verify pgbackrest.conf
+        # Verify pgbackrest.conf
         pgbackrest_conf = base_dir / "docker" / "postgres" / "pgbackrest.conf"
         if not pgbackrest_conf.exists():
             raise CommandError(f"[-] pgBackRest configuration missing at {pgbackrest_conf}")
@@ -83,7 +83,7 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.SUCCESS("[✓] pgBackRest configuration enforces AES-256-CBC repository encryption"))
 
-        # 3. Verify postgresql.conf WAL archiving settings
+        # Verify postgresql.conf WAL archiving settings
         postgres_conf = base_dir / "docker" / "postgres" / "postgresql.conf"
         if not postgres_conf.exists():
             raise CommandError(f"[-] PostgreSQL configuration missing at {postgres_conf}")
@@ -96,7 +96,7 @@ class Command(BaseCommand):
 
         self.stdout.write(self.style.SUCCESS("[✓] PostgreSQL continuous WAL archiving and restore_command configured"))
 
-        # 4. Verify scripts
+        # Verify scripts
         backup_sh = base_dir / "docker" / "postgres" / "backup.sh"
         restore_sh = base_dir / "docker" / "postgres" / "restore.sh"
         if not backup_sh.exists() or not restore_sh.exists():

@@ -360,7 +360,6 @@ def scan_file_for_malware(content_bytes):
 
     clamav_socket = None
     try:
-        # Open a TCP stream socket to the ClamAV daemon.
         clamav_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         clamav_socket.settimeout(scanner_timeout)
         clamav_socket.connect((clamav_host, clamav_port))
@@ -379,7 +378,6 @@ def scan_file_for_malware(content_bytes):
         # Terminate the stream by sending a zero-length integer (0x00000000).
         clamav_socket.sendall(struct.pack("!I", 0))
 
-        # Read the scan result response from ClamAV.
         scanner_response = b""
         while True:
             chunk = clamav_socket.recv(4096)
@@ -398,14 +396,12 @@ def scan_file_for_malware(content_bytes):
         log_security_event(None, "clamav.unavailable", {"error_type": type(error).__name__}, level=logging.ERROR)
         return
     finally:
-        # Always close the socket connection.
         if clamav_socket:
             try:
                 clamav_socket.close()
             except OSError:
                 pass
 
-    # Convert the bytes response to text for inspection.
     scanner_response_text = scanner_response.decode("utf-8", errors="replace").strip("\x00\r\n ")
 
     # If ClamAV rejects the file, the response ends with "FOUND", for example "stream: Eicar-Test-Signature FOUND" or "stream: Heuristics.Encrypted.Zip FOUND".
@@ -544,7 +540,6 @@ def validate_and_save_upload(uploaded_file, user, request=None, log_context=None
             "OpenDocument, CSV, text, Markdown, images (PNG, JPEG, GIF, WebP), MP4, MP3, ZIP."
         )
 
-    # Calculate SHA-256 hash.
     content_sha256 = hashlib.sha256(content_bytes).hexdigest()
 
     # The extension must match the detected type, so a valid PDF named .html cannot be stored and later downloaded under a web-page extension (INP-01).
@@ -617,7 +612,7 @@ def create_download_response(stored_file):
     # Prevent MIME confusion attacks.
     response["X-Content-Type-Options"] = "nosniff"
 
-    # Ensure sensitive materials are not stored in shared caches.
+    # Keep sensitive materials out of shared caches.
     response["Cache-Control"] = "no-store"
 
     return response
@@ -975,7 +970,7 @@ def create_user_session(request, user, method="password"):
     """Create a new tracked UserSession record for an authenticated user.
     Records client IP address, browser user-agent, and the absolute expiry (ACL-07).
     """
-    # Ensure Django has issued a session key and bind session_token_hash to it (W7).
+    # Make sure the session has a key, then bind session_token_hash to it (W7).
     if not request.session.session_key:
         request.session.save()
     token_hash = hash_session_token(request.session.session_key)
@@ -983,13 +978,11 @@ def create_user_session(request, user, method="password"):
     # Read the real visitor's IP address (not the WAF's).
     ip_address = get_client_ip(request)
 
-    # Read the client browser user agent string.
     user_agent = request.META.get("HTTP_USER_AGENT", "")[:255]
 
     # Set absolute session expiry from active SecurityPolicy (ACL-07, O6).
     expires_at = timezone.now() + timezone.timedelta(hours=get_security_policy()["session_absolute_hours"])
 
-    # Save session record to the database.
     user_session = UserSession.objects.create(
         user=user,
         session_token_hash=token_hash,
@@ -1352,7 +1345,7 @@ def passkey_register_complete_view(request):
     Who can use it: Any authenticated user adding a passkey to their own account.
     Security: all the real checks (the FIDO2 challenge kept in the session and
     the authenticator's signature) are done by django-mfa2's own
-    FIDO2.complete_reg, which this view simply calls. Returns 400/500 on ERR
+    FIDO2.complete_reg, which this view calls. Returns 400/500 on ERR
     without leaking raw exception details.
     """
     from mfa import FIDO2
@@ -1621,7 +1614,6 @@ def home_view(request):
     Who can use it: All authenticated users.
     Security: Requires login and active MFA.
     """
-    # Fetch roles assigned to this user to customize the dashboard.
     user_roles = UserRole.objects.filter(user=request.user).select_related("role")
     role_names = [ur.role.name for ur in user_roles]
     # Find the department or departments this user leads for the dashboard card.
@@ -1667,7 +1659,6 @@ def home_view(request):
         "password_changed_at": latest_password.created_at if latest_password else request.user.created_at,
     }
 
-    # Render the role-scoped work cards, counts, and activity records on the dashboard.
     return render(
         request,
         "kura/accounts/home.html",
@@ -2047,7 +2038,6 @@ def password_change_view(request):
             )
         log_security_event(request, "auth.password.changed", {})
 
-        # Notify the user by email that their password was changed.
         queue_email(
             f"password-changed:{request.user.id}:{secrets.token_hex(8)}",
             request.user.email,
@@ -2263,11 +2253,9 @@ def password_reset_confirm_view(request, token):
             user.password_changed_at = timezone.now()
             user.save()
 
-            # Mark token as consumed.
             reset_record.used_at = timezone.now()
             reset_record.save(update_fields=["used_at"])
 
-            # Revoke all existing sessions for this user.
             sessions_revoked = UserSession.objects.filter(user=user, revoked_at__isnull=True).update(
                 revoked_at=timezone.now()
             )
@@ -2279,7 +2267,6 @@ def password_reset_confirm_view(request, token):
             {"user_id": user.id, "sessions_revoked": sessions_revoked},
         )
 
-        # Notify the user by email that their password was reset.
         queue_email(
             f"password-reset-complete:{user.id}:{secrets.token_hex(8)}",
             user.email,
@@ -2376,7 +2363,6 @@ def mfa_setup_view(request):
     )
     otpauth_url = f"otpauth://totp/{urllib.parse.quote('Kura:' + request.user.email)}?{otpauth_query}"
 
-    # Generate QR code in memory as an SVG data URI.
     qr_img = qrcode.make(otpauth_url, image_factory=qrcode.image.svg.SvgPathImage)
     svg_data = qr_img.to_string().decode("utf-8")
     qr_code_data_uri = f"data:image/svg+xml;utf8,{urllib.parse.quote(svg_data)}"
@@ -2400,7 +2386,6 @@ def mfa_setup_view(request):
                 name="recovery",
                 defaults={"confirmed": True},
             )
-            # Remove any previous recovery tokens.
             StaticToken.objects.filter(device=static_device).delete()
 
             # Generate 10 new random 8-character recovery codes.
@@ -2927,7 +2912,6 @@ def staff_list_view(request):
     if not has_role(request.user, "Admin"):
         raise PermissionDenied
 
-    # Load staff accounts and profiles.
     staff_members = StaffProfile.objects.select_related("user", "department").order_by("-created_at")
     # Apply only validated filters to the administrator's staff list.
     filter_form = AdminStaffFilterForm(request.GET or None)
@@ -3416,7 +3400,6 @@ def user_roles_view(request, user_id):
             )
         return redirect("kura:user_roles", user_id=target_user.id)
 
-    # Load currently assigned roles and unassigned roles.
     assigned_roles = UserRole.objects.filter(user=target_user).select_related("role", "assigned_by")
     assigned_ids = [ur.role_id for ur in assigned_roles]
     available_roles = Role.objects.exclude(id__in=assigned_ids)
@@ -3482,7 +3465,6 @@ def student_create_view(request):
                 matriculation_year=matriculation_year,
             )
 
-            # Assign Student system role.
             student_role, _ = Role.objects.get_or_create(name="Student")
             UserRole.objects.get_or_create(
                 user=new_user,
@@ -3712,7 +3694,6 @@ def enrollment_drop_view(request, enrollment_id):
 
     enrollment = get_object_or_404(Enrollment, id=enrollment_id)
 
-    # Set status to dropped and record dropping registrar.
     enrollment.status = EnrollmentStatus.DROPPED
     enrollment.dropped_by = request.user
     enrollment.dropped_at = timezone.now()
@@ -3956,7 +3937,6 @@ def course_detail_view(request, course_id):
         course_files = course_files.filter(is_visible=True)
     assessments = Assessment.objects.filter(course=course).order_by("due_date")
 
-    # Load course staff assignments.
     staff_assignments = CourseStaff.objects.filter(course=course).select_related("user")
 
     # Check instructor authority to assign TAs (lead and co-instructors) and manage schedules/assessments.
@@ -4557,7 +4537,6 @@ def attendance_session_detail_view(request, session_id):
     # Check if session is still unexpired and active.
     is_live = session.is_active and session.expires_at > timezone.now()
 
-    # Retrieve temporary raw passcode from staff session if available.
     passcode = None
     if is_live:
         passcode = request.session.get(f"session_passcode_{session.id}")
@@ -4572,7 +4551,6 @@ def attendance_session_detail_view(request, session_id):
         svg_data = qr_img.to_string().decode("utf-8")
         qr_code_data_uri = f"data:image/svg+xml;utf8,{urllib.parse.quote(svg_data)}"
 
-    # Load recorded attendance entries.
     records = (
         AttendanceRecord.objects.filter(session=session)
         .select_related("student", "recorded_by")
@@ -4648,7 +4626,6 @@ def student_checkin_view(request, session_id):
     if not student_can_see_course(request.user, course):
         raise PermissionDenied
 
-    # Check if passcode was provided in QR code URL query parameter.
     qr_code_param = request.GET.get("code")
     checkin_method = AttendanceMethod.QR_CODE if qr_code_param else AttendanceMethod.PASSCODE
 
@@ -5058,7 +5035,7 @@ def assessment_delete_view(request, assessment_id):
     if not DeleteConfirmationForm(request.POST).is_valid():
         messages.error(request, "Confirm assessment deletion first.")
         return redirect("kura:assessment_detail", assessment_id=assessment.id)
-    # Share the start-attempt lock to ensure attempts cannot be deleted by a race.
+    # Share the start-attempt lock so a delete cannot race a new attempt.
     with transaction.atomic():
         assessment = Assessment.objects.select_for_update().get(id=assessment.id)
         if AssessmentAttempt.objects.filter(assessment=assessment).exists():
@@ -5121,7 +5098,6 @@ def assessment_detail_view(request, assessment_id):
         user_attempts_count = attempts.count()
         can_start_attempt = is_open and (user_attempts_count < assessment.max_attempts)
 
-    # Load attached files.
     attached_files = AssessmentFile.objects.filter(assessment=assessment).select_related("file")
     file_upload_form = AssessmentFileUploadForm()
 
@@ -5518,7 +5494,7 @@ def assessment_submit_view(request, attempt_id):
 def attempt_detail_view(request, attempt_id):
     """Show a submission with its files, integrity hash and (once released) grade.
     Who can use it: The attempting student, Course staff, Department Heads.
-    Security: IDOR protection ensures students cannot inspect other students' attempts.
+    Security: IDOR guard, so students cannot inspect other students' attempts.
     """
     # Admins and Registrars cannot access instructional content or grades.
     if not can_access_learning_records(request.user):
@@ -5753,7 +5729,6 @@ def grade_entry_view(request, attempt_id):
                 },
             )
 
-            # Record change in immutable grade history.
             GradeHistory.objects.create(
                 grade=grade,
                 old_score=old_score,
@@ -6042,7 +6017,6 @@ def grade_change_request_create_view(request, grade_id):
         messages.error(request, "Grade change requests only apply to already released grades.")
         return redirect("kura:course_grades", course_id=course.id)
 
-    # Check for existing pending request.
     if GradeChangeRequest.objects.filter(grade=grade, status=ChangeRequestStatus.PENDING).exists():
         messages.warning(request, "A pending change request already exists for this grade.")
         return redirect("kura:course_grades", course_id=course.id)
@@ -6170,7 +6144,6 @@ def grade_change_request_review_view(request, request_id):
                 )
                 grade.save(update_fields=["score", "released_by", "released_at", "release_signature"])
 
-                # Immutable audit log with department head approval.
                 GradeHistory.objects.create(
                     grade=grade,
                     old_score=old_score,

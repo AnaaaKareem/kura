@@ -100,7 +100,7 @@ class Command(BaseCommand):
         with service_rls_context():
             self._resolve_password_reset_lookups(now)
 
-        # 1. Give up on emails that are too old to be useful.
+        # Give up on emails that are too old to be useful.
         expired_reset_ids = list(
             OutgoingEmail.objects.filter(
                 status=OutgoingEmailStatus.PENDING,
@@ -126,7 +126,7 @@ class Command(BaseCommand):
         for expired_email_id in expired_ids:
             log_security_event(None, "email.expired", {"email_id": expired_email_id, "error_type": "Expired"}, level=logging.WARNING)
 
-        # 2. Send the pending emails, oldest first (at most 200 per run).
+        # Send the pending emails, oldest first (at most 200 per run).
         # shortcut: takes the 200 oldest pending emails before skipping ones whose backoff is not due, so newer emails
         # can wait behind them; revisit when enrollment or burst email volume exceeds 200 emails per outage window.
         pending_ids = list(

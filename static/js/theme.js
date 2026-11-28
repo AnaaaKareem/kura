@@ -1,7 +1,7 @@
 // Kura shared interactions: colour theme, confirmation dialog, copy/print helpers.
 // Loaded from an external file because the Content Security Policy blocks inline scripts.
 document.addEventListener("DOMContentLoaded", function () {
-    // 1. Colour theme: "light", "dark", or "system" (follows the operating system).
+    // Colour theme: "light", "dark", or "system" (follows the operating system).
     const allowedThemes = ["light", "dark", "system"];
     const colourScheme = window.matchMedia("(prefers-color-scheme: dark)");
 
@@ -35,7 +35,7 @@ document.addEventListener("DOMContentLoaded", function () {
         if ((localStorage.getItem("kura-theme") || "system") === "system") applyTheme("system");
     });
 
-    // 2. Office room filter by building (staff creation form).
+    // Office room filter by building (staff creation form).
     const building = document.querySelector("[data-office-building]");
     const room = document.querySelector("[data-office-room]");
     const officeRooms = document.getElementById("office-rooms");
@@ -56,7 +56,7 @@ document.addEventListener("DOMContentLoaded", function () {
         updateRooms();
     }
 
-    // 3. Recovery codes: copy and print.
+    // Recovery codes: copy and print.
     const copyRecoveryCodes = document.querySelector("[data-copy-recovery-codes]");
     const recoveryStatus = document.querySelector("[data-recovery-status]");
     if (copyRecoveryCodes && recoveryStatus) {
@@ -79,7 +79,7 @@ document.addEventListener("DOMContentLoaded", function () {
         button.addEventListener("click", function () { window.print(); });
     });
 
-    // 4. Block a link or button (data-requires) until the referenced checkbox is ticked.
+    // Block a link or button (data-requires) until the referenced checkbox is ticked.
     document.querySelectorAll("[data-requires]").forEach(function (control) {
         const checkbox = document.querySelector(control.getAttribute("data-requires"));
         if (!checkbox) return;
@@ -97,7 +97,7 @@ document.addEventListener("DOMContentLoaded", function () {
         syncRequired();
     });
 
-    // 5. Copy text from a referenced element into the clipboard.
+    // Copy text from a referenced element into the clipboard.
     document.querySelectorAll("[data-copy]").forEach(function (button) {
         button.addEventListener("click", async function () {
             const target = document.querySelector(button.getAttribute("data-copy"));
@@ -112,7 +112,7 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     });
 
-    // 6. Full screen view of the live attendance code and QR panel.
+    // Full screen view of the live attendance code and QR panel.
     document.querySelectorAll("[data-fullscreen]").forEach(function (button) {
         const target = document.querySelector(button.getAttribute("data-fullscreen"));
         if (!target || !target.requestFullscreen) return;
@@ -125,7 +125,7 @@ document.addEventListener("DOMContentLoaded", function () {
         });
     });
 
-    // 7. Dismiss buttons for notices and flash messages.
+    // Dismiss buttons for notices and flash messages.
     document.addEventListener("click", function (event) {
         const dismissTarget = event.target.closest("[data-dismiss-target]");
         if (dismissTarget) {
@@ -140,7 +140,7 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 
-    // 8. Confirmation dialog (Bootstrap modal) for forms marked with data-confirm-action.
+    // Confirmation dialog (Bootstrap modal) for forms marked with data-confirm-action.
     const confirmElement = document.getElementById("k-confirm");
     const confirmModal = confirmElement && window.bootstrap ? new window.bootstrap.Modal(confirmElement) : null;
     let pendingSubmitForm = null;
@@ -192,7 +192,7 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 
-    // 9. Disable the submit button after a POST so a double click cannot write twice.
+    // Disable the submit button after a POST so a double click cannot write twice.
     document.addEventListener("submit", function (event) {
         const form = event.target;
         if (!form || form.method.toUpperCase() !== "POST" || event.defaultPrevented) return;
@@ -203,7 +203,7 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     });
 
-    // 10. Move focus to the form error summary when a page loads with errors.
+    // Move focus to the form error summary when a page loads with errors.
     const errorSummary = document.querySelector("[data-form-error-summary]");
     if (errorSummary) errorSummary.focus();
 });

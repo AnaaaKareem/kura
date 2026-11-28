@@ -237,7 +237,7 @@ services:
 
   # Runs database migrations as kura_migrator before the web service starts.
   # Uses the same distroless runtime image but runs manage.py migrate directly,
-  # then exits. No entrypoint, no setpriv — Django's manage.py handles the
+  # then exits. No entrypoint and no setpriv; Django's manage.py handles the
   # DATABASE_USER=kura_migrator login via environment.
   kura-migrate:
     build:

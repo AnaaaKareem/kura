@@ -51,7 +51,7 @@ class Command(BaseCommand):
         total_purged = 0
         try:
             with service_rls_context():
-                # 1. Purge expired or revoked UserSessions
+                # Purge expired or revoked UserSessions
                 expired_sessions = UserSession.objects.filter(expires_at__lt=cutoff)
                 session_count = expired_sessions.count()
                 if not dry_run and session_count > 0:
@@ -59,7 +59,7 @@ class Command(BaseCommand):
                 self.stdout.write(f"  - Expired user sessions purged: {session_count}")
                 total_purged += session_count
 
-                # 2. Purge old django-axes AccessAttempt and AccessLog rows (O7, P3, P4).
+                # Purge old django-axes AccessAttempt and AccessLog rows (O7, P3, P4).
                 try:
                     from axes.models import AccessAttempt, AccessLog
                 except ImportError:
@@ -79,7 +79,7 @@ class Command(BaseCommand):
                     self.stdout.write(f"  - Axes access logs purged: {axes_count}")
                     total_purged += axes_count
 
-                # 3. Purge sent OutgoingEmail rows older than 30 days (Q10)
+                # Purge sent OutgoingEmail rows older than 30 days (Q10)
                 old_sent_emails = OutgoingEmail.objects.filter(
                     status=OutgoingEmailStatus.SENT,
                     sent_at__lt=email_cutoff,

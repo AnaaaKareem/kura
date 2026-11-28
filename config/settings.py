@@ -21,7 +21,6 @@ from fido2.webauthn import ResidentKeyRequirement, UserVerificationRequirement
 
 from kura.vault_secrets import get_gmail_app_password
 
-# Build paths inside the project like this: BASE_DIR / 'subdir'.
 BASE_DIR = Path(__file__).resolve().parent.parent
 
 # Load environment variables from .env
@@ -42,7 +41,7 @@ def read_secret(name, fallback=""):
     return os.environ.get(name.upper(), fallback)
 
 
-# SECURITY WARNING: don't run with debug turned on in production!
+# Never run with DEBUG on in production.
 DEBUG = os.environ.get("DEBUG", "False").lower() == "true"
 
 # The secret key signs session cookies, CSRF tokens and password-reset links.
@@ -157,7 +156,6 @@ WSGI_APPLICATION = "config.wsgi.application"
 
 
 # Database
-# https://docs.djangoproject.com/en/6.1/ref/settings/#databases
 
 DATABASES = {
     "default": {
@@ -205,7 +203,6 @@ DATABASES["quarantine"]["TEST"] = {"MIRROR": "default"}
 
 
 # Password validation
-# https://docs.djangoproject.com/en/6.1/ref/settings/#auth-password-validators
 
 AUTH_PASSWORD_VALIDATORS = [
     {
@@ -231,7 +228,6 @@ AUTH_PASSWORD_VALIDATORS = [
 
 
 # Internationalization
-# https://docs.djangoproject.com/en/6.1/topics/i18n/
 
 LANGUAGE_CODE = "en-us"
 
@@ -243,7 +239,6 @@ USE_TZ = True
 
 
 # Static files (CSS, JavaScript, Images)
-# https://docs.djangoproject.com/en/6.1/howto/static-files/
 
 STATIC_URL = "/static/"
 STATICFILES_DIRS = [BASE_DIR / "static"]
@@ -297,7 +292,7 @@ CACHES = {
 }
 
 
-# Password hashing with Argon2id primary (legacy SHA-1 hasher removed)
+# Argon2id password hashing.
 PASSWORD_HASHERS = [
     "django.contrib.auth.hashers.Argon2PasswordHasher",
     "django.contrib.auth.hashers.PBKDF2PasswordHasher",

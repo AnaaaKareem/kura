@@ -45,7 +45,7 @@ RUN SECRET_KEY="$(python -c 'import secrets; print(secrets.token_urlsafe(64))')"
         --ignore=admin --ignore=django_otp --ignore=otp_totp
 
 
-# Stage 3: Final runtime container — python:3.14-slim with apt, bash,
+# Stage 3: final runtime container. python:3.14-slim with apt, bash,
 # util-linux, ncurses, perl-base, tar purged to minimize the attack surface.
 # Runs as kura (UID 10001) with no entrypoint: gunicorn starts directly,
 # migrations run in the separate kura-migrate service.
