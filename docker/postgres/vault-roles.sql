@@ -1,12 +1,12 @@
 -- Kura LMS - roles for Vault's temporary database users (vault-roles.sql)
--- Run by ./kura.sh vault-init as kura-admin.
+-- Run by ./setup.sh vault-init as kura-admin.
 -- Safe to run more than once.
 -- 1. kura_app keeps every runtime permission but can no longer log in.
 -- Django logs in as short-lived users ("kura_dyn_...") that Vault creates as members of kura_app, so they get exactly kura_app's permissions.
 -- 2. vault_admin is the account Vault uses to create and drop those users.
 -- It is NOT a superuser: it may create roles, and the only role it may hand out is kura_app (ADMIN option).
 -- It cannot read or change any table itself (INHERIT FALSE, SET FALSE).
--- Its password is set by ./kura.sh vault-init and then immediately changed by Vault ("rotate-root"), so only Vault knows it.
+-- Its password is set by ./setup.sh vault-init and then immediately changed by Vault ("rotate-root"), so only Vault knows it.
 
 -- 1. Nobody logs in as kura_app any more (a stolen certificate alone is useless).
 ALTER ROLE kura_app WITH NOLOGIN;

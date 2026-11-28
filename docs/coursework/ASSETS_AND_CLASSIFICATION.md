@@ -44,23 +44,23 @@
 | `PasswordHistory` (`kura/models.py:1265`) | Confidential | User | Last 5 passwords | Argon2id password hashes (`config/settings.py:301`) | TLS 1.3 + mTLS |
 | `SecurityPolicy` (`kura/models.py:1278`) | Sensitive | Admin | Permanent | Singleton runtime security policy table, host LUKS + pgBackRest | TLS 1.3 + mTLS |
 
-## Secrets (from `docker-compose.yml:995-1015`, `kura.sh:21-26`, and Vault)
+## Secrets (from `docker-compose.yml:995-1015`, `setup.sh:21-26`, and Vault)
 
 | Secret | Source | Classification | Owner | Rotation | At-Rest | In-Transit |
 |--------|--------|---------------|-------|----------|---------|------------|
-| `db_password` | `kura.sh:21` (`GENERATED_SECRETS`), `docker-compose.yml:996` | Confidential | DBA | Manual | Docker secret file (mode 600, mounted at `/run/secrets/`) | mTLS (PostgreSQL) |
-| `backup_encryption_key` | `kura.sh:21` (`GENERATED_SECRETS`), `docker-compose.yml:998` | Confidential | DBA | Manual | Docker secret file (mode 600) | mTLS (pgBackRest) |
-| `django_secret_key` | `kura.sh:21` (`GENERATED_SECRETS`), `docker-compose.yml:1000` | Confidential | System | Manual | Docker secret file (mode 600, uid 10001) | Local memory only |
-| `log_hmac_key` | `kura.sh:21` (`GENERATED_SECRETS`), `docker-compose.yml:1002` | Confidential | System | Manual | Docker secret file (mode 600, uid 10001) | Local memory only |
-| `crowdsec_bouncer_key` | `kura.sh:21` (`GENERATED_SECRETS`), `docker-compose.yml:1004` | Confidential | SOC | Manual | Docker secret file (mode 600) | Localhost API (127.0.0.1:8085) |
-| `grafana_admin_password` | `kura.sh:21` (`GENERATED_SECRETS`), `docker-compose.yml:1006` | Confidential | Admin | Manual | Docker secret file (mode 600) | Localhost SSH tunnel (127.0.0.1:3000) |
-| `grafana_viewer_password` | `kura.sh:21` (`GENERATED_SECRETS`) | Confidential | Admin | Manual | Host secret file (mode 600, provisioned via `kura.sh`) | Localhost SSH tunnel (127.0.0.1:3000) |
-| `telegram_bot_token` | `kura.sh:24` (`EXTERNAL_SECRETS`), `docker-compose.yml:1008` | Confidential | Admin | Manual | Docker secret file (mode 600) | TLS 1.3 (Telegram API) |
-| `telegram_chat_id` | `kura.sh:24` (`EXTERNAL_SECRETS`), `docker-compose.yml:1010` | Sensitive | Admin | Manual | Docker secret file (mode 600) | TLS 1.3 (Telegram API) |
-| `vault_role_id` | `kura.sh:24` (`EXTERNAL_SECRETS`), `docker-compose.yml:1012` | Confidential | System | `kura.sh vault-rotate-approle` (`kura.sh:719`) | Docker secret file (mode 600, uid 10001) | mTLS to Vault |
-| `vault_secret_id` | `kura.sh:24` (`EXTERNAL_SECRETS`), `docker-compose.yml:1014` | Confidential | System | `kura.sh vault-rotate-approle` (`kura.sh:719`) | Docker secret file (mode 600, uid 10001) | mTLS to Vault |
-| `vault_issuer_role_id` | `kura.sh:26` (`HOST_ONLY_SECRETS`) | Confidential | System | Manual / AppRole rotation | Host-only secret file (mode 600, never mounted in containers) | mTLS to Vault (host cert renewal) |
-| `vault_issuer_secret_id` | `kura.sh:26` (`HOST_ONLY_SECRETS`) | Confidential | System | Manual / AppRole rotation | Host-only secret file (mode 600, never mounted in containers) | mTLS to Vault (host cert renewal) |
+| `db_password` | `setup.sh:21` (`GENERATED_SECRETS`), `docker-compose.yml:996` | Confidential | DBA | Manual | Docker secret file (mode 600, mounted at `/run/secrets/`) | mTLS (PostgreSQL) |
+| `backup_encryption_key` | `setup.sh:21` (`GENERATED_SECRETS`), `docker-compose.yml:998` | Confidential | DBA | Manual | Docker secret file (mode 600) | mTLS (pgBackRest) |
+| `django_secret_key` | `setup.sh:21` (`GENERATED_SECRETS`), `docker-compose.yml:1000` | Confidential | System | Manual | Docker secret file (mode 600, uid 10001) | Local memory only |
+| `log_hmac_key` | `setup.sh:21` (`GENERATED_SECRETS`), `docker-compose.yml:1002` | Confidential | System | Manual | Docker secret file (mode 600, uid 10001) | Local memory only |
+| `crowdsec_bouncer_key` | `setup.sh:21` (`GENERATED_SECRETS`), `docker-compose.yml:1004` | Confidential | SOC | Manual | Docker secret file (mode 600) | Localhost API (127.0.0.1:8085) |
+| `grafana_admin_password` | `setup.sh:21` (`GENERATED_SECRETS`), `docker-compose.yml:1006` | Confidential | Admin | Manual | Docker secret file (mode 600) | Localhost SSH tunnel (127.0.0.1:3000) |
+| `grafana_viewer_password` | `setup.sh:21` (`GENERATED_SECRETS`) | Confidential | Admin | Manual | Host secret file (mode 600, provisioned via `setup.sh`) | Localhost SSH tunnel (127.0.0.1:3000) |
+| `telegram_bot_token` | `setup.sh:24` (`EXTERNAL_SECRETS`), `docker-compose.yml:1008` | Confidential | Admin | Manual | Docker secret file (mode 600) | TLS 1.3 (Telegram API) |
+| `telegram_chat_id` | `setup.sh:24` (`EXTERNAL_SECRETS`), `docker-compose.yml:1010` | Sensitive | Admin | Manual | Docker secret file (mode 600) | TLS 1.3 (Telegram API) |
+| `vault_role_id` | `setup.sh:24` (`EXTERNAL_SECRETS`), `docker-compose.yml:1012` | Confidential | System | `setup.sh vault-rotate-approle` (`setup.sh:719`) | Docker secret file (mode 600, uid 10001) | mTLS to Vault |
+| `vault_secret_id` | `setup.sh:24` (`EXTERNAL_SECRETS`), `docker-compose.yml:1014` | Confidential | System | `setup.sh vault-rotate-approle` (`setup.sh:719`) | Docker secret file (mode 600, uid 10001) | mTLS to Vault |
+| `vault_issuer_role_id` | `setup.sh:26` (`HOST_ONLY_SECRETS`) | Confidential | System | Manual / AppRole rotation | Host-only secret file (mode 600, never mounted in containers) | mTLS to Vault (host cert renewal) |
+| `vault_issuer_secret_id` | `setup.sh:26` (`HOST_ONLY_SECRETS`) | Confidential | System | Manual / AppRole rotation | Host-only secret file (mode 600, never mounted in containers) | mTLS to Vault (host cert renewal) |
 | `gmail-app-password` | Vault KV v2 (`docker/vault/policies/kura-web.hcl:50`) | Confidential | Admin | Manual in Vault KV v2 | Encrypted inside Vault storage (no disk secret file) | mTLS (app to Vault) + TLS 1.3 (SMTP) |
 | Internal CA & service certificates | Vault PKI (`certs/internal/`) | Confidential | System | Renewed via host issuer script | Mode 600 private keys in `certs/internal/` | mTLS across all internal hops |
 
@@ -98,6 +98,6 @@
 |----------------|------------------|---------------|----------------------|---------------|
 | User PII | nftables default-drop, CrowdSec | Read-only containers, non-root (`Dockerfile:98`) | Argon2id, mandatory MFA, PostgreSQL RLS | Vault Transit `kura-mfa` on `mfa_secret`, host LUKS |
 | Grades and Submissions | Internal Docker networks only | `cap_drop: ALL`, `no-new-privileges` | RBAC, separation of duties, insert-only triggers | Vault Transit ECDSA-P256 signatures, per-file AES-256-GCM on `FileContent` |
-| Encryption Keys | Vault on internal `backend` network with mTLS | Vault sealed at rest; HSM recommended for production | Scoped Vault policy (`docker/vault/policies/kura-web.hcl`) | Auto-rotation `720h` (`kura.sh:495-501`), keys never exported |
-| Backups | Isolated `egress` / offsite mount | Separate `kura_postgres_backups_offsite` volume | Encrypted WAL + automated `kura.sh restore-drill` | pgBackRest AES-256-CBC encryption |
-| Logs | Internal `observability` network | Alloy TLS shipping, host FIM (`kura.sh:1645`) | Structured logfmt redaction (`kura/logging_utils.py:45`) | HMAC-SHA256 sequence chain + `verify_log_chain`, 180-day retention |
+| Encryption Keys | Vault on internal `backend` network with mTLS | Vault sealed at rest; HSM recommended for production | Scoped Vault policy (`docker/vault/policies/kura-web.hcl`) | Auto-rotation `720h` (`setup.sh:495-501`), keys never exported |
+| Backups | Isolated `egress` / offsite mount | Separate `kura_postgres_backups_offsite` volume | Encrypted WAL + automated `setup.sh restore-drill` | pgBackRest AES-256-CBC encryption |
+| Logs | Internal `observability` network | Alloy TLS shipping, host FIM (`setup.sh:1645`) | Structured logfmt redaction (`kura/logging_utils.py:45`) | HMAC-SHA256 sequence chain + `verify_log_chain`, 180-day retention |

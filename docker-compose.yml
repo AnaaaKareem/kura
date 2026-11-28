@@ -827,7 +827,7 @@ services:
     environment:
       GF_SECURITY_ADMIN_USER: admin
       GF_SECURITY_ADMIN_PASSWORD__FILE: /run/secrets/grafana_admin_password
-      # No anonymous browsing, no self sign-up and no new organisations: only the admin account and the read-only "viewer" (./kura.sh grafana-users).
+      # No anonymous browsing, no self sign-up and no new organisations: only the admin account and the read-only "viewer" (./setup.sh grafana-users).
       GF_AUTH_ANONYMOUS_ENABLED: "false"
       GF_USERS_ALLOW_SIGN_UP: "false"
       GF_USERS_ALLOW_ORG_CREATE: "false"
@@ -881,7 +881,7 @@ services:
       start_period: 15s
 
   # Secrets & Cryptographic Management (HashiCorp Vault) Encrypts authenticator (TOTP) seeds with its Transit engine; Django only ever stores the ciphertext. HTTPS only (certificate from our internal CA).
-  # Set up once with ./kura.sh vault-init, and unsealed by hand after each restart (see docker/vault/README.md).
+  # Set up once with ./setup.sh vault-init, and unsealed by hand after each restart (see docker/vault/README.md).
   # Isolated on backend.
   vault:
     image: hashicorp/vault:2.2.1@sha256:962a92876e168d68eaaa24b0b8b49bbce1cb63024060a67bba95cd158a366fc2
@@ -899,7 +899,7 @@ services:
       VAULT_CONFIG_DIR: "/vault/config"
     volumes:
       - ./docker/vault/config/vault.hcl:/vault/config/vault.hcl:ro
-      # The "kura-web" policy that ./kura.sh vault-init loads into Vault.
+      # The "kura-web" policy that ./setup.sh vault-init loads into Vault.
       - ./docker/vault/policies:/vault/policies:ro
       # Only Vault's own certificate and key, plus the CA certificate.
       - ./certs/internal/ca.crt:/vault/tls/ca.crt:ro

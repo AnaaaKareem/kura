@@ -44,7 +44,7 @@ Based on the data-flow diagram in `architecture.py` and `docs/coursework/pdf/kur
 |--------|--------|-------------|------------|-------------|
 | Rule bypass | Tampering | Encoded payloads evade CRS rules | OWASP CRS ruleset plus app-layer NFKC and parameterized ORM | `docker-compose.yml` (`waf` service), `kura/text_safety.py:33` |
 | False-positive blocking | DoS | Valid LMS traffic blocked by strict rules | Scoped exclusion rules before CRS | `docker/coraza/rules.d/REQUEST-900-EXCLUSION-RULES-BEFORE-CRS.conf` |
-| WAF log tampering | Repudiation | Attacker modifies local log files | Alloy shipping to Loki, host FIM | `kura.sh:1645`, `docker-compose.yml` (`alloy` service) |
+| WAF log tampering | Repudiation | Attacker modifies local log files | Alloy shipping to Loki, host FIM | `setup.sh:1645`, `docker-compose.yml` (`alloy` service) |
 
 ### 4. Gunicorn / Django App (Web)
 
@@ -67,16 +67,16 @@ Based on the data-flow diagram in `architecture.py` and `docs/coursework/pdf/kur
 | Static credential theft | Information | Stolen static DB password grants long-lived access | Vault dynamic DB credentials (15-minute TTL) | `kura/base.py:1`, `config/settings.py:196` |
 | Direct DBA data tampering | Tampering | Superuser edits submissions or grades directly | Immutability triggers, Vault Transit ECDSA signatures, `verify_signatures` | `kura/migrations/0025`, `0030`, `0031`; `kura/signing.py:154` |
 | Backup theft | Information | Stolen backup files expose database contents | pgBackRest AES-256-CBC encryption on local and offsite repos | `docker/postgres/pgbackrest.conf:10,20` |
-| Ransomware | Destruction | Attacker encrypts live DB volume | Separate encrypted offsite backup volume and tested restore drill | `kura.sh:1516`, `docker-compose.yml:991-992` |
+| Ransomware | Destruction | Attacker encrypts live DB volume | Separate encrypted offsite backup volume and tested restore drill | `setup.sh:1516`, `docker-compose.yml:991-992` |
 
 ### 6. Vault (Secrets Management)
 
 | Threat | STRIDE | Description | Mitigation | Control Ref |
 |--------|--------|-------------|------------|-------------|
-| Unseal key compromise | Spoofing | Unauthorized actor unseals Vault | Threshold unseal shares held by operators | `kura.sh:427` |
-| AppRole credential theft | Information | Attacker reads `role_id`/`secret_id` from compose or env | Stored in Docker secrets only, preflight inline-secret check, rotation command | `docker-compose.yml:1012-1015`, `kura.sh:719,1094` |
+| Unseal key compromise | Spoofing | Unauthorized actor unseals Vault | Threshold unseal shares held by operators | `setup.sh:427` |
+| AppRole credential theft | Information | Attacker reads `role_id`/`secret_id` from compose or env | Stored in Docker secrets only, preflight inline-secret check, rotation command | `docker-compose.yml:1012-1015`, `setup.sh:719,1094` |
 | Cryptographic key misuse | Tampering | App exports keys or accesses unrelated secrets | Least-privilege Transit and KV policy (`kura-web.hcl`) | `docker/vault/policies/kura-web.hcl:10-52` |
-| Audit trail suppression | Repudiation | Secret access goes unrecorded | Vault file audit device shipped into Loki | `kura.sh:427` |
+| Audit trail suppression | Repudiation | Secret access goes unrecorded | Vault file audit device shipped into Loki | `setup.sh:427` |
 
 ### 7. ClamAV (Antivirus)
 
@@ -100,7 +100,7 @@ Based on the data-flow diagram in `architecture.py` and `docs/coursework/pdf/kur
 |--------|--------|-------------|------------|-------------|
 | SSH brute force | Spoofing | Automated login attempts against host SSH | Key-only authentication, nftables allowlist, CrowdSec bouncer | `docker/nftables/kura.nft`, `docker/crowdsec/` |
 | Container breakout / lateral movement | Elevation | Compromised app process escalates to host | Read-only containers, `cap_drop: ALL`, `no-new-privileges`, non-root user | `docker-compose.yml`, `Dockerfile:98` |
-| Host config persistence | Tampering | Attacker modifies compose, nginx, nftables, or sshd config | Host FIM baseline and periodic check | `kura.sh:1645,1659` |
+| Host config persistence | Tampering | Attacker modifies compose, nginx, nftables, or sshd config | Host FIM baseline and periodic check | `setup.sh:1645,1659` |
 
 ## Cross-Boundary Threat Summary
 

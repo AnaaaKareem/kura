@@ -1,4 +1,4 @@
-# Vault policy "kura-cert-issuer": what ./kura.sh renew-certs may do.
+# Vault policy "kura-cert-issuer": what ./setup.sh renew-certs may do.
 # Vault denies everything that is not listed here.
 # The renewal script may ONLY ask the intermediate CA for a new certificate with the "kura-service" role, which is limited to Kura's five service names and at most 1 year.
 # It cannot read or export any CA key, sign an intermediate, change the role, revoke certificates, read other secrets or change any policy.

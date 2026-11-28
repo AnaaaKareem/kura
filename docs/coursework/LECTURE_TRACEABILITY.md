@@ -7,7 +7,7 @@ Section numbers follow the lecture topic outline in `security_concepts_reference
 | **§1.1 Security Objectives (CIA -> CIAAA + Non-Repudiation)** |
 | Confidentiality | TLS 1.3 (`docker/nginx/conf.d/kura.conf:37`), mTLS (`docker-compose.yml`), AES-256-GCM per-file (`kura/views.py:239-248`), Vault `kura-mfa` (`kura/views.py:200`) | T9 (`testssl.txt`), T13 (`upload-controls.txt`), T14 | Implemented |
 | Integrity | HMAC-SHA256 log chain (`kura/logging_utils.py:206`), ECDSA signatures (`kura/signing.py:120`), insert-only and lock triggers (`kura/migrations/0016`, `0025`, `0030`) | T15 (`G05-tamper-detected.txt`), T16 (`G11-log-chain-verify.txt`) | Implemented |
-| Availability | Rate limiting (`docker/nginx/nginx.conf:43-44`, `kura/middleware.py:214`), pgBackRest (`kura.sh:1516`), Loki healthcheck, CrowdSec | T8 (`rate-limit-verification.txt`), T14 (`restore-drill-with-data.txt`), T16 (`G03-alert-fired.txt`) | Implemented |
+| Availability | Rate limiting (`docker/nginx/nginx.conf:43-44`, `kura/middleware.py:214`), pgBackRest (`setup.sh:1516`), Loki healthcheck, CrowdSec | T8 (`rate-limit-verification.txt`), T14 (`restore-drill-with-data.txt`), T16 (`G03-alert-fired.txt`) | Implemented |
 | Authentication | Argon2id (`config/settings.py:301`), HIBP k-anon (`kura/views.py:177`), Axes lockout (`config/settings.py:317`), mandatory MFA (`kura/views.py:1128`), Passkeys (`kura/views.py:1423`) | T1, T3, T4 (`session-validation.txt`), T8 (`rate-limit-verification.txt`) | Implemented |
 | Authorization | RBAC and course ownership (`kura/permissions.py:53-192`), PostgreSQL RLS (`kura/migrations/0026_rls_and_readonly_revokes.py`), separation of duties (`kura/views.py:5590`) | T6 (`idor_matrix.py`, `idor_matrix.csv`) | Implemented |
 | Accountability | Structured logfmt + HMAC chain (`kura/logging_utils.py:106,206`), Loki 180-day retention, pgAudit | T16 (`G11-log-chain-verify.txt`), T14 | Implemented |
@@ -46,7 +46,7 @@ Section numbers follow the lecture topic outline in `security_concepts_reference
 | Social Engineering | Mandatory MFA, HIBP check, honeytoken, staff training (production rec) | T1, T16 (`G09-honeypot-check.txt`) | Implemented |
 | **§3 Web Application & API Security (OWASP Top 10:2025 with 2021 Cross-Ref)** |
 | A01:2025 Broken Access Control (A01:2021 + SSRF) | RBAC, course ownership (`kura/permissions.py:53-192`), PostgreSQL RLS, separation of duties, no outbound user-controlled URL fetch | T6 (`idor_matrix.csv`, `idor_matrix.txt`) | Implemented |
-| A02:2025 Security Misconfiguration (A05:2021) | No public DB port (`docker-compose.yml`), `pg_hba.conf` TCP reject (`docker/postgres/pg_hba.conf:22`), preflight checks (`kura.sh:1094`), `manage.py check --deploy` | T2 (`deploy-check.txt`), T10 (`port-scan.txt`, `G02-nmap-after.txt`) | G01, G02 Done (`bcd8ff0`) |
+| A02:2025 Security Misconfiguration (A05:2021) | No public DB port (`docker-compose.yml`), `pg_hba.conf` TCP reject (`docker/postgres/pg_hba.conf:22`), preflight checks (`setup.sh:1094`), `manage.py check --deploy` | T2 (`deploy-check.txt`), T10 (`port-scan.txt`, `G02-nmap-after.txt`) | G01, G02 Done (`bcd8ff0`) |
 | A03:2025 Software Supply Chain Failures (expanded from A06:2021) | Runtime `pip`/`setuptools`/`wheel` removed (`Dockerfile:74`), SHA-pinned CI actions, Trivy gate, `pip-audit`, CycloneDX SBOMs | T11 (`trivy-image-after-G06.txt`, `pip-audit-after-G06.txt`, `sbom-*.cdx.json`) | G06 Done (`f8026f5`) |
 | A04:2025 Cryptographic Failures (A02:2021) | TLS 1.3 only (`docker/nginx/conf.d/kura.conf:37`), per-file AES-256-GCM (`kura/views.py:239-248`), Vault Transit `kura-mfa`, Argon2id (`config/settings.py:301`) | T9 (`testssl.txt`), T13 (`upload-controls.txt`) | Implemented |
 | A05:2025 Injection (A03:2021) | Parameterized ORM with `server_side_binding` (`config/settings.py:189`), Coraza CRS WAF, NFKC/bidi validation (`kura/text_safety.py:33`), CSP | T5 (`db-boundary-validation.txt`), T7 (`input-boundary-validation.txt`), T13 | G08 Done (`c494a89`) |
@@ -64,7 +64,7 @@ Section numbers follow the lecture topic outline in `security_concepts_reference
 | **§5 Cryptography, Integrity, PKI & Data Protection** |
 | Symmetric Encryption | Per-file AES-256-GCM (`kura/views.py:239-248`) with Vault-wrapped data key; pgBackRest AES-256-CBC (`docker/postgres/pgbackrest.conf:10`) | T13, T14 | Implemented |
 | Asymmetric Signatures | Vault Transit ECDSA-P256 (`kura/signing.py:120,154,217`) | T15 (`G05-openssl-verify.txt`, `G05-tamper-detected.txt`) | G05 Done (`d713810`) |
-| Key Management | Vault Transit `auto_rotate_period=720h` (`kura.sh:495-501`), Docker secrets (`docker-compose.yml:995-1015`) | T11, T15 | G01, G02 Done (`bcd8ff0`) |
+| Key Management | Vault Transit `auto_rotate_period=720h` (`setup.sh:495-501`), Docker secrets (`docker-compose.yml:995-1015`) | T11, T15 | G01, G02 Done (`bcd8ff0`) |
 | TLS | TLS 1.3 only at nginx (`docker/nginx/conf.d/kura.conf:37`) | T9 (`testssl.txt`, `testssl-openssl.txt`) | Implemented |
 | mTLS | Vault PKI certificates mounted across internal services (`docker-compose.yml`) | T10, `docker-compose.yml` | Implemented |
 | Certificate Revocation (CRL) | Chain and expiry validated; internal CRL checking deferred | Optional gap G16 (P3) | Deferred (P3) |
@@ -72,9 +72,9 @@ Section numbers follow the lecture topic outline in `security_concepts_reference
 | **§5.7 Common Crypto Mistakes (8)** |
 | 1. Rolling own crypto | Uses Vault Transit, Python `cryptography` AESGCM, and Django Argon2id | `kura/signing.py:120`, `kura/views.py:246` | Implemented |
 | 2. Hardcoding keys | Moved to Docker secrets and Vault; checked by secret grep | `G01-inspect-after.txt`, `G01-preflight.txt` | G01, G02 Done (`bcd8ff0`) |
-| 3. Plaintext keys in env/code | Verified by `check_no_inline_secrets` (`kura.sh:1094`) | `G01-preflight.txt`, `G02-preflight.txt` | G01 Done (`bcd8ff0`) |
+| 3. Plaintext keys in env/code | Verified by `check_no_inline_secrets` (`setup.sh:1094`) | `G01-preflight.txt`, `G02-preflight.txt` | G01 Done (`bcd8ff0`) |
 | 4. Weak algorithms | AES-256-GCM, ECDSA-P256, Argon2id, SHA-256 (SHA-1 limited to HIBP protocol with `usedforsecurity=False`) | T9, T12 (`SEMGREP_TRIAGE.md`), T15 | Implemented |
-| 5. No key rotation | Vault Transit `auto_rotate_period=720h` (`kura.sh:495-501`) and AppRole rotation (`kura.sh:719`) | `kura.sh:495-501`, `kura.sh:719` | Implemented |
+| 5. No key rotation | Vault Transit `auto_rotate_period=720h` (`setup.sh:495-501`) and AppRole rotation (`setup.sh:719`) | `setup.sh:495-501`, `setup.sh:719` | Implemented |
 | 6. Insecure random | `secrets` module and `os.urandom` for keys, nonces, tokens | T12 (`bandit.txt`, `semgrep-after.txt`) | Implemented |
 | 7. Side-channel timing leaks | Constant-time comparisons (`kura/middleware.py:123`), dummy hash (`kura/backends.py:28`), reset queue (`kura/migrations/0032`) | T1 (`django-tests-2026-12.txt`) | G13 Done (`d1b06ff`) |
 | 8. Key reuse | Per-file AES-256-GCM keys (`kura/views.py:246`), separate `log_hmac_key` (`config/settings.py:68`), 15-min DB creds (`kura/base.py:1`) | T11, T13, T16 | G11 Done (`d1b06ff`) |
@@ -82,7 +82,7 @@ Section numbers follow the lecture topic outline in `security_concepts_reference
 | DMZ and Segmentation | Docker internal networks (`app`, `backend`, `clamav`, `egress`, `frontend`, `observability`, `docker_api`) | `docker-compose.yml`, T10 (`port-scan.txt`) | Implemented |
 | Default Deny | nftables default-drop policy (`docker/nftables/kura.nft`) | `G02-preflight.txt` | G02 Done (`bcd8ff0`) |
 | Stateful vs Proxy Firewall | nftables (stateful host firewall) + Coraza CRS (HTTP proxy WAF) | `docker/nftables/kura.nft`, `docker-compose.yml` | D5 (`MITIGATION_PLAN.md`) |
-| NIDS / HIPS Placement | CrowdSec log-based IPS + Loki alerting + host FIM (`kura.sh:1645`) | T8 (`rate-limit-verification.txt`), T16 (`G09-honeypot-check.txt`, `G17-fim-check.txt`) | G17 Done (`d1b06ff`) |
+| NIDS / HIPS Placement | CrowdSec log-based IPS + Loki alerting + host FIM (`setup.sh:1645`) | T8 (`rate-limit-verification.txt`), T16 (`G09-honeypot-check.txt`, `G17-fim-check.txt`) | G17 Done (`d1b06ff`) |
 | L2/L3/L4 Protocol Attacks | Not applicable inside single-VM virtual Docker bridge; covered in DC mitigation plan | D5 (`MITIGATION_PLAN.md`) | Covered in D5 |
 | DNS Security | Pinned resolver `1.1.1.1` (`docker-compose.yml`), no user-controlled DNS lookups | `docker-compose.yml` | Implemented |
 | Wireless (WPA3) | Not applicable to wired server prototype; covered in DC mitigation plan | D5 (`MITIGATION_PLAN.md`) | Covered in D5 |

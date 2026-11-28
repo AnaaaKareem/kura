@@ -2792,7 +2792,7 @@ class PostgreSQLEncryptedBackupAndPITRTests(TestCase):
         key_path = self.base_dir / "secrets" / "backup_encryption_key.txt"
         self.assertTrue(key_path.exists(), "Backup encryption key file must exist in secrets/")
         # On Linux the key is mode 600 and belongs to the database container user (UID 26), so this test (running as you) may not read it.
-        # ./kura.sh preflight checks its length as root instead.
+        # ./setup.sh preflight checks its length as root instead.
         if not os.access(key_path, os.R_OK):
             self.skipTest("backup key belongs to the database container user")
 
@@ -3338,7 +3338,7 @@ class IncidentResponseRunbookTests(TestCase):
         # Must include actionable commands for tools used in Kura.
         content = self.runbook_path.read_text(encoding="utf-8")
         self.assertIn("cscli decisions add", content, "Must explain CrowdSec IP banning")
-        self.assertIn("kura.sh renew-certs", content, "Must explain mTLS certificate renewal")
+        self.assertIn("setup.sh renew-certs", content, "Must explain mTLS certificate renewal")
         self.assertIn("pgbackrest", content, "Must explain PITR database restoration")
         self.assertIn("sha256sum", content, "Must explain cryptographic evidence hashing")
 

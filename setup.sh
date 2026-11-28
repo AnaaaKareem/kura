@@ -1,8 +1,8 @@
 #!/usr/bin/env bash
-# kura.sh: one script for setting up and running Kura on the Ubuntu Server VM.
-#     ./kura.sh help                 list every subcommand
-#     sudo ./kura.sh setup           first setup on a fresh VM
-#     sudo ./kura.sh preflight       read-only production checks
+# setup.sh: one script for setting up and running Kura on the Ubuntu Server VM.
+#     ./setup.sh help                 list every subcommand
+#     sudo ./setup.sh setup           first setup on a fresh VM
+#     sudo ./setup.sh preflight       read-only production checks
 # Options (anywhere on the command line):
 # --dry-run   print what each step would do and change nothing --force     answer YES to the confirmation of a destructive step
 # Every step is safe to run twice: work that is already done is skipped, and the script says so.
@@ -72,7 +72,7 @@ is_linux() { [ "$(uname -s)" = "Linux" ]; }
 # On Linux the key and secret files belong to container users, so commands that write or read them must run as root. A dry run changes nothing, so it may run as anyone.
 need_root() {
     if [ "$DRY_RUN" = 0 ] && is_linux && [ "$(id -u)" != "0" ]; then
-        die "Run this as root on Linux:  sudo ./kura.sh $1"
+        die "Run this as root on Linux:  sudo ./setup.sh $1"
     fi
 }
 
@@ -159,7 +159,7 @@ for mount in config["services"][sys.argv[1]]["volumes"]:
 # Print every subcommand with one line about what it does.
 cmd_help() {
     cat <<'EOF'
-Usage: ./kura.sh <command> [--dry-run] [--force]
+Usage: ./setup.sh <command> [--dry-run] [--force]
 
 Setup
   setup              First setup on a fresh VM: prerequisites, secrets, certificates,
@@ -230,7 +230,7 @@ cmd_secrets() {
         case "$name" in
             telegram_bot_token) source="Telegram @BotFather" ;;
             telegram_chat_id) source="the Telegram chat that receives alerts" ;;
-            *) source="Vault. ./kura.sh vault-init writes it for you" ;;
+            *) source="Vault. ./setup.sh vault-init writes it for you" ;;
         esac
         if [ -s "$file" ]; then
             skip "$file already filled in"
@@ -691,7 +691,7 @@ obtain_temp_root_token() {
 cmd_vault_add_name() {
     NEW_NAME=${1:-}
     if [ -z "$NEW_NAME" ]; then
-        die "Usage: ./kura.sh vault-add-name <service-name>"
+        die "Usage: ./setup.sh vault-add-name <service-name>"
     fi
     if planned "add '$NEW_NAME' to Vault's kura-service role (asks for the unseal key)"; then
         return 0
@@ -946,7 +946,7 @@ cmd_grafana_users() {
         return 0
     fi
     curl -fsS -o /dev/null http://127.0.0.1:3000/api/health || die "Grafana is not answering on 127.0.0.1:3000."
-    [ -s "$SECRETS_DIR/grafana_viewer_password.txt" ] || die "secrets/grafana_viewer_password.txt is missing. Run ./kura.sh secrets."
+    [ -s "$SECRETS_DIR/grafana_viewer_password.txt" ] || die "secrets/grafana_viewer_password.txt is missing. Run ./setup.sh secrets."
 
     # Private working folder for the session cookies and API answers.
     GRAFANA_WORK=$(mktemp -d)
@@ -963,7 +963,7 @@ cmd_grafana_users() {
     # 1. The admin login must work, or nothing else can be checked.
     code=$(grafana_login admin grafana_admin_password)
     if [ "$code" != "200" ]; then
-        die "The admin password in secrets/grafana_admin_password.txt does not log in (HTTP $code). Run: sudo ./kura.sh grafana-users --reset-password"
+        die "The admin password in secrets/grafana_admin_password.txt does not log in (HTTP $code). Run: sudo ./setup.sh grafana-users --reset-password"
     fi
     skip "admin account works (kept for setup and recovery)"
 
@@ -1012,7 +1012,7 @@ cmd_grafana_users() {
     if [ "$code" = "200" ]; then
         skip "viewer login works"
     else
-        die "The viewer password in secrets/ does not log in (HTTP $code). Run: sudo ./kura.sh grafana-users --reset-password"
+        die "The viewer password in secrets/ does not log in (HTTP $code). Run: sudo ./setup.sh grafana-users --reset-password"
     fi
     rm -rf "$GRAFANA_WORK"
     trap - EXIT
@@ -1414,7 +1414,7 @@ cmd_setup() {
     if command -v crowdsec-firewall-bouncer > /dev/null 2>&1; then
         cmd_firewall_bouncer
     else
-        skip "crowdsec-firewall-bouncer-nftables not installed (see docker/nftables/README.md, then run: sudo ./kura.sh firewall-bouncer)"
+        skip "crowdsec-firewall-bouncer-nftables not installed (see docker/nftables/README.md, then run: sudo ./setup.sh firewall-bouncer)"
     fi
     if ! planned "run the health checks"; then
         cmd_health
@@ -1432,7 +1432,7 @@ cmd_firewall_bouncer() {
     need_root firewall-bouncer
     template="docker/crowdsec/crowdsec-firewall-bouncer.yaml"
     target="/etc/crowdsec/bouncers/crowdsec-firewall-bouncer.yaml"
-    [ -f "$SECRETS_DIR/crowdsec_bouncer_key.txt" ] || die "Missing $SECRETS_DIR/crowdsec_bouncer_key.txt (run: sudo ./kura.sh secrets)."
+    [ -f "$SECRETS_DIR/crowdsec_bouncer_key.txt" ] || die "Missing $SECRETS_DIR/crowdsec_bouncer_key.txt (run: sudo ./setup.sh secrets)."
     if ! command -v crowdsec-firewall-bouncer > /dev/null 2>&1; then
         die "Package crowdsec-firewall-bouncer-nftables is not installed (see docker/nftables/README.md)."
     fi
@@ -1519,7 +1519,7 @@ cmd_restore_drill() {
     if planned "restore backup ($TARGET_TIME) into a new throwaway volume and compare row counts"; then
         return 0
     fi
-    docker info > /dev/null 2>&1 || die "Cannot talk to Docker. Run as a user in the docker group or with: sudo ./kura.sh restore-drill"
+    docker info > /dev/null 2>&1 || die "Cannot talk to Docker. Run as a user in the docker group or with: sudo ./setup.sh restore-drill"
     IMAGE=$(docker compose config --images db | head -1)
     DRILL_VOLUME="kura_restore_drill_$(date +%Y%m%d%H%M%S)"
     DRILL_CONTAINER="kura-restore-drill"
@@ -1696,7 +1696,7 @@ for word in "$@"; do
         --force) FORCE=1 ;;
         --reset-password) RESET_PASSWORD=1 ;;
         -h|--help) COMMAND=help ;;
-        -*) die "Unknown option: $word (see ./kura.sh help)" ;;
+        -*) die "Unknown option: $word (see ./setup.sh help)" ;;
         *)
             if [ -z "$COMMAND" ]; then
                 COMMAND=$word
@@ -1727,5 +1727,5 @@ case "$COMMAND" in
     restore-drill) cmd_restore_drill "$ARGUMENT" ;;
     fim-baseline) cmd_fim_baseline ;;
     fim-check) cmd_fim_check ;;
-    *) die "Unknown command: $COMMAND (see ./kura.sh help)" ;;
+    *) die "Unknown command: $COMMAND (see ./setup.sh help)" ;;
 esac

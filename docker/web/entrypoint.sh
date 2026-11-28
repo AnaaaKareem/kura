@@ -24,7 +24,7 @@ if [ "${KURA_RUN_MIGRATIONS:-True}" = "True" ]; then
               python manage.py migrate --noinput )
 fi
 
-# "migrate-only" lets ./kura.sh setup run migrations before Vault exists (see section 6).
+# "migrate-only" lets ./setup.sh setup run migrations before Vault exists (see section 6).
 [ "${1:-}" = "migrate-only" ] && exit 0
 
 # Gunicorn: kura only, no migrator group, normal runtime settings from the container environment.

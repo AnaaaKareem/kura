@@ -312,7 +312,7 @@ class EgressFirewallConfigTests(SimpleTestCase):
             self.assertIn("flags timeout", declaration, name)
 
     def test_egress_refresh_does_not_hide_nft_errors(self):
-        script = self.read("kura.sh")
+        script = self.read("setup.sh")
         add_lines = [line for line in script.splitlines() if "nft add element" in line]
         self.assertTrue(add_lines)
         for line in add_lines:

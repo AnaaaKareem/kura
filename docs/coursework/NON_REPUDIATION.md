@@ -8,7 +8,7 @@ Before G05, submitted attempts in Kura recorded only a SHA-256 integrity hash (`
 
 Kura adds asymmetric digital signatures managed by HashiCorp Vault's Transit secrets engine (`kura/signing.py`):
 
-1. **Isolated ECDSA Signing Key (`kura-receipts`):** `kura.sh` (`cmd_vault_init` and `cmd_vault_add_receipts_key`) creates a non-exportable `ecdsa-p256` Transit key (`auto_rotate_period=720h`). The private key never leaves Vault memory.
+1. **Isolated ECDSA Signing Key (`kura-receipts`):** `setup.sh` (`cmd_vault_init` and `cmd_vault_add_receipts_key`) creates a non-exportable `ecdsa-p256` Transit key (`auto_rotate_period=720h`). The private key never leaves Vault memory.
 2. **Least-Privilege Vault Policy (`docker/vault/policies/kura-web.hcl`):** The `kura-web` role is restricted to `transit/sign/kura-receipts` (`update`), `transit/verify/kura-receipts` (`update`), and `transit/keys/kura-receipts` (`read` for the public verification key).
 3. **Canonical Deterministic Payloads (`kura/signing.py`):** Submissions and grade transitions serialize into sorted compact JSON (`{"v":1,"kind":...}`) with timestamps normalized to UTC ISO-8601 and decimal scores formatted to two decimal places before signing with SHA-256 (`hash_algorithm="sha2-256"`).
 4. **Fail-Closed Sealing (`kura/views.py`, `kura/management/commands/finalize_attempts.py`):**

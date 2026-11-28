@@ -611,10 +611,10 @@ class SecurityGapG11LogChainTests(unittest.TestCase):
 class SecurityGapG17FimTests(unittest.TestCase):
     """Verification tests for G17 host file-integrity baseline and drift detection."""
 
-    @skipIf(not (BASE_DIR / "kura.sh").exists(), "kura.sh not available in container")
+    @skipIf(not (BASE_DIR / "setup.sh").exists(), "setup.sh not available in container")
     def test_g17_fim_baseline_and_drift_detection(self):
         """Plan ID: G17 | Risk ID: R09
-        Verify ./kura.sh fim-baseline records deterministic hashes and ./kura.sh fim-check
+        Verify ./setup.sh fim-baseline records deterministic hashes and ./setup.sh fim-check
         exits 0 on clean files and non-zero with event="fim.changed" when modified.
         """
         import subprocess
@@ -637,7 +637,7 @@ class SecurityGapG17FimTests(unittest.TestCase):
                 "KURA_FIM_BASELINE": str(baseline_file),
             }
             res_base = subprocess.run(
-                [str(BASE_DIR / "kura.sh"), "fim-baseline"],
+                [str(BASE_DIR / "setup.sh"), "fim-baseline"],
                 env=env,
                 capture_output=True,
                 text=True,
@@ -647,7 +647,7 @@ class SecurityGapG17FimTests(unittest.TestCase):
             self.assertTrue(baseline_file.exists())
 
             res_ok = subprocess.run(
-                [str(BASE_DIR / "kura.sh"), "fim-check"],
+                [str(BASE_DIR / "setup.sh"), "fim-check"],
                 env=env,
                 capture_output=True,
                 text=True,
@@ -659,7 +659,7 @@ class SecurityGapG17FimTests(unittest.TestCase):
             # Mutate a monitored file and verify fim-check detects drift cleanly.
             (root / "docker" / "nginx" / "kura.conf").write_text("server { listen 80; }\n", encoding="utf-8")
             res_drift = subprocess.run(
-                [str(BASE_DIR / "kura.sh"), "fim-check"],
+                [str(BASE_DIR / "setup.sh"), "fim-check"],
                 env=env,
                 capture_output=True,
                 text=True,

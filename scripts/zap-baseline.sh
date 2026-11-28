@@ -21,7 +21,8 @@ cd "$(dirname "$0")/.."
 
 TARGET="${ZAP_TARGET:-https://localhost/}"
 EMAIL="${ZAP_EMAIL:-student@kura.edu}"
-PASSWORD="${ZAP_PASSWORD:-KuraPass2026!}"
+# The demo password is never stored in this file. Set ZAP_PASSWORD before running.
+PASSWORD="${ZAP_PASSWORD:?Set ZAP_PASSWORD to the demo account password}"
 MINS="${ZAP_MINS:-1}"
 TOTP_FILE="${ZAP_TOTP_SECRET_FILE:-$HOME/.config/kura/zap-student-totp.secret}"
 PYTHON="${ZAP_PYTHON:-.venv/bin/python}"

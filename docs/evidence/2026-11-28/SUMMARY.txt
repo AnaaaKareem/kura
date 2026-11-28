@@ -1,0 +1,14 @@
+Security test summary (2026-11-28, commit dc51558)
+STEP               GROUP    RESULT  TIME  LOG
+ruff               default  PASS      0s  docs/evidence/2026-11-28/01_ruff.txt
+deploy-check       default  PASS      1s  docs/evidence/2026-11-28/02_deploy-check.txt
+django-suite       default  PASS    141s  docs/evidence/2026-11-28/03_django-suite.txt
+semgrep            default  PASS     33s  docs/evidence/2026-11-28/04_semgrep.txt
+pip-audit          default  PASS     14s  docs/evidence/2026-11-28/05_pip-audit.txt
+trivy-fs           default  PASS     92s  docs/evidence/2026-11-28/06_trivy-fs.txt
+trivy-config       default  PASS      2s  docs/evidence/2026-11-28/07_trivy-config.txt
+gitleaks           default  PASS      2s  docs/evidence/2026-11-28/08_gitleaks.txt
+compose-config     default  PASS      0s  docs/evidence/2026-11-28/09_compose-config.txt
+nft-syntax         default  PASS      0s  docs/evidence/2026-11-28/10_nft-syntax.txt
+
+No step failed. Logs are in docs/evidence/2026-11-28/

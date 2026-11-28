@@ -59,7 +59,7 @@ if DEBUG and not SECRET_KEY:
 if not DEBUG:
     if not SECRET_KEY or SECRET_KEY.startswith("django-insecure-") or len(SECRET_KEY) < 50:
         raise ImproperlyConfigured(
-            "SECRET_KEY is missing or too weak. Run ./kura.sh secrets "
+            "SECRET_KEY is missing or too weak. Run ./setup.sh secrets "
             "or set a random SECRET_KEY of at least 50 characters."
         )
 

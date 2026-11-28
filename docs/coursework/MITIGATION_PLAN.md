@@ -13,7 +13,7 @@
 | Unrestricted outbound traffic | Default-deny egress with explicit allowlist | nftables `OUTPUT` allowlist (e.g. `api.pwnedpasswords.com`, ClamAV mirrors, SMTP) + CrowdSec bouncer | §6.2 | Low | `docker/nftables/kura.nft` + CrowdSec bouncer |
 | **IDS / IPS Placement** |
 | No network IDS | Deploy NIDS sensors at DMZ and core choke points | Suricata/Zeek on SPAN/TAP ports at DMZ perimeter | §6.3 | Medium | CrowdSec log-based IPS (`docker/crowdsec/`) |
-| No host IPS or integrity check | Deploy HIPS and file integrity monitoring on critical hosts | `auditd` + AIDE/FIM + CrowdSec agent | §6.3 | Low | Host FIM (`kura.sh:1645,1659`) + CrowdSec + Loki alerts |
+| No host IPS or integrity check | Deploy HIPS and file integrity monitoring on critical hosts | `auditd` + AIDE/FIM + CrowdSec agent | §6.3 | Low | Host FIM (`setup.sh:1645,1659`) + CrowdSec + Loki alerts |
 | **Protocol Attacks (L2 / L3 / L4)** |
 | ARP spoofing and MAC flooding | Switch port security, DAI, and DHCP snooping | Access-port MAC limits, Dynamic ARP Inspection, DHCP snooping | §6.4 | Low | Out of prototype scope (virtual Docker bridge) |
 | VLAN hopping | Disable unused ports and restrict trunk VLANs | `switchport mode access`, explicit trunk allowlist, native VLAN pruning | §6.4 | Low | Docker network isolation (`internal: true`) |
@@ -28,7 +28,7 @@
 | **Backup & Recovery** |
 | Single local backup copy | 3-2-1 backup strategy (3 copies, 2 media, 1 offsite) | pgBackRest `repo1` local + `repo2` offsite repository (`docker/postgres/pgbackrest.conf:6-22`) | §7.2 | Medium | `kura_postgres_backups` + `kura_postgres_backups_offsite` |
 | Mutable backups vulnerable to tampering | Immutable backup storage (WORM) | `repo1-retention-full=7` plus S3 Object Lock in production | §7.2 | Medium | Separate offsite volume tested read-only during restore |
-| Untested recovery procedures | Scheduled restore drills with row-count validation | `kura.sh restore-drill` (`kura.sh:1516`) verifying table row counts | §7.2 | Low | T14 passed in 21 s (`docs/evidence/2026-12/restore-drill-with-data.txt`: 8 users, 1 course, 2 enrollments, 1 assessment, 0 grades) |
+| Untested recovery procedures | Scheduled restore drills with row-count validation | `setup.sh restore-drill` (`setup.sh:1516`) verifying table row counts | §7.2 | Low | T14 passed in 21 s (`docs/evidence/2026-12/restore-drill-with-data.txt`: 8 users, 1 course, 2 enrollments, 1 assessment, 0 grades) |
 | Ransomware encrypting live and backup stores | Air-gapped or pull-only offsite replication | Offsite repository on isolated credentials and dedicated `egress` network | §7.2 | High | `kura_postgres_backups_offsite` separate volume |
 | **Shared Responsibility (Cloud)** |
 | Unclear security ownership across provider and university | Formal RACI mapped to cloud shared-responsibility model | Documented IaaS/PaaS/SaaS control matrix reviewed annually | §7.2 | Low | This mitigation plan and `risk_register.csv` |
@@ -49,5 +49,5 @@
 | CrowdSec | Equivalent of log-based NIDS/IPS bouncer | `docker-compose.yml` (`crowdsec` service) | §6.3 | N/A | Implemented in prototype |
 | pgBackRest | Equivalent of encrypted enterprise backup with offsite copy | `docker/postgres/pgbackrest.conf` | §7.2 | N/A | Implemented in prototype |
 | Vault Transit | Prototype equivalent of HSM / KMS | `kura/signing.py`, `docker/vault/policies/kura-web.hcl` | §5.5 | N/A | Implemented in prototype |
-| Host FIM (`kura.sh fim-baseline`) | Prototype equivalent of Tripwire / AIDE | `kura.sh:1645,1659` | §2.4 | N/A | Implemented in prototype |
+| Host FIM (`setup.sh fim-baseline`) | Prototype equivalent of Tripwire / AIDE | `setup.sh:1645,1659` | §2.4 | N/A | Implemented in prototype |
 | Loki + HMAC log chain | Prototype equivalent of tamper-evident SIEM | `kura/logging_utils.py:206`, `docker/loki/` | §6.3 | N/A | Implemented in prototype |
