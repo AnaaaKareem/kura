@@ -960,6 +960,9 @@ networks:
   # lets 172.28.60.10 reach only Gmail SMTP (587) and HaveIBeenPwned (443), plus DNS.
   egress:
     driver: bridge
+    # The host firewall matches this exact interface name (docker/nftables/kura.nft).
+    driver_opts:
+      com.docker.network.bridge.name: kura-egress
     ipam:
       config:
         - subnet: 172.28.60.0/24

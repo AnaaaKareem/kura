@@ -1121,15 +1121,14 @@ class AdminStaffAccountsTests(TestCase):
         self.assertTrue(created_user.must_change_password)
         self.assertTrue(StaffProfile.objects.filter(user=created_user).exists())
 
-    @patch("kura.views.check_breached_password", side_effect=ValidationError("Breached password"))
-    def test_breached_temporary_password_does_not_create_staff(self, check):
+    def test_staff_creation_with_missing_fields_creates_nothing(self):
+        # The account password is random and never shown, so only the form fields can block creation.
         login_with_session(self.client, self.admin)
         response = self.client.post(reverse("kura:staff_create"), {
-            "email": "blocked.staff@example.com", "department": self.department.id, "staff_title": "Instructor",
+            "department": self.department.id, "staff_title": "Instructor",
         })
         self.assertEqual(response.status_code, 400)
-        check.assert_called_once()
-        self.assertFalse(User.objects.filter(email="blocked.staff@example.com").exists())
+        self.assertFalse(StaffProfile.objects.filter(department=self.department).exists())
 
     def test_new_staff_account_gets_the_role_named_by_its_title(self):
         # The chosen title becomes the first role, recorded with the Admin who assigned it.

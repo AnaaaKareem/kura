@@ -72,11 +72,11 @@ class SecurityRouteContractUnitTests(SimpleTestCase):
 
     def test_cls_all_90_urlconf_routes_mapped(self):
         """Plan ID: CLS-01..CLS-08 | Risk ID: R10
-        Verify every named URL pattern in config/urls.py and kura/urls.py (91 total) is mapped
+        Verify every named URL pattern in config/urls.py and kura/urls.py (93 total) is mapped
         in ROUTE_CLASS_MAP with zero unmapped or extra entries.
         """
         discovered = dict(_walk_named_routes(get_resolver().url_patterns))
-        self.assertEqual(len(discovered), 91)
+        self.assertEqual(len(discovered), 93)
         self.assertEqual(set(discovered.keys()), set(ROUTE_CLASS_MAP.keys()))
 
     def test_cls_01_to_cls_08_login_required_baseline(self):

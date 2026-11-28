@@ -27,24 +27,6 @@
         </div>
     </header>
 
-    {% if temp_account %}
-    <!-- One-time temporary password card popped from session; never logged or put in flash messages. -->
-    <div id="temp-password-card" class="card card-body mb-3 border-warning p-3 vstack gap-2" role="status">
-        <div class="d-flex align-items-start justify-content-between gap-3">
-            <div>
-                <h2 class="fw-semibold">Temporary password for {{ temp_account.email }}</h2>
-                <p class="small text-body-secondary mt-1">This is shown once. Share it securely with the staff member.</p>
-            </div>
-            <button type="button" class="btn btn-link text-decoration-none btn-sm" data-dismiss-target="#temp-password-card" aria-label="Dismiss temporary password">Dismiss</button>
-        </div>
-        <div class="d-flex flex-wrap align-items-center gap-2">
-            <code id="temp-password-value" class="font-monospace fs-5 bg-body-tertiary border rounded px-2 py-1 user-select-all">{{ temp_account.password }}</code>
-            <button type="button" class="btn btn-outline-secondary btn-sm" data-copy="#temp-password-value">Copy</button>
-            <span class="small text-success fw-medium" data-copy-status></span>
-        </div>
-    </div>
-    {% endif %}
-
     {% if filter_form %}
     <form method="get" class="card card-body mb-3 p-3 vstack gap-3 bg-body" role="search">
         <div class="k-grid gap-3">

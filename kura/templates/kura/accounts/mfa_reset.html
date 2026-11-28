@@ -1,0 +1,35 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Reset two-step verification - Kura{% endblock %}
+
+{% block form_errors %}{% endblock %}
+
+{% block content %}
+<div class="k-max-md mx-auto my-4">
+    <div class="card card-body mb-3 p-4 p-sm-5 vstack gap-4">
+        <header class="text-center vstack gap-2">
+            <h1 class="fs-3 fw-bold">Reset two-step verification</h1>
+            <p class="small text-body-secondary">
+                This removes your authenticator app, recovery codes and passkeys. You will set up two-step verification again straight away.
+                Enter your password and a code from your current authenticator app or an unused recovery code.
+            </p>
+            <p class="small text-body-secondary">
+                If you have lost your device and your recovery codes, ask an administrator to reset it for you.
+            </p>
+        </header>
+
+        <form method="post" action="{% url 'kura:mfa_reset' %}" class="vstack gap-3">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+            {% csrf_token %}
+            {% include "kura/_form_errors.html" %}
+            {% include "kura/_field.html" with field=form.password %}
+            {% include "kura/_field.html" with field=form.code %}
+
+            <div class="pt-2">
+                <button type="submit" class="btn btn-danger w-100">
+                    Reset two-step verification
+                </button>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

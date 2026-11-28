@@ -1,0 +1,33 @@
+{% extends "kura/base.html" %}
+
+{% block title %}Reset two-step verification - Kura{% endblock %}
+
+{% block form_errors %}{% endblock %}
+
+{% block content %}
+<div class="k-max-md mx-auto my-4">
+    <div class="card card-body mb-3 p-4 p-sm-5 vstack gap-4">
+        <header class="vstack gap-2">
+            <h1 class="fs-3 fw-bold">Reset two-step verification for {{ target_user.email }}</h1>
+            <p class="small text-body-secondary">
+                Use this when the user lost their device and their recovery codes. It removes their authenticator app, recovery codes and passkeys,
+                signs them out everywhere, and replaces their password with one nobody knows.
+                They are emailed a single-use link to choose a new password and then set up two-step verification again.
+                You will not see any code or link.
+            </p>
+        </header>
+
+        <form method="post" action="{% url 'kura:admin_user_mfa_reset' target_user.id %}" class="vstack gap-3">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}
+            {% csrf_token %}
+            {% include "kura/_form_errors.html" %}
+            {% include "kura/_field.html" with field=form.reason %}
+            {% include "kura/_field.html" with field=form.password %}
+
+            <div class="pt-2 d-flex gap-2">
+                <button type="submit" class="btn btn-danger">Reset two-step verification</button>
+                <a href="{% url 'kura:admin_users' %}" class="btn btn-outline-secondary">Cancel</a>
+            </div>
+        </form>
+    </div>
+</div>
+{% endblock %}

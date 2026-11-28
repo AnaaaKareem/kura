@@ -1498,7 +1498,8 @@ cmd_egress_refresh() {
             if planned "add $ip to inet kura_host $set (timeout 2h)"; then
                 continue
             fi
-            nft add element inet kura_host "$set" "{ $ip timeout 2h }" 2>/dev/null || true
+            # A failed add must be visible: an empty allowlist drops all web egress.
+            nft add element inet kura_host "$set" "{ $ip timeout 2h }" || die "Could not add $ip to $set. Is the kura_host table loaded?"
         done
     done
     say "Egress allowlists refreshed"

@@ -16,6 +16,10 @@
             <p class="small text-body-secondary">
                 Entering a recovery code uses it up.
             </p>
+            <p class="small text-body-secondary">
+                Want to start over with a new device? <a href="{% url 'kura:mfa_reset' %}">Reset two-step verification</a>.
+                If you lost your device and your recovery codes, ask an administrator to reset it.
+            </p>
         </header>
 
         <form method="post" action="{% url 'kura:mfa_setup' %}" class="vstack gap-3">{# The csrf_token is the first line inside this form; Semgrep only looks a few lines ahead. nosemgrep: python.django.security.django-no-csrf-token.django-no-csrf-token #}

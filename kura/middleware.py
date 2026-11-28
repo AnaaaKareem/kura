@@ -1,3 +1,10 @@
+"""Middleware that wraps every request with Kura's security checks.
+
+The order in settings.MIDDLEWARE matters. Outage handling runs first, then the
+login gate, then the database row-level security context, then session validation,
+onboarding rules (forced password change and MFA setup) and rate limits. Each class
+says what it blocks and what it does when its own dependency fails.
+"""
 import hmac
 import logging
 
@@ -223,6 +230,8 @@ class RateLimitMiddleware:
         # Course material files.
         "course_file_upload",
     }
+    # MFA resets are rare and sensitive, so they get a much tighter budget: 5 per hour.
+    MFA_RESET_URL_NAMES = {"mfa_reset", "admin_user_mfa_reset"}
     # List pages with a free-text "q" filter.
     # Enrollment search has its own limit in views.py.
     SEARCH_URL_NAMES = {
@@ -242,9 +251,7 @@ class RateLimitMiddleware:
         limit = None
         bucket = None
         window = 60
-        # Uploads are POST.
-        # Searches are GET and only count when a search term is sent, so plain page loads and pagination stay free.
-        # Counting only touches the rate-limit cache.
+        # Uploads are POST. Searches are GET and only count when a search term is sent, so plain page loads and pagination stay free.
         has_search_term = request.method == "GET" and request.GET.get("q", "").strip() != ""
         if request.method == "POST" or has_search_term:
             try:
@@ -255,6 +262,10 @@ class RateLimitMiddleware:
                 if match.url_name in self.UPLOAD_URL_NAMES:
                     limit = 20
                     bucket = "upload"
+                elif match.url_name in self.MFA_RESET_URL_NAMES:
+                    limit = 5
+                    bucket = "mfa_reset"
+                    window = 3600
             elif match is not None and match.url_name in self.SEARCH_URL_NAMES:
                 limit = 60
                 bucket = "search"
@@ -311,7 +322,7 @@ class RowLevelSecurityMiddleware:
                     # Use set_config(..., false) for session-wide SET with psycopg 3 bound parameters.
                     cursor.execute("SELECT set_config('kura.current_user_id', %s, false);", [str(request.user.id)])
             except Exception as error:
-                # Fail closed: database policies treat a missing user id as unrestricted.
+                # Fail closed: stop the request here so no view runs without the row-level security user id set.
                 log_security_event(
                     request,
                     "rls.context_failed",

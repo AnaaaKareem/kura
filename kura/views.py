@@ -1,3 +1,15 @@
+"""Request handlers and the security helpers they share.
+
+The file starts with shared helpers (breach check, file encryption, upload
+scanning, error and honeypot views, one-time codes and sessions). The views follow
+by feature: sign-in and MFA, dashboard, password change and reset, admin, registrar,
+courses, attendance, assessments, and grades.
+
+Every view is protected by the login gate in settings (views are private unless
+marked with @login_not_required). Each handler then checks the caller's role and
+the exact record it touches before it reads or changes anything.
+"""
+
 import csv
 import base64
 import hashlib
@@ -70,6 +82,8 @@ from .forms import (
     GradeEntryForm,
     GradeReleaseForm,
     LoginForm,
+    AdminMFAResetForm,
+    MFAResetForm,
     MFAVerifyForm,
     ManualAttendanceForm,
     PasswordChangeForm,
@@ -242,7 +256,8 @@ def encrypt_file_content(content_bytes, stored_file_id):
     if not getattr(settings, "VAULT_ENABLED", False):
         return {"content": raw_bytes, "wrapped_key": "", "nonce": b"", "encryption_version": 0}
 
-    # Bind the ciphertext to its file ID so it cannot be swapped between files.
+    # Envelope encryption: a fresh AES-256 key per file encrypts the bytes, and Vault encrypts that key.
+    # The file ID is bound in as authenticated data, so ciphertext cannot be swapped between files.
     data_key = AESGCM.generate_key(bit_length=256)
     nonce = os.urandom(12)
     ciphertext = AESGCM(data_key).encrypt(nonce, raw_bytes, str(stored_file_id).encode("utf-8"))
@@ -2087,9 +2102,9 @@ def verify_second_factor(user, code):
     return None
 
 
-def create_reset_token(user):
-    """Make a single-use password reset token valid for 30 minutes.
-    Used by both reset methods (email link and authenticator code).
+def create_reset_token(user, lifetime_minutes=30):
+    """Make a single-use password reset token, valid for 30 minutes unless told otherwise.
+    Used by the reset email, account activation and the admin MFA reset.
     Returns (raw_token, token_record). Only the SHA-256 hash is saved.
     """
     raw_token = secrets.token_urlsafe(32)
@@ -2097,7 +2112,7 @@ def create_reset_token(user):
     record = PasswordResetToken.objects.create(
         user=user,
         token_hash=token_hash,
-        expires_at=timezone.now() + timezone.timedelta(minutes=30),
+        expires_at=timezone.now() + timezone.timedelta(minutes=lifetime_minutes),
     )
     log_security_event(
         None,
@@ -2105,6 +2120,65 @@ def create_reset_token(user):
         {"user_id": user.id, "expires_at": record.expires_at.isoformat()},
     )
     return raw_token, record
+
+
+# How long a new account's set-password link, or an admin MFA reset link, stays valid (2 days).
+ACCOUNT_ACTIVATION_MINUTES = 2 * 24 * 60
+
+
+def queue_account_activation_email(new_user, subject, intro):
+    """Email a new or recovering user a single-use link to set their own password.
+
+    Who can use it: Admin and Registrar account creation, and the Admin MFA reset.
+    Security: Only the user's mailbox receives the link, so the Admin or Registrar who
+    created the account never learns a credential. The token is stored as a SHA-256
+    hash, works once and expires after ACCOUNT_ACTIVATION_MINUTES. The link goes to the
+    normal password page, and the user then signs in and must enrol their own MFA.
+    """
+    raw_token, token_record = create_reset_token(new_user, lifetime_minutes=ACCOUNT_ACTIVATION_MINUTES)
+    link = settings.SITE_URL.rstrip("/") + reverse("kura:password_reset_confirm", kwargs={"token": raw_token})
+    hours = ACCOUNT_ACTIVATION_MINUTES // 60
+    queue_email(
+        f"account-activation:{token_record.id}",
+        new_user.email,
+        subject,
+        f"Hello,\n\n{intro}\n\nSet your password here:\n{link}\n\n"
+        f"The link works once and expires in {hours} hours. After you sign in, Kura asks you to set up "
+        "two-step verification on your own device.\n\n"
+        "If you did not expect this email, ignore it and contact an administrator.\n\n"
+        "This is an automatic message from Kura. Please do not reply.",
+    )
+    return token_record
+
+
+def reset_user_mfa(user, keep_session_id=None):
+    """Remove every second factor of one user so they must enrol again.
+
+    Who can use it: mfa_reset_view (the user's own reset) and admin_user_mfa_reset_view.
+    Security: Deletes authenticator devices, recovery codes, passkeys and any
+    remembered-device records (django-mfa2 keeps them all in User_Keys), clears the
+    encrypted seed, and revokes the user's sessions. The next sign-in goes to the
+    mandatory MFA setup page. Returns the counts, never any secret value.
+    """
+    from mfa.models import User_Keys
+
+    with transaction.atomic():
+        authenticators_removed = TOTPDevice.objects.filter(user=user).delete()[0]
+        recovery_removed = StaticDevice.objects.filter(user=user).delete()[0]
+        passkeys_removed = User_Keys.objects.filter(username=user.email).delete()[0]
+        user.mfa_secret = None
+        user.mfa_enabled = False
+        user.save(update_fields=["mfa_secret", "mfa_enabled"])
+        sessions = UserSession.objects.filter(user=user, revoked_at__isnull=True)
+        if keep_session_id:
+            sessions = sessions.exclude(id=keep_session_id)
+        sessions_revoked = sessions.update(revoked_at=timezone.now())
+    return {
+        "authenticators_removed": authenticators_removed,
+        "recovery_rows_removed": recovery_removed,
+        "passkeys_removed": passkeys_removed,
+        "sessions_revoked": sessions_revoked,
+    }
 
 
 @login_not_required
@@ -2431,6 +2505,142 @@ def mfa_setup_complete_view(request):
         request,
         "kura/accounts/mfa_setup_complete.html",
         {"recovery_codes": recovery_codes},
+    )
+
+
+@login_required
+@never_cache
+def mfa_reset_view(request):
+    """Let a signed-in user remove their own two-step verification and enrol again.
+    Who can use it: Any authenticated user whose MFA is enabled, for their own account only.
+    Security: Needs the current password (checked through authenticate, so django-axes
+    counts wrong guesses) and a current authenticator or recovery code. On success every
+    factor is deleted, the user's other sessions are revoked and a notice is emailed; the
+    middleware then forces MFA setup. POST with CSRF, rate-limited by RateLimitMiddleware.
+    Users who lost their device must ask an Admin (admin_user_mfa_reset_view).
+    """
+    if not request.user.mfa_enabled:
+        return redirect("kura:mfa_setup")
+
+    form = MFAResetForm(request.POST or None)
+    if request.method == "POST" and form.is_valid():
+        user = request.user
+        password_ok = (
+            authenticate(request, username=user.email, password=form.cleaned_data["password"]) is not None
+        )
+        # Check the code only after the password, so a wrong password never spends a recovery code.
+        method = verify_second_factor(user, form.cleaned_data["code"].strip()) if password_ok else None
+        if not method:
+            log_security_event(request, "auth.mfa.reset_failed", {"mode": "self"}, level=logging.WARNING)
+            messages.error(request, "Your password or security code was not correct.")
+            return render(request, "kura/accounts/mfa_reset.html", {"form": form}, status=400)
+
+        result = reset_user_mfa(user, keep_session_id=request.session.get("user_session_id"))
+        request.session.pop("mfa_reauth_at", None)
+        log_security_event(
+            request,
+            "auth.mfa.reset",
+            {"mode": "self", "target_user_id": user.id, "method": method, **result},
+            level=logging.WARNING,
+        )
+        queue_email(
+            f"mfa-reset-notice:{user.id}:{secrets.token_hex(8)}",
+            user.email,
+            "Your Kura two-step verification was reset",
+            "Hello,\n\nYou reset two-step verification on your Kura account and must set it up again.\n"
+            "If this was not you, contact an administrator now.\n\n"
+            "This is an automatic message from Kura. Please do not reply.",
+        )
+        messages.success(request, "Two-step verification was reset. Set it up again now.")
+        return redirect("kura:mfa_setup")
+
+    if request.method == "POST":
+        log_invalid_form(request, form)
+    return render(
+        request,
+        "kura/accounts/mfa_reset.html",
+        {"form": form},
+        status=400 if request.method == "POST" else 200,
+    )
+
+
+@login_required
+@never_cache
+def admin_user_mfa_reset_view(request, user_id):
+    """Let an Admin reset another user's two-step verification after a lost device.
+    Who can use it: System administrators, for any account except their own.
+    Security: Admin role, the Admin's own current password, a fresh second factor of
+    the Admin (step-up) and a written reason are all required. The reset deletes the
+    user's factors and recovery codes, revokes their sessions and passkeys, replaces
+    their password with a random one and emails them a single-use link to choose a new
+    one. The Admin never sees a code, seed or link. An Admin cannot reset themselves, so
+    resetting another Admin needs a second Admin. Rate-limited and written to the
+    security log with actor, target, reason and IP.
+    """
+    if not has_role(request.user, "Admin"):
+        raise PermissionDenied
+
+    target_user = get_object_or_404(User, id=user_id)
+    if target_user.id == request.user.id:
+        log_security_event(request, "admin.mfa.reset_denied", {"reason": "self"}, level=logging.WARNING)
+        messages.error(request, "You cannot reset your own two-step verification here. Ask another administrator.")
+        return redirect("kura:admin_users")
+
+    # The Admin's own MFA must be enabled and freshly confirmed before this runs.
+    reauth_url = reverse("kura:admin_user_mfa_reset", kwargs={"user_id": target_user.id})
+    form = AdminMFAResetForm(request.POST or None)
+    if request.method == "POST":
+        if not request.user.mfa_enabled or not has_fresh_second_factor(request):
+            return redirect_to_reauth(request, reauth_url)
+        if form.is_valid():
+            password_ok = (
+                authenticate(request, username=request.user.email, password=form.cleaned_data["password"])
+                is not None
+            )
+            if not password_ok:
+                log_security_event(
+                    request,
+                    "admin.mfa.reset_failed",
+                    {"target_user_id": target_user.id, "reason": "password"},
+                    level=logging.WARNING,
+                )
+                form.add_error("password", "Your password is not correct.")
+            else:
+                reason = " ".join(form.cleaned_data["reason"].split())[:300]
+                with transaction.atomic():
+                    result = reset_user_mfa(target_user)
+                    # The old password stops working, so only the person who owns the mailbox can sign in again.
+                    target_user.set_password(secrets.token_urlsafe(32))  # nosemgrep: python.django.security.audit.unvalidated-password.unvalidated-password
+                    target_user.must_change_password = True
+                    target_user.save(update_fields=["password", "must_change_password"])
+                    PasswordResetToken.objects.filter(user=target_user, used_at__isnull=True).update(
+                        used_at=timezone.now()
+                    )
+                queue_account_activation_email(
+                    target_user,
+                    "Your Kura two-step verification was reset",
+                    "An administrator reset two-step verification on your Kura account. "
+                    "Your old password no longer works.",
+                )
+                log_security_event(
+                    request,
+                    "admin.mfa.reset",
+                    {"target_user_id": target_user.id, "reason": reason, **result},
+                    level=logging.WARNING,
+                )
+                messages.success(
+                    request,
+                    f"Two-step verification was reset for {target_user.email}. They were emailed a link to choose a new password and set it up again.",
+                )
+                return redirect("kura:admin_users")
+        else:
+            log_invalid_form(request, form)
+
+    return render(
+        request,
+        "kura/accounts/admin_user_mfa_reset.html",
+        {"form": form, "target_user": target_user},
+        status=400 if request.method == "POST" else 200,
     )
 
 
@@ -2952,7 +3162,6 @@ def staff_list_view(request):
     for staff_member in page_staff:
         staff_member.head_department_names = head_department_names.get(staff_member.user_id, [])
 
-    temp_account = request.session.pop("new_account_temp_password", None)
     return render(
         request,
         "kura/accounts/staff_list.html",
@@ -2960,7 +3169,6 @@ def staff_list_view(request):
             "staff_members": page_staff,
             "page_obj": page_obj,
             "pagination_query": pagination_query,
-            "temp_account": temp_account,
             "now": timezone.now(),
             "filter_form": filter_form,
         },
@@ -3012,23 +3220,17 @@ def admin_users_view(request):
 
 @login_required
 def staff_create_view(request):
-    """Create a new staff account and profile with an auto-generated temporary password.
+    """Create a new staff account and profile, then email the user a set-password link.
     Who can use it: System administrators.
-    Security: Restricted to Admin role; enforces must_change_password=True on first login.
+    Security: Restricted to Admin role. The Admin never sees a password: the account
+    starts with a random one nobody knows, and the user sets their own through a
+    single-use emailed link, then enrols their own MFA at first sign-in.
     """
     # Check administrator permission.
     if not has_role(request.user, "Admin"):
         raise PermissionDenied
 
     form = StaffCreateForm(request.POST or None)
-
-    # Check the generated temporary password before creating the account.
-    if request.method == "POST" and form.is_valid():
-        temporary_password = secrets.token_urlsafe(12)
-        try:
-            check_breached_password(temporary_password)
-        except ValidationError as error:
-            form.add_error(None, error)
 
     if request.method == "POST" and form.is_valid():
         email = form.cleaned_data["email"].strip().lower()
@@ -3043,7 +3245,8 @@ def staff_create_view(request):
             # Create user account requiring password rotation on first login.
             new_user = User.objects.create_user(
                 email=email,
-                password=temporary_password,
+                # Nobody ever sees this random password. The user sets their own through the emailed link.
+                password=secrets.token_urlsafe(32),
                 first_name=first_name,
                 last_name=last_name,
                 must_change_password=True,
@@ -3067,9 +3270,13 @@ def staff_create_view(request):
         role_names = list(UserRole.objects.filter(user=new_user).values_list("role__name", flat=True))
         log_security_event(request, "admin.user.created", {"target_user_id": new_user.id, "roles": role_names})
 
-        # Keep the temporary password out of flash messages; show it once from the session.
-        request.session["new_account_temp_password"] = {"email": email, "password": temporary_password}
-        messages.success(request, f"Staff account created for {email}.")
+        # The new user gets a single-use set-password link by email, so the Admin never learns a credential.
+        queue_account_activation_email(
+            new_user,
+            "Set up your Kura account",
+            "An administrator created a Kura staff account for you.",
+        )
+        messages.success(request, f"Staff account created for {email}. A set-password link was emailed to them.")
         return redirect("kura:staff_list")
 
     # Log the rejected fields without the typed email, name or title (LOG-03).
@@ -3346,19 +3553,19 @@ def user_roles_view(request, user_id):
         removed_roles = []
 
         if action == "assign":
-            # Separation of duty: Admin cannot be combined with academic/grading/student roles (W9).
-            admin_incompatible_roles = ("Instructor", "Teaching assistant", "Department head", "Student")
+            # Separation of duty: Admin cannot be combined with academic, grading, student or Registrar roles (W9).
+            admin_incompatible_roles = ("Instructor", "Teaching assistant", "Department head", "Student", "Registrar")
             if target_role.name == "Admin" and any(r in admin_incompatible_roles for r in existing_roles):
                 messages.error(
                     request,
-                    "Separation of duty: Administrators cannot hold academic, grading, or student roles.",
+                    "Separation of duty: Administrators cannot hold academic, grading, student, or registrar roles.",
                 )
                 return redirect("kura:user_roles", user_id=target_user.id)
 
             if target_role.name in admin_incompatible_roles and "Admin" in existing_roles:
                 messages.error(
                     request,
-                    "Separation of duty: Administrators cannot hold academic, grading, or student roles.",
+                    "Separation of duty: Administrators cannot hold academic, grading, student, or registrar roles.",
                 )
                 return redirect("kura:user_roles", user_id=target_user.id)
 
@@ -3420,23 +3627,16 @@ def user_roles_view(request, user_id):
 
 @login_required
 def student_create_view(request):
-    """Create a new student account and profile with an auto-generated temporary password.
+    """Create a new student account and profile, then email the student a set-password link.
     Who can use it: Academic registrar.
-    Security: Restricted to Registrar role; assigns Student role automatically.
+    Security: Restricted to Registrar role; assigns Student role automatically. The
+    Registrar never sees a password, because the student sets one through a single-use link.
     """
     # Check registrar permission.
     if not has_role(request.user, "Registrar"):
         raise PermissionDenied
 
     form = StudentCreateForm(request.POST or None)
-
-    # Check the generated temporary password before creating the account.
-    if request.method == "POST" and form.is_valid():
-        temporary_password = secrets.token_urlsafe(12)
-        try:
-            check_breached_password(temporary_password)
-        except ValidationError as error:
-            form.add_error(None, error)
 
     if request.method == "POST" and form.is_valid():
         email = form.cleaned_data["email"].strip().lower()
@@ -3450,7 +3650,8 @@ def student_create_view(request):
             # Create student user account.
             new_user = User.objects.create_user(
                 email=email,
-                password=temporary_password,
+                # Nobody ever sees this random password. The user sets their own through the emailed link.
+                password=secrets.token_urlsafe(32),
                 first_name=first_name,
                 last_name=last_name,
                 must_change_password=True,
@@ -3479,9 +3680,13 @@ def student_create_view(request):
             {"target_user_id": new_user.id, "roles": ["Student"]},
         )
 
-        # Keep the temporary password out of flash messages; show it once from the session.
-        request.session["new_account_temp_password"] = {"email": email, "password": temporary_password}
-        messages.success(request, f"Student account created for {email}.")
+        # The new student gets a single-use set-password link by email, so the Registrar never learns a credential.
+        queue_account_activation_email(
+            new_user,
+            "Set up your Kura account",
+            "The registrar created a Kura student account for you.",
+        )
+        messages.success(request, f"Student account created for {email}. A set-password link was emailed to them.")
         return redirect("kura:enrollment_list")
 
     if request.method == "POST":
@@ -3602,7 +3807,6 @@ def enrollment_list_view(request):
         if form.cleaned_data["year"]:
             enrollments = enrollments.filter(course__academic_year=form.cleaned_data["year"])
     page_obj, pagination_query = paginate_queryset(request, enrollments, per_page=25)
-    temp_account = request.session.pop("new_account_temp_password", None)
     return render(
         request,
         "kura/accounts/enrollment_list.html",
@@ -3610,7 +3814,6 @@ def enrollment_list_view(request):
             "enrollments": page_obj.object_list,
             "page_obj": page_obj,
             "pagination_query": pagination_query,
-            "temp_account": temp_account,
             "filter_form": form,
         },
     )

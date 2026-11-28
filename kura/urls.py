@@ -1,3 +1,8 @@
+"""URL routes for the Kura app, grouped by feature area.
+
+Views are private by default because of the global login gate. The few public
+views carry @login_not_required in views.py. The last routes are honeypots with no names.
+"""
 from django.urls import path
 from . import views
 
@@ -19,6 +24,7 @@ urlpatterns = [
     path("mfa/setup/", views.mfa_setup_view, name="mfa_setup"),
     path("mfa/confirm/", views.mfa_reauth_view, name="mfa_reauth"),
     path("mfa/complete/", views.mfa_setup_complete_view, name="mfa_setup_complete"),
+    path("mfa/reset/", views.mfa_reset_view, name="mfa_reset"),
     # Passkey (WebAuthn / FIDO2) management routes
     path("passkeys/", views.passkey_manage_view, name="passkey_manage"),
     path("passkeys/<int:key_id>/delete/", views.passkey_delete_view, name="passkey_delete"),
@@ -32,6 +38,7 @@ urlpatterns = [
     path("account/sessions/", views.user_sessions_view, name="user_sessions"),
     path("account/sessions/<uuid:session_id>/revoke/", views.user_session_revoke_view, name="user_session_revoke"),
     path("admin/sessions/", views.admin_sessions_view, name="admin_sessions"),
+    path("admin/users/<uuid:user_id>/mfa-reset/", views.admin_user_mfa_reset_view, name="admin_user_mfa_reset"),
     path("admin/security-policy/", views.security_policy_view, name="security_policy"),
     path("admin/quarantine/", views.quarantine_list_view, name="quarantine_list"),
     path(

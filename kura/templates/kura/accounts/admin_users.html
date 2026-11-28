@@ -85,6 +85,7 @@
                             <a href="{% url 'kura:user_roles' account.id %}" class="btn btn-link text-decoration-none btn-sm">Roles</a>
 
                             {% if account.id != user.id %}
+                            <a href="{% url 'kura:admin_user_mfa_reset' account.id %}" class="btn btn-link text-decoration-none btn-sm">Reset MFA</a>
                             <form method="post" action="{% url 'kura:user_lock_toggle' account.id %}" class="d-inline" data-confirm-action="{% if account.locked_until and account.locked_until > now %}Unlock{% else %}Lock{% endif %} {{ account.email }}?">
                                 {% csrf_token %}
                                 <input type="hidden" name="next" value="{% url 'kura:admin_users' %}">

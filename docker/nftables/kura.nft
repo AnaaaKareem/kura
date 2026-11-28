@@ -23,9 +23,11 @@ table inet kura_host {
 #   - smtp.gmail.com:587 (Gmail SMTP, STARTTLS)
 #   - 1.1.1.1:53 (DNS resolver)
 # Everything else on the internet is dropped.
-set egress_smtp { type ipv4_addr; }
-set egress_hibp { type ipv4_addr; }
-set egress_dns { type ipv4_addr; }
+# flags timeout lets ./kura.sh egress-refresh add resolved addresses that expire after 2 hours.
+# The DNS resolver is fixed (the same address as dns: in docker-compose.yml), so it is listed here without a timeout.
+set egress_smtp { type ipv4_addr; flags timeout; }
+set egress_hibp { type ipv4_addr; flags timeout; }
+set egress_dns { type ipv4_addr; flags timeout; elements = { 1.1.1.1 } }
 
 chain web_egress {
     ip daddr @egress_smtp tcp dport 587 accept
@@ -73,6 +75,7 @@ chain web_egress {
         ip6 saddr @crowdsec6_blacklists drop
 
         # Web egress: jump to web_egress chain for traffic from the web container's egress address.
-        iifname "eth1" ip saddr 172.28.60.10 jump web_egress
+        # kura-egress is the bridge name pinned for the egress network in docker-compose.yml. Keep the two names the same.
+        iifname "kura-egress" ip saddr 172.28.60.10 jump web_egress
     }
 }

@@ -1,3 +1,10 @@
+"""Forms that validate every piece of user input before a view uses it.
+
+Forms limit which fields a request may set, check formats and ranges, and apply
+the password and email rules. Views must read values from cleaned_data, never
+from request.POST, and must log rejected fields by name only, never by value.
+"""
+
 import logging
 
 from django import forms
@@ -414,6 +421,38 @@ class MFAVerifyForm(forms.Form):
                 "autofocus": "autofocus",
             }
         ),
+    )
+
+
+class MFAResetForm(MFAVerifyForm):
+    """
+    Form for resetting your own two-step verification: current password plus a current code.
+    """
+
+    field_order = ["password", "code"]
+
+    password = forms.CharField(
+        label="Current password",
+        widget=forms.PasswordInput(attrs={"class": "form-control", "autocomplete": "current-password"}),
+    )
+
+
+class AdminMFAResetForm(SafeTextMixin, forms.Form):
+    """
+    Form for an Admin resetting another user's two-step verification: their own password and a reason.
+    """
+
+    password = forms.CharField(
+        label="Your password",
+        widget=forms.PasswordInput(attrs={"class": "form-control", "autocomplete": "current-password"}),
+    )
+    # The reason is kept in the security log, so it must be written and bounded.
+    reason = forms.CharField(
+        label="Reason",
+        min_length=10,
+        max_length=300,
+        help_text="Say why, for example that the user lost their phone. This is saved in the security log.",
+        widget=forms.Textarea(attrs={"class": "form-control", "rows": 3}),
     )
 
 
