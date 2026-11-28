@@ -19,7 +19,8 @@ How to read the picture:
     - Each arrow is a connection. Its label says the protocol and, where it
       matters, the security on it (TLS, mTLS, AppRole, ...).
     - Solid arrows show configured traffic; deployments still need valid
-      credentials and live delivery checks. Dashed arrows are planned.
+      credentials and live delivery checks. Dashed arrows are optional or
+      manual (the host firewall bouncer package, local scans, local builds).
 """
 
 import os
@@ -57,7 +58,6 @@ graph_settings = {
 node_settings = {"fontsize": "12"}
 edge_settings = {"fontsize": "10"}
 
-# Everything inside this "with" block is drawn into one picture.
 with Diagram(
     "Kura Secure Learning Management System",
     filename=OUTPUT_FILE,
@@ -68,28 +68,27 @@ with Diagram(
     node_attr=node_settings,
     edge_attr=edge_settings,
 ):
-    # People who use Kura.
     students_and_staff = Users("Students and staff\n(web browser)")
     admin = User("Admin laptop\n(Ed25519 SSH key)")
 
-    # Development side: GitHub Actions checks every push.
+    # Development side: GitHub Actions checks pushes and pull requests.
     with Cluster("CI/CD: GitHub Actions (actions pinned to commit hashes)"):
-        # These jobs run in parallel; only the image build waits for Semgrep (needs: semgrep-scan in ci.yml).
-        ci_pipeline = GithubActions("ruff + pip-audit\nDjango tests (PostgreSQL 17)\nSemgrep SAST")
+        # ci.yml: four parallel jobs (lint, tests + deploy check, Semgrep, config checks).
+        ci_pipeline = GithubActions("ci.yml\nRuff, 423 Django tests\n(PostgreSQL 17, deploy check),\nSemgrep SAST,\nconfig checks")
+        # security.yml: Gitleaks, pip-audit and Trivy. It builds its own images for scanning.
         image_scanner = Trivy(
-            "Docker build + Trivy\n(web, nginx;\nfails on fixable\nHigh or Critical)"
+            "security.yml\nGitleaks, pip-audit,\nTrivy (fs, config,\nweb + nginx images;\nfails on fixable\nHigh or Critical),\nCycloneDX SBOMs"
         )
-        # The ZAP baseline job scans only the signed-out login page and runs with -I, so warnings do not fail the build.
-        zap_scan = Server("OWASP ZAP baseline\n(login page only,\nreport only)")
-        ci_pipeline >> Edge(label="after Semgrep") >> image_scanner
-        ci_pipeline >> Edge(label="parallel job") >> zap_scan
 
-    # The server: an Ubuntu 24.04 Hyper-V virtual machine running Docker Compose.
-    with Cluster("Ubuntu Server 24.04 VM (Hyper-V) running Docker Compose"):
+    # ZAP is not in CI. It and the other active scanners run by hand against the local stack.
+    manual_scans = Server("Manual scans (local)\nscripts/zap-baseline.sh,\nsqlmap, ffuf, Hydra,\nnmap, Nikto")
+
+    # The server: Docker Compose running inside Ubuntu Server 26.04.1 on WSL.
+    with Cluster("Ubuntu Server 26.04.1 (WSL) running Docker Compose"):
         # Layer 1: the host firewall and CrowdSec.
         with Cluster("Layer 1: host firewall"):
-            host_firewall = Firewall("nftables\ndefault DROP\n(HTTPS 443 + HTTP 80 open,\nSSH 22 only from\nadmin allowlist)")
-            crowdsec = Firewall("CrowdSec\nKura parsers + scenarios,\nsshd collection,\nbans real client IPs")
+            host_firewall = Firewall("nftables\ndefault DROP\n(HTTPS 443 + HTTP 80 open,\nSSH 22 only from\nadmin allowlist,\nno anti-spoofing\nor SYN limits)")
+            crowdsec = Firewall("CrowdSec\nKura parsers + 6 scenarios\n(incl. honeypot-hit),\nsshd collection,\nno hub upgrade or\nonline API,\nwhitelists 172.16.0.0/12")
             # The VM's SSH server: keys only, one admin user, one allowed forward.
             sshd = Server("VM sshd\nEd25519 keys only,\nAllowUsers admin,\nforward only to\n127.0.0.1:3000")
 
@@ -101,13 +100,13 @@ with Diagram(
         # The application ("app", "backend", "clamav" and "egress" networks).
         with Cluster("Application (internal networks: app, backend, clamav; egress network for allowlisted traffic)"):
             gunicorn = Gunicorn("Gunicorn\n(mTLS, non-root,\nread-only filesystem)")
-            django_app = Django("Django 6.1.2\nPython 3.14\nRBAC + IDOR checks,\nCSP, MFA, passkeys")
+            django_app = Django("Django 6.1.2\npython:3.14-slim\n(hardened, not distroless)\nRBAC + IDOR checks,\nCSP, MFA, passkeys,\nhoneypot routes,\nsigned receipts")
 
         # Data and security services ("backend" network, internal).
         with Cluster("Data and secrets (backend network, internal)"):
             database = Postgresql("PostgreSQL 17\nRow-Level Security,\npgAudit,\nfiles in bytea")
             vault = Vault(
-                "HashiCorp Vault\nTransit (MFA seeds,\nfile keys),\n"
+                "HashiCorp Vault\nTransit (MFA seeds,\nfile keys, ECDSA\nreceipt signing),\n"
                 "dynamic DB users (15 min),\nPKI (30-day certs)"
             )
             backups = Storage("pgBackRest\nencrypted WAL archive,\nfull + differential,\nPITR drill")
@@ -122,8 +121,8 @@ with Diagram(
         # Monitoring and SIEM ("observability" network).
         with Cluster("Observability and SIEM (observability network)"):
             alloy = Grafana("Grafana Alloy\nlogs, metrics,\nprobes")
-            loki = Loki("Loki\n180-day logs,\n26 LogQL alert rules")
-            prometheus = Prometheus("Prometheus\nmetric alerts")
+            loki = Loki("Loki\n180-day logs,\n31 LogQL alert rules")
+            prometheus = Prometheus("Prometheus\n18 metric alert rules")
             alertmanager = Prometheus("Alertmanager\ngroup + route\n(no host port)")
             grafana = Grafana("Grafana\n127.0.0.1:3000\n3 dashboards,\nadmin + viewer")
 
@@ -168,8 +167,8 @@ with Diagram(
 
     # CrowdSec reads the web logs and the firewall drops banned IPs.
     crowdsec >> Edge(label="reads nginx, WAF,\nDjango logs\n(Docker API proxy)") >> nginx
-    # The host firewall bouncer is not installed on the VM yet, so the ban push is planned (dashed).
-    crowdsec >> Edge(label="pushes bans\n(planned bouncer)", style="dashed") >> host_firewall
+    # The host firewall bouncer is a host package (not a container); bans reach nftables only where it is installed (dashed).
+    crowdsec >> Edge(label="pushes bans\n(host bouncer package,\nwhere installed)", style="dashed") >> host_firewall
 
     # Admin access: an SSH tunnel from the admin's laptop to Grafana on the VM's loopback address.
     # Prometheus, Loki and Alertmanager have no host port; the admin sees them only through Grafana.
@@ -180,5 +179,7 @@ with Diagram(
     sshd >> Edge(label="auth.log") >> alloy
     sshd >> Edge(label="auth.log") >> crowdsec
 
-    # Development: the checked image is what runs on the server.
-    image_scanner >> Edge(label="built image\n(local, no registry)", style="dashed") >> gunicorn
+    # Development: images are built locally on the VM (no registry); CI only scans its own builds.
+    image_scanner >> Edge(label="scan reports only;\nimages built locally", style="dashed") >> gunicorn
+    # Manual scans hit the local nginx front door.
+    manual_scans >> Edge(label="run by hand", style="dashed") >> nginx

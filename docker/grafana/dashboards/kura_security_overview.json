@@ -25,7 +25,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"auth.login.failed\" [5m]))",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"auth.login.failed\" [5m])) or vector(0)",
           "legendFormat": "failed logins per 5m",
           "queryType": "range"
         }
@@ -85,7 +85,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"auth.mfa.failed\" [10m]))",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"auth.mfa.failed\" [10m])) or vector(0)",
           "legendFormat": "MFA failures per 10m",
           "queryType": "range"
         }
@@ -114,7 +114,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"auth.login.failed\" | reason=\"locked\" [5m]))",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"auth.login.failed\" | reason=\"locked\" [5m])) or vector(0)",
           "legendFormat": "locked attempts per 5m",
           "queryType": "range"
         }
@@ -143,7 +143,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"access.csrf_failed\" [10m]))",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"access.csrf_failed\" [10m])) or vector(0)",
           "legendFormat": "CSRF failures per 10m",
           "queryType": "range"
         }
@@ -178,7 +178,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"access.denied\" [5m]))",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"access.denied\" [5m])) or vector(0)",
           "legendFormat": "denied requests per 5m",
           "queryType": "range"
         }
@@ -261,7 +261,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (reason) (crowdsec_active_decisions)",
+          "expr": "sum by (reason) (cs_active_decisions)",
           "legendFormat": "{{reason}}",
           "queryType": "range"
         }
@@ -296,7 +296,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"file.quarantined\" [5m]))",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"file.quarantined\" [5m])) or vector(0)",
           "legendFormat": "quarantined per 5m",
           "queryType": "range"
         }
@@ -378,7 +378,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (event) (count_over_time({service=\"web\"} | logfmt | event=~\"server\\.error|file\\.decrypt_failed|file\\.integrity_failed|vault\\.error|rls\\.context_failed\" [5m]))",
+          "expr": "sum by (event) (count_over_time({service=\"web\"} | logfmt | event=~\"server\\.error|file\\.decrypt_failed|file\\.integrity_failed|vault\\.error|rls\\.context_failed\" [5m])) or vector(0)",
           "legendFormat": "{{event}}",
           "queryType": "range"
         }
@@ -407,7 +407,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum by (event) (count_over_time({service=\"web\"} | logfmt | event=~\"access\\.not_found|session\\.created|session\\.invalid\" [5m]))",
+          "expr": "sum by (event) (count_over_time({service=\"web\"} | logfmt | event=~\"access\\.not_found|session\\.created|session\\.invalid\" [5m])) or vector(0)",
           "legendFormat": "{{event}}",
           "queryType": "range"
         }
