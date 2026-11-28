@@ -2449,7 +2449,6 @@ def mfa_setup_view(request):
             device.confirmed = True
             device.save()
 
-            # Set mfa_enabled on the user model.
             request.user.mfa_enabled = True
             request.user.save(update_fields=["mfa_enabled"])
             log_security_event(request, "auth.mfa.setup_completed", {})
@@ -3253,7 +3252,6 @@ def staff_create_view(request):
                 mfa_enabled=False,
             )
 
-            # Create staff employment profile.
             StaffProfile.objects.create(
                 user=new_user,
                 department=department,
@@ -3547,7 +3545,6 @@ def user_roles_view(request, user_id):
         action = form.cleaned_data["action"]
         target_role = form.cleaned_data["role_id"]
 
-        # Get existing assigned role names for target user.
         existing_roles = list(UserRole.objects.filter(user=target_user).values_list("role__name", flat=True))
         added_roles = []
         removed_roles = []
@@ -3647,7 +3644,6 @@ def student_create_view(request):
         matriculation_year = form.cleaned_data["matriculation_year"]
 
         with transaction.atomic():
-            # Create student user account.
             new_user = User.objects.create_user(
                 email=email,
                 # Nobody ever sees this random password. The user sets their own through the emailed link.
@@ -3658,7 +3654,6 @@ def student_create_view(request):
                 mfa_enabled=False,
             )
 
-            # Create student academic profile.
             StudentProfile.objects.create(
                 user=new_user,
                 department=department,

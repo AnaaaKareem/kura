@@ -305,8 +305,8 @@ class RateLimitMiddleware:
 
 class RowLevelSecurityMiddleware:
     """
-    Sets the active user ID in the PostgreSQL connection session for Row-Level Security.
-    Ensures database-level isolation so SQL queries only return records the user may view.
+    Set the active user ID on the PostgreSQL connection so Row-Level Security
+    limits every query to records the user may view.
     """
 
     def __init__(self, get_response):

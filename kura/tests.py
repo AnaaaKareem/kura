@@ -1721,14 +1721,12 @@ class AttendanceHistoryTests(TestCase):
             is_active=True,
         )
 
-        # Create attendance record for Student A.
         self.rec_a = AttendanceRecord.objects.create(
             session=self.session,
             student=self.student_a,
             status=AttendanceStatus.PRESENT,
             method=AttendanceMethod.PASSCODE,
         )
-        # Create attendance record for Student B.
         self.rec_b = AttendanceRecord.objects.create(
             session=self.session,
             student=self.student_b,

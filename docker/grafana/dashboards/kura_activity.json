@@ -25,7 +25,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"attempt.submitted\" [1h]))",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"attempt.submitted\" [1h])) or vector(0)",
           "legendFormat": "submissions per hour",
           "queryType": "range"
         }
@@ -54,7 +54,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"assessment.created\" [1d]))",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"assessment.created\" [1d])) or vector(0)",
           "legendFormat": "assessments per day",
           "queryType": "range"
         }
@@ -89,7 +89,7 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"grade.released\" [1d]))",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"grade.released\" [1d])) or vector(0)",
           "legendFormat": "grades released per day",
           "queryType": "range"
         }
@@ -118,13 +118,13 @@
       "targets": [
         {
           "refId": "A",
-          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"grade.change_requested\" [1d]))",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"grade.change_requested\" [1d])) or vector(0)",
           "legendFormat": "requests per day",
           "queryType": "range"
         },
         {
           "refId": "B",
-          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"grade.change_decided\" [1d]))",
+          "expr": "sum(count_over_time({service=\"web\"} | logfmt | event=\"grade.change_decided\" [1d])) or vector(0)",
           "legendFormat": "decisions per day",
           "queryType": "range"
         }
